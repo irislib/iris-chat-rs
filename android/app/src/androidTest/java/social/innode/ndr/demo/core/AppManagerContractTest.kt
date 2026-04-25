@@ -388,7 +388,14 @@ class AppManagerContractTest {
                     sendReadReceipts = true,
                     desktopNotificationsEnabled = true,
                     startupAtLoginEnabled = false,
-                    nostrRelayUrls = listOf("wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"),
+                    nostrRelayUrls =
+                        listOf(
+                            "wss://relay.damus.io",
+                            "wss://nos.lol",
+                            "wss://relay.primal.net",
+                            "wss://relay.snort.social",
+                            "wss://temp.iris.to",
+                        ),
                     imageProxyEnabled = true,
                     imageProxyUrl = "https://imgproxy.iris.to",
                     imageProxyKeyHex = "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
@@ -505,7 +512,14 @@ private object AppManagerContractDefaults {
                     sendReadReceipts = true,
                     desktopNotificationsEnabled = true,
                     startupAtLoginEnabled = false,
-                    nostrRelayUrls = listOf("wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net"),
+                    nostrRelayUrls =
+                        listOf(
+                            "wss://relay.damus.io",
+                            "wss://nos.lol",
+                            "wss://relay.primal.net",
+                            "wss://relay.snort.social",
+                            "wss://temp.iris.to",
+                        ),
                     imageProxyEnabled = true,
                     imageProxyUrl = "https://imgproxy.iris.to",
                     imageProxyKeyHex = "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",

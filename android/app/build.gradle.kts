@@ -30,7 +30,7 @@ val androidSdkDir =
 val androidAppId = "to.iris.chat"
 val androidNdkDir = file("$androidSdkDir/ndk/$ndkVersionValue")
 val cargoBinary = file("${System.getProperty("user.home")}/.cargo/bin/cargo")
-val publicRelayFallbackCsv = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net"
+val publicRelayFallbackCsv = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to"
 
 fun configValue(propertyName: String, envName: String): String? =
     localProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }

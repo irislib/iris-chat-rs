@@ -2,7 +2,7 @@ use std::env;
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-const FALLBACK_RELAYS: &str = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net";
+const FALLBACK_RELAYS: &str = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to";
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");

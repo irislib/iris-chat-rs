@@ -1,6 +1,20 @@
 use super::*;
 
 impl AppCore {
+    pub(super) fn runtime_publish_completion(
+        &self,
+        event_id: &str,
+        inner_event_id: Option<&str>,
+        completions: &BTreeMap<String, (String, String)>,
+    ) -> Option<(String, String)> {
+        completions.get(event_id).cloned().or_else(|| {
+            inner_event_id.and_then(|message_id| {
+                self.find_message_chat_id(message_id)
+                    .map(|chat_id| (message_id.to_string(), chat_id))
+            })
+        })
+    }
+
     pub(super) fn handle_relay_event(&mut self, event: Event) {
         let event_id = event.id.to_string();
         if self.has_seen_event(&event_id) || self.logged_in.is_none() {
@@ -89,7 +103,8 @@ impl AppCore {
                 SessionManagerEvent::Publish(unsigned) => {
                     if let Some(signed) = self.sign_runtime_unsigned_event(unsigned) {
                         let event_id = signed.id.to_string();
-                        let completion = completions.get(&event_id).cloned();
+                        let completion =
+                            self.runtime_publish_completion(&event_id, None, completions);
                         if !completions.is_empty() {
                             self.push_debug_log(
                                 "publish.runtime.completion",
@@ -101,8 +116,26 @@ impl AppCore {
                 }
                 SessionManagerEvent::PublishSigned(event) => {
                     let event_id = event.id.to_string();
-                    let completion = completions.get(&event_id).cloned();
+                    let completion = self.runtime_publish_completion(&event_id, None, completions);
                     if !completions.is_empty() {
+                        self.push_debug_log(
+                            "publish.runtime.completion",
+                            format!("event_id={event_id} matched={}", completion.is_some()),
+                        );
+                    }
+                    self.publish_runtime_event(event, "runtime", completion);
+                }
+                SessionManagerEvent::PublishSignedForInnerEvent {
+                    event,
+                    inner_event_id,
+                } => {
+                    let event_id = event.id.to_string();
+                    let completion = self.runtime_publish_completion(
+                        &event_id,
+                        inner_event_id.as_deref(),
+                        completions,
+                    );
+                    if !completions.is_empty() || inner_event_id.is_some() {
                         self.push_debug_log(
                             "publish.runtime.completion",
                             format!("event_id={event_id} matched={}", completion.is_some()),

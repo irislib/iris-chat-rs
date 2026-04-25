@@ -77,6 +77,18 @@ impl AppCore {
         thread
     }
 
+    pub(super) fn find_message_chat_id(&self, message_id: &str) -> Option<String> {
+        self.threads
+            .iter()
+            .find(|(_, thread)| {
+                thread
+                    .messages
+                    .iter()
+                    .any(|message| message.id == message_id)
+            })
+            .map(|(chat_id, _)| chat_id.clone())
+    }
+
     pub(super) fn normalize_chat_id(&self, chat_id: &str) -> Option<String> {
         if is_group_chat_id(chat_id) {
             let group_id = parse_group_id_from_chat_id(chat_id)?;

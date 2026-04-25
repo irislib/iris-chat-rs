@@ -149,6 +149,58 @@ fn linked_device_authorization_follows_app_keys() {
     );
 }
 
+#[test]
+fn queued_runtime_publish_completion_uses_inner_message_id() {
+    let owner = Keys::generate();
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    let inner_message_id = "inner-rumor-id".to_string();
+    let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
+        .sign_with_keys(&owner)
+        .expect("outer event");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-completion-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 0,
+            updated_at_secs: 1,
+            messages: vec![ChatMessageSnapshot {
+                id: inner_message_id.clone(),
+                chat_id: chat_id.clone(),
+                author: owner.public_key().to_hex(),
+                body: "queued".to_string(),
+                attachments: Vec::new(),
+                reactions: Vec::new(),
+                is_outgoing: true,
+                created_at_secs: 1,
+                expires_at_secs: None,
+                delivery: DeliveryState::Queued,
+            }],
+        },
+    );
+
+    assert_eq!(
+        core.runtime_publish_completion(
+            &outer_event.id.to_string(),
+            Some(&inner_message_id),
+            &BTreeMap::new(),
+        ),
+        Some((inner_message_id, chat_id))
+    );
+}
+
 fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
     for event in drain_signed_events(from, signer) {
         to.session_manager().process_received_event(event);
@@ -164,6 +216,7 @@ fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
                 unsigned.sign_with_keys(signer).ok()
             }
             SessionManagerEvent::PublishSigned(event) => Some(event),
+            SessionManagerEvent::PublishSignedForInnerEvent { event, .. } => Some(event),
             _ => None,
         })
         .collect()
