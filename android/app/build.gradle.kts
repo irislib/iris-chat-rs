@@ -36,6 +36,13 @@ fun configValue(propertyName: String, envName: String): String? =
     localProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
         ?: System.getenv(envName)?.takeIf { it.isNotBlank() }
 
+fun configValueAllowEmpty(propertyName: String, envName: String): String? =
+    when {
+        localProperties.containsKey(propertyName) -> localProperties.getProperty(propertyName)
+        System.getenv().containsKey(envName) -> System.getenv(envName)
+        else -> null
+    }
+
 fun configIntValue(propertyName: String, envName: String): Int? =
     configValue(propertyName, envName)?.toIntOrNull()
 
@@ -51,7 +58,8 @@ fun gitValue(vararg args: String): String? =
 
 val appVersionCode = configIntValue("app.versionCode", "NDR_APP_VERSION_CODE") ?: 1
 val appVersionName = configValue("app.versionName", "NDR_APP_VERSION_NAME") ?: "0.1.0"
-val debugApplicationIdSuffix = configValue("debug.applicationIdSuffix", "NDR_DEBUG_APPLICATION_ID_SUFFIX") ?: ".debug"
+val debugApplicationIdSuffix =
+    configValueAllowEmpty("debug.applicationIdSuffix", "NDR_DEBUG_APPLICATION_ID_SUFFIX") ?: ".debug"
 val buildGitSha = configValue("build.gitSha", "NDR_BUILD_GIT_SHA") ?: gitValue("rev-parse", "--short=12", "HEAD") ?: "unknown"
 val buildTimestampUtc =
     configValue("build.timestampUtc", "NDR_BUILD_TIMESTAMP_UTC")
@@ -123,7 +131,6 @@ android {
         versionName = appVersionName
         testApplicationId = "$androidAppId.test"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        testInstrumentationRunnerArguments["clearPackageData"] = "true"
 
         ndk {
             abiFilters += listOf("arm64-v8a")

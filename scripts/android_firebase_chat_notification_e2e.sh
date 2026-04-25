@@ -41,16 +41,72 @@ firebase_access_token() {
     return 0
   fi
   ssh -o BatchMode=yes -o ConnectTimeout=5 root@osiris \
-    'gcloud auth application-default print-access-token 2>/dev/null || gcloud auth print-access-token 2>/dev/null'
+    'if command -v gcloud >/dev/null 2>&1; then
+       gcloud auth application-default print-access-token 2>/dev/null ||
+         gcloud auth print-access-token 2>/dev/null
+     elif [ -f /root/iris-backend/firebase-key.json ]; then
+       cd /root/iris-backend && python3 - <<'"'"'PY'"'"'
+import base64
+import json
+import os
+import subprocess
+import tempfile
+import time
+import urllib.parse
+import urllib.request
+
+with open("firebase-key.json", "r", encoding="utf-8") as handle:
+    key = json.load(handle)
+
+def b64url(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+now = int(time.time())
+header = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
+claim = b64url(json.dumps({
+    "iss": key["client_email"],
+    "scope": "https://www.googleapis.com/auth/firebase.messaging",
+    "aud": "https://oauth2.googleapis.com/token",
+    "iat": now,
+    "exp": now + 3600,
+}, separators=(",", ":")).encode())
+unsigned = f"{header}.{claim}".encode("ascii")
+private_key_path = None
+try:
+    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as key_file:
+        key_file.write(key["private_key"])
+        private_key_path = key_file.name
+    signature = subprocess.check_output(
+        ["openssl", "dgst", "-sha256", "-sign", private_key_path],
+        input=unsigned,
+    )
+finally:
+    if private_key_path:
+        os.unlink(private_key_path)
+
+jwt = f"{header}.{claim}.{b64url(signature)}"
+data = urllib.parse.urlencode({
+    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+    "assertion": jwt,
+}).encode()
+with urllib.request.urlopen("https://oauth2.googleapis.com/token", data=data, timeout=20) as response:
+    print(json.load(response)["access_token"])
+PY
+     fi'
 }
 
 run_instrumentation() {
   local method="$1"
   shift
-  adb -s "${SERIAL}" shell am instrument -w -r \
+  local output
+  output="$(adb -s "${SERIAL}" shell am instrument -w -r \
     -e class "${TEST_CLASS}#${method}" \
     "$@" \
-    "${TEST_PACKAGE_NAME}/androidx.test.runner.AndroidJUnitRunner"
+    "${TEST_PACKAGE_NAME}/androidx.test.runner.AndroidJUnitRunner")"
+  printf '%s\n' "${output}"
+  if printf '%s\n' "${output}" | grep -Eq '(^FAILURES!!!|^INSTRUMENTATION_STATUS_CODE: -[0-9]|^Error in )'; then
+    return 1
+  fi
 }
 
 status_value() {
@@ -135,9 +191,52 @@ if [[ -z "${access_token}" ]]; then
 fi
 
 echo "Sending Firebase chat notification payload through project ${project}"
-send_fcm_message "${fcm_token}" "${MESSAGE}" "${project}" "${access_token}" >/dev/null
+wait_output="$(mktemp)"
+adb -s "${SERIAL}" shell am instrument -w -r \
+  -e class "${TEST_CLASS}#wait_for_firebase_chat_notification" \
+  -e message "${MESSAGE}" \
+  -e timeout_ms "${FCM_E2E_TIMEOUT_MS:-120000}" \
+  "${TEST_PACKAGE_NAME}/androidx.test.runner.AndroidJUnitRunner" >"${wait_output}" 2>&1 &
+wait_pid="$!"
+
+wait_ready=0
+for _ in {1..60}; do
+  if grep -q 'test=wait_for_firebase_chat_notification' "${wait_output}"; then
+    wait_ready=1
+    break
+  fi
+  if ! kill -0 "${wait_pid}" 2>/dev/null; then
+    cat "${wait_output}" >&2
+    rm -f "${wait_output}"
+    exit 1
+  fi
+  sleep 0.25
+done
+
+if [[ "${wait_ready}" != "1" ]]; then
+  kill "${wait_pid}" 2>/dev/null || true
+  cat "${wait_output}" >&2
+  rm -f "${wait_output}"
+  echo "Timed out waiting for Android notification probe to start." >&2
+  exit 1
+fi
+
+if ! send_fcm_message "${fcm_token}" "${MESSAGE}" "${project}" "${access_token}" >/dev/null; then
+  kill "${wait_pid}" 2>/dev/null || true
+  rm -f "${wait_output}"
+  exit 1
+fi
 
 echo "Waiting for Android Firebase service and notification manager"
-run_instrumentation wait_for_firebase_chat_notification -e message "${MESSAGE}" -e timeout_ms "${FCM_E2E_TIMEOUT_MS:-120000}"
+wait_status=0
+wait "${wait_pid}" || wait_status="$?"
+if [[ "${wait_status}" != "0" ]] ||
+  grep -Eq '(^FAILURES!!!|^INSTRUMENTATION_STATUS_CODE: -[0-9]|^Error in )' "${wait_output}"; then
+  cat "${wait_output}" >&2
+  rm -f "${wait_output}"
+  exit 1
+fi
+cat "${wait_output}"
+rm -f "${wait_output}"
 
 echo "Android Firebase chat notification e2e passed for ${SERIAL}"
