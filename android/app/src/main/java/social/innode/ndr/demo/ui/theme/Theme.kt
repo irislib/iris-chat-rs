@@ -174,7 +174,7 @@ fun IrisChatTheme(
                 toolbar = IrisLightToolbar,
                 bubbleMine = IrisLightBubbleMine,
                 bubbleTheirs = IrisLightBubbleTheirs,
-                accent = Sky500,
+                accent = IrisPurple,
                 accentAlt = IrisAccent,
                 muted = IrisMutedLight,
             )

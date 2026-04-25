@@ -21,7 +21,7 @@ val IrisLightSurface = Color(0xFFF7F9FA)
 val IrisLightSurfaceAlt = Color(0xFFE1E8ED)
 val IrisLightBorder = Color(0x14000000)
 val IrisLightToolbar = Color(0xF2F7F9FA)
-val IrisLightBubbleMine = Color(0xFF0F1419)
+val IrisLightBubbleMine = IrisPurple
 val IrisLightBubbleTheirs = Color(0xFFF7F9FA)
 
 val IrisPurple = Color(0xFF702ACE)
