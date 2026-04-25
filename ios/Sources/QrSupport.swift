@@ -74,6 +74,12 @@ func resolveDeviceAuthorizationInput(
 
 struct QrCodeImage: View {
     let text: String
+    let size: CGFloat
+
+    init(text: String, size: CGFloat = 260) {
+        self.text = text
+        self.size = size
+    }
 
     var body: some View {
         if let image = qrImage(text: text) {
@@ -81,8 +87,11 @@ struct QrCodeImage: View {
                 .interpolation(.none)
                 .resizable()
                 .scaledToFit()
+                .frame(width: size, height: size)
+                .background(Color.white)
         } else {
             Color.secondary.opacity(0.1)
+                .frame(width: size, height: size)
                 .overlay(Text("QR unavailable").font(.footnote))
         }
     }

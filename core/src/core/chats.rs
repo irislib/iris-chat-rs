@@ -1116,9 +1116,19 @@ impl AppCore {
             return;
         };
         if is_group_chat_id(&normalized_chat_id) {
-            self.send_group_control(&normalized_chat_id, AppControlType::Typing, Vec::new());
+            self.send_group_control(
+                &normalized_chat_id,
+                AppControlType::Typing,
+                Vec::new(),
+                None,
+            );
         } else {
-            self.send_direct_control(&normalized_chat_id, AppControlType::Typing, Vec::new());
+            self.send_direct_control(
+                &normalized_chat_id,
+                AppControlType::Typing,
+                Vec::new(),
+                None,
+            );
         }
     }
 
@@ -1146,14 +1156,42 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
-        match ttl_seconds {
+        let normalized_ttl = match ttl_seconds {
             Some(ttl_seconds) if ttl_seconds > 0 => {
                 self.chat_message_ttl_seconds
-                    .insert(normalized_chat_id, ttl_seconds);
+                    .insert(normalized_chat_id.clone(), ttl_seconds);
+                Some(ttl_seconds)
             }
             _ => {
                 self.chat_message_ttl_seconds.remove(&normalized_chat_id);
+                None
             }
+        };
+
+        let actor = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| self.owner_display_label(&logged_in.owner_pubkey.to_string()))
+            .unwrap_or_else(|| "You".to_string());
+        self.push_system_notice(
+            &normalized_chat_id,
+            disappearing_timer_notice(&actor, normalized_ttl),
+            unix_now().get(),
+        );
+        if is_group_chat_id(&normalized_chat_id) {
+            self.send_group_control(
+                &normalized_chat_id,
+                AppControlType::ChatSettings,
+                Vec::new(),
+                normalized_ttl,
+            );
+        } else {
+            self.send_direct_control(
+                &normalized_chat_id,
+                AppControlType::ChatSettings,
+                Vec::new(),
+                normalized_ttl,
+            );
         }
         self.rebuild_state();
         self.persist_best_effort();
@@ -1380,7 +1418,7 @@ impl AppCore {
         if is_group_chat_id(&normalized_chat_id) {
             // Group read state is local-only for now, matching the Flutter client.
         } else if self.preferences.send_read_receipts {
-            self.send_direct_control(&normalized_chat_id, AppControlType::Seen, receipt_ids);
+            self.send_direct_control(&normalized_chat_id, AppControlType::Seen, receipt_ids, None);
         }
 
         if changed {
@@ -1395,6 +1433,7 @@ impl AppCore {
         chat_id: &str,
         control_type: AppControlType,
         message_ids: Vec<String>,
+        message_ttl_seconds: Option<u64>,
     ) {
         let Ok((normalized_chat_id, peer_pubkey)) = parse_peer_input(chat_id) else {
             return;
@@ -1403,6 +1442,7 @@ impl AppCore {
             control_type,
             Some(normalized_chat_id.clone()),
             message_ids,
+            message_ttl_seconds,
         ) {
             Ok(payload) => payload,
             Err(error) => {
@@ -1443,11 +1483,17 @@ impl AppCore {
         chat_id: &str,
         control_type: AppControlType,
         message_ids: Vec<String>,
+        message_ttl_seconds: Option<u64>,
     ) {
         let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
             return;
         };
-        let payload = match encode_app_control_payload(control_type, None, message_ids) {
+        let payload = match encode_app_control_payload(
+            control_type,
+            None,
+            message_ids,
+            message_ttl_seconds,
+        ) {
             Ok(payload) => payload,
             Err(error) => {
                 self.push_debug_log("control.group.encode", error.to_string());
@@ -1516,6 +1562,35 @@ impl AppCore {
         if changed {
             self.persist_best_effort();
         }
+    }
+
+    pub(super) fn apply_chat_settings_control(
+        &mut self,
+        chat_id: &str,
+        actor: &str,
+        ttl_seconds: Option<u64>,
+        created_at_secs: u64,
+    ) {
+        let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
+            return;
+        };
+        match ttl_seconds {
+            Some(ttl_seconds) if ttl_seconds > 0 => {
+                self.chat_message_ttl_seconds
+                    .insert(normalized_chat_id.clone(), ttl_seconds);
+            }
+            _ => {
+                self.chat_message_ttl_seconds.remove(&normalized_chat_id);
+            }
+        }
+        self.push_system_notice(
+            &normalized_chat_id,
+            disappearing_timer_notice(actor, ttl_seconds),
+            created_at_secs,
+        );
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
     }
 
     pub(super) fn set_typing_indicator(
@@ -1633,6 +1708,15 @@ impl AppCore {
                     is_from_local_owner,
                 );
             }
+            AppControlType::ChatSettings => {
+                let actor = self.owner_display_label(&sender_owner.to_string());
+                self.apply_chat_settings_control(
+                    &chat_id,
+                    &actor,
+                    control.message_ttl_seconds,
+                    created_at_secs,
+                );
+            }
         }
     }
 
@@ -1746,17 +1830,26 @@ impl AppCore {
             Some(GroupIncomingEvent::Message(group_message)) => {
                 let chat_id = group_chat_id(&group_message.group_id);
                 match decode_app_payload(&group_message.body) {
-                    AppPayload::Control(control) => {
-                        if group_message.sender_owner != local_owner
-                            && control.control_type == AppControlType::Typing
-                        {
+                    AppPayload::Control(control) => match control.control_type {
+                        AppControlType::Typing if group_message.sender_owner != local_owner => {
                             self.set_typing_indicator(
                                 chat_id,
                                 group_message.sender_owner.to_string(),
                                 created_at_secs,
                             );
                         }
-                    }
+                        AppControlType::ChatSettings => {
+                            let actor =
+                                self.owner_display_label(&group_message.sender_owner.to_string());
+                            self.apply_chat_settings_control(
+                                &chat_id,
+                                &actor,
+                                control.message_ttl_seconds,
+                                created_at_secs,
+                            );
+                        }
+                        _ => {}
+                    },
                     AppPayload::GroupMessage(decoded) => {
                         self.clear_typing_indicator(
                             &chat_id,
@@ -1846,6 +1939,7 @@ impl AppCore {
                                 &receipt_chat_id,
                                 AppControlType::Delivered,
                                 vec![message_id],
+                                None,
                             );
                         }
                     }
@@ -1860,6 +1954,46 @@ impl AppCore {
         let id = self.next_message_id;
         self.next_message_id = self.next_message_id.saturating_add(1);
         id.to_string()
+    }
+}
+
+fn disappearing_timer_notice(actor: &str, ttl_seconds: Option<u64>) -> String {
+    format!(
+        "{actor} set disappearing messages timer to {}",
+        disappearing_timer_label(ttl_seconds)
+    )
+}
+
+fn disappearing_timer_label(ttl_seconds: Option<u64>) -> String {
+    match ttl_seconds {
+        None | Some(0) => "Off".to_string(),
+        Some(300) => "5 minutes".to_string(),
+        Some(3600) => "1 hour".to_string(),
+        Some(86_400) => "24 hours".to_string(),
+        Some(604_800) => "1 week".to_string(),
+        Some(2_592_000) => "1 month".to_string(),
+        Some(7_776_000) => "3 months".to_string(),
+        Some(seconds) if seconds % 86_400 == 0 => {
+            let days = seconds / 86_400;
+            format!("{days} days")
+        }
+        Some(seconds) if seconds % 3600 == 0 => {
+            let hours = seconds / 3600;
+            if hours == 1 {
+                "1 hour".to_string()
+            } else {
+                format!("{hours} hours")
+            }
+        }
+        Some(seconds) if seconds % 60 == 0 => {
+            let minutes = seconds / 60;
+            if minutes == 1 {
+                "1 minute".to_string()
+            } else {
+                format!("{minutes} minutes")
+            }
+        }
+        Some(seconds) => format!("{seconds} seconds"),
     }
 }
 

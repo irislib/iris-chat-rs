@@ -125,20 +125,79 @@ fn parse_public_invite_input(input: &str) -> codec::Result<Invite> {
         return codec::parse_invite_url(input);
     };
 
-    for (_, value) in url.query_pairs() {
-        if let Ok(invite) = codec::parse_invite_url(&format!("{CHAT_INVITE_ROOT_URL}#{value}")) {
-            return Ok(invite);
+    for (key, value) in url.query_pairs() {
+        for candidate in [key.as_ref(), value.as_ref()] {
+            if let Ok(invite) = parse_invite_candidate(candidate) {
+                return Ok(invite);
+            }
         }
     }
 
     if let Some(fragment) = url.fragment() {
+        if let Ok(invite) = parse_invite_candidate(fragment) {
+            return Ok(invite);
+        }
         for (_, value) in url::form_urlencoded::parse(fragment.as_bytes()) {
-            if let Ok(invite) = codec::parse_invite_url(&format!("{CHAT_INVITE_ROOT_URL}#{value}"))
-            {
+            if let Ok(invite) = parse_invite_candidate(&value) {
+                return Ok(invite);
+            }
+        }
+        for part in fragment.split(['/', '?', '&', '=']) {
+            if let Ok(invite) = parse_invite_candidate(part) {
                 return Ok(invite);
             }
         }
     }
 
     codec::parse_invite_url(input)
+}
+
+fn parse_invite_candidate(candidate: &str) -> codec::Result<Invite> {
+    let trimmed = candidate.trim().trim_start_matches('/');
+    if let Ok(invite) = codec::parse_invite_url(trimmed) {
+        return Ok(invite);
+    }
+    codec::parse_invite_url(&format!("{CHAT_INVITE_ROOT_URL}#{trimmed}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_invite_url() -> String {
+        let keys = Keys::new(SecretKey::from_slice(&[42u8; 32]).expect("secret key"));
+        let invite = Invite {
+            inviter_device_pubkey: DevicePubkey::from_bytes(keys.public_key().to_bytes()),
+            inviter_ephemeral_public_key: DevicePubkey::from_bytes([9u8; 32]),
+            shared_secret: [7u8; 32],
+            inviter_ephemeral_private_key: Some([8u8; 32]),
+            max_uses: None,
+            used_by: Vec::new(),
+            created_at: UnixSeconds(22),
+            inviter_owner_pubkey: Some(OwnerPubkey::from_bytes(keys.public_key().to_bytes())),
+        };
+        codec::invite_url(&invite, CHAT_INVITE_ROOT_URL).expect("invite url")
+    }
+
+    #[test]
+    fn parse_public_invite_input_accepts_hash_route_wrapper() {
+        let url = sample_invite_url();
+        let encoded = url.split('#').nth(1).expect("hash");
+        let wrapped = format!("https://iris.to/#/invite/{encoded}");
+
+        let parsed = parse_public_invite_input(&wrapped).expect("parse wrapped invite");
+
+        assert_eq!(parsed.shared_secret, [7u8; 32]);
+    }
+
+    #[test]
+    fn parse_public_invite_input_accepts_invite_fragment_value() {
+        let url = sample_invite_url();
+        let encoded = url.split('#').nth(1).expect("hash");
+        let wrapped = format!("https://iris.to/#foo=bar&invite={encoded}");
+
+        let parsed = parse_public_invite_input(&wrapped).expect("parse wrapped invite");
+
+        assert_eq!(parsed.shared_secret, [7u8; 32]);
+    }
 }

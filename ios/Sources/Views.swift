@@ -247,11 +247,11 @@ struct NavigationShell<Content: View>: View {
                 trailing: trailing
             )
 
-            if let statusText = networkStatusIndicatorText(networkStatus) {
-                NetworkStatusPill(text: statusText)
+            if shouldShowRelayStatusDots(networkStatus) {
+                RelayStatusDots(status: networkStatus)
                     .padding(.top, 8)
                     .transition(.opacity)
-                    .accessibilityIdentifier("networkStatusPill")
+                    .accessibilityIdentifier("relayStatusDots")
             }
 
             content()
@@ -260,32 +260,47 @@ struct NavigationShell<Content: View>: View {
     }
 }
 
-private struct NetworkStatusPill: View {
+private struct RelayStatusDots: View {
     @Environment(\.irisPalette) private var palette
-    let text: String
+    let status: NetworkStatusSnapshot?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(palette.accent)
-            Text(text)
-                .font(.system(.caption, design: .rounded, weight: .semibold))
-                .foregroundStyle(palette.textPrimary)
+        HStack(spacing: 5) {
+            ForEach(0..<relayDotCount(status), id: \.self) { _ in
+                Circle()
+                    .fill(relayStatusColor(status, palette: palette))
+                    .frame(width: 7, height: 7)
+            }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(
-            Capsule(style: .continuous)
-                .fill(palette.panel)
-        )
+        .accessibilityLabel(relayStatusLabel(status))
     }
 }
 
-private func networkStatusIndicatorText(_ status: NetworkStatusSnapshot?) -> String? {
-    guard let status else { return nil }
-    _ = status
-    return nil
+private func shouldShowRelayStatusDots(_ status: NetworkStatusSnapshot?) -> Bool {
+    guard let status else { return false }
+    return !status.relayUrls.isEmpty
+}
+
+private func relayDotCount(_ status: NetworkStatusSnapshot?) -> Int {
+    min(max(status?.relayUrls.count ?? 1, 1), 3)
+}
+
+private func relayStatusColor(_ status: NetworkStatusSnapshot?, palette: IrisPalette) -> Color {
+    guard let status, !status.relayUrls.isEmpty else {
+        return palette.muted.opacity(0.55)
+    }
+    if status.syncing || status.pendingOutboundCount > 0 || status.pendingGroupControlCount > 0 {
+        return Color(red: 234.0 / 255.0, green: 179.0 / 255.0, blue: 8.0 / 255.0)
+    }
+    return Color(red: 34.0 / 255.0, green: 197.0 / 255.0, blue: 94.0 / 255.0)
+}
+
+private func relayStatusLabel(_ status: NetworkStatusSnapshot?) -> String {
+    guard let status else { return "Relays offline" }
+    if status.syncing || status.pendingOutboundCount > 0 || status.pendingGroupControlCount > 0 {
+        return "Relays syncing"
+    }
+    return "Relays connected"
 }
 
 private struct OwnerPresentation {
@@ -924,7 +939,7 @@ struct CreateInviteScreen: View {
                         .padding(.vertical, 24)
                 } else if let invite = manager.state.publicInvite {
                     QrCodeImage(text: invite.url)
-                        .frame(maxWidth: .infinity)
+                        .frame(maxWidth: .infinity, alignment: .center)
                         .accessibilityIdentifier("createInviteQrCode")
 
                     MonoValue(label: "Invite link", value: invite.url, identifier: "createInviteUrl")
@@ -2470,9 +2485,8 @@ private struct ProfileEditorCard: View {
             .buttonStyle(IrisSecondaryButtonStyle())
             .accessibilityIdentifier("myProfileManageDevicesButton")
 
-            QrCodeImage(text: account.npub)
-                .frame(height: 220)
-                .frame(maxWidth: .infinity)
+            QrCodeImage(text: account.npub, size: 220)
+                .frame(maxWidth: .infinity, alignment: .center)
                 .accessibilityIdentifier("myProfileQrCode")
 
             MonoValue(label: "Device ID", value: account.deviceNpub)

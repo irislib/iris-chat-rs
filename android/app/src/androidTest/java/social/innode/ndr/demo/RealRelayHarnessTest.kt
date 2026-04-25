@@ -91,6 +91,53 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun accept_invite_and_send_message_from_args() {
+        ensureLoggedIn()
+        val inviteUrl = requiredArg("invite_url")
+        val message = requiredArg("message")
+
+        appManager().dispatch(AppAction.AcceptInvite(inviteUrl))
+        val chat =
+            waitForState("accepted invite", timeoutMs = 180_000) {
+                val state = appManager().state.value
+                if (!state.busy.acceptingInvite) {
+                    state.toast?.takeIf { it.isNotBlank() }?.let { toast ->
+                        fail("Invite accept failed: $toast")
+                    }
+                }
+                state.currentChat?.takeIf { current -> !state.busy.acceptingInvite && current.chatId.isNotBlank() }
+            }
+
+        appManager().sendText(chat.chatId, message)
+
+        val finalized =
+            waitForState("invite chat message publish", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current -> current.chatId == chat.chatId }
+                    ?.messages
+                    ?.find { entry ->
+                        entry.isOutgoing &&
+                            entry.body == message &&
+                            entry.delivery != DeliveryState.QUEUED &&
+                            entry.delivery != DeliveryState.PENDING
+                    }
+            }
+
+        if (finalized.delivery == DeliveryState.FAILED) {
+            fail("Invite chat message failed to publish")
+        }
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "message" to message,
+            "delivery" to finalized.delivery.name,
+        )
+    }
+
+    @Test
     fun wait_for_mobile_push_author_from_args() {
         ensureLoggedIn()
         val authorInput = requiredArg("author_input")

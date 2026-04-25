@@ -170,6 +170,8 @@ pub(super) struct AppControlPayload {
     pub(super) chat_id: Option<String>,
     #[serde(default)]
     pub(super) message_ids: Vec<String>,
+    #[serde(rename = "messageTtlSeconds", default)]
+    pub(super) message_ttl_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -178,6 +180,7 @@ pub(super) enum AppControlType {
     Typing,
     Delivered,
     Seen,
+    ChatSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

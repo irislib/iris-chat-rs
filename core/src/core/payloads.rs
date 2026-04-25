@@ -55,12 +55,14 @@ pub(super) fn encode_app_control_payload(
     control_type: AppControlType,
     chat_id: Option<String>,
     message_ids: Vec<String>,
+    message_ttl_seconds: Option<u64>,
 ) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&AppControlPayload {
         version: APP_DIRECT_MESSAGE_PAYLOAD_VERSION,
         control_type,
         chat_id,
         message_ids,
+        message_ttl_seconds,
     })?)
 }
 
