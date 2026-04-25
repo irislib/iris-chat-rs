@@ -1,5 +1,7 @@
-# Iris Chat 0.1.1
+# Iris Chat 2.6.15
 
-Bugfix alpha release for relay reconnection after the app returns from the background.
+Native Rust chat release replacing the previous Flutter Android build.
 
-The app now refreshes relay sessions, subscriptions, catch-up, and pending publishes when it is foregrounded.
+- Native Android shell backed by the shared Rust chat core.
+- Improved direct chat, group, attachment, typing, and read receipt flows.
+- Queued publishing when relays are unavailable.

@@ -16,6 +16,15 @@ if [[ -f "$ZAPSTORE_ENV_FILE" ]]; then
   set +a
 fi
 
+NDR_RELEASE_KEYSTORE_PATH="${NDR_RELEASE_KEYSTORE_PATH:-${ANDROID_KEYSTORE_PATH:-}}"
+NDR_RELEASE_KEYSTORE_PASSWORD="${NDR_RELEASE_KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
+NDR_RELEASE_KEY_ALIAS="${NDR_RELEASE_KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
+NDR_RELEASE_KEY_PASSWORD="${NDR_RELEASE_KEY_PASSWORD:-${ANDROID_KEY_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}}"
+export NDR_RELEASE_KEYSTORE_PATH
+export NDR_RELEASE_KEYSTORE_PASSWORD
+export NDR_RELEASE_KEY_ALIAS
+export NDR_RELEASE_KEY_PASSWORD
+
 resolve_shared_build_metadata "$ROOT"
 
 ZAPSTORE_CONFIG="${ZAPSTORE_CONFIG:-$ROOT/zapstore.yaml}"
@@ -26,6 +35,7 @@ APK_PATH="$ROOT/dist/android/IrisChat-release-latest.apk"
 
 TEMP_DIR=""
 TEMP_P12_PATH=""
+TEMP_IDENTITY_EVENT_PATH=""
 
 usage() {
   cat <<'EOF'
@@ -36,6 +46,9 @@ EOF
 cleanup() {
   if [[ -n "${TEMP_P12_PATH}" && -f "${TEMP_P12_PATH}" ]]; then
     rm -f "${TEMP_P12_PATH}"
+  fi
+  if [[ -n "${TEMP_IDENTITY_EVENT_PATH}" && -f "${TEMP_IDENTITY_EVENT_PATH}" ]]; then
+    rm -f "${TEMP_IDENTITY_EVENT_PATH}"
   fi
   if [[ -n "${TEMP_DIR}" && -d "${TEMP_DIR}" ]]; then
     rmdir "${TEMP_DIR}" 2>/dev/null || true
@@ -152,7 +165,7 @@ zapstore.signing.method=$(signing_method_label)
 android.release.env=ok
 android.keystore=ok
 android.key.alias=$NDR_RELEASE_KEY_ALIAS
-android.app.id=social.innode.irischat
+android.app.id=to.iris.chat
 EOF
 }
 
@@ -167,10 +180,13 @@ link_identity() {
   ensure_config
   build_release_apk
   require_cmd zsp
+  require_cmd nak
   export_pkcs12
+  TEMP_IDENTITY_EVENT_PATH="$TEMP_DIR/identity-event.json"
   KEYSTORE_PASSWORD="$NDR_RELEASE_KEYSTORE_PASSWORD" \
     SIGN_WITH="$SIGN_WITH" \
-    zsp identity --link-key "$TEMP_P12_PATH" --relays "$ZAPSTORE_IDENTITY_RELAYS"
+    zsp identity --link-key "$TEMP_P12_PATH" --relays "$ZAPSTORE_IDENTITY_RELAYS" --offline > "$TEMP_IDENTITY_EVENT_PATH"
+  nak event "$ZAPSTORE_IDENTITY_RELAYS" < "$TEMP_IDENTITY_EVENT_PATH"
 }
 
 run_publish() {

@@ -1,16 +1,26 @@
-repository: https://github.com/lauri000/iris-chat-rs
-release_source: ./dist/android/IrisChat-release-latest.apk
 name: Iris Chat
-summary: Alpha release of Iris Chat, a secure Nostr messenger built on Nostr Double Ratchet.
-description: Alpha release of Iris Chat, a secure Nostr messenger built on Nostr Double Ratchet.
-website: https://github.com/lauri000/iris-chat-rs
+summary: End-to-end encrypted chat app using Nostr Double Ratchet.
+repository: https://github.com/lauri000/iris-chat-rs
+pubkey: npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm
+release_source: ./dist/android/IrisChat-release-latest.apk
+website: https://chat.iris.to
 license: MIT
 icon: ./android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
 tags:
   - nostr
-  - messaging
   - chat
+  - messaging
+  - privacy
 metadata_sources:
   - github
+description: |
+  Iris Chat is an end-to-end encrypted mobile chat app built on Nostr and the
+  Double Ratchet protocol.
+
+  Current app capabilities include:
+  - encrypted one-to-one messaging
+  - group conversations
+  - multi-device identity and device linking
+  - QR and link-based invites
+  - offline message queueing and relay sync
 release_notes: ./ZAPSTORE_RELEASE_NOTES.md
-pubkey: npub1dmhju6xrn8y09malwrvrrs4krrt6sj7l6gtnf2q7d47nmqtldpgqgctgtm
