@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -24,8 +26,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import social.innode.ndr.demo.core.AppManager
 import social.innode.ndr.demo.rust.AppAction
@@ -34,7 +38,6 @@ import social.innode.ndr.demo.rust.Screen
 import social.innode.ndr.demo.rust.isValidPeerInput
 import social.innode.ndr.demo.rust.normalizePeerInput
 import social.innode.ndr.demo.ui.components.IrisIcons
-import social.innode.ndr.demo.ui.components.IrisPrimaryButton
 import social.innode.ndr.demo.ui.components.IrisSecondaryButton
 import social.innode.ndr.demo.ui.components.IrisTopBar
 import social.innode.ndr.demo.ui.components.rememberIrisClipboard
@@ -46,10 +49,26 @@ fun NewChatScreen(
     appState: AppState,
 ) {
     val clipboard = rememberIrisClipboard()
+    val focusManager = LocalFocusManager.current
     var peerInput by remember { mutableStateOf("") }
     var showScanner by remember { mutableStateOf(false) }
     val normalizedInput = normalizePeerInput(peerInput)
     val isValidPeer = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput)
+
+    fun handleNewChatInput(raw: String) {
+        val normalized = normalizePeerInput(raw)
+        if (normalized.isNotBlank() && isValidPeerInput(normalized)) {
+            peerInput = normalized
+            appManager.createChat(normalized)
+            return
+        }
+
+        val trimmed = raw.trim()
+        if (trimmed.isNotBlank()) {
+            peerInput = trimmed
+            appManager.dispatch(AppAction.AcceptInvite(trimmed))
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -98,6 +117,16 @@ fun NewChatScreen(
                         )
                     },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions =
+                        KeyboardActions(
+                            onDone = {
+                                focusManager.clearFocus()
+                                if (isValidPeer) {
+                                    appManager.createChat(normalizedInput)
+                                }
+                            },
+                        ),
                     colors =
                         TextFieldDefaults.colors(
                             focusedContainerColor = IrisTheme.palette.panelAlt,
@@ -122,7 +151,7 @@ fun NewChatScreen(
                         text = "Paste",
                         onClick = {
                             clipboard.getText { text ->
-                                peerInput = normalizePeerInput(text)
+                                handleNewChatInput(text)
                             }
                         },
                         modifier = Modifier.testTag("newChatPasteButton"),
@@ -146,21 +175,6 @@ fun NewChatScreen(
                     )
                 }
 
-                IrisPrimaryButton(
-                    text = if (appState.busy.creatingChat) "Creating…" else "Open chat",
-                    onClick = { appManager.createChat(normalizedInput) },
-                    enabled = isValidPeer && !appState.busy.creatingChat,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .testTag("newChatStartButton"),
-                    icon = {
-                        Icon(
-                            imageVector = IrisIcons.NewChat,
-                            contentDescription = null,
-                        )
-                    },
-                )
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -190,13 +204,8 @@ fun NewChatScreen(
         QrScannerDialog(
             onDismiss = { showScanner = false },
             onScanned = { scanned ->
-                val normalized = normalizePeerInput(scanned)
-                if (normalized.isNotBlank() && isValidPeerInput(normalized)) {
-                    peerInput = normalized
-                    showScanner = false
-                    null
-                } else if (scanned.isNotBlank()) {
-                    appManager.dispatch(AppAction.AcceptInvite(scanned.trim()))
+                if (scanned.isNotBlank()) {
+                    handleNewChatInput(scanned)
                     showScanner = false
                     null
                 } else {

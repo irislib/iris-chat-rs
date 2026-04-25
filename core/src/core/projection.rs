@@ -130,9 +130,7 @@ impl AppCore {
         let owner_public_key_hex = logged_in.owner_pubkey.to_string();
         let owner_npub = owner_npub_from_owner(logged_in.owner_pubkey)
             .unwrap_or_else(|| owner_public_key_hex.clone());
-        let display_name = self
-            .owner_display_name(&owner_public_key_hex)
-            .unwrap_or_else(|| owner_npub.clone());
+        let display_name = self.owner_display_label(&owner_public_key_hex);
         let picture_url = self
             .owner_profiles
             .get(&owner_public_key_hex)

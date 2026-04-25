@@ -110,15 +110,8 @@ impl AppCore {
         else {
             return;
         };
-        let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
-            if let Err(error) =
-                publish_event_with_retry(&client, &relay_urls, event, "invite response").await
-            {
-                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(format!(
-                    "Invite response publish failed: {error}"
-                )))));
-            }
+            let _ = publish_event_with_retry(&client, &relay_urls, event, "invite response").await;
         });
     }
 }

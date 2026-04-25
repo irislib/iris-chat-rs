@@ -88,18 +88,6 @@ fun NewGroupScreen(
         ) {
             IrisSectionCard {
                 Text(
-                    text = "Create a group",
-                    style = MaterialTheme.typography.titleLarge,
-                )
-                Text(
-                    text = "Pick members from existing direct chats or paste and scan user IDs. The creator stays the managing admin in this client.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = IrisTheme.palette.muted,
-                )
-            }
-
-            IrisSectionCard {
-                Text(
                     text = "Group name",
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -301,15 +289,15 @@ private fun ownerPresentation(
 ): OwnerPresentation {
     existingDirectChats.firstOrNull { sameOwner(owner, hex = it.chatId, npub = it.subtitle) }?.let { chat ->
         val primary = primaryDisplayName(chat.displayName, normalizePeerInput(owner))
-        return OwnerPresentation(primary, secondaryDisplayName(chat.subtitle, primary))
+        return OwnerPresentation(primary, null)
     }
 
     if (localOwnerHex != null && sameOwner(owner, hex = localOwnerHex, npub = localOwnerNpub)) {
         val primary = primaryDisplayName(localOwnerDisplayName, localOwnerNpub ?: localOwnerHex)
-        return OwnerPresentation(primary, secondaryDisplayName(localOwnerNpub, primary))
+        return OwnerPresentation(primary, null)
     }
 
-    return OwnerPresentation(normalizePeerInput(owner), null)
+    return OwnerPresentation(fallbackProfileNameForIdentity(normalizePeerInput(owner)), null)
 }
 
 private fun sameOwner(
@@ -328,17 +316,46 @@ private fun primaryDisplayName(
     displayName: String,
     fallback: String,
 ): String =
-    displayName.trim().ifEmpty { fallback.trim() }
+    displayName.trim().ifEmpty { fallbackProfileNameForIdentity(fallback) }
 
-private fun secondaryDisplayName(
-    secondary: String?,
-    primary: String,
-): String? {
-    val trimmed = secondary?.trim().orEmpty()
+private fun fallbackProfileNameForIdentity(identity: String): String {
+    val adjectives =
+        listOf(
+            "Amber",
+            "Bright",
+            "Calm",
+            "Clear",
+            "Golden",
+            "Lunar",
+            "Nova",
+            "Quiet",
+            "Silver",
+            "Solar",
+            "Velvet",
+            "Wild",
+        )
+    val nouns =
+        listOf(
+            "Aurora",
+            "Comet",
+            "Echo",
+            "Falcon",
+            "Harbor",
+            "Listener",
+            "Otter",
+            "Raven",
+            "Signal",
+            "Sparrow",
+            "Tide",
+            "Voyager",
+        )
+    val trimmed = identity.trim()
     if (trimmed.isEmpty()) {
-        return null
+        return "Quiet Listener"
     }
-    return trimmed.takeUnless { it.equals(primary.trim(), ignoreCase = true) }
+    val hash = trimmed.fold(0) { acc, char -> acc * 31 + char.code }
+    val positiveHash = hash and Int.MAX_VALUE
+    return "${adjectives[positiveHash % adjectives.size]} ${nouns[(positiveHash / adjectives.size) % nouns.size]}"
 }
 
 @Composable

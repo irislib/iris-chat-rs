@@ -3822,7 +3822,7 @@ fn metadata_event_updates_direct_chat_display_name() {
         .find(|chat| chat.chat_id == peer_hex)
         .expect("chat row");
     assert_eq!(chat.display_name, "Bob");
-    assert_eq!(chat.subtitle.as_deref(), Some(peer_npub.as_str()));
+    assert_eq!(chat.subtitle, None);
     assert_eq!(
         core.state
             .current_chat

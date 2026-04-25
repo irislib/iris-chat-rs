@@ -107,10 +107,6 @@ pub(super) fn local_device_from_keys(keys: &Keys) -> DevicePubkey {
     DevicePubkey::from_bytes(keys.public_key().to_bytes())
 }
 
-pub(super) fn owner_npub(peer_hex: &str) -> Option<String> {
-    PublicKey::parse(peer_hex).ok()?.to_bech32().ok()
-}
-
 pub(super) fn owner_npub_from_owner(owner_pubkey: OwnerPubkey) -> Option<String> {
     PublicKey::parse(owner_pubkey.to_string())
         .ok()?

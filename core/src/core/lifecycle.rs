@@ -318,10 +318,6 @@ impl AppCore {
                 self.rebuild_state();
                 self.emit_state();
             }
-            InternalEvent::Toast(message) => {
-                self.state.toast = Some(message);
-                self.emit_state();
-            }
         }
     }
 }

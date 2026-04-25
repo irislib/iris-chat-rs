@@ -87,11 +87,6 @@ fun CreateInviteScreen(
                     text = "Invite",
                     style = MaterialTheme.typography.titleLarge,
                 )
-                Text(
-                    text = "Share this with someone to start an encrypted chat.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                )
 
                 if (qrBitmap != null && inviteUrl != null) {
                     Image(
@@ -262,4 +257,3 @@ fun JoinInviteScreen(
         )
     }
 }
-

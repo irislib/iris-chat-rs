@@ -110,13 +110,6 @@ fun GroupDetailsScreen(
                     style = MaterialTheme.typography.bodySmall,
                     color = IrisTheme.palette.muted,
                 )
-                secondaryDisplayName(details.createdByNpub, creatorPrimary)?.let { npub ->
-                    Text(
-                        text = npub,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = IrisTheme.palette.muted,
-                    )
-                }
             }
 
             IrisSectionCard {
@@ -126,7 +119,6 @@ fun GroupDetailsScreen(
                 )
                 details.members.forEach { member ->
                     val primary = primaryDisplayName(member.displayName, member.npub)
-                    val secondary = secondaryDisplayName(member.npub, primary)
                     val roles = member.roleLabels()
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -150,13 +142,6 @@ fun GroupDetailsScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 fontWeight = FontWeight.SemiBold,
                             )
-                            if (secondary != null) {
-                                Text(
-                                    text = secondary,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = IrisTheme.palette.muted,
-                                )
-                            }
                             if (roles.isNotEmpty()) {
                                 Text(
                                     text = roles.joinToString(" · "),
@@ -318,17 +303,6 @@ private fun primaryDisplayName(
     fallback: String,
 ): String =
     displayName.trim().ifEmpty { fallback.trim() }
-
-private fun secondaryDisplayName(
-    secondary: String,
-    primary: String,
-): String? {
-    val trimmed = secondary.trim()
-    if (trimmed.isEmpty()) {
-        return null
-    }
-    return trimmed.takeUnless { it.equals(primary.trim(), ignoreCase = true) }
-}
 
 private fun GroupMemberSnapshot.roleLabels(): List<String> =
     buildList {

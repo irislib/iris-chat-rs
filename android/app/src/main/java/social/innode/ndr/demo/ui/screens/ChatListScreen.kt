@@ -119,11 +119,6 @@ fun ChatListScreen(
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                     )
-                    Text(
-                        text = "Direct chats and groups live together here. Start a 1:1 conversation with a user ID or create a group and manage it from the thread itself.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = IrisTheme.palette.muted,
-                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         IrisPrimaryButton(
                             text = "New chat",
@@ -215,13 +210,8 @@ fun ChatListScreen(
             ) {
                 IrisSectionCard {
                     Text(
-                        text = "Start something new",
+                        text = "New",
                         style = MaterialTheme.typography.headlineSmall,
-                    )
-                    Text(
-                        text = "Choose between a direct chat and a group. Both land in the same conversation list.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = IrisTheme.palette.muted,
                     )
                     IrisPrimaryButton(
                         text = "New chat",

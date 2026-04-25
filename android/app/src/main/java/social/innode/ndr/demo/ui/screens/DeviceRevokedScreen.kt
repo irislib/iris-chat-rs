@@ -23,8 +23,6 @@ fun DeviceRevokedScreen(
     appManager: AppManager,
     appState: AppState,
 ) {
-    val account = appState.account
-
     Column(
         modifier =
             Modifier
@@ -43,24 +41,6 @@ fun DeviceRevokedScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = IrisTheme.palette.muted,
             )
-            account?.let {
-                Text(
-                    text = "User ID",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = it.npub,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                Text(
-                    text = "Device ID",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = it.deviceNpub,
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-            }
             IrisPrimaryButton(
                 text = "Logout",
                 onClick = appManager::logout,

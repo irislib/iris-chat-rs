@@ -232,9 +232,5 @@ private fun NetworkStatusPill(
 
 private fun networkStatusIndicatorText(status: NetworkStatusSnapshot?): String? {
     status ?: return null
-    return when {
-        status.syncing -> "Syncing network"
-        status.pendingOutboundCount > 0u || status.pendingGroupControlCount > 0u -> "Waiting for network"
-        else -> null
-    }
+    return null
 }

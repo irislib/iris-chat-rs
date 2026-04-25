@@ -92,16 +92,34 @@ impl AppCore {
 
     pub(super) fn owner_display_label(&self, owner_hex: &str) -> String {
         self.owner_display_name(owner_hex)
-            .or_else(|| owner_npub(owner_hex))
-            .unwrap_or_else(|| owner_hex.to_string())
+            .unwrap_or_else(|| fallback_profile_name_for_identity(owner_hex))
     }
 
     pub(super) fn owner_secondary_identifier(&self, owner_hex: &str) -> Option<String> {
-        let npub = owner_npub(owner_hex)?;
-        match self.owner_display_name(owner_hex) {
-            Some(label) if label != npub => Some(npub),
-            Some(_) => None,
-            None => Some(npub),
-        }
+        let _ = owner_hex;
+        None
     }
+}
+
+fn fallback_profile_name_for_identity(identity: &str) -> String {
+    const ADJECTIVES: [&str; 12] = [
+        "Amber", "Bright", "Calm", "Clear", "Golden", "Lunar", "Nova", "Quiet", "Silver", "Solar",
+        "Velvet", "Wild",
+    ];
+    const NOUNS: [&str; 12] = [
+        "Aurora", "Comet", "Echo", "Falcon", "Harbor", "Listener", "Otter", "Raven", "Signal",
+        "Sparrow", "Tide", "Voyager",
+    ];
+
+    let trimmed = identity.trim();
+    if trimmed.is_empty() {
+        return "Quiet Listener".to_string();
+    }
+
+    let hash = trimmed.bytes().fold(0_u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(byte as u32)
+    });
+    let adjective = ADJECTIVES[(hash as usize) % ADJECTIVES.len()];
+    let noun = NOUNS[((hash as usize) / ADJECTIVES.len()) % NOUNS.len()];
+    format!("{adjective} {noun}")
 }

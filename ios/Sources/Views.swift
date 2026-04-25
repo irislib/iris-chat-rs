@@ -114,7 +114,7 @@ struct RootView: View {
         return AnyView(
             Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
                 IrisAvatar(
-                    label: account.displayName.isEmpty ? account.npub : account.displayName,
+                    label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
                     emphasize: true,
                     imageURL: proxiedImageURL(account.pictureUrl, preferences: manager.state.preferences, width: 88, height: 88, square: true)
                 )
@@ -246,12 +246,7 @@ private struct NetworkStatusPill: View {
 
 private func networkStatusIndicatorText(_ status: NetworkStatusSnapshot?) -> String? {
     guard let status else { return nil }
-    if status.syncing {
-        return "Syncing network"
-    }
-    if status.pendingOutboundCount > 0 || status.pendingGroupControlCount > 0 {
-        return "Waiting for network"
-    }
+    _ = status
     return nil
 }
 
@@ -267,7 +262,7 @@ private func trimmedText(_ value: String?) -> String? {
 }
 
 private func primaryDisplayName(displayName: String, fallback: String) -> String {
-    trimmedText(displayName) ?? fallback
+    trimmedText(displayName) ?? fallbackProfileNameForIdentity(fallback)
 }
 
 private func secondaryDisplayName(_ secondary: String?, primary: String) -> String? {
@@ -286,6 +281,26 @@ private func sameOwner(_ owner: String, hex: String?, npub: String?) -> Bool {
     return candidates.contains(rawOwner) || candidates.contains(normalizedOwner)
 }
 
+private func fallbackProfileNameForIdentity(_ identity: String) -> String {
+    let adjectives = [
+        "Amber", "Bright", "Calm", "Clear", "Golden", "Lunar",
+        "Nova", "Quiet", "Silver", "Solar", "Velvet", "Wild"
+    ]
+    let nouns = [
+        "Aurora", "Comet", "Echo", "Falcon", "Harbor", "Listener",
+        "Otter", "Raven", "Signal", "Sparrow", "Tide", "Voyager"
+    ]
+    let trimmed = identity.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "Quiet Listener" }
+
+    let hash = trimmed.utf8.reduce(UInt32(0)) { partial, byte in
+        partial &* 31 &+ UInt32(byte)
+    }
+    let adjective = adjectives[Int(hash) % adjectives.count]
+    let noun = nouns[(Int(hash) / adjectives.count) % nouns.count]
+    return "\(adjective) \(noun)"
+}
+
 struct WelcomeScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
@@ -301,10 +316,6 @@ struct WelcomeScreen: View {
                     Text("Iris Chat")
                         .font(.system(.largeTitle, design: .rounded, weight: .bold))
                         .foregroundStyle(palette.textPrimary)
-                    Text("Create an account, restore it from a secret, or add this device to one you already use.")
-                        .font(.system(.body, design: .rounded))
-                        .foregroundStyle(palette.muted)
-
                     Button("Create account") {
                         manager.dispatch(.pushScreen(screen: .createAccount))
                     }
@@ -333,16 +344,12 @@ struct WelcomeScreen: View {
                         title: manager.trustedTestBuildEnabled() ? "Trusted test build" : "How this works",
                         subtitle: manager.trustedTestBuildEnabled()
                             ? "This beta uses a controlled relay set and should not be used for sensitive conversations."
-                            : "Private chats on Nostr Double Ratchet."
+                            : nil
                     )
 
                     if manager.trustedTestBuildEnabled() {
                         Text(manager.buildSummaryText())
                             .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(palette.muted)
-                    } else {
-                        Text("Create an account, restore it from a secret, or add another device later.")
-                            .font(.system(.body, design: .rounded))
                             .foregroundStyle(palette.muted)
                     }
                 }
@@ -365,8 +372,7 @@ struct CreateAccountScreen: View {
                     .accessibilityIdentifier("createAccountScreen")
 
                 CardHeader(
-                    title: "Create account",
-                    subtitle: "Generate a fresh owner account on this device and jump straight into chats."
+                    title: "Create account"
                 )
 
                 TextField("Display name", text: $displayName)
@@ -621,14 +627,11 @@ struct ChatListScreen: View {
             }
 
             if manager.state.chatList.isEmpty {
-                IrisSectionCard {
-                    Text("No chats yet")
-                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.textPrimary)
-                    Text("Create a direct chat with a user ID or start a group with people you already know.")
-                        .font(.system(.body, design: .rounded))
-                        .foregroundStyle(palette.muted)
-                }
+                Text("No chats yet")
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 18)
             } else {
                 IrisSectionCard {
                     ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
@@ -680,10 +683,9 @@ struct ChatListScreen: View {
                 .frame(height: 0)
                 .accessibilityIdentifier("chatListHeroCard")
 
-            CardHeader(
-                title: "Conversations",
-                subtitle: "Direct chats and groups live together here. Start something new or jump back into an active thread."
-            )
+            Text("Conversations")
+                .font(.system(.title3, design: .rounded, weight: .bold))
+                .foregroundStyle(palette.textPrimary)
 
             HStack(spacing: 10) {
                 newChatButton
@@ -704,10 +706,6 @@ struct ChatListScreen: View {
                     Text(account.displayName.isEmpty ? "Your account" : account.displayName)
                         .font(.system(.headline, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.textPrimary)
-                    Text(account.npub)
-                        .font(.system(.footnote, design: .monospaced))
-                        .foregroundStyle(palette.muted)
-                        .lineLimit(2)
                 }
             }
         }
@@ -769,13 +767,6 @@ struct NewChatScreen: View {
                 pasteButton
                 scanButton
             }
-
-            Button(manager.state.busy.creatingChat ? "Creating…" : "Open chat") {
-                manager.dispatch(.createChat(peerInput: normalizedPeerInput))
-            }
-            .buttonStyle(IrisPrimaryButtonStyle())
-            .disabled(!validPeerInput || manager.state.busy.creatingChat)
-            .accessibilityIdentifier("newChatStartButton")
         }
     }
 
@@ -809,7 +800,7 @@ struct NewChatScreen: View {
 
     private var pasteButton: some View {
         Button("Paste") {
-            peerInput = normalizePeerInput(input: PlatformClipboard.string() ?? "")
+            handleNewChatInput(PlatformClipboard.string() ?? "")
         }
         .buttonStyle(IrisSecondaryButtonStyle())
         .accessibilityIdentifier("newChatPasteButton")
@@ -861,14 +852,20 @@ struct NewChatScreen: View {
     }
 
     private func handleScannedCode(_ code: String) {
-        let normalized = normalizePeerInput(input: code)
+        handleNewChatInput(code)
+    }
+
+    private func handleNewChatInput(_ raw: String) {
+        let normalized = normalizePeerInput(input: raw)
         if !normalized.isEmpty, isValidPeerInput(input: normalized) {
             peerInput = normalized
+            manager.dispatch(.createChat(peerInput: normalized))
             return
         }
 
-        let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
+            peerInput = trimmed
             manager.dispatch(.acceptInvite(inviteInput: trimmed))
         }
     }
@@ -881,10 +878,7 @@ struct CreateInviteScreen: View {
     var body: some View {
         IrisScrollScreen {
             IrisSectionCard(accent: true) {
-                CardHeader(
-                    title: "Invite",
-                    subtitle: "Share this with someone to start an encrypted chat."
-                )
+                CardHeader(title: "Invite")
 
                 if manager.state.busy.creatingInvite && manager.state.publicInvite == nil {
                     ProgressView()
@@ -946,10 +940,7 @@ struct JoinInviteScreen: View {
     var body: some View {
         IrisScrollScreen {
             IrisSectionCard(accent: true) {
-                CardHeader(
-                    title: "Join chat",
-                    subtitle: "Paste or scan an invite link."
-                )
+                CardHeader(title: "Join chat")
 
                 TextField("Invite link", text: $inviteInput)
                     .textFieldStyle(.plain)
@@ -1027,14 +1018,11 @@ struct NewGroupScreen: View {
 
         if let account = manager.state.account, sameOwner(owner, hex: account.publicKeyHex, npub: account.npub) {
             let primary = primaryDisplayName(displayName: account.displayName, fallback: account.npub)
-            return OwnerPresentation(
-                primary: primary,
-                secondary: secondaryDisplayName(account.npub, primary: primary)
-            )
+            return OwnerPresentation(primary: primary, secondary: nil)
         }
 
         let normalized = normalizePeerInput(input: owner)
-        return OwnerPresentation(primary: normalized, secondary: nil)
+        return OwnerPresentation(primary: fallbackProfileNameForIdentity(normalized), secondary: nil)
     }
 
     var body: some View {
@@ -1045,10 +1033,7 @@ struct NewGroupScreen: View {
                         .frame(height: 0)
                         .accessibilityIdentifier("newGroupPrimaryCard")
 
-                    CardHeader(
-                        title: "Create group",
-                        subtitle: "Choose a name, add people you already know, then manage the group from the thread."
-                    )
+                    CardHeader(title: "Create group")
 
                     TextField("Weekend plans", text: $name)
                         .textFieldStyle(.plain)
@@ -1057,10 +1042,7 @@ struct NewGroupScreen: View {
                 }
             } trailing: {
                 IrisSectionCard {
-                    CardHeader(
-                        title: "Add members",
-                        subtitle: "Paste or scan people directly, or pick from existing direct chats."
-                    )
+                    CardHeader(title: "Add members")
 
                     TextField("User ID, hex, or nostr:…", text: $memberInput)
                         .irisIdentifierInputModifiers()
@@ -1091,10 +1073,7 @@ struct NewGroupScreen: View {
 
             if !existingDirectChats.isEmpty {
                 IrisSectionCard {
-                    CardHeader(
-                        title: "Existing chats",
-                        subtitle: "Quick-pick people you already have in your chat list."
-                    )
+                    CardHeader(title: "Existing chats")
 
                     ForEach(Array(existingDirectChats.enumerated()), id: \.element.chatId) { index, chat in
                         Button {
@@ -1626,12 +1605,6 @@ struct GroupDetailsScreen: View {
                                 Text(primary)
                                     .font(.system(.headline, design: .rounded, weight: .semibold))
                                     .foregroundStyle(palette.textPrimary)
-                                if let secondary = secondaryDisplayName(member.npub, primary: primary) {
-                                    Text(secondary)
-                                        .font(.system(.footnote, design: .monospaced))
-                                        .foregroundStyle(palette.muted)
-                                        .lineLimit(2)
-                                }
                                 if member.isLocalOwner {
                                     IrisInfoPill("You")
                                 }
@@ -1979,10 +1952,7 @@ struct SettingsScreen: View {
                     }
 
                     IrisSectionCard {
-                        CardHeader(
-                            title: "Messaging",
-                            subtitle: "Choose what activity is shared while you write."
-                        )
+                        CardHeader(title: "Messaging")
 
                         Toggle(
                             "Typing indicators",
@@ -2032,18 +2002,12 @@ struct SettingsScreen: View {
                     }
 
                     IrisSectionCard {
-                        CardHeader(
-                            title: "Media",
-                            subtitle: "Control how remote profile images are loaded."
-                        )
+                        CardHeader(title: "Media")
                         ImageProxySettingsSection(manager: manager)
                     }
 
                     IrisSectionCard {
-                        CardHeader(
-                            title: "Relays",
-                            subtitle: "Edit the network relays used for messages and sync."
-                        )
+                        CardHeader(title: "Relays")
                         NostrRelaySettingsSection(
                             manager: manager,
                             newRelayURL: $newRelayURL,
@@ -2053,10 +2017,7 @@ struct SettingsScreen: View {
                     }
 
                     IrisSectionCard {
-                        CardHeader(
-                            title: "Security",
-                            subtitle: "Copy keys only when you are ready to store them securely."
-                        )
+                        CardHeader(title: "Security")
 
                         if manager.state.account?.hasOwnerSigningAuthority == true {
                             Button {
@@ -2638,16 +2599,23 @@ private struct LoadingOverlay: View {
 private struct CardHeader: View {
     @Environment(\.irisPalette) private var palette
     let title: String
-    let subtitle: String
+    let subtitle: String?
+
+    init(title: String, subtitle: String? = nil) {
+        self.title = title
+        self.subtitle = subtitle
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
                 .font(.system(.title3, design: .rounded, weight: .bold))
                 .foregroundStyle(palette.textPrimary)
-            Text(subtitle)
-                .font(.system(.body, design: .rounded))
-                .foregroundStyle(palette.muted)
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(palette.muted)
+            }
         }
     }
 }

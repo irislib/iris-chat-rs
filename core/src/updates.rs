@@ -61,5 +61,4 @@ pub(crate) enum InternalEvent {
         plan: Option<ProtocolSubscriptionPlan>,
     },
     SyncComplete,
-    Toast(String),
 }

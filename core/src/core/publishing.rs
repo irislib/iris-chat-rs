@@ -240,20 +240,11 @@ impl AppCore {
                             .sign_with_keys(&keys);
                     match event {
                         Ok(event) => {
-                            if let Err(error) =
+                            let _ =
                                 publish_event_with_retry(&client, &relay_urls, event, "metadata")
-                                    .await
-                            {
-                                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(
-                                    format!("Metadata publish failed: {error}"),
-                                ))));
-                            }
+                                    .await;
                         }
-                        Err(error) => {
-                            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(
-                                error.to_string(),
-                            ))));
-                        }
+                        Err(_) => {}
                     }
                 }
             }
@@ -263,21 +254,11 @@ impl AppCore {
                     .and_then(|unsigned| unsigned.sign_with_keys(&keys).map_err(Into::into))
                 {
                     Ok(event) => Some(event),
-                    Err(error) => {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(
-                            error.to_string(),
-                        ))));
-                        None
-                    }
+                    Err(_) => None,
                 };
                 if let Some(roster_event) = roster_event {
-                    if let Err(error) =
-                        publish_event_with_retry(&client, &relay_urls, roster_event, "roster").await
-                    {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(
-                            format!("Roster publish failed: {error}"),
-                        ))));
-                    }
+                    let _ = publish_event_with_retry(&client, &relay_urls, roster_event, "roster")
+                        .await;
                 }
             }
 
@@ -286,21 +267,11 @@ impl AppCore {
                     .and_then(|unsigned| unsigned.sign_with_keys(&device_keys).map_err(Into::into))
                 {
                     Ok(event) => Some(event),
-                    Err(error) => {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(
-                            error.to_string(),
-                        ))));
-                        None
-                    }
+                    Err(_) => None,
                 };
                 if let Some(invite_event) = invite_event {
-                    if let Err(error) =
-                        publish_event_with_retry(&client, &relay_urls, invite_event, "invite").await
-                    {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(
-                            format!("Invite publish failed: {error}"),
-                        ))));
-                    }
+                    let _ = publish_event_with_retry(&client, &relay_urls, invite_event, "invite")
+                        .await;
                 }
             }
 
@@ -325,19 +296,9 @@ impl AppCore {
                 .and_then(|unsigned| unsigned.sign_with_keys(&owner_keys).map_err(Into::into))
             {
                 Ok(event) => {
-                    if let Err(error) =
-                        publish_event_with_retry(&client, &relay_urls, event, "roster").await
-                    {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(
-                            format!("Roster publish failed: {error}"),
-                        ))));
-                    }
+                    let _ = publish_event_with_retry(&client, &relay_urls, event, "roster").await;
                 }
-                Err(error) => {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::Toast(
-                        error.to_string(),
-                    ))));
-                }
+                Err(_) => {}
             }
 
             let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
