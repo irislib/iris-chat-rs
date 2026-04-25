@@ -51,6 +51,7 @@ fun gitValue(vararg args: String): String? =
 
 val appVersionCode = configIntValue("app.versionCode", "NDR_APP_VERSION_CODE") ?: 1
 val appVersionName = configValue("app.versionName", "NDR_APP_VERSION_NAME") ?: "0.1.0"
+val debugApplicationIdSuffix = configValue("debug.applicationIdSuffix", "NDR_DEBUG_APPLICATION_ID_SUFFIX") ?: ".debug"
 val buildGitSha = configValue("build.gitSha", "NDR_BUILD_GIT_SHA") ?: gitValue("rev-parse", "--short=12", "HEAD") ?: "unknown"
 val buildTimestampUtc =
     configValue("build.timestampUtc", "NDR_BUILD_TIMESTAMP_UTC")
@@ -150,7 +151,9 @@ android {
 
     buildTypes {
         debug {
-            applicationIdSuffix = ".debug"
+            if (debugApplicationIdSuffix.isNotEmpty()) {
+                applicationIdSuffix = debugApplicationIdSuffix
+            }
             versionNameSuffix = "-debug"
             buildConfigField("String", "BUILD_CHANNEL", stringLiteral("debug"))
             buildConfigField("String", "BUILD_GIT_SHA", stringLiteral(buildGitSha))
