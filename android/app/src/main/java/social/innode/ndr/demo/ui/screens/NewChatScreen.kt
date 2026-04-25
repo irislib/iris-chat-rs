@@ -19,6 +19,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -51,14 +52,24 @@ fun NewChatScreen(
     val clipboard = rememberIrisClipboard()
     val focusManager = LocalFocusManager.current
     var peerInput by remember { mutableStateOf("") }
+    var submittedPeerInput by remember { mutableStateOf<String?>(null) }
     var showScanner by remember { mutableStateOf(false) }
     val normalizedInput = normalizePeerInput(peerInput)
     val isValidPeer = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput)
+
+    LaunchedEffect(isValidPeer, normalizedInput) {
+        if (isValidPeer && submittedPeerInput != normalizedInput) {
+            submittedPeerInput = normalizedInput
+            focusManager.clearFocus()
+            appManager.createChat(normalizedInput)
+        }
+    }
 
     fun handleNewChatInput(raw: String) {
         val normalized = normalizePeerInput(raw)
         if (normalized.isNotBlank() && isValidPeerInput(normalized)) {
             peerInput = normalized
+            submittedPeerInput = normalized
             appManager.createChat(normalized)
             return
         }

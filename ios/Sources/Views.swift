@@ -769,6 +769,7 @@ struct NewChatScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     @State private var peerInput = ""
+    @State private var submittedPeerInput: String?
     @State private var showingScanner = false
 
     private var normalizedPeerInput: String {
@@ -791,6 +792,11 @@ struct NewChatScreen: View {
                 handleScannedCode(code)
                 showingScanner = false
             }
+        }
+        .onChange(of: normalizedPeerInput) { _, normalized in
+            guard validPeerInput, submittedPeerInput != normalized else { return }
+            submittedPeerInput = normalized
+            manager.dispatch(.createChat(peerInput: normalized))
         }
     }
 
@@ -912,6 +918,7 @@ struct NewChatScreen: View {
         let normalized = normalizePeerInput(input: raw)
         if !normalized.isEmpty, isValidPeerInput(input: normalized) {
             peerInput = normalized
+            submittedPeerInput = normalized
             manager.dispatch(.createChat(peerInput: normalized))
             return
         }
