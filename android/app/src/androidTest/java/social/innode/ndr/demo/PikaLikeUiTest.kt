@@ -38,10 +38,12 @@ class PikaLikeUiTest {
             .appManager
             .resetForUiTestsBlocking()
         composeRule.waitUntil(20_000) {
-            composeRule
-                .onAllNodesWithTag("welcomeCreateAction", useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .isNotEmpty()
+            runCatching {
+                composeRule
+                    .onAllNodesWithTag("welcomeCreateAction", useUnmergedTree = true)
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }.getOrDefault(false)
         }
     }
 
@@ -144,8 +146,6 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("newChatScanQrButton", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
             .performTextInput(VALID_PEER_NPUB)
-        composeRule.onNodeWithTag("newChatStartButton", useUnmergedTree = true).assertIsEnabled()
-        composeRule.onNodeWithTag("newChatStartButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("chatMessageInput")
         composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true)
@@ -167,7 +167,6 @@ class PikaLikeUiTest {
         composeRule.waitForTag("newChatPeerInput")
         composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
             .performTextInput(VALID_PEER_NPUB)
-        composeRule.onNodeWithTag("newChatStartButton", useUnmergedTree = true).performClick()
         composeRule.waitForTag("chatMessageInput")
 
         val messagePrefix = "scroll pin ${System.nanoTime()}"
@@ -191,7 +190,6 @@ class PikaLikeUiTest {
         composeRule.waitForTag("newChatPeerInput")
         composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
             .performTextInput(VALID_PEER_NPUB)
-        composeRule.onNodeWithTag("newChatStartButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("chatMessageInput")
         val message = "hello from enter ${System.nanoTime()}"
@@ -216,7 +214,7 @@ class PikaLikeUiTest {
     }
 
     @Test
-    fun scan_qr_populates_new_chat_input() {
+    fun scan_qr_starts_new_chat() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
         composeRule.waitForTag("chatListNewChatOption")
@@ -228,16 +226,7 @@ class PikaLikeUiTest {
         }
         composeRule.onNodeWithTag("newChatScanQrButton", useUnmergedTree = true).performClick()
 
-        composeRule.waitUntil(5_000) {
-            composeRule
-                .onAllNodesWithTag("newChatPeerInput", useUnmergedTree = true)
-                .fetchSemanticsNodes()
-                .isNotEmpty()
-        }
-        composeRule
-            .onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
-            .assertTextContains(VALID_PEER_NPUB)
-        composeRule.onNodeWithTag("newChatStartButton", useUnmergedTree = true).assertIsEnabled()
+        composeRule.waitForTag("chatMessageInput")
     }
 
     @Test

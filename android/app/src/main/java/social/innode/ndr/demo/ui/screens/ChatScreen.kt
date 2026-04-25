@@ -360,91 +360,101 @@ fun ChatScreen(
                     .background(MaterialTheme.colorScheme.background),
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                LazyColumn(
-                    state = listState,
+                Box(
                     modifier =
                         Modifier
                             .weight(1f)
-                            .fillMaxWidth()
-                            .testTag("chatTimeline")
-                            .padding(horizontal = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                            .fillMaxWidth(),
                 ) {
-                    itemsIndexed(visibleMessages, key = { _, message -> message.id }) { index, message ->
-                        val previous = visibleMessages.getOrNull(index - 1)
-                        val next = visibleMessages.getOrNull(index + 1)
-                        val showDayChip =
-                            previous == null ||
-                                !isSameTimelineDay(
-                                    previous.createdAtSecs.toLong(),
-                                    message.createdAtSecs.toLong(),
-                                )
-                        val isFirstInCluster = startsMessageCluster(previous, message, chat.kind)
-                        val isLastInCluster = next == null || startsMessageCluster(message, next, chat.kind)
-
-                        if (showDayChip) {
-                            Box(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 14.dp),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Surface(
-                                    color = IrisTheme.palette.panel.copy(alpha = 0.58f),
-                                    shape = RoundedCornerShape(100.dp),
-                                ) {
-                                    Text(
-                                        text = formatTimelineDay(message.createdAtSecs.toLong()),
-                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = IrisTheme.palette.muted,
+                    LazyColumn(
+                        state = listState,
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .testTag("chatTimeline")
+                                .padding(horizontal = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        itemsIndexed(visibleMessages, key = { _, message -> message.id }) { index, message ->
+                            val previous = visibleMessages.getOrNull(index - 1)
+                            val next = visibleMessages.getOrNull(index + 1)
+                            val showDayChip =
+                                previous == null ||
+                                    !isSameTimelineDay(
+                                        previous.createdAtSecs.toLong(),
+                                        message.createdAtSecs.toLong(),
                                     )
+                            val isFirstInCluster = startsMessageCluster(previous, message, chat.kind)
+                            val isLastInCluster = next == null || startsMessageCluster(message, next, chat.kind)
+
+                            if (showDayChip) {
+                                Box(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 14.dp),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Surface(
+                                        color = IrisTheme.palette.panel.copy(alpha = 0.58f),
+                                        shape = RoundedCornerShape(100.dp),
+                                    ) {
+                                        Text(
+                                            text = formatTimelineDay(message.createdAtSecs.toLong()),
+                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = IrisTheme.palette.muted,
+                                        )
+                                    }
                                 }
                             }
-                        }
 
-                        MessageBubble(
-                            message = message,
-                            chatKind = chat.kind,
-                            isFirstInCluster = isFirstInCluster,
-                            isLastInCluster = isLastInCluster,
-                            reactions = message.reactions,
-                            onReply = { replyTarget = message },
-                            onReact = { emoji ->
-                                appManager.dispatch(
-                                    AppAction.ToggleReaction(
-                                        chatId = chatId,
-                                        messageId = message.id,
-                                        emoji = emoji,
-                                    ),
-                                )
-                            },
-                            onDelete = {
-                                appManager.dispatch(
-                                    AppAction.DeleteLocalMessage(
-                                        chatId = chatId,
-                                        messageId = message.id,
-                                    ),
-                                )
-                                if (replyTarget?.id == message.id) {
-                                    replyTarget = null
-                                }
-                            },
-                            downloadAttachment = { attachment ->
-                                appManager.downloadAttachment(attachment)
-                            },
-                            onOpenImage = { data, filename ->
-                                imageViewerItem = DownloadedImageAttachment(data = data, filename = filename)
-                            },
+                            MessageBubble(
+                                message = message,
+                                chatKind = chat.kind,
+                                isFirstInCluster = isFirstInCluster,
+                                isLastInCluster = isLastInCluster,
+                                reactions = message.reactions,
+                                onReply = { replyTarget = message },
+                                onReact = { emoji ->
+                                    appManager.dispatch(
+                                        AppAction.ToggleReaction(
+                                            chatId = chatId,
+                                            messageId = message.id,
+                                            emoji = emoji,
+                                        ),
+                                    )
+                                },
+                                onDelete = {
+                                    appManager.dispatch(
+                                        AppAction.DeleteLocalMessage(
+                                            chatId = chatId,
+                                            messageId = message.id,
+                                        ),
+                                    )
+                                    if (replyTarget?.id == message.id) {
+                                        replyTarget = null
+                                    }
+                                },
+                                downloadAttachment = { attachment ->
+                                    appManager.downloadAttachment(attachment)
+                                },
+                                onOpenImage = { data, filename ->
+                                    imageViewerItem = DownloadedImageAttachment(data = data, filename = filename)
+                                },
+                            )
+                        }
+                    }
+
+                    if (chat.typingIndicators.isNotEmpty()) {
+                        TypingIndicatorBubble(
+                            names = chat.typingIndicators.map { indicator -> indicator.displayName },
+                            modifier =
+                                Modifier
+                                    .align(Alignment.BottomStart)
+                                    .padding(start = 14.dp, end = 14.dp, bottom = 10.dp),
                         )
                     }
-                }
-
-                if (chat.typingIndicators.isNotEmpty()) {
-                    TypingIndicatorRow(
-                        names = chat.typingIndicators.map { indicator -> indicator.displayName },
-                    )
                 }
 
                 replyTarget?.let { reply ->
@@ -576,7 +586,7 @@ private fun MessageBubble(
             ) {
                 if (showActionDock && isHovering && message.isOutgoing) {
                     MessageActionDock(
-                        onReact = { onReact("❤️") },
+                        onReact = onReact,
                         onReply = onReply,
                         onInfo = {
                             clipboard.setText(
@@ -693,7 +703,7 @@ private fun MessageBubble(
                 }
                 if (showActionDock && isHovering && !message.isOutgoing) {
                     MessageActionDock(
-                        onReact = { onReact("❤️") },
+                        onReact = onReact,
                         onReply = onReply,
                         onInfo = {
                             clipboard.setText(
@@ -714,12 +724,13 @@ private fun MessageBubble(
 
 @Composable
 private fun MessageActionDock(
-    onReact: () -> Unit,
+    onReact: (String) -> Unit,
     onReply: () -> Unit,
     onInfo: () -> Unit,
     onDelete: () -> Unit,
 ) {
     var menuOpen by remember { mutableStateOf(false) }
+    var reactionPickerOpen by remember { mutableStateOf(false) }
     Surface(
         color = IrisTheme.palette.toolbar,
         shape = RoundedCornerShape(100.dp),
@@ -729,8 +740,23 @@ private fun MessageActionDock(
             horizontalArrangement = Arrangement.spacedBy(1.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ActionDockIconButton(Icons.Rounded.AddReaction, "React", onReact)
-            ActionDockIconButton(Icons.AutoMirrored.Rounded.Reply, "Reply", onReply)
+            Box {
+                ActionDockIconButton(
+                    icon = Icons.Rounded.AddReaction,
+                    label = "React",
+                    testTag = "messageReactButton",
+                    onClick = { reactionPickerOpen = true },
+                )
+                ReactionPickerMenu(
+                    expanded = reactionPickerOpen,
+                    onDismiss = { reactionPickerOpen = false },
+                    onEmoji = { emoji ->
+                        reactionPickerOpen = false
+                        onReact(emoji)
+                    },
+                )
+            }
+            ActionDockIconButton(Icons.AutoMirrored.Rounded.Reply, "Reply", onClick = onReply)
             Box {
                 ActionDockIconButton(Icons.Rounded.MoreHoriz, "More", { menuOpen = true })
                 DropdownMenu(
@@ -758,17 +784,61 @@ private fun MessageActionDock(
 }
 
 @Composable
+private fun ReactionPickerMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    onEmoji: (String) -> Unit,
+) {
+    DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        modifier =
+            Modifier
+                .widthIn(max = 324.dp)
+                .testTag("messageReactionPicker"),
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 8.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            ReactionEmojiChoices.forEachIndexed { index, emoji ->
+                Box(
+                    modifier =
+                        Modifier
+                            .size(36.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onEmoji(emoji) }
+                            .testTag("messageReactionEmoji-$index"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = emoji,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ActionDockIconButton(
     icon: ImageVector,
     label: String,
     onClick: () -> Unit,
+    testTag: String? = null,
 ) {
     Box(
         modifier =
             Modifier
                 .size(28.dp)
                 .clip(CircleShape)
-                .clickable(onClick = onClick),
+                .clickable(onClick = onClick)
+                .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -849,7 +919,10 @@ private fun ReactionRow(reactions: List<MessageReactionSnapshot>) {
 }
 
 @Composable
-private fun TypingIndicatorRow(names: List<String>) {
+private fun TypingIndicatorBubble(
+    names: List<String>,
+    modifier: Modifier = Modifier,
+) {
     val label =
         when {
             names.isEmpty() -> ""
@@ -858,13 +931,18 @@ private fun TypingIndicatorRow(names: List<String>) {
         }
     Surface(
         modifier =
-            Modifier
-                .fillMaxWidth()
+            modifier
+                .widthIn(max = 280.dp)
                 .testTag("chatTypingIndicator"),
-        color = IrisTheme.palette.toolbar,
+        color = IrisTheme.palette.bubbleTheirs.copy(alpha = 0.94f),
+        shape = messageBubbleShape(
+            isOutgoing = false,
+            isFirstInCluster = true,
+            isLastInCluster = true,
+        ),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -1308,12 +1386,14 @@ private fun EmojiPickerRow(
     }
 }
 
-private val ComposerEmojiChoices =
+private val ReactionEmojiChoices =
     listOf(
         "😀", "😂", "😊", "😍", "🥰", "😎", "🤔", "😭",
         "❤️", "🔥", "✨", "🙏", "👍", "👀", "🎉", "💜",
         "🌞", "🌙", "⭐️", "🍓", "☕️", "🌊", "🚀", "✅",
     )
+
+private val ComposerEmojiChoices = ReactionEmojiChoices
 
 @Composable
 private fun SelectedAttachmentChip(
