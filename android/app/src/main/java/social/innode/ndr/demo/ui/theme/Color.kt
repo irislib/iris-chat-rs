@@ -7,6 +7,7 @@ val Slate700 = Color(0xFF334155)
 val Sky500 = Color(0xFF0EA5E9)
 val Sky200 = Color(0xFFBAE6FD)
 val Sand50 = Color(0xFFF8FAFC)
+val IrisPurple = Color(0xFF702ACE)
 
 val IrisNightBackground = Color(0xFF030918)
 val IrisNightSurface = Color(0xFF1B1C48)
@@ -24,7 +25,6 @@ val IrisLightToolbar = Color(0xF2F7F9FA)
 val IrisLightBubbleMine = IrisPurple
 val IrisLightBubbleTheirs = Color(0xFFF7F9FA)
 
-val IrisPurple = Color(0xFF702ACE)
 val IrisPurpleDeep = Color(0xFF34216C)
 val IrisAccent = Color(0xFFDB8216)
 val IrisBlack = Color(0xFF0F1419)

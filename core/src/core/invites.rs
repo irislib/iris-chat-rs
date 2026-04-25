@@ -180,10 +180,15 @@ mod tests {
     }
 
     #[test]
+    fn public_invite_url_uses_chat_iris_root() {
+        assert!(sample_invite_url().starts_with("https://chat.iris.to/#"));
+    }
+
+    #[test]
     fn parse_public_invite_input_accepts_hash_route_wrapper() {
         let url = sample_invite_url();
         let encoded = url.split('#').nth(1).expect("hash");
-        let wrapped = format!("https://iris.to/#/invite/{encoded}");
+        let wrapped = format!("https://chat.iris.to/#/invite/{encoded}");
 
         let parsed = parse_public_invite_input(&wrapped).expect("parse wrapped invite");
 
@@ -194,9 +199,20 @@ mod tests {
     fn parse_public_invite_input_accepts_invite_fragment_value() {
         let url = sample_invite_url();
         let encoded = url.split('#').nth(1).expect("hash");
-        let wrapped = format!("https://iris.to/#foo=bar&invite={encoded}");
+        let wrapped = format!("https://chat.iris.to/#foo=bar&invite={encoded}");
 
         let parsed = parse_public_invite_input(&wrapped).expect("parse wrapped invite");
+
+        assert_eq!(parsed.shared_secret, [7u8; 32]);
+    }
+
+    #[test]
+    fn parse_public_invite_input_still_accepts_legacy_iris_wrapper() {
+        let url = sample_invite_url();
+        let encoded = url.split('#').nth(1).expect("hash");
+        let wrapped = format!("https://iris.to/#/invite/{encoded}");
+
+        let parsed = parse_public_invite_input(&wrapped).expect("parse legacy wrapped invite");
 
         assert_eq!(parsed.shared_secret, [7u8; 32]);
     }

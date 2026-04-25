@@ -224,6 +224,7 @@ private fun RelayStatusDots(
 private fun shouldShowRelayStatusDots(status: NetworkStatusSnapshot?): Boolean =
     status?.relayUrls?.isNotEmpty() == true
 
+@Composable
 private fun relayStatusColor(status: NetworkStatusSnapshot?): Color =
     when {
         status == null || status.relayUrls.isEmpty() -> IrisTheme.palette.muted.copy(alpha = 0.55f)
