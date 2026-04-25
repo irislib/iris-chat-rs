@@ -1,13 +1,9 @@
-# Iris Chat 2.6.18
+# Iris Chat 2.6.22
 
-Native Rust chat release with chat UI and message-control fixes.
+Interop reliability release for the native Rust chat app.
 
-- Typed user IDs now open a chat immediately.
-- Added disappearing-message controls in the chat header.
-- Added visible disappearing-message timer notices.
-- Added unread count on the back button.
-- Improved hover message actions and delivery indicators.
-- Fixed Android keyboard resizing for the message composer.
-- Capped desktop QR code size.
-- Added compact relay status dots.
-- Notification taps now surface the chat list.
+- Fixed bidirectional NDR interop with chat.iris.to.
+- Fetches recent protocol state immediately after opening or accepting chats.
+- Keeps queued setup messages moving to sent after runtime relay ACKs.
+- Uses live-updating relative timestamps and shows fresh messages as "now".
+- Adds live Android/browser interop coverage against public relays.
