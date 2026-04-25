@@ -10,27 +10,9 @@ impl AppCore {
 
         self.state.busy.creating_invite = true;
         self.emit_state();
-
-        let result = (|| -> anyhow::Result<()> {
-            let logged_in = self
-                .logged_in
-                .as_mut()
-                .ok_or_else(|| anyhow::anyhow!("Create or restore an account first."))?;
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(unix_now(), &mut rng);
-            logged_in.session_manager.ensure_local_invite(&mut ctx)?;
-            Ok(())
-        })();
-
-        match result {
-            Ok(()) => {
-                self.publish_local_identity_artifacts();
-                self.request_protocol_subscription_refresh();
-                self.persist_best_effort();
-            }
-            Err(error) => self.state.toast = Some(error.to_string()),
-        }
-
+        self.publish_local_identity_artifacts();
+        self.request_protocol_subscription_refresh();
+        self.persist_best_effort();
         self.state.busy.creating_invite = false;
         self.rebuild_state();
         self.emit_state();
@@ -53,9 +35,11 @@ impl AppCore {
         self.state.busy.accepting_invite = true;
         self.emit_state();
 
-        let result = parse_public_invite_input(trimmed)
-            .map_err(|_| anyhow::anyhow!("Invalid invite link."))
-            .and_then(|invite| self.accept_parsed_invite(invite));
+        let result = match parse_public_invite_or_direct_chat_input(trimmed) {
+            Ok(PublicInviteInput::Invite(invite)) => self.accept_parsed_invite(invite),
+            Ok(PublicInviteInput::DirectChat) => self.open_direct_chat_from_peer_input(trimmed),
+            Err(_) => Err(anyhow::anyhow!("Invalid invite link.")),
+        };
 
         match result {
             Ok(chat_id) => {
@@ -74,55 +58,50 @@ impl AppCore {
     }
 
     fn accept_parsed_invite(&mut self, invite: Invite) -> anyhow::Result<String> {
-        let owner_pubkey = invite
-            .inviter_owner_pubkey
-            .unwrap_or_else(|| OwnerPubkey::from_bytes(invite.inviter_device_pubkey.to_bytes()));
-        let chat_id = owner_pubkey.to_string();
-        let response = {
+        let owner_pubkey = invite.owner_public_key.unwrap_or(invite.inviter);
+        let chat_id = owner_pubkey.to_hex();
+        let result = {
             let logged_in = self
                 .logged_in
-                .as_mut()
+                .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("Create or restore an account first."))?;
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(unix_now(), &mut rng);
-            logged_in.session_manager.accept_invite(&mut ctx, &invite)?
+            logged_in
+                .ndr_runtime
+                .accept_invite(&invite, Some(owner_pubkey))?
         };
 
-        let response_event = codec::invite_response_event(&response)?;
-        self.remember_event(response_event.id.to_string());
-        self.start_invite_response_publish(response_event);
         self.ensure_thread_record(&chat_id, unix_now().get())
             .unread_count = 0;
         self.remember_recent_handshake_peer(
             chat_id.clone(),
-            invite.inviter_device_pubkey.to_string(),
+            result.inviter_device_pubkey.to_hex(),
             unix_now().get(),
         );
-
+        self.process_runtime_events();
         Ok(chat_id)
-    }
-
-    pub(super) fn start_invite_response_publish(&self, event: Event) {
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return;
-        };
-        self.runtime.spawn(async move {
-            let _ = publish_event_with_retry(&client, &relay_urls, event, "invite response").await;
-        });
     }
 }
 
-fn parse_public_invite_input(input: &str) -> codec::Result<Invite> {
-    if let Ok(invite) = codec::parse_invite_url(input) {
+enum PublicInviteInput {
+    Invite(Invite),
+    DirectChat,
+}
+
+fn parse_public_invite_or_direct_chat_input(input: &str) -> anyhow::Result<PublicInviteInput> {
+    if let Ok(invite) = parse_public_invite_input(input) {
+        return Ok(PublicInviteInput::Invite(invite));
+    }
+    parse_peer_input(input)?;
+    Ok(PublicInviteInput::DirectChat)
+}
+
+fn parse_public_invite_input(input: &str) -> anyhow::Result<Invite> {
+    if let Ok(invite) = Invite::from_url(input) {
         return Ok(invite);
     }
 
     let Ok(url) = url::Url::parse(input) else {
-        return codec::parse_invite_url(input);
+        return Invite::from_url(input).map_err(|error| anyhow::anyhow!(error.to_string()));
     };
 
     for (key, value) in url.query_pairs() {
@@ -149,15 +128,16 @@ fn parse_public_invite_input(input: &str) -> codec::Result<Invite> {
         }
     }
 
-    codec::parse_invite_url(input)
+    Invite::from_url(input).map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-fn parse_invite_candidate(candidate: &str) -> codec::Result<Invite> {
+fn parse_invite_candidate(candidate: &str) -> anyhow::Result<Invite> {
     let trimmed = candidate.trim().trim_start_matches('/');
-    if let Ok(invite) = codec::parse_invite_url(trimmed) {
+    if let Ok(invite) = Invite::from_url(trimmed) {
         return Ok(invite);
     }
-    codec::parse_invite_url(&format!("{CHAT_INVITE_ROOT_URL}#{trimmed}"))
+    Invite::from_url(&format!("{CHAT_INVITE_ROOT_URL}#{trimmed}"))
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 #[cfg(test)]
@@ -165,18 +145,11 @@ mod tests {
     use super::*;
 
     fn sample_invite_url() -> String {
-        let keys = Keys::new(SecretKey::from_slice(&[42u8; 32]).expect("secret key"));
-        let invite = Invite {
-            inviter_device_pubkey: DevicePubkey::from_bytes(keys.public_key().to_bytes()),
-            inviter_ephemeral_public_key: DevicePubkey::from_bytes([9u8; 32]),
-            shared_secret: [7u8; 32],
-            inviter_ephemeral_private_key: Some([8u8; 32]),
-            max_uses: None,
-            used_by: Vec::new(),
-            created_at: UnixSeconds(22),
-            inviter_owner_pubkey: Some(OwnerPubkey::from_bytes(keys.public_key().to_bytes())),
-        };
-        codec::invite_url(&invite, CHAT_INVITE_ROOT_URL).expect("invite url")
+        let keys = Keys::generate();
+        let mut invite = Invite::create_new(keys.public_key(), Some("public".to_string()), None)
+            .expect("invite");
+        invite.owner_public_key = Some(keys.public_key());
+        invite.get_url(CHAT_INVITE_ROOT_URL).expect("invite url")
     }
 
     #[test]
@@ -192,28 +165,18 @@ mod tests {
 
         let parsed = parse_public_invite_input(&wrapped).expect("parse wrapped invite");
 
-        assert_eq!(parsed.shared_secret, [7u8; 32]);
+        assert!(parsed.owner_public_key.is_some());
     }
 
     #[test]
-    fn parse_public_invite_input_accepts_invite_fragment_value() {
-        let url = sample_invite_url();
-        let encoded = url.split('#').nth(1).expect("hash");
-        let wrapped = format!("https://chat.iris.to/#foo=bar&invite={encoded}");
+    fn parse_public_invite_input_accepts_user_link_as_direct_chat() {
+        let keys = Keys::generate();
+        let npub = keys.public_key().to_bech32().expect("npub");
+        let wrapped = format!("https://chat.iris.to/#{npub}");
 
-        let parsed = parse_public_invite_input(&wrapped).expect("parse wrapped invite");
+        let parsed =
+            parse_public_invite_or_direct_chat_input(&wrapped).expect("parse direct chat link");
 
-        assert_eq!(parsed.shared_secret, [7u8; 32]);
-    }
-
-    #[test]
-    fn parse_public_invite_input_still_accepts_legacy_iris_wrapper() {
-        let url = sample_invite_url();
-        let encoded = url.split('#').nth(1).expect("hash");
-        let wrapped = format!("https://iris.to/#/invite/{encoded}");
-
-        let parsed = parse_public_invite_input(&wrapped).expect("parse legacy wrapped invite");
-
-        assert_eq!(parsed.shared_secret, [7u8; 32]);
+        assert!(matches!(parsed, PublicInviteInput::DirectChat));
     }
 }

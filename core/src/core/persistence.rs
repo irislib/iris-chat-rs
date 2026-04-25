@@ -5,6 +5,13 @@ impl AppCore {
         self.data_dir.join("ndr_demo_core_state.json")
     }
 
+    pub(super) fn ndr_storage_dir(&self, owner: PublicKey, device: PublicKey) -> PathBuf {
+        self.data_dir
+            .join("ndr_runtime")
+            .join(owner.to_hex())
+            .join(device.to_hex())
+    }
+
     pub(super) fn debug_snapshot_path(&self) -> PathBuf {
         self.data_dir.join(DEBUG_SNAPSHOT_FILENAME)
     }
@@ -33,8 +40,6 @@ impl AppCore {
             version: PERSISTED_STATE_VERSION,
             active_chat_id: self.active_chat_id.clone(),
             next_message_id: self.next_message_id,
-            session_manager: Some(logged_in.session_manager.snapshot()),
-            group_manager: Some(logged_in.group_manager.snapshot()),
             owner_profiles: self.owner_profiles.clone(),
             preferences: PersistedPreferences {
                 send_typing_indicators: self.preferences.send_typing_indicators,
@@ -48,6 +53,8 @@ impl AppCore {
                 image_proxy_salt_hex: self.preferences.image_proxy_salt_hex.clone(),
             },
             chat_message_ttl_seconds: self.chat_message_ttl_seconds.clone(),
+            app_keys: self.app_keys.values().cloned().collect(),
+            groups: self.groups.values().cloned().collect(),
             threads: self
                 .threads
                 .values()
@@ -73,9 +80,6 @@ impl AppCore {
                         .collect(),
                 })
                 .collect(),
-            pending_inbound: self.pending_inbound.clone(),
-            pending_outbound: self.pending_outbound.clone(),
-            pending_group_controls: self.pending_group_controls.clone(),
             seen_event_ids: self.seen_event_order.iter().cloned().collect(),
             authorization_state: Some(logged_in.authorization_state.into()),
         };

@@ -18,30 +18,43 @@ impl AppCore {
         self.state.busy.creating_chat = true;
         self.emit_state();
 
-        let Ok((chat_id, _pubkey)) = parse_peer_input(peer_input) else {
-            self.state.toast = Some("Invalid peer key.".to_string());
-            self.state.busy.creating_chat = false;
-            self.emit_state();
-            return;
-        };
-        self.push_debug_log(
-            "chat.create",
-            format!("peer_input={} chat_id={chat_id}", peer_input.trim()),
-        );
+        match self.open_direct_chat_from_peer_input(peer_input) {
+            Ok(chat_id) => {
+                self.push_debug_log(
+                    "chat.create",
+                    format!("peer_input={} chat_id={chat_id}", peer_input.trim()),
+                );
+            }
+            Err(_) => self.state.toast = Some("Invalid peer key.".to_string()),
+        }
 
-        let now = unix_now().get();
-        self.prune_recent_handshake_peers(now);
-        self.ensure_thread_record(&chat_id, now).unread_count = 0;
-
-        self.active_chat_id = Some(chat_id.clone());
-        self.screen_stack = vec![Screen::Chat { chat_id }];
-        self.republish_local_identity_artifacts();
         self.rebuild_state();
         self.persist_best_effort();
-        self.request_protocol_subscription_refresh();
-        self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
         self.state.busy.creating_chat = false;
         self.emit_state();
+    }
+
+    pub(super) fn open_direct_chat_from_peer_input(
+        &mut self,
+        peer_input: &str,
+    ) -> anyhow::Result<String> {
+        let (chat_id, peer_pubkey) = parse_peer_input(peer_input)?;
+        let now = unix_now().get();
+        self.ensure_thread_record(&chat_id, now).unread_count = 0;
+
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            logged_in.ndr_runtime.setup_user(peer_pubkey)?;
+        }
+        self.process_runtime_events();
+
+        self.active_chat_id = Some(chat_id.clone());
+        self.screen_stack = vec![Screen::Chat {
+            chat_id: chat_id.clone(),
+        }];
+        self.republish_local_identity_artifacts();
+        self.request_protocol_subscription_refresh();
+        self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
+        Ok(chat_id)
     }
 
     pub(super) fn ensure_thread_record(
@@ -68,12 +81,7 @@ impl AppCore {
         if is_group_chat_id(chat_id) {
             let group_id = parse_group_id_from_chat_id(chat_id)?;
             let group_chat_id = group_chat_id(&group_id);
-            let known_group = self
-                .logged_in
-                .as_ref()
-                .and_then(|logged_in| logged_in.group_manager.group(&group_id))
-                .is_some();
-            if known_group || self.threads.contains_key(&group_chat_id) {
+            if self.groups.contains_key(&group_id) || self.threads.contains_key(&group_chat_id) {
                 return Some(group_chat_id);
             }
             return None;
@@ -98,7 +106,6 @@ impl AppCore {
         };
 
         let now = unix_now().get();
-        self.prune_recent_handshake_peers(now);
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
         self.active_chat_id = Some(chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
@@ -117,7 +124,6 @@ impl AppCore {
         if trimmed.is_empty() {
             return;
         }
-
         if self.logged_in.is_none() {
             self.state.toast = Some("Create or restore an account first.".to_string());
             self.emit_state();
@@ -134,17 +140,8 @@ impl AppCore {
             self.emit_state();
             return;
         };
-        self.push_debug_log(
-            "chat.send",
-            format!(
-                "chat_id={} is_group={}",
-                normalized_chat_id,
-                is_group_chat_id(&normalized_chat_id)
-            ),
-        );
 
         let now = unix_now();
-        self.prune_recent_handshake_peers(now.get());
         self.active_chat_id = Some(normalized_chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
             chat_id: normalized_chat_id.clone(),
@@ -165,7 +162,6 @@ impl AppCore {
             self.send_direct_message(&normalized_chat_id, trimmed, now, expires_at_secs);
         }
 
-        self.schedule_next_pending_retry(now.get());
         self.state.busy.sending_message = false;
         self.rebuild_state();
         self.persist_best_effort();
@@ -184,33 +180,60 @@ impl AppCore {
             return;
         };
 
-        let message_id = self.allocate_message_id();
-        let payload =
-            match encode_app_direct_message_payload(&normalized_chat_id, &message_id, text) {
-                Ok(payload) => payload,
-                Err(error) => {
-                    self.state.toast = Some(error.to_string());
-                    return;
-                }
-            };
-        let owner = OwnerPubkey::from_bytes(peer_pubkey.to_bytes());
-        let prepared = {
-            let logged_in = self.logged_in.as_mut().expect("logged in checked above");
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(now, &mut rng);
-            logged_in
-                .session_manager
-                .prepare_send(&mut ctx, owner, payload)
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
         };
-
-        self.handle_prepared_direct_send(
-            &normalized_chat_id,
-            message_id,
-            text,
-            now,
-            expires_at_secs,
-            prepared,
+        let result = logged_in.ndr_runtime.send_text_with_inner_id(
+            peer_pubkey,
+            text.to_string(),
+            send_options_for_expiration(expires_at_secs),
         );
+
+        match result {
+            Ok((inner_id, event_ids)) => {
+                let message_id = if inner_id.is_empty() {
+                    self.allocate_message_id()
+                } else {
+                    inner_id
+                };
+                let delivery = if event_ids.is_empty() {
+                    DeliveryState::Queued
+                } else {
+                    DeliveryState::Pending
+                };
+                self.push_debug_log(
+                    "message.direct.send",
+                    format!(
+                        "chat_id={normalized_chat_id} message_id={message_id} event_ids={}",
+                        event_ids.len()
+                    ),
+                );
+                self.push_outgoing_message_with_id(
+                    message_id.clone(),
+                    &normalized_chat_id,
+                    text.to_string(),
+                    now.get(),
+                    expires_at_secs,
+                    delivery,
+                );
+                let completions = event_ids
+                    .iter()
+                    .map(|event_id| {
+                        (
+                            event_id.clone(),
+                            (message_id.clone(), normalized_chat_id.clone()),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>();
+                self.process_runtime_events_with_completions(&completions);
+                if event_ids.is_empty() {
+                    self.request_protocol_subscription_refresh();
+                }
+            }
+            Err(error) => {
+                self.state.toast = Some(error.to_string());
+            }
+        }
     }
 
     pub(super) fn send_group_message(
@@ -224,687 +247,76 @@ impl AppCore {
             self.state.toast = Some("Invalid group id.".to_string());
             return;
         };
-        let message_id = self.allocate_message_id();
-        let payload = match encode_app_group_message_payload(&message_id, text) {
-            Ok(payload) => payload,
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-                return;
-            }
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
         };
 
-        let prepared = {
-            let logged_in = self.logged_in.as_mut().expect("logged in checked above");
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(now, &mut rng);
-            let (session_manager, group_manager) =
-                (&mut logged_in.session_manager, &mut logged_in.group_manager);
-            group_manager.send_message(session_manager, &mut ctx, &group_id, payload)
+        let mut outer_events = Vec::new();
+        let mut message_id = None;
+        let mut error = None;
+        let event = GroupSendEvent {
+            kind: CHAT_MESSAGE_KIND,
+            content: text.to_string(),
+            tags: expires_at_secs
+                .and_then(|expires_at| {
+                    nostr::Tag::parse(["expiration", &expires_at.to_string()]).ok()
+                })
+                .into_iter()
+                .map(|tag| tag.as_slice().to_vec())
+                .collect(),
         };
-
-        match prepared {
-            Ok(prepared) => {
-                self.publish_group_local_sibling_best_effort(&prepared);
-                if let Some(reason) = pending_reason_from_group_prepared(&prepared) {
-                    self.push_debug_log(
-                        "group.send.pending",
-                        format!(
-                            "chat_id={} reason={reason:?} gaps={}",
-                            chat_id,
-                            summarize_relay_gaps(&prepared.remote.relay_gaps)
-                        ),
-                    );
-                    let pending_reason = reason.clone();
-                    let message = self.push_outgoing_message_with_id(
-                        message_id.clone(),
-                        chat_id,
-                        text.to_string(),
-                        now.get(),
-                        expires_at_secs,
-                        DeliveryState::Queued,
-                    );
-                    self.queue_pending_outbound(
-                        message.id,
-                        chat_id.to_string(),
-                        text.to_string(),
-                        expires_at_secs,
-                        None,
-                        OutboundPublishMode::WaitForPeer,
-                        pending_reason.clone(),
-                        now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
-                    );
-                    self.nudge_protocol_state_for_pending_reason(&pending_reason);
-                    self.request_protocol_subscription_refresh();
-                    self.schedule_pending_outbound_retry(Duration::from_secs(
-                        PENDING_RETRY_DELAY_SECS,
-                    ));
-                } else {
-                    match build_group_prepared_publish_batch(&prepared, expires_at_secs) {
-                        Ok(Some(batch)) => {
-                            let publish_mode = publish_mode_for_batch(&batch);
-                            let message = self.push_outgoing_message_with_id(
-                                message_id.clone(),
-                                chat_id,
-                                text.to_string(),
-                                now.get(),
-                                expires_at_secs,
-                                DeliveryState::Pending,
-                            );
-                            self.queue_pending_outbound(
-                                message.id.clone(),
-                                chat_id.to_string(),
-                                text.to_string(),
-                                expires_at_secs,
-                                Some(batch.clone()),
-                                publish_mode.clone(),
-                                pending_reason_for_publish_mode(&publish_mode),
-                                retry_deadline_for_publish_mode(now.get(), &publish_mode),
-                            );
-                            self.set_pending_outbound_in_flight(&message.id, true);
-                            self.start_publish_for_pending(
-                                message.id,
-                                chat_id.to_string(),
-                                publish_mode,
-                                batch,
-                            );
-                        }
-                        Ok(None) => {
-                            let message = self.push_outgoing_message_with_id(
-                                message_id.clone(),
-                                chat_id,
-                                text.to_string(),
-                                now.get(),
-                                expires_at_secs,
-                                DeliveryState::Failed,
-                            );
-                            self.update_message_delivery(
-                                chat_id,
-                                &message.id,
-                                DeliveryState::Failed,
-                            );
-                        }
-                        Err(error) => self.state.toast = Some(error.to_string()),
+        logged_in
+            .ndr_runtime
+            .with_group_context(|session_manager, group_manager, _| {
+                let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
+                    session_manager
+                        .send_event(recipient, rumor.clone())
+                        .map(|_| ())
+                };
+                let mut publish_outer = |event: &Event| {
+                    outer_events.push(event.clone());
+                    Ok(())
+                };
+                match group_manager.send_event(
+                    &group_id,
+                    event,
+                    &mut send_pairwise,
+                    &mut publish_outer,
+                    None,
+                ) {
+                    Ok(result) => {
+                        message_id = result
+                            .inner
+                            .id
+                            .as_ref()
+                            .map(ToString::to_string)
+                            .or_else(|| Some(result.outer.id.to_string()));
                     }
+                    Err(send_error) => error = Some(send_error.to_string()),
                 }
-            }
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-            }
-        }
-    }
+            });
 
-    pub(super) fn handle_prepared_direct_send(
-        &mut self,
-        chat_id: &str,
-        message_id: String,
-        text: &str,
-        now: UnixSeconds,
-        expires_at_secs: Option<u64>,
-        prepared: Result<nostr_double_ratchet::PreparedSend, Error>,
-    ) {
-        match prepared {
-            Ok(prepared) => {
-                if let Some(reason) = pending_reason_from_prepared(&prepared) {
-                    self.push_debug_log(
-                        "direct.send.pending",
-                        format!(
-                            "chat_id={} reason={reason:?} gaps={}",
-                            chat_id,
-                            summarize_relay_gaps(&prepared.relay_gaps)
-                        ),
-                    );
-                    let pending_reason = reason.clone();
-                    let message = self.push_outgoing_message_with_id(
-                        message_id.clone(),
-                        chat_id,
-                        text.to_string(),
-                        now.get(),
-                        expires_at_secs,
-                        DeliveryState::Queued,
-                    );
-                    self.queue_pending_outbound(
-                        message.id,
-                        chat_id.to_string(),
-                        text.to_string(),
-                        expires_at_secs,
-                        None,
-                        OutboundPublishMode::WaitForPeer,
-                        pending_reason.clone(),
-                        now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
-                    );
-                    self.nudge_protocol_state_for_pending_reason(&pending_reason);
-                    self.request_protocol_subscription_refresh();
-                    self.schedule_pending_outbound_retry(Duration::from_secs(
-                        PENDING_RETRY_DELAY_SECS,
-                    ));
-                } else {
-                    match build_prepared_publish_batch(&prepared, expires_at_secs) {
-                        Ok(Some(batch)) => {
-                            let publish_mode = publish_mode_for_batch(&batch);
-                            let message = self.push_outgoing_message_with_id(
-                                message_id.clone(),
-                                chat_id,
-                                text.to_string(),
-                                now.get(),
-                                expires_at_secs,
-                                DeliveryState::Pending,
-                            );
-                            self.queue_pending_outbound(
-                                message.id.clone(),
-                                chat_id.to_string(),
-                                text.to_string(),
-                                expires_at_secs,
-                                Some(batch.clone()),
-                                publish_mode.clone(),
-                                pending_reason_for_publish_mode(&publish_mode),
-                                retry_deadline_for_publish_mode(now.get(), &publish_mode),
-                            );
-                            self.set_pending_outbound_in_flight(&message.id, true);
-                            self.start_publish_for_pending(
-                                message.id,
-                                chat_id.to_string(),
-                                publish_mode,
-                                batch,
-                            );
-                        }
-                        Ok(None) => {
-                            let message = self.push_outgoing_message_with_id(
-                                message_id.clone(),
-                                chat_id,
-                                text.to_string(),
-                                now.get(),
-                                expires_at_secs,
-                                DeliveryState::Failed,
-                            );
-                            self.update_message_delivery(
-                                chat_id,
-                                &message.id,
-                                DeliveryState::Failed,
-                            );
-                        }
-                        Err(error) => self.state.toast = Some(error.to_string()),
-                    }
-                }
-            }
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-            }
-        }
-    }
-
-    pub(super) fn retry_pending_inbound(&mut self, now: UnixSeconds) {
-        if self.logged_in.is_none() {
-            return;
-        }
-
-        let mut pending = std::mem::take(&mut self.pending_inbound);
-        loop {
-            let mut still_pending = Vec::new();
-            let mut made_progress = false;
-
-            for item in pending {
-                if let PendingInbound::Decrypted {
-                    sender_owner_hex,
-                    payload,
-                    created_at_secs,
+        match error {
+            None => {
+                let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
+                self.push_outgoing_message_with_id(
+                    message_id.clone(),
+                    chat_id,
+                    text.to_string(),
+                    now.get(),
                     expires_at_secs,
-                } = item.clone()
-                {
-                    let Ok(sender_pubkey) = PublicKey::parse(&sender_owner_hex) else {
-                        still_pending.push(item);
-                        continue;
-                    };
-                    match self.apply_decrypted_payload(
-                        OwnerPubkey::from_bytes(sender_pubkey.to_bytes()),
-                        &payload,
-                        created_at_secs,
-                        expires_at_secs,
-                    ) {
-                        Ok(()) => {
-                            made_progress = true;
-                        }
-                        Err(error) if is_retryable_group_payload_error(&error) => {
-                            if is_unknown_group_payload_error(&error) {
-                                self.fetch_recent_messages_for_owner_with_lookback(
-                                    OwnerPubkey::from_bytes(sender_pubkey.to_bytes()),
-                                    now,
-                                    UNKNOWN_GROUP_RECOVERY_LOOKBACK_SECS,
-                                );
-                            }
-                            still_pending.push(item);
-                        }
-                        Err(error) => {
-                            self.state.toast = Some(error.to_string());
-                            made_progress = true;
-                        }
-                    }
-                    continue;
-                }
-
-                let PendingInbound::Envelope {
-                    envelope,
-                    expires_at_secs,
-                } = &item
-                else {
-                    continue;
-                };
-
-                let sender_owner = self.logged_in.as_ref().and_then(|logged_in| {
-                    resolve_message_sender_owner(&logged_in.session_manager, envelope, now)
-                });
-                let Some(sender_owner) = sender_owner else {
-                    still_pending.push(item);
-                    continue;
-                };
-                let receive_result = {
-                    let logged_in = self.logged_in.as_mut().expect("checked above");
-                    let mut rng = OsRng;
-                    let mut ctx = ProtocolContext::new(now, &mut rng);
-                    logged_in
-                        .session_manager
-                        .receive(&mut ctx, sender_owner, envelope)
-                };
-                match receive_result {
-                    Ok(Some(message)) => match self.apply_decrypted_payload(
-                        message.owner_pubkey,
-                        &message.payload,
-                        envelope.created_at.get(),
-                        *expires_at_secs,
-                    ) {
-                        Ok(()) => {
-                            made_progress = true;
-                        }
-                        Err(error) if is_retryable_group_payload_error(&error) => {
-                            if is_unknown_group_payload_error(&error) {
-                                self.fetch_recent_messages_for_owner_with_lookback(
-                                    message.owner_pubkey,
-                                    now,
-                                    UNKNOWN_GROUP_RECOVERY_LOOKBACK_SECS,
-                                );
-                            }
-                            still_pending.push(PendingInbound::decrypted(
-                                message.owner_pubkey,
-                                message.payload,
-                                envelope.created_at.get(),
-                                *expires_at_secs,
-                            ));
-                        }
-                        Err(error) => {
-                            self.state.toast = Some(error.to_string());
-                            made_progress = true;
-                        }
-                    },
-                    Ok(None) | Err(_) => {
-                        // If the owner is now resolvable but the real session manager can no
-                        // longer receive this envelope, the payload was already consumed earlier.
-                        // Keeping the raw envelope would wedge the queue forever.
-                        made_progress = true;
-                    }
-                }
-            }
-
-            if still_pending.is_empty() || !made_progress {
-                self.pending_inbound = still_pending;
-                break;
-            }
-            pending = still_pending;
-        }
-    }
-
-    pub(super) fn retry_pending_outbound(&mut self, now: UnixSeconds) {
-        if self.logged_in.is_none() || self.pending_outbound.is_empty() {
-            return;
-        }
-
-        self.prune_recent_handshake_peers(now.get());
-        let pending = std::mem::take(&mut self.pending_outbound);
-        let mut still_pending = Vec::new();
-
-        for mut pending_message in pending {
-            if pending_message
-                .expires_at_secs
-                .is_some_and(|expires_at_secs| expires_at_secs <= now.get())
-            {
-                self.update_message_delivery(
-                    &pending_message.chat_id,
-                    &pending_message.message_id,
-                    DeliveryState::Failed,
-                );
-                continue;
-            }
-
-            if pending_message.next_retry_at_secs > now.get() {
-                still_pending.push(pending_message);
-                continue;
-            }
-
-            if pending_message.in_flight {
-                still_pending.push(pending_message);
-                continue;
-            }
-
-            if let Some(batch) = pending_message.prepared_publish.clone() {
-                pending_message.publish_mode =
-                    migrate_publish_mode(pending_message.publish_mode.clone(), Some(&batch));
-                pending_message.reason =
-                    pending_reason_for_publish_mode(&pending_message.publish_mode);
-                pending_message.next_retry_at_secs =
-                    retry_deadline_for_publish_mode(now.get(), &pending_message.publish_mode);
-                pending_message.in_flight = true;
-                self.update_message_delivery(
-                    &pending_message.chat_id,
-                    &pending_message.message_id,
                     DeliveryState::Pending,
                 );
-                self.start_publish_for_pending(
-                    pending_message.message_id.clone(),
-                    pending_message.chat_id.clone(),
-                    pending_message.publish_mode.clone(),
-                    batch,
-                );
-                still_pending.push(pending_message);
-                continue;
-            }
-
-            if is_group_chat_id(&pending_message.chat_id) {
-                let Some(group_id) = parse_group_id_from_chat_id(&pending_message.chat_id) else {
-                    self.update_message_delivery(
-                        &pending_message.chat_id,
-                        &pending_message.message_id,
-                        DeliveryState::Failed,
-                    );
-                    continue;
-                };
-                let payload = match encode_app_group_message_payload(
-                    &pending_message.message_id,
-                    &pending_message.body,
-                ) {
-                    Ok(payload) => payload,
-                    Err(error) => {
-                        self.state.toast = Some(error.to_string());
-                        self.update_message_delivery(
-                            &pending_message.chat_id,
-                            &pending_message.message_id,
-                            DeliveryState::Failed,
-                        );
-                        continue;
-                    }
-                };
-                let prepared = {
-                    let logged_in = self.logged_in.as_mut().expect("checked above");
-                    let mut rng = OsRng;
-                    let mut ctx = ProtocolContext::new(now, &mut rng);
-                    let (session_manager, group_manager) =
-                        (&mut logged_in.session_manager, &mut logged_in.group_manager);
-                    group_manager.send_message(session_manager, &mut ctx, &group_id, payload)
-                };
-
-                match prepared {
-                    Ok(prepared) => {
-                        self.publish_group_local_sibling_best_effort(&prepared);
-                        if let Some(reason) = pending_reason_from_group_prepared(&prepared) {
-                            self.push_debug_log(
-                                "retry.group.pending",
-                                format!(
-                                    "chat_id={} reason={reason:?} gaps={}",
-                                    pending_message.chat_id,
-                                    summarize_relay_gaps(&prepared.remote.relay_gaps)
-                                ),
-                            );
-                            pending_message.reason = reason.clone();
-                            pending_message.next_retry_at_secs =
-                                now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
-                            self.update_message_delivery(
-                                &pending_message.chat_id,
-                                &pending_message.message_id,
-                                DeliveryState::Queued,
-                            );
-                            self.nudge_protocol_state_for_pending_reason(&reason);
-                            pending_message.publish_mode = OutboundPublishMode::WaitForPeer;
-                            still_pending.push(pending_message);
-                        } else {
-                            match build_group_prepared_publish_batch(
-                                &prepared,
-                                pending_message.expires_at_secs,
-                            ) {
-                                Ok(Some(batch)) => {
-                                    pending_message.publish_mode = publish_mode_for_batch(&batch);
-                                    pending_message.prepared_publish = Some(batch.clone());
-                                    pending_message.reason = pending_reason_for_publish_mode(
-                                        &pending_message.publish_mode,
-                                    );
-                                    pending_message.next_retry_at_secs =
-                                        retry_deadline_for_publish_mode(
-                                            now.get(),
-                                            &pending_message.publish_mode,
-                                        );
-                                    pending_message.in_flight = true;
-                                    self.update_message_delivery(
-                                        &pending_message.chat_id,
-                                        &pending_message.message_id,
-                                        DeliveryState::Pending,
-                                    );
-                                    self.start_publish_for_pending(
-                                        pending_message.message_id.clone(),
-                                        pending_message.chat_id.clone(),
-                                        pending_message.publish_mode.clone(),
-                                        batch,
-                                    );
-                                    still_pending.push(pending_message);
-                                }
-                                Ok(None) => {
-                                    pending_message.publish_mode = OutboundPublishMode::WaitForPeer;
-                                    pending_message.reason = PendingSendReason::MissingDeviceInvite;
-                                    pending_message.next_retry_at_secs =
-                                        now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
-                                    self.update_message_delivery(
-                                        &pending_message.chat_id,
-                                        &pending_message.message_id,
-                                        DeliveryState::Queued,
-                                    );
-                                    self.push_debug_log(
-                                        "retry.group.pending",
-                                        format!(
-                                            "chat_id={} reason={:?}",
-                                            pending_message.chat_id, pending_message.reason
-                                        ),
-                                    );
-                                    self.nudge_protocol_state_for_pending_reason(
-                                        &pending_message.reason,
-                                    );
-                                    still_pending.push(pending_message);
-                                }
-                                Err(error) => {
-                                    self.state.toast = Some(error.to_string());
-                                    self.update_message_delivery(
-                                        &pending_message.chat_id,
-                                        &pending_message.message_id,
-                                        DeliveryState::Failed,
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        self.state.toast = Some(error.to_string());
-                        self.update_message_delivery(
-                            &pending_message.chat_id,
-                            &pending_message.message_id,
-                            DeliveryState::Failed,
-                        );
-                    }
-                }
-                continue;
-            }
-
-            let prepared = {
-                let owner = match parse_peer_input(&pending_message.chat_id) {
-                    Ok((_, peer_pubkey)) => OwnerPubkey::from_bytes(peer_pubkey.to_bytes()),
-                    Err(_) => {
-                        self.update_message_delivery(
-                            &pending_message.chat_id,
-                            &pending_message.message_id,
-                            DeliveryState::Failed,
-                        );
-                        continue;
-                    }
-                };
-
-                let payload = match encode_app_direct_message_payload(
-                    &pending_message.chat_id,
-                    &pending_message.message_id,
-                    &pending_message.body,
-                ) {
-                    Ok(payload) => payload,
-                    Err(error) => {
-                        self.state.toast = Some(error.to_string());
-                        self.update_message_delivery(
-                            &pending_message.chat_id,
-                            &pending_message.message_id,
-                            DeliveryState::Failed,
-                        );
-                        continue;
-                    }
-                };
-
-                let logged_in = self.logged_in.as_mut().expect("checked above");
-                let mut rng = OsRng;
-                let mut ctx = ProtocolContext::new(now, &mut rng);
-                logged_in
-                    .session_manager
-                    .prepare_send(&mut ctx, owner, payload)
-            };
-
-            match prepared {
-                Ok(prepared) => {
-                    if let Some(reason) = pending_reason_from_prepared(&prepared) {
-                        self.push_debug_log(
-                            "retry.direct.pending",
-                            format!(
-                                "chat_id={} reason={reason:?} gaps={}",
-                                pending_message.chat_id,
-                                summarize_relay_gaps(&prepared.relay_gaps)
-                            ),
-                        );
-                        pending_message.reason = reason.clone();
-                        pending_message.next_retry_at_secs =
-                            now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
-                        self.update_message_delivery(
-                            &pending_message.chat_id,
-                            &pending_message.message_id,
-                            DeliveryState::Queued,
-                        );
-                        self.nudge_protocol_state_for_pending_reason(&reason);
-                        pending_message.publish_mode = OutboundPublishMode::WaitForPeer;
-                        still_pending.push(pending_message);
-                    } else {
-                        match build_prepared_publish_batch(
-                            &prepared,
-                            pending_message.expires_at_secs,
-                        ) {
-                            Ok(Some(batch)) => {
-                                pending_message.publish_mode = publish_mode_for_batch(&batch);
-                                pending_message.prepared_publish = Some(batch.clone());
-                                pending_message.reason =
-                                    pending_reason_for_publish_mode(&pending_message.publish_mode);
-                                pending_message.next_retry_at_secs =
-                                    retry_deadline_for_publish_mode(
-                                        now.get(),
-                                        &pending_message.publish_mode,
-                                    );
-                                pending_message.in_flight = true;
-                                self.update_message_delivery(
-                                    &pending_message.chat_id,
-                                    &pending_message.message_id,
-                                    DeliveryState::Pending,
-                                );
-                                self.start_publish_for_pending(
-                                    pending_message.message_id.clone(),
-                                    pending_message.chat_id.clone(),
-                                    pending_message.publish_mode.clone(),
-                                    batch,
-                                );
-                                still_pending.push(pending_message);
-                            }
-                            Ok(None) => {
-                                pending_message.publish_mode = OutboundPublishMode::WaitForPeer;
-                                pending_message.reason = PendingSendReason::MissingDeviceInvite;
-                                pending_message.next_retry_at_secs =
-                                    now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
-                                self.update_message_delivery(
-                                    &pending_message.chat_id,
-                                    &pending_message.message_id,
-                                    DeliveryState::Queued,
-                                );
-                                self.push_debug_log(
-                                    "retry.direct.pending",
-                                    format!(
-                                        "chat_id={} reason={:?}",
-                                        pending_message.chat_id, pending_message.reason
-                                    ),
-                                );
-                                self.nudge_protocol_state_for_pending_reason(
-                                    &pending_message.reason,
-                                );
-                                still_pending.push(pending_message);
-                            }
-                            Err(error) => {
-                                self.state.toast = Some(error.to_string());
-                                self.update_message_delivery(
-                                    &pending_message.chat_id,
-                                    &pending_message.message_id,
-                                    DeliveryState::Failed,
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(error) => {
-                    self.state.toast = Some(error.to_string());
-                    self.update_message_delivery(
-                        &pending_message.chat_id,
-                        &pending_message.message_id,
-                        DeliveryState::Failed,
+                for event in outer_events {
+                    self.publish_runtime_event(
+                        event,
+                        "group message",
+                        Some((message_id.clone(), chat_id.to_string())),
                     );
                 }
+                self.process_runtime_events();
             }
-        }
-
-        self.pending_outbound = still_pending;
-        self.schedule_next_pending_retry(now.get());
-    }
-
-    pub(super) fn queue_pending_outbound(
-        &mut self,
-        message_id: String,
-        chat_id: String,
-        body: String,
-        expires_at_secs: Option<u64>,
-        prepared_publish: Option<PreparedPublishBatch>,
-        publish_mode: OutboundPublishMode,
-        reason: PendingSendReason,
-        next_retry_at_secs: u64,
-    ) {
-        self.pending_outbound.push(PendingOutbound {
-            message_id,
-            chat_id,
-            body,
-            expires_at_secs,
-            prepared_publish,
-            publish_mode,
-            reason,
-            next_retry_at_secs,
-            in_flight: false,
-        });
-    }
-
-    pub(super) fn set_pending_outbound_in_flight(&mut self, message_id: &str, in_flight: bool) {
-        if let Some(pending) = self
-            .pending_outbound
-            .iter_mut()
-            .find(|pending| pending.message_id == message_id)
-        {
-            pending.in_flight = in_flight;
+            Some(error) => self.state.toast = Some(error),
         }
     }
 
@@ -924,25 +336,6 @@ impl AppCore {
         {
             message.delivery = delivery;
         }
-    }
-
-    pub(super) fn push_outgoing_message(
-        &mut self,
-        chat_id: &str,
-        body: String,
-        created_at_secs: u64,
-        expires_at_secs: Option<u64>,
-        delivery: DeliveryState,
-    ) -> ChatMessageSnapshot {
-        let message_id = self.allocate_message_id();
-        self.push_outgoing_message_with_id(
-            message_id,
-            chat_id,
-            body,
-            created_at_secs,
-            expires_at_secs,
-            delivery,
-        )
     }
 
     pub(super) fn push_outgoing_message_with_id(
@@ -997,6 +390,14 @@ impl AppCore {
         author: Option<String>,
     ) {
         let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
+        if self.threads.get(chat_id).is_some_and(|thread| {
+            thread
+                .messages
+                .iter()
+                .any(|message| message.id == message_id)
+        }) {
+            return;
+        }
         let author = author.unwrap_or_else(|| self.owner_display_label(chat_id));
         let thread = self
             .threads
@@ -1067,7 +468,10 @@ impl AppCore {
         if chat_id.is_empty() || message_id.is_empty() || emoji.is_empty() {
             return;
         }
-        let Some(thread) = self.threads.get_mut(chat_id) else {
+        let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
+            return;
+        };
+        let Some(thread) = self.threads.get_mut(&normalized_chat_id) else {
             return;
         };
         let Some(message) = thread
@@ -1078,9 +482,64 @@ impl AppCore {
             return;
         };
         toggle_local_reaction(message, emoji);
+        self.send_reaction(&normalized_chat_id, message_id, emoji);
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
+    }
+
+    pub(super) fn send_reaction(&mut self, chat_id: &str, message_id: &str, emoji: &str) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
+        };
+        if let Some(group_id) = parse_group_id_from_chat_id(chat_id) {
+            let mut outer_events = Vec::new();
+            let event = GroupSendEvent {
+                kind: REACTION_KIND,
+                content: emoji.to_string(),
+                tags: vec![vec!["e".to_string(), message_id.to_string()]],
+            };
+            let mut result = Ok(());
+            logged_in
+                .ndr_runtime
+                .with_group_context(|session_manager, group_manager, _| {
+                    let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
+                        session_manager
+                            .send_event(recipient, rumor.clone())
+                            .map(|_| ())
+                    };
+                    let mut publish_outer = |event: &Event| {
+                        outer_events.push(event.clone());
+                        Ok(())
+                    };
+                    result = group_manager
+                        .send_event(
+                            &group_id,
+                            event,
+                            &mut send_pairwise,
+                            &mut publish_outer,
+                            None,
+                        )
+                        .map(|_| ());
+                });
+            if result.is_ok() {
+                for event in outer_events {
+                    self.publish_runtime_event(event, "group reaction", None);
+                }
+                self.process_runtime_events();
+            }
+            return;
+        }
+
+        if let Ok((_, peer)) = parse_peer_input(chat_id) {
+            let _ = logged_in.ndr_runtime.send_reaction(
+                peer,
+                message_id.to_string(),
+                emoji.to_string(),
+                None,
+            );
+            self.process_runtime_events();
+        }
     }
 
     pub(super) fn delete_local_message(&mut self, chat_id: &str, message_id: &str) {
@@ -1115,20 +574,14 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
+        };
         if is_group_chat_id(&normalized_chat_id) {
-            self.send_group_control(
-                &normalized_chat_id,
-                AppControlType::Typing,
-                Vec::new(),
-                None,
-            );
-        } else {
-            self.send_direct_control(
-                &normalized_chat_id,
-                AppControlType::Typing,
-                Vec::new(),
-                None,
-            );
+            self.send_group_event(&normalized_chat_id, TYPING_KIND, "typing", Vec::new(), None);
+        } else if let Ok((_, peer)) = parse_peer_input(&normalized_chat_id) {
+            let _ = logged_in.ndr_runtime.send_typing(peer, None);
+            self.process_runtime_events();
         }
     }
 
@@ -1171,7 +624,7 @@ impl AppCore {
         let actor = self
             .logged_in
             .as_ref()
-            .map(|logged_in| self.owner_display_label(&logged_in.owner_pubkey.to_string()))
+            .map(|logged_in| self.owner_display_label(&logged_in.owner_pubkey.to_hex()))
             .unwrap_or_else(|| "You".to_string());
         self.push_system_notice(
             &normalized_chat_id,
@@ -1179,19 +632,26 @@ impl AppCore {
             unix_now().get(),
         );
         if is_group_chat_id(&normalized_chat_id) {
-            self.send_group_control(
+            let content = serde_json::json!({
+                "type": "chat-settings",
+                "v": 1,
+                "messageTtlSeconds": normalized_ttl.unwrap_or(0),
+            })
+            .to_string();
+            self.send_group_event(
                 &normalized_chat_id,
-                AppControlType::ChatSettings,
+                CHAT_SETTINGS_KIND,
+                &content,
                 Vec::new(),
-                normalized_ttl,
+                None,
             );
-        } else {
-            self.send_direct_control(
-                &normalized_chat_id,
-                AppControlType::ChatSettings,
-                Vec::new(),
-                normalized_ttl,
-            );
+        } else if let (Some(logged_in), Ok((_, peer))) = (
+            self.logged_in.as_ref(),
+            parse_peer_input(&normalized_chat_id),
+        ) {
+            let ttl = normalized_ttl.unwrap_or(0);
+            let _ = logged_in.ndr_runtime.send_chat_settings(peer, ttl);
+            self.process_runtime_events();
         }
         self.rebuild_state();
         self.persist_best_effort();
@@ -1415,10 +875,8 @@ impl AppCore {
             thread.unread_count = 0;
             changed = true;
         }
-        if is_group_chat_id(&normalized_chat_id) {
-            // Group read state is local-only for now, matching the Flutter client.
-        } else if self.preferences.send_read_receipts {
-            self.send_direct_control(&normalized_chat_id, AppControlType::Seen, receipt_ids, None);
+        if self.preferences.send_read_receipts {
+            self.send_receipt(&normalized_chat_id, "seen", receipt_ids);
         }
 
         if changed {
@@ -1428,105 +886,209 @@ impl AppCore {
         }
     }
 
-    pub(super) fn send_direct_control(
-        &mut self,
-        chat_id: &str,
-        control_type: AppControlType,
-        message_ids: Vec<String>,
-        message_ttl_seconds: Option<u64>,
-    ) {
-        let Ok((normalized_chat_id, peer_pubkey)) = parse_peer_input(chat_id) else {
+    fn send_receipt(&mut self, chat_id: &str, receipt_type: &str, message_ids: Vec<String>) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
-        let payload = match encode_app_control_payload(
-            control_type,
-            Some(normalized_chat_id.clone()),
-            message_ids,
-            message_ttl_seconds,
-        ) {
-            Ok(payload) => payload,
-            Err(error) => {
-                self.push_debug_log("control.direct.encode", error.to_string());
-                return;
-            }
-        };
-        let Some(logged_in) = self.logged_in.as_mut() else {
-            return;
-        };
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(unix_now(), &mut rng);
-        let owner = OwnerPubkey::from_bytes(peer_pubkey.to_bytes());
-        match logged_in
-            .session_manager
-            .prepare_send(&mut ctx, owner, payload)
-        {
-            Ok(prepared) => match build_prepared_publish_batch(&prepared, None) {
-                Ok(Some(batch)) => {
-                    let control_id = format!("control-{}", self.allocate_message_id());
-                    let publish_mode = publish_mode_for_batch(&batch);
-                    self.start_publish_for_pending(
-                        control_id,
-                        normalized_chat_id,
-                        publish_mode,
-                        batch,
-                    );
-                }
-                Ok(None) => {}
-                Err(error) => self.push_debug_log("control.direct.publish", error.to_string()),
-            },
-            Err(error) => self.push_debug_log("control.direct.prepare", error.to_string()),
+        if is_group_chat_id(chat_id) {
+            let tags = message_ids
+                .into_iter()
+                .map(|id| vec!["e".to_string(), id])
+                .collect();
+            self.send_group_event(chat_id, RECEIPT_KIND, receipt_type, tags, None);
+        } else if let Ok((_, peer)) = parse_peer_input(chat_id) {
+            let _ = logged_in
+                .ndr_runtime
+                .send_receipt(peer, receipt_type, message_ids, None);
+            self.process_runtime_events();
         }
     }
 
-    pub(super) fn send_group_control(
+    pub(super) fn send_group_event(
         &mut self,
         chat_id: &str,
-        control_type: AppControlType,
-        message_ids: Vec<String>,
-        message_ttl_seconds: Option<u64>,
+        kind: u32,
+        content: &str,
+        tags: Vec<Vec<String>>,
+        now_ms: Option<u64>,
     ) {
         let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
             return;
         };
-        let payload = match encode_app_control_payload(
-            control_type,
-            None,
-            message_ids,
-            message_ttl_seconds,
-        ) {
-            Ok(payload) => payload,
-            Err(error) => {
-                self.push_debug_log("control.group.encode", error.to_string());
-                return;
-            }
-        };
-        let Some(logged_in) = self.logged_in.as_mut() else {
+        let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(unix_now(), &mut rng);
-        let (session_manager, group_manager) =
-            (&mut logged_in.session_manager, &mut logged_in.group_manager);
-        match group_manager.send_message(session_manager, &mut ctx, &group_id, payload) {
-            Ok(prepared) => {
-                self.publish_group_local_sibling_best_effort(&prepared);
-                match build_group_prepared_publish_batch(&prepared, None) {
-                    Ok(Some(batch)) => {
-                        let control_id = format!("control-{}", self.allocate_message_id());
-                        let publish_mode = publish_mode_for_batch(&batch);
-                        self.start_publish_for_pending(
-                            control_id,
-                            chat_id.to_string(),
-                            publish_mode,
-                            batch,
-                        );
+        let mut outer_events = Vec::new();
+        let mut result = Ok(());
+        let event = GroupSendEvent {
+            kind,
+            content: content.to_string(),
+            tags,
+        };
+        logged_in
+            .ndr_runtime
+            .with_group_context(|session_manager, group_manager, _| {
+                let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
+                    session_manager
+                        .send_event(recipient, rumor.clone())
+                        .map(|_| ())
+                };
+                let mut publish_outer = |event: &Event| {
+                    outer_events.push(event.clone());
+                    Ok(())
+                };
+                result = group_manager
+                    .send_event(
+                        &group_id,
+                        event,
+                        &mut send_pairwise,
+                        &mut publish_outer,
+                        now_ms,
+                    )
+                    .map(|_| ());
+            });
+        if result.is_ok() {
+            for event in outer_events {
+                self.publish_runtime_event(event, "group event", None);
+            }
+            self.process_runtime_events();
+        }
+    }
+
+    pub(super) fn apply_decrypted_runtime_message(
+        &mut self,
+        sender_owner: PublicKey,
+        sender_device: Option<PublicKey>,
+        content: String,
+        outer_event_id: Option<String>,
+    ) {
+        let Ok(event) = serde_json::from_str::<UnsignedEvent>(&content) else {
+            self.apply_runtime_text_message(
+                sender_owner,
+                None,
+                content,
+                unix_now().get(),
+                None,
+                outer_event_id,
+            );
+            return;
+        };
+
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            for group_event in logged_in.ndr_runtime.group_handle_incoming_session_event(
+                &event,
+                sender_owner,
+                sender_device,
+            ) {
+                self.apply_group_decrypted_event(group_event);
+            }
+        }
+
+        let kind = event.kind.as_u16() as u32;
+        let created_at_secs = event.created_at.as_u64();
+        let expires_at_secs = message_expiration_from_tags(event.tags.iter());
+        let Some(local_owner) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return;
+        };
+        let chat_id = chat_id_for_rumor(sender_owner, local_owner, &event);
+        let is_outgoing = sender_owner == local_owner;
+
+        match kind {
+            GROUP_METADATA_KIND => {
+                self.apply_group_metadata_rumor(sender_owner, &event);
+            }
+            GROUP_SENDER_KEY_DISTRIBUTION_KIND => {}
+            CHAT_MESSAGE_KIND => {
+                self.apply_runtime_text_message(
+                    sender_owner,
+                    Some(chat_id.clone()),
+                    event.content.clone(),
+                    created_at_secs,
+                    expires_at_secs,
+                    outer_event_id.clone(),
+                );
+                if !is_outgoing && self.preferences.send_read_receipts {
+                    let receipt_id = event
+                        .id
+                        .as_ref()
+                        .map(|id| id.to_string())
+                        .or(outer_event_id);
+                    if let Some(receipt_id) = receipt_id {
+                        self.send_receipt(&chat_id, "delivered", vec![receipt_id]);
                     }
-                    Ok(None) => {}
-                    Err(error) => self.push_debug_log("control.group.publish", error.to_string()),
                 }
             }
-            Err(error) => self.push_debug_log("control.group.prepare", error.to_string()),
+            REACTION_KIND => {
+                for message_id in event_message_ids(&event) {
+                    self.apply_incoming_reaction_to_chat(&chat_id, &message_id, &event.content);
+                }
+            }
+            RECEIPT_KIND => {
+                let delivery = match event.content.as_str() {
+                    "seen" => DeliveryState::Seen,
+                    _ => DeliveryState::Received,
+                };
+                self.apply_receipt_to_messages(
+                    &chat_id,
+                    &event_message_ids(&event),
+                    delivery,
+                    is_outgoing,
+                );
+            }
+            TYPING_KIND => {
+                if !is_outgoing {
+                    self.set_typing_indicator(chat_id, sender_owner.to_hex(), created_at_secs);
+                }
+            }
+            CHAT_SETTINGS_KIND => {
+                let actor = self.owner_display_label(&sender_owner.to_hex());
+                self.apply_chat_settings_control(
+                    &chat_id,
+                    &actor,
+                    chat_settings_ttl_seconds(&event.content),
+                    created_at_secs,
+                );
+            }
+            _ => {}
         }
+    }
+
+    pub(super) fn apply_runtime_text_message(
+        &mut self,
+        sender_owner: PublicKey,
+        chat_id: Option<String>,
+        body: String,
+        created_at_secs: u64,
+        expires_at_secs: Option<u64>,
+        message_id: Option<String>,
+    ) {
+        let Some(local_owner) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return;
+        };
+        let chat_id = chat_id.unwrap_or_else(|| sender_owner.to_hex());
+        self.clear_typing_indicator(&chat_id, &sender_owner.to_hex());
+        if sender_owner == local_owner {
+            if let Some(message_id) = message_id {
+                self.update_message_delivery(&chat_id, &message_id, DeliveryState::Sent);
+            }
+            return;
+        }
+        self.push_incoming_message_from(
+            &chat_id,
+            message_id,
+            body,
+            created_at_secs,
+            expires_at_secs,
+            Some(self.owner_display_label(&sender_owner.to_hex())),
+        );
     }
 
     pub(super) fn apply_receipt_to_messages(
@@ -1628,328 +1190,6 @@ impl AppCore {
         });
     }
 
-    pub(super) fn apply_routed_chat_message(
-        &mut self,
-        routed: RoutedChatMessage,
-        created_at_secs: u64,
-    ) {
-        if routed.is_outgoing {
-            match routed.message_id {
-                Some(message_id) => self.push_outgoing_message_with_id(
-                    message_id,
-                    &routed.chat_id,
-                    routed.body,
-                    created_at_secs,
-                    routed.expires_at_secs,
-                    DeliveryState::Sent,
-                ),
-                None => self.push_outgoing_message(
-                    &routed.chat_id,
-                    routed.body,
-                    created_at_secs,
-                    routed.expires_at_secs,
-                    DeliveryState::Sent,
-                ),
-            };
-        } else {
-            self.push_incoming_message_from(
-                &routed.chat_id,
-                routed.message_id,
-                routed.body,
-                created_at_secs,
-                routed.expires_at_secs,
-                routed.author,
-            );
-        }
-    }
-
-    pub(super) fn apply_control_payload(
-        &mut self,
-        sender_owner: OwnerPubkey,
-        control: AppControlPayload,
-        created_at_secs: u64,
-    ) {
-        let Some(local_owner) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.owner_pubkey)
-        else {
-            return;
-        };
-        let is_from_local_owner = sender_owner == local_owner;
-        let chat_id = if is_from_local_owner {
-            control
-                .chat_id
-                .clone()
-                .unwrap_or_else(|| sender_owner.to_string())
-        } else {
-            sender_owner.to_string()
-        };
-
-        match control.control_type {
-            AppControlType::Typing => {
-                if !is_from_local_owner {
-                    self.set_typing_indicator(chat_id, sender_owner.to_string(), created_at_secs);
-                }
-            }
-            AppControlType::Delivered => {
-                self.apply_receipt_to_messages(
-                    &chat_id,
-                    &control.message_ids,
-                    DeliveryState::Received,
-                    is_from_local_owner,
-                );
-            }
-            AppControlType::Seen => {
-                self.apply_receipt_to_messages(
-                    &chat_id,
-                    &control.message_ids,
-                    DeliveryState::Seen,
-                    is_from_local_owner,
-                );
-            }
-            AppControlType::ChatSettings => {
-                let actor = self.owner_display_label(&sender_owner.to_string());
-                self.apply_chat_settings_control(
-                    &chat_id,
-                    &actor,
-                    control.message_ttl_seconds,
-                    created_at_secs,
-                );
-            }
-        }
-    }
-
-    pub(super) fn route_received_direct_message(
-        &self,
-        local_owner: OwnerPubkey,
-        sender_owner: OwnerPubkey,
-        payload: &[u8],
-    ) -> RoutedChatMessage {
-        match decode_app_payload(payload) {
-            AppPayload::DirectMessage(decoded) => {
-                if sender_owner == local_owner {
-                    if let Ok((chat_id, _)) = parse_peer_input(&decoded.chat_id) {
-                        if chat_id != local_owner.to_string() {
-                            return RoutedChatMessage {
-                                chat_id,
-                                message_id: decoded.message_id,
-                                body: decoded.body,
-                                is_outgoing: true,
-                                author: Some(self.owner_display_label(&local_owner.to_string())),
-                                expires_at_secs: None,
-                            };
-                        }
-                    }
-                }
-
-                RoutedChatMessage {
-                    chat_id: sender_owner.to_string(),
-                    message_id: decoded.message_id,
-                    body: decoded.body,
-                    is_outgoing: false,
-                    author: Some(self.owner_display_label(&sender_owner.to_string())),
-                    expires_at_secs: None,
-                }
-            }
-            AppPayload::LegacyText(body) => RoutedChatMessage {
-                chat_id: sender_owner.to_string(),
-                message_id: None,
-                body,
-                is_outgoing: false,
-                author: Some(self.owner_display_label(&sender_owner.to_string())),
-                expires_at_secs: None,
-            },
-            AppPayload::GroupMessage(decoded) => RoutedChatMessage {
-                chat_id: sender_owner.to_string(),
-                message_id: decoded.message_id,
-                body: decoded.body,
-                is_outgoing: false,
-                author: Some(self.owner_display_label(&sender_owner.to_string())),
-                expires_at_secs: None,
-            },
-            AppPayload::Control(_) => RoutedChatMessage {
-                chat_id: sender_owner.to_string(),
-                message_id: None,
-                body: String::new(),
-                is_outgoing: false,
-                author: Some(self.owner_display_label(&sender_owner.to_string())),
-                expires_at_secs: None,
-            },
-        }
-    }
-
-    pub(super) fn apply_group_metadata_update(
-        &mut self,
-        group: GroupSnapshot,
-        previous: Option<GroupSnapshot>,
-        created_at_secs: u64,
-    ) {
-        self.apply_group_snapshot_to_threads_with_notices(
-            previous.as_ref(),
-            &group,
-            created_at_secs.max(group.updated_at.get()),
-        );
-    }
-
-    pub(super) fn apply_decrypted_payload(
-        &mut self,
-        sender_owner: OwnerPubkey,
-        payload: &[u8],
-        created_at_secs: u64,
-        expires_at_secs: Option<u64>,
-    ) -> anyhow::Result<()> {
-        let local_owner = self.logged_in.as_ref().expect("logged in").owner_pubkey;
-
-        let previous_groups = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| {
-                logged_in
-                    .group_manager
-                    .snapshot()
-                    .groups
-                    .into_iter()
-                    .map(|group| (group.group_id.clone(), group))
-                    .collect::<BTreeMap<_, _>>()
-            })
-            .unwrap_or_default();
-
-        let group_event = {
-            let logged_in = self.logged_in.as_mut().expect("logged in");
-            logged_in
-                .group_manager
-                .handle_incoming(sender_owner, payload)?
-        };
-
-        match group_event {
-            Some(GroupIncomingEvent::MetadataUpdated(group)) => {
-                let previous = previous_groups.get(&group.group_id).cloned();
-                self.apply_group_metadata_update(group, previous, created_at_secs);
-            }
-            Some(GroupIncomingEvent::Message(group_message)) => {
-                let chat_id = group_chat_id(&group_message.group_id);
-                match decode_app_payload(&group_message.body) {
-                    AppPayload::Control(control) => match control.control_type {
-                        AppControlType::Typing if group_message.sender_owner != local_owner => {
-                            self.set_typing_indicator(
-                                chat_id,
-                                group_message.sender_owner.to_string(),
-                                created_at_secs,
-                            );
-                        }
-                        AppControlType::ChatSettings => {
-                            let actor =
-                                self.owner_display_label(&group_message.sender_owner.to_string());
-                            self.apply_chat_settings_control(
-                                &chat_id,
-                                &actor,
-                                control.message_ttl_seconds,
-                                created_at_secs,
-                            );
-                        }
-                        _ => {}
-                    },
-                    AppPayload::GroupMessage(decoded) => {
-                        self.clear_typing_indicator(
-                            &chat_id,
-                            &group_message.sender_owner.to_string(),
-                        );
-                        self.apply_routed_chat_message(
-                            RoutedChatMessage {
-                                chat_id,
-                                message_id: decoded.message_id,
-                                body: decoded.body,
-                                is_outgoing: group_message.sender_owner == local_owner,
-                                author: Some(
-                                    self.owner_display_label(
-                                        &group_message.sender_owner.to_string(),
-                                    ),
-                                ),
-                                expires_at_secs,
-                            },
-                            created_at_secs,
-                        );
-                    }
-                    AppPayload::LegacyText(body) => {
-                        self.clear_typing_indicator(
-                            &chat_id,
-                            &group_message.sender_owner.to_string(),
-                        );
-                        self.apply_routed_chat_message(
-                            RoutedChatMessage {
-                                chat_id,
-                                message_id: None,
-                                body,
-                                is_outgoing: group_message.sender_owner == local_owner,
-                                author: Some(
-                                    self.owner_display_label(
-                                        &group_message.sender_owner.to_string(),
-                                    ),
-                                ),
-                                expires_at_secs,
-                            },
-                            created_at_secs,
-                        );
-                    }
-                    AppPayload::DirectMessage(decoded) => {
-                        self.clear_typing_indicator(
-                            &chat_id,
-                            &group_message.sender_owner.to_string(),
-                        );
-                        self.apply_routed_chat_message(
-                            RoutedChatMessage {
-                                chat_id,
-                                message_id: decoded.message_id,
-                                body: decoded.body,
-                                is_outgoing: group_message.sender_owner == local_owner,
-                                author: Some(
-                                    self.owner_display_label(
-                                        &group_message.sender_owner.to_string(),
-                                    ),
-                                ),
-                                expires_at_secs,
-                            },
-                            created_at_secs,
-                        );
-                    }
-                }
-            }
-            None => match decode_app_payload(payload) {
-                AppPayload::Control(control) => {
-                    self.apply_control_payload(sender_owner, control, created_at_secs);
-                }
-                _ => {
-                    let mut routed =
-                        self.route_received_direct_message(local_owner, sender_owner, payload);
-                    routed.expires_at_secs = expires_at_secs;
-                    let should_send_delivered = !routed.is_outgoing
-                        && routed
-                            .message_id
-                            .as_ref()
-                            .map(|id| !id.is_empty())
-                            .unwrap_or(false);
-                    let receipt_chat_id = routed.chat_id.clone();
-                    let receipt_message_id = routed.message_id.clone();
-                    self.clear_typing_indicator(&receipt_chat_id, &sender_owner.to_string());
-                    self.apply_routed_chat_message(routed, created_at_secs);
-                    if should_send_delivered && self.preferences.send_read_receipts {
-                        if let Some(message_id) = receipt_message_id {
-                            self.send_direct_control(
-                                &receipt_chat_id,
-                                AppControlType::Delivered,
-                                vec![message_id],
-                                None,
-                            );
-                        }
-                    }
-                }
-            },
-        }
-
-        Ok(())
-    }
-
     pub(super) fn allocate_message_id(&mut self) -> String {
         let id = self.next_message_id;
         self.next_message_id = self.next_message_id.saturating_add(1);
@@ -2028,7 +1268,6 @@ pub(super) fn toggle_local_reaction(message: &mut ChatMessageSnapshot, emoji: &s
     sort_message_reactions(&mut message.reactions);
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
 pub(super) fn apply_incoming_reaction(message: &mut ChatMessageSnapshot, emoji: &str) -> bool {
     let emoji = emoji.trim();
     if emoji.is_empty() {
@@ -2051,6 +1290,27 @@ pub(super) fn apply_incoming_reaction(message: &mut ChatMessageSnapshot, emoji: 
     true
 }
 
+impl AppCore {
+    pub(super) fn apply_incoming_reaction_to_chat(
+        &mut self,
+        chat_id: &str,
+        message_id: &str,
+        emoji: &str,
+    ) {
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        apply_incoming_reaction(message, emoji);
+    }
+}
+
 pub(super) fn typing_indicator_key(chat_id: &str, author_owner_hex: &str) -> String {
     format!("{chat_id}\n{author_owner_hex}")
 }
@@ -2064,67 +1324,27 @@ fn normalized_setting(value: &str, fallback: &str) -> String {
     }
 }
 
-async fn sync_session_relays(client: &Client, previous: &[RelayUrl], next: &[RelayUrl]) {
-    let next_set = next.iter().cloned().collect::<HashSet<_>>();
-    for relay in previous {
-        if !next_set.contains(relay) {
-            let _ = client.force_remove_relay(relay.clone()).await;
-        }
-    }
-    ensure_session_relays_configured(client, next).await;
-}
-
-pub(super) fn should_advance_delivery(current: &DeliveryState, next: &DeliveryState) -> bool {
-    if matches!(
-        (current, next),
-        (DeliveryState::Pending, DeliveryState::Queued)
-            | (DeliveryState::Queued, DeliveryState::Pending)
-    ) {
-        return true;
-    }
-    delivery_rank(next) > delivery_rank(current)
-}
-
-fn delivery_rank(delivery: &DeliveryState) -> u8 {
-    match delivery {
-        DeliveryState::Queued | DeliveryState::Pending => 0,
-        DeliveryState::Sent => 1,
-        DeliveryState::Received => 2,
-        DeliveryState::Seen => 3,
-        DeliveryState::Failed => 4,
-    }
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) fn reaction_notification_body(emoji: &str, target_preview: &str) -> String {
-    let emoji = emoji.trim();
-    let target_preview = target_preview.trim();
-    if target_preview.is_empty() {
-        format!("New reaction {emoji}")
-    } else {
-        format!(
-            "Reaction {emoji} to \"{}\"",
-            truncate_reaction_preview(target_preview)
-        )
-    }
-}
-
 fn sort_message_reactions(reactions: &mut [MessageReactionSnapshot]) {
     reactions.sort_by(|left, right| {
-        left.emoji
-            .cmp(&right.emoji)
+        right
+            .reacted_by_me
+            .cmp(&left.reacted_by_me)
             .then_with(|| right.count.cmp(&left.count))
+            .then_with(|| left.emoji.cmp(&right.emoji))
     });
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-fn truncate_reaction_preview(preview: &str) -> String {
-    const MAX_CHARS: usize = 80;
-    let mut chars = preview.chars();
-    let truncated = chars.by_ref().take(MAX_CHARS).collect::<String>();
-    if chars.next().is_some() {
-        format!("{truncated}…")
-    } else {
-        truncated
+fn should_advance_delivery(current: &DeliveryState, next: &DeliveryState) -> bool {
+    delivery_rank(next) > delivery_rank(current)
+}
+
+fn delivery_rank(state: &DeliveryState) -> u8 {
+    match state {
+        DeliveryState::Queued => 0,
+        DeliveryState::Pending => 1,
+        DeliveryState::Sent => 2,
+        DeliveryState::Received => 3,
+        DeliveryState::Seen => 4,
+        DeliveryState::Failed => 0,
     }
 }

@@ -25,11 +25,8 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.owner_pubkey)
         else {
-            self.state.toast = Some("Create or restore an account first.".to_string());
-            self.emit_state();
             return;
         };
-
         let member_owners = match parse_owner_inputs(member_inputs, local_owner) {
             Ok(member_owners) if !member_owners.is_empty() => member_owners,
             Ok(_) => {
@@ -43,560 +40,99 @@ impl AppCore {
                 return;
             }
         };
-        let target_owner_hexes = sorted_owner_hexes(&member_owners);
+        let member_hexes = member_owners
+            .iter()
+            .map(PublicKey::to_hex)
+            .collect::<Vec<_>>();
+        let member_refs = member_hexes.iter().map(String::as_str).collect::<Vec<_>>();
 
         self.state.busy.creating_group = true;
         self.emit_state();
 
         let now = unix_now();
-        let create_result = {
-            let logged_in = self.logged_in.as_mut().expect("checked above");
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(now, &mut rng);
-            let (session_manager, group_manager) =
-                (&mut logged_in.session_manager, &mut logged_in.group_manager);
-            group_manager.create_group(
-                session_manager,
-                &mut ctx,
-                trimmed_name.to_string(),
-                member_owners,
-            )
+        let result = {
+            let logged_in = self.logged_in.as_ref().expect("checked above");
+            logged_in
+                .ndr_runtime
+                .with_group_context(|session_manager, group_manager, _| {
+                    let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
+                        session_manager
+                            .send_event(recipient, rumor.clone())
+                            .map(|_| ())
+                    };
+                    group_manager.create_group(
+                        trimmed_name,
+                        &member_refs,
+                        CreateGroupOptions {
+                            send_pairwise: Some(&mut send_pairwise),
+                            fanout_metadata: true,
+                            now_ms: Some(now.get().saturating_mul(1000)),
+                        },
+                    )
+                })
         };
 
-        match create_result {
+        match result {
             Ok(result) => {
-                let create_kind = PendingGroupControlKind::Create {
-                    name: trimmed_name.to_string(),
-                    member_owner_hexes: target_owner_hexes.clone(),
-                };
-                let chat_id = group_chat_id(&result.group.group_id);
-                self.apply_group_snapshot_to_threads(&result.group, now.get());
-                self.active_chat_id = Some(chat_id.clone());
-                self.screen_stack = vec![Screen::Chat {
-                    chat_id: chat_id.clone(),
-                }];
-                self.publish_group_local_sibling_best_effort(&result.prepared);
-
-                if let Some(reason) = pending_reason_from_group_prepared(&result.prepared) {
-                    let operation_id = self.allocate_message_id();
-                    self.queue_pending_group_control(
-                        operation_id,
-                        result.group.group_id.clone(),
-                        target_owner_hexes,
-                        None,
-                        reason.clone(),
-                        now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
-                        create_kind,
-                    );
-                    self.nudge_protocol_state_for_pending_reason(&reason);
-                } else {
-                    match build_group_prepared_publish_batch(&result.prepared, None) {
-                        Ok(Some(batch)) => {
-                            let operation_id = self.allocate_message_id();
-                            let publish_mode = publish_mode_for_batch(&batch);
-                            self.queue_pending_group_control(
-                                operation_id.clone(),
-                                result.group.group_id.clone(),
-                                target_owner_hexes,
-                                Some(batch.clone()),
-                                pending_reason_for_publish_mode(&publish_mode),
-                                retry_deadline_for_publish_mode(now.get(), &publish_mode),
-                                create_kind.clone(),
-                            );
-                            self.set_pending_group_control_in_flight(&operation_id, true);
-                            self.start_group_control_publish(operation_id, publish_mode, batch);
-                        }
-                        Ok(None) => {}
-                        Err(error) => self.state.toast = Some(error.to_string()),
+                for owner in member_owners {
+                    if let Some(logged_in) = self.logged_in.as_ref() {
+                        let _ = logged_in.ndr_runtime.setup_user(owner);
                     }
                 }
-
+                let chat_id = group_chat_id(&result.group.id);
+                self.apply_group_snapshot_to_threads(&result.group, now.get());
+                self.groups.insert(result.group.id.clone(), result.group);
+                self.sync_runtime_groups();
+                self.active_chat_id = Some(chat_id.clone());
+                self.screen_stack = vec![Screen::Chat { chat_id }];
+                self.process_runtime_events();
                 self.request_protocol_subscription_refresh();
                 self.schedule_tracked_peer_catch_up(Duration::from_secs(
                     RESUBSCRIBE_CATCH_UP_DELAY_SECS,
                 ));
             }
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-            }
+            Err(error) => self.state.toast = Some(error.to_string()),
         }
 
-        self.schedule_next_pending_retry(now.get());
         self.state.busy.creating_group = false;
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
     }
 
-    pub(super) fn prepare_group_control(
-        &mut self,
-        group_id: &str,
-        kind: &PendingGroupControlKind,
-        now: UnixSeconds,
-    ) -> anyhow::Result<(
-        GroupSnapshot,
-        Vec<String>,
-        nostr_double_ratchet::GroupPreparedSend,
-    )> {
-        let logged_in = self.logged_in.as_mut().expect("logged in checked above");
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(now, &mut rng);
-        let (session_manager, group_manager) =
-            (&mut logged_in.session_manager, &mut logged_in.group_manager);
-
-        match kind {
-            PendingGroupControlKind::Create {
-                name,
-                member_owner_hexes,
-            } => {
-                let members = owner_pubkeys_from_hexes(member_owner_hexes)?;
-                let result =
-                    group_manager.create_group(session_manager, &mut ctx, name.clone(), members)?;
-                return Ok((
-                    result.group.clone(),
-                    member_owner_hexes.clone(),
-                    result.prepared,
-                ));
-            }
-            PendingGroupControlKind::Rename { name } => {
-                let prepared =
-                    group_manager.update_name(session_manager, &mut ctx, group_id, name.clone())?;
-                let snapshot = group_manager
-                    .group(group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown group."))?;
-                return Ok((
-                    snapshot.clone(),
-                    sorted_owner_hexes(
-                        &snapshot
-                            .members
-                            .iter()
-                            .copied()
-                            .filter(|member| *member != logged_in.owner_pubkey)
-                            .collect::<Vec<_>>(),
-                    ),
-                    prepared,
-                ));
-            }
-            PendingGroupControlKind::AddMembers { member_owner_hexes } => {
-                let members = owner_pubkeys_from_hexes(member_owner_hexes)?;
-                let prepared =
-                    group_manager.add_members(session_manager, &mut ctx, group_id, members)?;
-                let snapshot = group_manager
-                    .group(group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown group."))?;
-                return Ok((
-                    snapshot.clone(),
-                    sorted_owner_hexes(
-                        &snapshot
-                            .members
-                            .iter()
-                            .copied()
-                            .filter(|member| *member != logged_in.owner_pubkey)
-                            .collect::<Vec<_>>(),
-                    ),
-                    prepared,
-                ));
-            }
-            PendingGroupControlKind::RemoveMember { owner_pubkey_hex } => {
-                let owner = parse_owner_input(owner_pubkey_hex)?;
-                let prepared = group_manager.remove_members(
-                    session_manager,
-                    &mut ctx,
-                    group_id,
-                    vec![owner],
-                )?;
-                let snapshot = group_manager
-                    .group(group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown group."))?;
-                return Ok((
-                    snapshot.clone(),
-                    sorted_owner_hexes(
-                        &snapshot
-                            .members
-                            .iter()
-                            .copied()
-                            .filter(|member| *member != logged_in.owner_pubkey)
-                            .collect::<Vec<_>>(),
-                    ),
-                    prepared,
-                ));
-            }
-        }
-    }
-
-    pub(super) fn rebuild_group_control(
-        &mut self,
-        group_id: &str,
-        kind: &PendingGroupControlKind,
-        now: UnixSeconds,
-    ) -> anyhow::Result<(
-        GroupSnapshot,
-        Vec<String>,
-        nostr_double_ratchet::GroupPreparedSend,
-    )> {
-        let logged_in = self.logged_in.as_mut().expect("logged in checked above");
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(now, &mut rng);
-        let (session_manager, group_manager) =
-            (&mut logged_in.session_manager, &mut logged_in.group_manager);
-
-        match kind {
-            PendingGroupControlKind::Create {
-                member_owner_hexes, ..
-            } => {
-                let members = owner_pubkeys_from_hexes(member_owner_hexes)?;
-                let prepared = group_manager.retry_create_group(
-                    session_manager,
-                    &mut ctx,
-                    group_id,
-                    members,
-                )?;
-                let snapshot = group_manager
-                    .group(group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown group."))?;
-                Ok((snapshot, member_owner_hexes.clone(), prepared))
-            }
-            PendingGroupControlKind::Rename { .. } => {
-                let prepared =
-                    group_manager.retry_update_name(session_manager, &mut ctx, group_id)?;
-                let snapshot = group_manager
-                    .group(group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown group."))?;
-                let target_owner_hexes = sorted_owner_hexes(
-                    &snapshot
-                        .members
-                        .iter()
-                        .copied()
-                        .filter(|member| *member != logged_in.owner_pubkey)
-                        .collect::<Vec<_>>(),
-                );
-                Ok((snapshot, target_owner_hexes, prepared))
-            }
-            PendingGroupControlKind::AddMembers { member_owner_hexes } => {
-                let members = owner_pubkeys_from_hexes(member_owner_hexes)?;
-                let prepared = group_manager.retry_add_members(
-                    session_manager,
-                    &mut ctx,
-                    group_id,
-                    members,
-                )?;
-                let snapshot = group_manager
-                    .group(group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown group."))?;
-                let target_owner_hexes = sorted_owner_hexes(
-                    &snapshot
-                        .members
-                        .iter()
-                        .copied()
-                        .filter(|member| *member != logged_in.owner_pubkey)
-                        .collect::<Vec<_>>(),
-                );
-                Ok((snapshot, target_owner_hexes, prepared))
-            }
-            PendingGroupControlKind::RemoveMember { owner_pubkey_hex } => {
-                let owner = parse_owner_input(owner_pubkey_hex)?;
-                let prepared = group_manager.retry_remove_members(
-                    session_manager,
-                    &mut ctx,
-                    group_id,
-                    vec![owner],
-                )?;
-                let snapshot = group_manager
-                    .group(group_id)
-                    .ok_or_else(|| anyhow::anyhow!("Unknown group."))?;
-                let mut targets = snapshot
-                    .members
-                    .iter()
-                    .copied()
-                    .filter(|member| *member != logged_in.owner_pubkey)
-                    .map(|member| member.to_string())
-                    .collect::<HashSet<_>>();
-                if owner != logged_in.owner_pubkey {
-                    targets.insert(owner.to_string());
-                }
-                Ok((snapshot, sorted_hexes(targets), prepared))
-            }
-        }
-    }
-
-    pub(super) fn apply_group_snapshot_to_threads(
-        &mut self,
-        group: &GroupSnapshot,
-        updated_at_secs: u64,
-    ) {
-        let chat_id = group_chat_id(&group.group_id);
-        let thread = self.ensure_thread_record(&chat_id, updated_at_secs);
-        thread.updated_at_secs = thread.updated_at_secs.max(updated_at_secs);
-    }
-
-    pub(super) fn apply_group_snapshot_to_threads_with_notices(
-        &mut self,
-        previous: Option<&GroupSnapshot>,
-        group: &GroupSnapshot,
-        updated_at_secs: u64,
-    ) {
-        self.apply_group_snapshot_to_threads(group, updated_at_secs);
-        let chat_id = group_chat_id(&group.group_id);
-        for notice in self.group_metadata_notices(previous, group) {
-            self.push_system_notice(&chat_id, notice, updated_at_secs);
-        }
-    }
-
-    pub(super) fn group_metadata_notices(
-        &self,
-        previous: Option<&GroupSnapshot>,
-        group: &GroupSnapshot,
-    ) -> Vec<String> {
-        let Some(previous) = previous else {
-            return Vec::new();
-        };
-        let mut notices = Vec::new();
-        if previous.name != group.name {
-            notices.push(format!("Group renamed to {}", group.name));
-        }
-
-        let previous_members = previous.members.iter().copied().collect::<HashSet<_>>();
-        let current_members = group.members.iter().copied().collect::<HashSet<_>>();
-        let mut added = current_members
-            .difference(&previous_members)
-            .copied()
-            .collect::<Vec<_>>();
-        let mut removed = previous_members
-            .difference(&current_members)
-            .copied()
-            .collect::<Vec<_>>();
-        added.sort_by_key(|owner| owner.to_string());
-        removed.sort_by_key(|owner| owner.to_string());
-
-        if !added.is_empty() {
-            notices.push(format!(
-                "{} added",
-                self.group_notice_owner_list(added.as_slice())
-            ));
-        }
-        if !removed.is_empty() {
-            notices.push(format!(
-                "{} removed",
-                self.group_notice_owner_list(removed.as_slice())
-            ));
-        }
-        notices
-    }
-
-    fn group_notice_owner_list(&self, owners: &[OwnerPubkey]) -> String {
-        match owners {
-            [] => String::new(),
-            [owner] => self.owner_display_label(&owner.to_string()),
-            owners => format!("{} members", owners.len()),
-        }
-    }
-
-    pub(super) fn queue_pending_group_control(
-        &mut self,
-        operation_id: String,
-        group_id: String,
-        target_owner_hexes: Vec<String>,
-        prepared_publish: Option<PreparedPublishBatch>,
-        reason: PendingSendReason,
-        next_retry_at_secs: u64,
-        kind: PendingGroupControlKind,
-    ) {
-        self.pending_group_controls.push(PendingGroupControl {
-            operation_id,
-            group_id,
-            target_owner_hexes,
-            prepared_publish,
-            reason,
-            next_retry_at_secs,
-            in_flight: false,
-            kind,
-        });
-    }
-
-    pub(super) fn set_pending_group_control_in_flight(
-        &mut self,
-        operation_id: &str,
-        in_flight: bool,
-    ) {
-        if let Some(pending) = self
-            .pending_group_controls
-            .iter_mut()
-            .find(|pending| pending.operation_id == operation_id)
-        {
-            pending.in_flight = in_flight;
-        }
-    }
-
-    pub(super) fn start_group_control_publish(
-        &mut self,
-        operation_id: String,
-        publish_mode: OutboundPublishMode,
-        batch: PreparedPublishBatch,
-    ) {
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return;
-        };
-
-        for event in batch
-            .invite_events
-            .iter()
-            .chain(batch.message_events.iter())
-        {
-            self.remember_event(event.id.to_string());
-        }
-
-        let tx = self.core_sender.clone();
-        match publish_mode {
-            OutboundPublishMode::OrdinaryFirstAck => {
-                self.runtime.spawn(async move {
-                    let success = publish_events_first_ack(
-                        &client,
-                        &relay_urls,
-                        &batch.message_events,
-                        "group control",
-                    )
-                    .await
-                    .is_ok();
-                    let _ = tx.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::GroupControlPublishFinished {
-                            operation_id,
-                            success,
-                        },
-                    )));
-                });
-            }
-            OutboundPublishMode::FirstContactStaged => {
-                self.runtime.spawn(async move {
-                    let invite_publish = publish_events_with_retry(
-                        &client,
-                        &relay_urls,
-                        batch.invite_events,
-                        "group control",
-                    )
-                    .await;
-                    if invite_publish.is_err() {
-                        let _ = tx.send(CoreMsg::Internal(Box::new(
-                            InternalEvent::GroupControlPublishFinished {
-                                operation_id,
-                                success: false,
-                            },
-                        )));
-                        return;
-                    }
-
-                    sleep(Duration::from_millis(FIRST_CONTACT_STAGE_DELAY_MS)).await;
-                    let success = publish_events_with_retry(
-                        &client,
-                        &relay_urls,
-                        batch.message_events,
-                        "group control",
-                    )
-                    .await
-                    .is_ok();
-                    let _ = tx.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::GroupControlPublishFinished {
-                            operation_id,
-                            success,
-                        },
-                    )));
-                });
-            }
-            OutboundPublishMode::WaitForPeer => {}
-        }
-    }
-
-    pub(super) fn start_best_effort_publish(
-        &mut self,
-        label: &'static str,
-        batch: PreparedPublishBatch,
-    ) {
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return;
-        };
-        if batch.message_events.is_empty() {
-            return;
-        }
-
-        for event in batch
-            .invite_events
-            .iter()
-            .chain(batch.message_events.iter())
-        {
-            self.remember_event(event.id.to_string());
-        }
-
-        let tx = self.core_sender.clone();
-        match publish_mode_for_batch(&batch) {
-            OutboundPublishMode::OrdinaryFirstAck => {
-                self.runtime.spawn(async move {
-                    let success = publish_events_first_ack(
-                        &client,
-                        &relay_urls,
-                        &batch.message_events,
-                        label,
-                    )
-                    .await
-                    .is_ok();
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "publish.best_effort".to_string(),
-                        detail: format!("label={label} success={success}"),
-                    })));
-                });
-            }
-            OutboundPublishMode::FirstContactStaged => {
-                self.runtime.spawn(async move {
-                    let success = if publish_events_with_retry(
-                        &client,
-                        &relay_urls,
-                        batch.invite_events,
-                        label,
-                    )
-                    .await
-                    .is_ok()
-                    {
-                        sleep(Duration::from_millis(FIRST_CONTACT_STAGE_DELAY_MS)).await;
-                        publish_events_with_retry(&client, &relay_urls, batch.message_events, label)
-                            .await
-                            .is_ok()
-                    } else {
-                        false
-                    };
-                    let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "publish.best_effort".to_string(),
-                        detail: format!("label={label} success={success}"),
-                    })));
-                });
-            }
-            OutboundPublishMode::WaitForPeer => {}
-        }
-    }
-
-    pub(super) fn publish_group_local_sibling_best_effort(
-        &mut self,
-        prepared: &nostr_double_ratchet::GroupPreparedSend,
-    ) {
-        match build_group_local_sibling_publish_batch(prepared) {
-            Ok(Some(batch)) => self.start_best_effort_publish("group sibling sync", batch),
-            Ok(None) => {}
-            Err(error) => self.state.toast = Some(error.to_string()),
-        }
-    }
-
     pub(super) fn update_group_name(&mut self, group_id: &str, name: &str) {
-        self.run_group_control(
-            group_id,
-            PendingGroupControlKind::Rename {
-                name: name.trim().to_string(),
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            self.state.toast = Some("Group name is required.".to_string());
+            self.emit_state();
+            return;
+        }
+        let Some(local_owner_hex) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex())
+        else {
+            return;
+        };
+        let Some(group) = self.groups.get(group_id).cloned() else {
+            self.state.toast = Some("Unknown group.".to_string());
+            self.emit_state();
+            return;
+        };
+        let Some(updated) = update_group_data(
+            &group,
+            &GroupUpdate {
+                name: Some(trimmed.to_string()),
+                description: None,
+                picture: None,
             },
-        );
+            &local_owner_hex,
+        ) else {
+            self.state.toast = Some("Only group admins can edit the group.".to_string());
+            self.emit_state();
+            return;
+        };
+        self.apply_local_group_update(group_id, updated, Some("group.rename"));
     }
 
     pub(super) fn add_group_members(&mut self, group_id: &str, member_inputs: &[String]) {
@@ -605,203 +141,298 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.owner_pubkey)
         else {
-            self.state.toast = Some("Create or restore an account first.".to_string());
+            return;
+        };
+        let Some(group) = self.groups.get(group_id).cloned() else {
+            self.state.toast = Some("Unknown group.".to_string());
             self.emit_state();
             return;
         };
         let member_owners = match parse_owner_inputs(member_inputs, local_owner) {
             Ok(member_owners) if !member_owners.is_empty() => member_owners,
-            Ok(_) => {
-                self.state.toast = Some("Pick at least one member to add.".to_string());
-                self.emit_state();
-                return;
-            }
+            Ok(_) => return,
             Err(error) => {
                 self.state.toast = Some(error.to_string());
                 self.emit_state();
                 return;
             }
         };
-        self.run_group_control(
-            group_id,
-            PendingGroupControlKind::AddMembers {
-                member_owner_hexes: sorted_owner_hexes(&member_owners),
-            },
-        );
+
+        let mut updated = group;
+        for owner in &member_owners {
+            let Some(next) = add_group_member(&updated, &owner.to_hex(), &local_owner.to_hex())
+            else {
+                continue;
+            };
+            updated = next;
+            if let Some(logged_in) = self.logged_in.as_ref() {
+                let _ = logged_in.ndr_runtime.setup_user(*owner);
+            }
+        }
+        self.apply_local_group_update(group_id, updated, Some("group.add_members"));
     }
 
     pub(super) fn remove_group_member(&mut self, group_id: &str, owner_pubkey_hex: &str) {
-        let Ok((owner_pubkey_hex, _)) = parse_peer_input(owner_pubkey_hex) else {
-            self.state.toast = Some("Invalid member key.".to_string());
-            self.emit_state();
+        let Some(local_owner) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
             return;
         };
-        self.run_group_control(
-            group_id,
-            PendingGroupControlKind::RemoveMember { owner_pubkey_hex },
-        );
-    }
-
-    pub(super) fn run_group_control(&mut self, group_id: &str, kind: PendingGroupControlKind) {
-        if self.logged_in.is_none() {
-            self.state.toast = Some("Create or restore an account first.".to_string());
-            self.emit_state();
-            return;
-        }
-        if !self.can_use_chats() {
-            self.state.toast = Some(chat_unavailable_message(self.logged_in.as_ref()).to_string());
-            self.emit_state();
-            return;
-        }
-
-        let Some(group_id) = normalize_group_id(group_id) else {
+        let Some(group) = self.groups.get(group_id).cloned() else {
             self.state.toast = Some("Unknown group.".to_string());
             self.emit_state();
             return;
         };
+        let Ok(owner) = parse_owner_input(owner_pubkey_hex) else {
+            self.state.toast = Some("Invalid member key.".to_string());
+            self.emit_state();
+            return;
+        };
+        let Some(updated) = remove_group_member(&group, &owner.to_hex(), &local_owner.to_hex())
+        else {
+            self.state.toast = Some("Only group admins can remove members.".to_string());
+            self.emit_state();
+            return;
+        };
+        self.apply_local_group_update(group_id, updated, Some("group.remove_member"));
+    }
+
+    fn apply_local_group_update(
+        &mut self,
+        group_id: &str,
+        group: GroupData,
+        debug_category: Option<&'static str>,
+    ) {
         self.state.busy.updating_group = true;
         self.emit_state();
 
-        let now = unix_now();
-        let previous_group = self
-            .logged_in
-            .as_ref()
-            .and_then(|logged_in| logged_in.group_manager.group(&group_id));
-        let control_result = self.prepare_group_control(&group_id, &kind, now);
-        match control_result {
-            Ok((snapshot, target_owner_hexes, prepared)) => {
-                self.apply_group_snapshot_to_threads_with_notices(
-                    previous_group.as_ref(),
-                    &snapshot,
-                    now.get(),
-                );
-                self.publish_group_local_sibling_best_effort(&prepared);
-                if let Some(reason) = pending_reason_from_group_prepared(&prepared) {
-                    let operation_id = self.allocate_message_id();
-                    self.queue_pending_group_control(
-                        operation_id,
-                        group_id,
-                        target_owner_hexes,
-                        None,
-                        reason.clone(),
-                        now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
-                        kind,
-                    );
-                    self.nudge_protocol_state_for_pending_reason(&reason);
-                } else {
-                    match build_group_prepared_publish_batch(&prepared, None) {
-                        Ok(Some(batch)) => {
-                            let operation_id = self.allocate_message_id();
-                            let publish_mode = publish_mode_for_batch(&batch);
-                            self.queue_pending_group_control(
-                                operation_id.clone(),
-                                group_id.clone(),
-                                target_owner_hexes,
-                                Some(batch.clone()),
-                                pending_reason_for_publish_mode(&publish_mode),
-                                retry_deadline_for_publish_mode(now.get(), &publish_mode),
-                                kind.clone(),
-                            );
-                            self.set_pending_group_control_in_flight(&operation_id, true);
-                            self.start_group_control_publish(operation_id, publish_mode, batch);
-                        }
-                        Ok(None) => {}
-                        Err(error) => self.state.toast = Some(error.to_string()),
-                    }
-                }
-
-                self.request_protocol_subscription_refresh();
-                self.schedule_tracked_peer_catch_up(Duration::from_secs(
-                    RESUBSCRIBE_CATCH_UP_DELAY_SECS,
-                ));
-            }
-            Err(error) => self.state.toast = Some(error.to_string()),
+        let previous = self.groups.get(group_id).cloned();
+        self.groups.insert(group.id.clone(), group.clone());
+        self.apply_group_snapshot_to_threads(&group, unix_now().get());
+        self.sync_runtime_groups();
+        if let Some(category) = debug_category {
+            self.push_debug_log(category, group.id.clone());
         }
+        self.fanout_group_metadata(group.clone(), None);
+        self.apply_group_metadata_notice(previous.as_ref(), &group);
+        self.request_protocol_subscription_refresh();
 
-        self.schedule_next_pending_retry(now.get());
         self.state.busy.updating_group = false;
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
     }
 
-    pub(super) fn retry_pending_group_controls(&mut self, now: UnixSeconds) {
-        if self.logged_in.is_none() || self.pending_group_controls.is_empty() {
+    pub(super) fn fanout_group_metadata(
+        &mut self,
+        group: GroupData,
+        exclude_secret_for: Option<String>,
+    ) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
             return;
+        };
+        let result =
+            logged_in
+                .ndr_runtime
+                .with_group_context(|session_manager, group_manager, _| {
+                    let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
+                        session_manager
+                            .send_event(recipient, rumor.clone())
+                            .map(|_| ())
+                    };
+                    group_manager.fan_out_group_metadata(
+                        group,
+                        FanoutGroupMetadataOptions {
+                            send_pairwise: &mut send_pairwise,
+                            exclude_secret_for: exclude_secret_for.as_deref(),
+                            now_ms: Some(unix_now().get().saturating_mul(1000)),
+                        },
+                    )
+                });
+        if let Err(error) = result {
+            self.push_debug_log("group.metadata.fanout.error", error.to_string());
         }
+        self.process_runtime_events();
+    }
 
-        let pending = std::mem::take(&mut self.pending_group_controls);
-        let mut still_pending = Vec::new();
+    pub(super) fn apply_group_snapshot_to_threads(
+        &mut self,
+        group: &GroupData,
+        updated_at_secs: u64,
+    ) {
+        self.ensure_thread_record(&group_chat_id(&group.id), updated_at_secs);
+    }
 
-        for mut control in pending {
-            if control.next_retry_at_secs > now.get() || control.in_flight {
-                still_pending.push(control);
-                continue;
+    pub(super) fn apply_group_metadata_rumor(
+        &mut self,
+        sender_owner: PublicKey,
+        event: &UnsignedEvent,
+    ) {
+        let Some(metadata) = parse_group_metadata(&event.content) else {
+            return;
+        };
+        let Some(local_owner) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return;
+        };
+
+        let local_owner_hex = local_owner.to_hex();
+        let sender_hex = sender_owner.to_hex();
+        let previous = self.groups.get(&metadata.id).cloned();
+        let next = if let Some(existing) = previous.as_ref() {
+            match validate_metadata_update(existing, &metadata, &sender_hex, &local_owner_hex) {
+                MetadataValidation::Accept => apply_metadata_update(existing, &metadata),
+                MetadataValidation::Removed => {
+                    self.groups.remove(&metadata.id);
+                    self.sync_runtime_groups();
+                    self.push_system_notice(
+                        &group_chat_id(&metadata.id),
+                        "You were removed from the group.".to_string(),
+                        event.created_at.as_u64(),
+                    );
+                    return;
+                }
+                MetadataValidation::Reject => return,
             }
-
-            if let Some(batch) = control.prepared_publish.clone() {
-                control.in_flight = true;
-                let publish_mode = publish_mode_for_batch(&batch);
-                self.start_group_control_publish(control.operation_id.clone(), publish_mode, batch);
-                still_pending.push(control);
-                continue;
+        } else {
+            if !validate_metadata_creation(&metadata, &sender_hex, &local_owner_hex) {
+                return;
             }
+            GroupData {
+                id: metadata.id.clone(),
+                name: metadata.name.clone(),
+                description: metadata.description.clone(),
+                picture: metadata.picture.clone(),
+                members: metadata.members.clone(),
+                admins: metadata.admins.clone(),
+                created_at: event.created_at.as_u64().saturating_mul(1000),
+                secret: metadata.secret.clone(),
+                accepted: Some(true),
+            }
+        };
 
-            match self.rebuild_group_control(&control.group_id, &control.kind, now) {
-                Ok((snapshot, target_owner_hexes, prepared)) => {
-                    self.apply_group_snapshot_to_threads(&snapshot, now.get());
-                    control.target_owner_hexes = target_owner_hexes;
-                    self.publish_group_local_sibling_best_effort(&prepared);
-                    if let Some(reason) = pending_reason_from_group_prepared(&prepared) {
-                        self.push_debug_log(
-                            "retry.group_control.pending",
-                            format!(
-                                "group_id={} reason={reason:?} gaps={}",
-                                control.group_id,
-                                summarize_relay_gaps(&prepared.remote.relay_gaps)
-                            ),
-                        );
-                        control.reason = reason.clone();
-                        control.next_retry_at_secs =
-                            now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
-                        self.nudge_protocol_state_for_pending_reason(&reason);
-                        still_pending.push(control);
-                    } else {
-                        match build_group_prepared_publish_batch(&prepared, None) {
-                            Ok(Some(batch)) => {
-                                control.prepared_publish = Some(batch.clone());
-                                control.reason = pending_reason_for_publish_mode(
-                                    &publish_mode_for_batch(&batch),
-                                );
-                                control.next_retry_at_secs = retry_deadline_for_publish_mode(
-                                    now.get(),
-                                    &publish_mode_for_batch(&batch),
-                                );
-                                control.in_flight = true;
-                                self.start_group_control_publish(
-                                    control.operation_id.clone(),
-                                    publish_mode_for_batch(&batch),
-                                    batch,
-                                );
-                                still_pending.push(control);
-                            }
-                            Ok(None) => {
-                                control.next_retry_at_secs =
-                                    now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
-                                self.nudge_protocol_state_for_pending_reason(
-                                    &PendingSendReason::MissingDeviceInvite,
-                                );
-                                still_pending.push(control);
-                            }
-                            Err(error) => self.state.toast = Some(error.to_string()),
-                        }
+        self.groups.insert(next.id.clone(), next.clone());
+        self.apply_group_snapshot_to_threads(&next, event.created_at.as_u64());
+        self.sync_runtime_groups();
+        self.apply_group_metadata_notice(previous.as_ref(), &next);
+    }
+
+    pub(super) fn apply_group_decrypted_event(&mut self, event: GroupDecryptedEvent) {
+        let sender_owner = event.sender_owner_pubkey.unwrap_or(event.inner.pubkey);
+        let kind = event.inner.kind.as_u16() as u32;
+        let created_at_secs = event.inner.created_at.as_u64();
+        let expires_at_secs = message_expiration_from_tags(event.inner.tags.iter());
+        let chat_id = group_chat_id(&event.group_id);
+        let message_id = event
+            .inner
+            .id
+            .as_ref()
+            .map(ToString::to_string)
+            .or_else(|| Some(event.outer_event_id.clone()));
+        let is_outgoing = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| sender_owner == logged_in.owner_pubkey)
+            .unwrap_or(false);
+
+        match kind {
+            GROUP_METADATA_KIND => self.apply_group_metadata_rumor(sender_owner, &event.inner),
+            CHAT_MESSAGE_KIND => {
+                self.apply_runtime_text_message(
+                    sender_owner,
+                    Some(chat_id.clone()),
+                    event.inner.content.clone(),
+                    created_at_secs,
+                    expires_at_secs,
+                    message_id.clone(),
+                );
+                if !is_outgoing && self.preferences.send_read_receipts {
+                    if let Some(message_id) = message_id {
+                        self.send_group_receipt(&chat_id, "delivered", vec![message_id]);
                     }
                 }
-                Err(error) => self.state.toast = Some(error.to_string()),
+            }
+            REACTION_KIND => {
+                for message_id in event_message_ids(&event.inner) {
+                    self.apply_incoming_reaction_to_chat(
+                        &chat_id,
+                        &message_id,
+                        &event.inner.content,
+                    );
+                }
+            }
+            RECEIPT_KIND => {
+                let delivery = match event.inner.content.as_str() {
+                    "seen" => DeliveryState::Seen,
+                    _ => DeliveryState::Received,
+                };
+                self.apply_receipt_to_messages(
+                    &chat_id,
+                    &event_message_ids(&event.inner),
+                    delivery,
+                    is_outgoing,
+                );
+            }
+            TYPING_KIND => {
+                if !is_outgoing {
+                    self.set_typing_indicator(chat_id, sender_owner.to_hex(), created_at_secs);
+                }
+            }
+            CHAT_SETTINGS_KIND => {
+                let actor = self.owner_display_label(&sender_owner.to_hex());
+                self.apply_chat_settings_control(
+                    &chat_id,
+                    &actor,
+                    chat_settings_ttl_seconds(&event.inner.content),
+                    created_at_secs,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    fn send_group_receipt(&mut self, chat_id: &str, receipt_type: &str, message_ids: Vec<String>) {
+        let tags = message_ids
+            .into_iter()
+            .map(|id| vec!["e".to_string(), id])
+            .collect();
+        self.send_group_event(chat_id, RECEIPT_KIND, receipt_type, tags, None);
+    }
+
+    fn apply_group_metadata_notice(&mut self, previous: Option<&GroupData>, group: &GroupData) {
+        let chat_id = group_chat_id(&group.id);
+        let now = unix_now().get();
+        match previous {
+            None => {
+                self.push_system_notice(&chat_id, format!("Group created: {}", group.name), now);
+            }
+            Some(previous) if previous.name != group.name => {
+                self.push_system_notice(&chat_id, format!("Group renamed to {}", group.name), now);
+            }
+            Some(previous) if previous.members != group.members => {
+                self.push_system_notice(
+                    &chat_id,
+                    format!("Group members updated: {} members", group.members.len()),
+                    now,
+                );
+            }
+            _ => {}
+        }
+    }
+
+    pub(super) fn sync_runtime_groups(&mut self) {
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            if let Err(error) = logged_in
+                .ndr_runtime
+                .sync_groups(self.groups.values().cloned().collect())
+            {
+                self.push_debug_log("group.sync.error", error.to_string());
             }
         }
-
-        self.pending_group_controls = still_pending;
-        self.schedule_next_pending_retry(now.get());
     }
 }

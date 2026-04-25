@@ -10,18 +10,22 @@ use crate::state::{
 };
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;
-use nostr::EventBuilder;
+use nostr::{EventBuilder, UnsignedEvent};
 use nostr_double_ratchet::{
-    DevicePubkey, DeviceRoster, DomainError, Error, GroupIncomingEvent, GroupManager,
-    GroupManagerSnapshot, GroupSnapshot, Invite, MessageEnvelope, OwnerPubkey, ProtocolContext,
-    RelayGap, RosterEditor, SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds,
+    add_group_member, apply_metadata_update, build_direct_message_backfill_filter,
+    is_app_keys_event, parse_group_metadata, remove_group_member, update_group_data,
+    validate_metadata_creation, validate_metadata_update, AppKeys, CreateGroupOptions, DeviceEntry,
+    DirectMessageSubscriptionTracker, FanoutGroupMetadataOptions, FileStorageAdapter, GroupData,
+    GroupDecryptedEvent, GroupSendEvent, GroupUpdate, Invite, MetadataValidation, NdrRuntime,
+    SendOptions, SessionManagerEvent, SessionState, StorageAdapter, APP_KEYS_EVENT_KIND,
+    CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_METADATA_KIND, GROUP_SENDER_KEY_DISTRIBUTION_KIND,
+    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
+    TYPING_KIND,
 };
-use nostr_double_ratchet_nostr::nostr as codec;
 use nostr_sdk::prelude::{
-    Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, RelayUrl, SecretKey,
-    SubscriptionId, Timestamp, ToBech32,
+    Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, RelayUrl, SubscriptionId,
+    Timestamp, ToBech32,
 };
-use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
@@ -56,6 +60,19 @@ mod support;
 #[cfg(test)]
 mod tests;
 
+type OwnerPubkey = PublicKey;
+type DevicePubkey = PublicKey;
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+pub(super) struct UnixSeconds(u64);
+
+impl UnixSeconds {
+    pub(super) fn get(self) -> u64 {
+        self.0
+    }
+}
+
+use account::{known_app_keys_from_ndr, known_app_keys_to_ndr};
 use attachments::*;
 use config::*;
 pub(crate) use config::{build_summary, configured_relays, relay_set_id, trusted_test_build_flag};
@@ -86,10 +103,9 @@ pub struct AppCore {
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,
     next_message_id: u64,
-    pending_inbound: Vec<PendingInbound>,
-    pending_outbound: Vec<PendingOutbound>,
-    pending_group_controls: Vec<PendingGroupControl>,
     owner_profiles: BTreeMap<String, OwnerProfileRecord>,
+    app_keys: BTreeMap<String, KnownAppKeys>,
+    groups: BTreeMap<String, GroupData>,
     typing_indicators: BTreeMap<String, TypingIndicatorRecord>,
     chat_message_ttl_seconds: BTreeMap<String, u64>,
     preferences: PreferencesSnapshot,
@@ -98,6 +114,7 @@ pub struct AppCore {
     seen_event_order: VecDeque<String>,
     device_invite_poll_token: u64,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
+    direct_message_subscriptions: DirectMessageSubscriptionTracker,
     debug_log: VecDeque<DebugLogEntry>,
     debug_event_counters: DebugEventCounters,
 }

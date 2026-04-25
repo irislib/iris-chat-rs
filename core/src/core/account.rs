@@ -26,32 +26,11 @@ impl AppCore {
             return;
         }
 
-        let now = unix_now();
         self.push_debug_log("app.foreground", "refresh relay session");
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced();
         self.fetch_recent_protocol_state();
-        self.fetch_recent_messages_for_tracked_peers(now);
-        if self.can_poll_pending_device_invites() {
-            self.fetch_pending_device_invites_for_local_owner();
-            self.schedule_pending_device_invite_poll(Duration::from_secs(
-                DEVICE_INVITE_DISCOVERY_POLL_SECS,
-            ));
-        }
-
-        for pending in &mut self.pending_outbound {
-            if !pending.in_flight {
-                pending.next_retry_at_secs = now.get();
-            }
-        }
-        for pending in &mut self.pending_group_controls {
-            if !pending.in_flight {
-                pending.next_retry_at_secs = now.get();
-            }
-        }
-        self.retry_pending_outbound(now);
-        self.retry_pending_group_controls(now);
-        self.schedule_next_pending_retry(now.get());
+        self.fetch_recent_messages_for_tracked_peers(unix_now());
         self.state.busy.syncing_network = true;
         self.rebuild_state();
         self.persist_best_effort();
@@ -103,8 +82,7 @@ impl AppCore {
                 Some(secret) => {
                     let keys = Keys::parse(secret.trim())
                         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                    let derived_owner = OwnerPubkey::from_bytes(keys.public_key().to_bytes());
-                    if derived_owner != owner_pubkey {
+                    if keys.public_key() != owner_pubkey {
                         return Err(anyhow::anyhow!(
                             "stored owner secret does not match stored owner pubkey"
                         ));
@@ -162,15 +140,15 @@ impl AppCore {
         self.threads.clear();
         self.active_chat_id = None;
         self.screen_stack.clear();
-        self.pending_inbound.clear();
-        self.pending_outbound.clear();
-        self.pending_group_controls.clear();
         self.owner_profiles.clear();
+        self.app_keys.clear();
+        self.groups.clear();
         self.chat_message_ttl_seconds.clear();
         self.recent_handshake_peers.clear();
         self.seen_event_ids.clear();
         self.seen_event_order.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+        self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
         self.next_message_id = 1;
         self.state = AppState::empty();
         self.state.rev = previous_rev;
@@ -195,38 +173,12 @@ impl AppCore {
             self.emit_state();
             return;
         };
-        if device_pubkey == local_device_from_keys(&logged_in.device_keys) {
-            self.state.toast = Some("The current device is already authorized.".to_string());
-            self.emit_state();
-            return;
-        }
 
-        self.state.busy.updating_roster = true;
-        self.emit_state();
-
-        let now = unix_now();
-        let updated_roster = {
-            let logged_in = self.logged_in.as_mut().expect("checked above");
-            let current_roster = local_roster_from_session_manager(&logged_in.session_manager);
-            let mut editor = RosterEditor::from_roster(current_roster.as_ref());
-            editor.authorize_device(device_pubkey, now);
-            let roster = editor.build(now);
-            logged_in.session_manager.apply_local_roster(roster.clone());
-            logged_in.authorization_state = derive_local_authorization_state(
-                logged_in.owner_keys.is_some(),
-                logged_in.owner_pubkey,
-                local_device_from_keys(&logged_in.device_keys),
-                &logged_in.session_manager,
-                Some(logged_in.authorization_state),
-            );
-            roster
-        };
-
-        self.publish_roster_update(updated_roster);
-        self.request_protocol_subscription_refresh();
-        self.persist_best_effort();
-        self.state.busy.updating_roster = false;
+        let owner_pubkey = logged_in.owner_pubkey;
+        self.upsert_local_app_key_device(owner_pubkey, device_pubkey);
+        self.publish_local_app_keys();
         self.rebuild_state();
+        self.persist_best_effort();
         self.emit_state();
     }
 
@@ -247,38 +199,16 @@ impl AppCore {
             self.emit_state();
             return;
         };
-        if device_pubkey == local_device_from_keys(&logged_in.device_keys) {
+        if device_pubkey == logged_in.device_keys.public_key() {
             self.state.toast = Some("The current device cannot remove itself.".to_string());
             self.emit_state();
             return;
         }
 
-        self.state.busy.updating_roster = true;
-        self.emit_state();
-
-        let now = unix_now();
-        let updated_roster = {
-            let logged_in = self.logged_in.as_mut().expect("checked above");
-            let current_roster = local_roster_from_session_manager(&logged_in.session_manager);
-            let mut editor = RosterEditor::from_roster(current_roster.as_ref());
-            editor.revoke_device(device_pubkey);
-            let roster = editor.build(now);
-            logged_in.session_manager.apply_local_roster(roster.clone());
-            logged_in.authorization_state = derive_local_authorization_state(
-                logged_in.owner_keys.is_some(),
-                logged_in.owner_pubkey,
-                local_device_from_keys(&logged_in.device_keys),
-                &logged_in.session_manager,
-                Some(logged_in.authorization_state),
-            );
-            roster
-        };
-
-        self.publish_roster_update(updated_roster);
-        self.request_protocol_subscription_refresh();
-        self.persist_best_effort();
-        self.state.busy.updating_roster = false;
+        self.remove_local_app_key_device(logged_in.owner_pubkey, device_pubkey);
+        self.publish_local_app_keys();
         self.rebuild_state();
+        self.persist_best_effort();
         self.emit_state();
     }
 
@@ -302,16 +232,16 @@ impl AppCore {
         allow_restore: bool,
         allow_protocol_restore: bool,
     ) -> anyhow::Result<()> {
+        let owner_pubkey = owner_keys.public_key();
         self.push_debug_log(
             "session.start_primary",
             format!(
                 "owner_pubkey={} allow_restore={} allow_protocol_restore={}",
-                owner_keys.public_key().to_hex(),
+                owner_pubkey.to_hex(),
                 allow_restore,
                 allow_protocol_restore,
             ),
         );
-        let owner_pubkey = OwnerPubkey::from_bytes(owner_keys.public_key().to_bytes());
         self.start_session(
             owner_pubkey,
             Some(owner_keys),
@@ -327,16 +257,15 @@ impl AppCore {
         owner_keys: Option<Keys>,
         device_keys: Keys,
         allow_restore: bool,
-        allow_protocol_restore: bool,
+        _allow_protocol_restore: bool,
     ) -> anyhow::Result<()> {
         self.push_debug_log(
             "session.start",
             format!(
-                "owner={} has_owner_keys={} allow_restore={} allow_protocol_restore={}",
-                owner_pubkey,
+                "owner={} has_owner_keys={} allow_restore={}",
+                owner_pubkey.to_hex(),
                 owner_keys.is_some(),
                 allow_restore,
-                allow_protocol_restore,
             ),
         );
         if let Some(existing) = self.logged_in.take() {
@@ -348,26 +277,22 @@ impl AppCore {
         }
 
         self.threads.clear();
-        self.pending_inbound.clear();
         self.active_chat_id = None;
         self.screen_stack.clear();
-        self.pending_outbound.clear();
-        self.pending_group_controls.clear();
         self.owner_profiles.clear();
+        self.app_keys.clear();
+        self.groups.clear();
         self.chat_message_ttl_seconds.clear();
         self.recent_handshake_peers.clear();
         self.seen_event_ids.clear();
         self.seen_event_order.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+        self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
         self.debug_log.clear();
         self.debug_event_counters = DebugEventCounters::default();
         self.next_message_id = 1;
-        self.chat_message_ttl_seconds.clear();
 
-        let device_secret_bytes = device_keys.secret_key().to_secret_bytes();
-        let local_device = DevicePubkey::from_bytes(device_keys.public_key().to_bytes());
         let now = unix_now();
-
         let persisted = if allow_restore {
             match self.load_persisted() {
                 Ok(persisted) => persisted,
@@ -386,10 +311,6 @@ impl AppCore {
             "session.restore_state",
             format!("persisted_present={}", persisted.is_some()),
         );
-        let persisted_authorization_state = persisted
-            .as_ref()
-            .and_then(|persisted| persisted.authorization_state.clone())
-            .map(Into::into);
 
         if let Some(persisted) = &persisted {
             self.active_chat_id = persisted.active_chat_id.clone();
@@ -410,38 +331,29 @@ impl AppCore {
                 persisted.preferences.image_proxy_key_hex.clone();
             self.preferences.image_proxy_salt_hex =
                 persisted.preferences.image_proxy_salt_hex.clone();
-            if allow_protocol_restore {
-                self.pending_outbound = persisted.pending_outbound.clone();
-                for pending in &mut self.pending_outbound {
-                    pending.publish_mode = migrate_publish_mode(
-                        pending.publish_mode.clone(),
-                        pending.prepared_publish.as_ref(),
-                    );
-                    if pending.in_flight {
-                        pending.in_flight = false;
-                        pending.next_retry_at_secs = now.get();
-                    }
-                }
-                self.pending_group_controls = persisted.pending_group_controls.clone();
-                for pending in &mut self.pending_group_controls {
-                    if pending.in_flight {
-                        pending.in_flight = false;
-                        pending.next_retry_at_secs = now.get();
-                    }
-                }
-                self.pending_inbound = persisted.pending_inbound.clone();
-                self.seen_event_order = persisted
-                    .seen_event_ids
-                    .iter()
-                    .rev()
-                    .take(MAX_SEEN_EVENT_IDS)
-                    .cloned()
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect();
-                self.seen_event_ids = self.seen_event_order.iter().cloned().collect();
-            }
+            self.seen_event_order = persisted
+                .seen_event_ids
+                .iter()
+                .rev()
+                .take(MAX_SEEN_EVENT_IDS)
+                .cloned()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
+            self.seen_event_ids = self.seen_event_order.iter().cloned().collect();
+            self.app_keys = persisted
+                .app_keys
+                .iter()
+                .cloned()
+                .map(|entry| (entry.owner_pubkey_hex.clone(), entry))
+                .collect();
+            self.groups = persisted
+                .groups
+                .iter()
+                .cloned()
+                .map(|group| (group.id.clone(), group))
+                .collect();
             self.threads = persisted
                 .threads
                 .iter()
@@ -490,69 +402,50 @@ impl AppCore {
                 .collect();
         }
 
-        let persisted_session_manager = persisted.as_ref().and_then(|persisted| {
-            if allow_protocol_restore {
-                persisted.session_manager.clone()
-            } else {
-                None
-            }
-        });
-
-        let mut session_manager = persisted_session_manager
-            .filter(|snapshot| {
-                snapshot.local_owner_pubkey == owner_pubkey
-                    && snapshot.local_device_pubkey == local_device
-            })
-            .map(|snapshot| SessionManager::from_snapshot(snapshot, device_secret_bytes))
-            .transpose()?
-            .unwrap_or_else(|| SessionManager::new(owner_pubkey, device_secret_bytes));
-
-        let group_manager = persisted
+        let previous_authorization_state = persisted
             .as_ref()
-            .and_then(|persisted| persisted.group_manager.clone())
-            .filter(|snapshot| snapshot.local_owner_pubkey == owner_pubkey)
-            .map(GroupManager::from_snapshot)
-            .transpose()?
-            .unwrap_or_else(|| GroupManager::new(owner_pubkey));
+            .and_then(|state| state.authorization_state.clone())
+            .map(LocalAuthorizationState::from);
 
-        let existing_local_roster = session_manager
-            .snapshot()
-            .users
-            .into_iter()
-            .find(|user| user.owner_pubkey == owner_pubkey)
-            .and_then(|user| user.roster);
-        if owner_keys.is_some() && existing_local_roster.is_none() {
-            let mut roster_editor = RosterEditor::new();
-            roster_editor.authorize_device(local_device, now);
-            session_manager.apply_local_roster(roster_editor.build(now));
+        let device_pubkey = device_keys.public_key();
+        if owner_keys.is_some() {
+            self.upsert_local_app_key_device(owner_pubkey, device_pubkey);
         }
 
-        let authorization_state = derive_local_authorization_state(
-            owner_keys.is_some(),
+        let storage = Arc::new(FileStorageAdapter::new(
+            self.ndr_storage_dir(owner_pubkey, device_pubkey),
+        )?) as Arc<dyn StorageAdapter>;
+        let device_id = device_pubkey.to_hex();
+        let local_invite =
+            load_or_create_local_invite(storage.as_ref(), device_pubkey, &device_id, owner_pubkey)?;
+        let ndr_runtime = NdrRuntime::new(
+            device_pubkey,
+            device_keys.secret_key().to_secret_bytes(),
+            device_id,
             owner_pubkey,
-            local_device,
-            &session_manager,
-            persisted_authorization_state,
+            Some(storage),
+            Some(local_invite.clone()),
         );
-        self.push_debug_log(
-            "session.authorization",
-            format!("state={authorization_state:?} owner={owner_pubkey} device={local_device}"),
-        );
+        ndr_runtime.init()?;
+        ndr_runtime.set_auto_adopt_chat_settings(true);
 
-        if authorization_state != LocalAuthorizationState::Revoked {
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(now, &mut rng);
-            session_manager.ensure_local_invite(&mut ctx)?;
+        for app_keys in self.app_keys.values() {
+            if let (Ok(owner), Some(keys)) = (
+                PublicKey::parse(&app_keys.owner_pubkey_hex),
+                known_app_keys_to_ndr(app_keys),
+            ) {
+                ndr_runtime.ingest_app_keys_snapshot(owner, keys, app_keys.created_at_secs);
+            }
         }
+        ndr_runtime.sync_groups(self.groups.values().cloned().collect())?;
 
-        if authorization_state != LocalAuthorizationState::Authorized {
-            self.active_chat_id = None;
-            self.screen_stack.clear();
-            self.pending_inbound.clear();
-            self.pending_outbound.clear();
-            self.pending_group_controls.clear();
-            self.chat_message_ttl_seconds.clear();
-        } else if let Some(chat_id) = self.active_chat_id.clone() {
+        let authorization_state = self.local_authorization_state(
+            owner_keys.as_ref(),
+            owner_pubkey,
+            device_pubkey,
+            previous_authorization_state,
+        );
+        if let Some(chat_id) = self.active_chat_id.clone() {
             self.screen_stack = vec![Screen::Chat { chat_id }];
         }
 
@@ -568,32 +461,182 @@ impl AppCore {
             device_keys: device_keys.clone(),
             client,
             relay_urls,
-            session_manager,
-            group_manager,
+            ndr_runtime,
+            local_invite,
             authorization_state,
         });
-        self.schedule_pending_device_invite_poll(Duration::from_secs(
-            DEVICE_INVITE_DISCOVERY_POLL_SECS,
-        ));
-        self.schedule_session_connect();
 
+        self.schedule_session_connect();
         self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
         self.republish_local_identity_artifacts();
-        self.reconcile_recent_handshake_peers();
-        self.retry_pending_inbound(now);
-        self.retry_pending_outbound(now);
-        self.retry_pending_group_controls(now);
-        self.schedule_next_pending_retry(now.get());
+        self.process_runtime_events();
+        self.request_protocol_subscription_refresh();
+        self.fetch_recent_protocol_state();
         self.state.busy.syncing_network = true;
         self.rebuild_state();
         self.persist_best_effort();
-        self.request_protocol_subscription_refresh();
-        if authorization_state != LocalAuthorizationState::Revoked {
-            self.schedule_tracked_peer_catch_up(Duration::from_secs(
-                RESUBSCRIBE_CATCH_UP_DELAY_SECS,
-            ));
-        }
         self.emit_state();
+        self.push_debug_log(
+            "session.authorization",
+            format!(
+                "state={authorization_state:?} owner={} device={}",
+                owner_pubkey.to_hex(),
+                device_pubkey.to_hex()
+            ),
+        );
+        self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
+        let _ = now;
         Ok(())
+    }
+
+    pub(super) fn upsert_local_app_key_device(&mut self, owner: PublicKey, device: PublicKey) {
+        let owner_hex = owner.to_hex();
+        let now = unix_now().get();
+        let entry = self
+            .app_keys
+            .entry(owner_hex.clone())
+            .or_insert_with(|| KnownAppKeys {
+                owner_pubkey_hex: owner_hex,
+                created_at_secs: now,
+                devices: Vec::new(),
+            });
+        if !entry
+            .devices
+            .iter()
+            .any(|existing| existing.identity_pubkey_hex == device.to_hex())
+        {
+            entry.devices.push(KnownAppKeyDevice {
+                identity_pubkey_hex: device.to_hex(),
+                created_at_secs: now,
+            });
+        }
+        entry.created_at_secs = now;
+        entry
+            .devices
+            .sort_by(|left, right| left.identity_pubkey_hex.cmp(&right.identity_pubkey_hex));
+    }
+
+    pub(super) fn remove_local_app_key_device(&mut self, owner: PublicKey, device: PublicKey) {
+        if let Some(entry) = self.app_keys.get_mut(&owner.to_hex()) {
+            entry
+                .devices
+                .retain(|candidate| candidate.identity_pubkey_hex != device.to_hex());
+            entry.created_at_secs = unix_now().get();
+        }
+    }
+
+    pub(super) fn refresh_local_authorization_state(&mut self) -> bool {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return false;
+        };
+        let previous = logged_in.authorization_state;
+        let next = self.local_authorization_state(
+            logged_in.owner_keys.as_ref(),
+            logged_in.owner_pubkey,
+            logged_in.device_keys.public_key(),
+            Some(previous),
+        );
+        if next == previous {
+            return false;
+        }
+
+        let owner_hex = logged_in.owner_pubkey.to_hex();
+        let device_hex = logged_in.device_keys.public_key().to_hex();
+        if let Some(logged_in) = self.logged_in.as_mut() {
+            logged_in.authorization_state = next;
+        }
+        self.push_debug_log(
+            "session.authorization",
+            format!("state={next:?} owner={owner_hex} device={device_hex}"),
+        );
+        true
+    }
+
+    pub(super) fn local_authorization_state(
+        &self,
+        owner_keys: Option<&Keys>,
+        owner_pubkey: PublicKey,
+        device_pubkey: PublicKey,
+        previous: Option<LocalAuthorizationState>,
+    ) -> LocalAuthorizationState {
+        if owner_keys.is_some() {
+            return LocalAuthorizationState::Authorized;
+        }
+
+        let owner_hex = owner_pubkey.to_hex();
+        let device_hex = device_pubkey.to_hex();
+        let Some(app_keys) = self.app_keys.get(&owner_hex) else {
+            return previous.unwrap_or(LocalAuthorizationState::AwaitingApproval);
+        };
+
+        let registered = app_keys
+            .devices
+            .iter()
+            .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(&device_hex));
+        if registered {
+            return LocalAuthorizationState::Authorized;
+        }
+
+        match previous {
+            Some(LocalAuthorizationState::Authorized) | Some(LocalAuthorizationState::Revoked) => {
+                LocalAuthorizationState::Revoked
+            }
+            _ => LocalAuthorizationState::AwaitingApproval,
+        }
+    }
+}
+
+fn load_or_create_local_invite(
+    storage: &dyn StorageAdapter,
+    device_pubkey: PublicKey,
+    device_id: &str,
+    owner_pubkey: PublicKey,
+) -> anyhow::Result<Invite> {
+    let storage_key = format!("device-invite/{device_id}");
+    if let Some(serialized) = storage.get(&storage_key)? {
+        if let Ok(mut invite) = Invite::deserialize(&serialized) {
+            invite.owner_public_key = Some(owner_pubkey);
+            return Ok(invite);
+        }
+    }
+
+    let mut invite = Invite::create_new(device_pubkey, Some(device_id.to_string()), None)?;
+    invite.owner_public_key = Some(owner_pubkey);
+    storage.put(&storage_key, invite.serialize()?)?;
+    Ok(invite)
+}
+
+pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> Option<AppKeys> {
+    Some(AppKeys::new(
+        known
+            .devices
+            .iter()
+            .filter_map(|device| {
+                PublicKey::parse(&device.identity_pubkey_hex)
+                    .ok()
+                    .map(|pubkey| DeviceEntry::new(pubkey, device.created_at_secs))
+            })
+            .collect(),
+    ))
+}
+
+pub(super) fn known_app_keys_from_ndr(
+    owner: PublicKey,
+    app_keys: &AppKeys,
+    created_at_secs: u64,
+) -> KnownAppKeys {
+    let mut devices = app_keys
+        .get_all_devices()
+        .into_iter()
+        .map(|device| KnownAppKeyDevice {
+            identity_pubkey_hex: device.identity_pubkey.to_hex(),
+            created_at_secs: device.created_at,
+        })
+        .collect::<Vec<_>>();
+    devices.sort_by(|left, right| left.identity_pubkey_hex.cmp(&right.identity_pubkey_hex));
+    KnownAppKeys {
+        owner_pubkey_hex: owner.to_hex(),
+        created_at_secs,
+        devices,
     }
 }

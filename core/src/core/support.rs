@@ -2,64 +2,36 @@ use super::*;
 
 impl AppCore {
     pub(super) fn build_runtime_debug_snapshot(&self) -> RuntimeDebugSnapshot {
-        let current_protocol_plan = self
-            .protocol_subscription_runtime
-            .applying_plan
-            .clone()
-            .or_else(|| self.protocol_subscription_runtime.current_plan.clone())
-            .or_else(|| self.compute_protocol_subscription_plan())
-            .map(|plan| RuntimeProtocolPlanDebug {
-                roster_authors: plan.roster_authors,
-                invite_authors: plan.invite_authors,
-                invite_response_recipient: plan.invite_response_recipient,
-                message_authors: plan.message_authors,
-                refresh_in_flight: self.protocol_subscription_runtime.refresh_in_flight,
-                refresh_dirty: self.protocol_subscription_runtime.refresh_dirty,
-            });
-
+        let current_protocol_plan =
+            self.compute_protocol_subscription_plan()
+                .map(|plan| RuntimeProtocolPlanDebug {
+                    runtime_subscriptions: plan.runtime_subscriptions,
+                });
         let tracked_owner_hexes = sorted_hexes(self.tracked_peer_owner_hexes());
         let current_chat_list = self.threads.keys().cloned().collect::<Vec<_>>();
-        let (local_owner_pubkey_hex, local_device_pubkey_hex, authorization_state, known_users) =
+        let (local_owner_pubkey_hex, local_device_pubkey_hex, authorization_state) =
             if let Some(logged_in) = self.logged_in.as_ref() {
-                let snapshot = logged_in.session_manager.snapshot();
-                let users = snapshot
-                    .users
-                    .into_iter()
-                    .map(|user| RuntimeKnownUserDebug {
-                        owner_pubkey_hex: user.owner_pubkey.to_string(),
-                        has_roster: user.roster.is_some(),
-                        roster_device_count: user
-                            .roster
-                            .as_ref()
-                            .map(|roster| roster.devices().len())
-                            .unwrap_or_default(),
-                        device_count: user.devices.len(),
-                        authorized_device_count: user
-                            .devices
-                            .iter()
-                            .filter(|device| device.authorized)
-                            .count(),
-                        active_session_device_count: user
-                            .devices
-                            .iter()
-                            .filter(|device| device.active_session.is_some())
-                            .count(),
-                        inactive_session_count: user
-                            .devices
-                            .iter()
-                            .map(|device| device.inactive_sessions.len())
-                            .sum(),
-                    })
-                    .collect::<Vec<_>>();
                 (
-                    Some(logged_in.owner_pubkey.to_string()),
-                    Some(local_device_from_keys(&logged_in.device_keys).to_string()),
+                    Some(logged_in.owner_pubkey.to_hex()),
+                    Some(local_device_from_keys(&logged_in.device_keys).to_hex()),
                     Some(format!("{:?}", logged_in.authorization_state)),
-                    users,
                 )
             } else {
-                (None, None, None, Vec::new())
+                (None, None, None)
             };
+        let known_users = self
+            .app_keys
+            .values()
+            .map(|known| RuntimeKnownUserDebug {
+                owner_pubkey_hex: known.owner_pubkey_hex.clone(),
+                has_roster: true,
+                roster_device_count: known.devices.len(),
+                device_count: known.devices.len(),
+                authorized_device_count: known.devices.len(),
+                active_session_device_count: 0,
+                inactive_session_count: 0,
+            })
+            .collect::<Vec<_>>();
 
         RuntimeDebugSnapshot {
             generated_at_secs: unix_now().get(),
@@ -70,29 +42,6 @@ impl AppCore {
             current_protocol_plan,
             tracked_owner_hexes,
             known_users,
-            pending_outbound: self
-                .pending_outbound
-                .iter()
-                .map(|pending| RuntimePendingOutboundDebug {
-                    message_id: pending.message_id.clone(),
-                    chat_id: pending.chat_id.clone(),
-                    reason: format!("{:?}", pending.reason),
-                    publish_mode: format!("{:?}", pending.publish_mode),
-                    in_flight: pending.in_flight,
-                })
-                .collect(),
-            pending_group_controls: self
-                .pending_group_controls
-                .iter()
-                .map(|pending| RuntimePendingGroupControlDebug {
-                    operation_id: pending.operation_id.clone(),
-                    group_id: pending.group_id.clone(),
-                    target_owner_hexes: pending.target_owner_hexes.clone(),
-                    reason: format!("{:?}", pending.reason),
-                    in_flight: pending.in_flight,
-                    kind: format!("{:?}", pending.kind),
-                })
-                .collect(),
             recent_handshake_peers: self
                 .recent_handshake_peers
                 .values()
@@ -147,7 +96,7 @@ impl AppCore {
                 relay_set_id: RELAY_SET_ID.to_string(),
                 trusted_test_build: trusted_test_build(),
             },
-            relay_urls: configured_relays(),
+            relay_urls: self.preferences.nostr_relay_urls.clone(),
             authorization_state: runtime.authorization_state,
             active_chat_id: runtime.active_chat_id,
             current_screen: format!("{current_screen:?}"),
@@ -155,8 +104,6 @@ impl AppCore {
             direct_chat_count,
             group_chat_count,
             unread_chat_count,
-            pending_outbound: runtime.pending_outbound,
-            pending_group_controls: runtime.pending_group_controls,
             protocol: runtime.current_protocol_plan,
             tracked_owner_hexes: runtime.tracked_owner_hexes,
             known_users: runtime.known_users,

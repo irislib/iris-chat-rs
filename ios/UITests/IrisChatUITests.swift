@@ -18,7 +18,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
         element(app, "chatListProfileButton").tap()
 
-        XCTAssertTrue(element(app, "myProfileSheet").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "myProfileQrCode").waitForExistence(timeout: 5))
     }
 
@@ -92,7 +92,7 @@ final class IrisChatUITests: XCTestCase {
         element(app, "newGroupCreateButton").tap()
 
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
-        element(app, "chatGroupDetailsButton").tap()
+        openGroupDetails(app)
 
         XCTAssertTrue(element(app, "groupDetailsScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "groupDetailsNameInput").waitForExistence(timeout: 5))
@@ -105,7 +105,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))
         element(app, "newChatPeerInput").tap()
         element(app, "newChatPeerInput").typeText(validPeerNpub)
-        element(app, "newChatStartButton").tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
     }
 
     func testRestoreAccountOpensDedicatedScreenAndEntersChatList() {
@@ -131,7 +131,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
         element(app, "chatListProfileButton").tap()
 
-        XCTAssertTrue(element(app, "myProfileSheet").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "myProfileLogoutButton").waitForExistence(timeout: 10))
         element(app, "myProfileLogoutButton").tap()
 
@@ -181,6 +181,13 @@ final class IrisChatUITests: XCTestCase {
         nameField.typeText("ios tester")
         element(app, "generateKeyButton").tap()
         XCTAssertTrue(element(app, "chatListNewChatButton").waitForExistence(timeout: 20))
+    }
+
+    private func openGroupDetails(_ app: XCUIApplication) {
+        element(app, "chatOverflowButton").tap()
+        let item = app.buttons["Group details"]
+        XCTAssertTrue(item.waitForExistence(timeout: 5))
+        item.tap()
     }
 
     private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {

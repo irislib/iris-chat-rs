@@ -114,15 +114,6 @@ impl FfiApp {
     }
 }
 
-#[cfg(test)]
-impl FfiApp {
-    pub(crate) fn shutdown_blocking(&self) {
-        let (reply_tx, reply_rx) = flume::bounded(1);
-        let _ = self.core_tx.send(CoreMsg::Shutdown(Some(reply_tx)));
-        let _ = reply_rx.recv_timeout(std::time::Duration::from_secs(5));
-    }
-}
-
 impl Drop for FfiApp {
     fn drop(&mut self) {
         let _ = self.core_tx.send(CoreMsg::Shutdown(None));

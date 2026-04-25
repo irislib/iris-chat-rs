@@ -1,5 +1,4 @@
 use crate::actions::AppAction;
-use crate::core::ProtocolSubscriptionPlan;
 use crate::state::AppState;
 use flume::Sender;
 use nostr_sdk::prelude::Event;
@@ -27,13 +26,11 @@ pub(crate) enum CoreMsg {
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
     RelayEvent(Event),
-    RetryPendingOutbound,
     FetchTrackedPeerCatchUp,
     PollPendingDeviceInvites {
         token: u64,
     },
     FetchCatchUpEvents(Vec<Event>),
-    FetchPendingDeviceInvites(Vec<Event>),
     DebugLog {
         category: String,
         detail: String,
@@ -50,15 +47,6 @@ pub(crate) enum InternalEvent {
     AttachmentUploadFinished {
         chat_id: String,
         result: Result<String, String>,
-    },
-    GroupControlPublishFinished {
-        operation_id: String,
-        success: bool,
-    },
-    ProtocolSubscriptionRefreshCompleted {
-        token: u64,
-        applied: bool,
-        plan: Option<ProtocolSubscriptionPlan>,
     },
     SyncComplete,
 }

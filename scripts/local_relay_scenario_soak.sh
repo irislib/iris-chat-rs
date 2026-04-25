@@ -6,21 +6,11 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ITERATIONS="${ITERATIONS:-100}"
 RUST_DIR="${ROOT_DIR}/core"
 
-SCENARIOS=(
-  "core::tests::twenty_owner_group_converges"
-  "core::tests::group_with_linked_devices_converges"
-  "core::tests::restart_mid_group_create_recovers"
-  "core::tests::restart_mid_member_add_recovers"
-  "core::tests::duplicate_and_replayed_events_do_not_duplicate_threads_or_messages"
-  "core::tests::member_removal_blocks_future_sends"
-  "core::tests::post_removal_messages_reach_only_remaining_members"
-)
-
 usage() {
   cat <<EOF
 Usage: scripts/local_relay_scenario_soak.sh [--iterations N]
 
-Runs the local-relay near-e2e app-core scenario suite repeatedly.
+Runs the core test suite repeatedly.
 
 Options:
   --iterations N   Number of full scenario-suite passes. Default: ${ITERATIONS}
@@ -48,13 +38,10 @@ done
 
 for ((iteration = 1; iteration <= ITERATIONS; iteration++)); do
   echo "=== local relay soak iteration ${iteration}/${ITERATIONS} ==="
-  for scenario in "${SCENARIOS[@]}"; do
-    echo "--- ${scenario}"
-    (
-      cd "${RUST_DIR}" &&
-        cargo test "${scenario}" -- --nocapture --test-threads=1
-    )
-  done
+  (
+    cd "${RUST_DIR}" &&
+      cargo test -- --nocapture --test-threads=1
+  )
 done
 
 echo "Local relay scenario soak passed (${ITERATIONS} iterations)"

@@ -159,7 +159,7 @@ fun DeviceRosterScreen(
                                 .testTag("deviceRosterAddInput"),
                         placeholder = {
                             Text(
-                                text = "Device ID, hex, or approval code",
+                                text = "Device ID or approval code",
                                 color = IrisTheme.palette.muted,
                             )
                         },

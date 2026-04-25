@@ -60,7 +60,6 @@ struct RootView: View {
                     title: screenTitle(manager.activeScreen),
                     canGoBack: manager.canNavigateBack,
                     onBack: manager.navigateBack,
-                    networkStatus: manager.state.networkStatus,
                     backBadgeCount: backUnreadCount,
                     leading: topBarLeadingItem,
                     trailing: topBarTrailingItem
@@ -210,7 +209,6 @@ struct NavigationShell<Content: View>: View {
     let title: String
     let canGoBack: Bool
     let onBack: () -> Void
-    let networkStatus: NetworkStatusSnapshot?
     let backBadgeCount: UInt64
     let leading: AnyView
     let trailing: AnyView
@@ -220,7 +218,6 @@ struct NavigationShell<Content: View>: View {
         title: String,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
-        networkStatus: NetworkStatusSnapshot? = nil,
         backBadgeCount: UInt64 = 0,
         leading: AnyView = AnyView(EmptyView()),
         trailing: AnyView = AnyView(EmptyView()),
@@ -229,7 +226,6 @@ struct NavigationShell<Content: View>: View {
         self.title = title
         self.canGoBack = canGoBack
         self.onBack = onBack
-        self.networkStatus = networkStatus
         self.backBadgeCount = backBadgeCount
         self.leading = leading
         self.trailing = trailing
@@ -247,42 +243,10 @@ struct NavigationShell<Content: View>: View {
                 trailing: trailing
             )
 
-            if shouldShowRelayStatusDots(networkStatus) {
-                RelayStatusDots(status: networkStatus)
-                    .padding(.top, 8)
-                    .transition(.opacity)
-                    .accessibilityIdentifier("relayStatusDots")
-            }
-
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
     }
-}
-
-private struct RelayStatusDots: View {
-    @Environment(\.irisPalette) private var palette
-    let status: NetworkStatusSnapshot?
-
-    var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<relayDotCount(status), id: \.self) { _ in
-                Circle()
-                    .fill(relayStatusColor(status, palette: palette))
-                    .frame(width: 7, height: 7)
-            }
-        }
-        .accessibilityLabel(relayStatusLabel(status))
-    }
-}
-
-private func shouldShowRelayStatusDots(_ status: NetworkStatusSnapshot?) -> Bool {
-    guard let status else { return false }
-    return !status.relayUrls.isEmpty
-}
-
-private func relayDotCount(_ status: NetworkStatusSnapshot?) -> Int {
-    min(max(status?.relayUrls.count ?? 1, 1), 3)
 }
 
 private func relayStatusColor(_ status: NetworkStatusSnapshot?, palette: IrisPalette) -> Color {
@@ -293,14 +257,6 @@ private func relayStatusColor(_ status: NetworkStatusSnapshot?, palette: IrisPal
         return Color(red: 234.0 / 255.0, green: 179.0 / 255.0, blue: 8.0 / 255.0)
     }
     return Color(red: 34.0 / 255.0, green: 197.0 / 255.0, blue: 94.0 / 255.0)
-}
-
-private func relayStatusLabel(_ status: NetworkStatusSnapshot?) -> String {
-    guard let status else { return "Relays offline" }
-    if status.syncing || status.pendingOutboundCount > 0 || status.pendingGroupControlCount > 0 {
-        return "Relays syncing"
-    }
-    return "Relays connected"
 }
 
 private struct OwnerPresentation {
@@ -552,7 +508,7 @@ struct AddDeviceScreen: View {
                         }
                         .buttonStyle(IrisSecondaryButtonStyle())
                     } else {
-                        TextField("User ID or hex", text: $ownerInput)
+                        TextField("User ID", text: $ownerInput)
                             .irisIdentifierInputModifiers()
                             .textFieldStyle(.plain)
                             .irisInputField()
@@ -793,8 +749,11 @@ struct NewChatScreen: View {
                 showingScanner = false
             }
         }
-        .onChange(of: normalizedPeerInput) { _, normalized in
-            guard validPeerInput, submittedPeerInput != normalized else { return }
+        .onChange(of: normalizedPeerInput) { normalized in
+            guard !normalized.isEmpty,
+                  isValidPeerInput(input: normalized),
+                  submittedPeerInput != normalized
+            else { return }
             submittedPeerInput = normalized
             manager.dispatch(.createChat(peerInput: normalized))
         }
@@ -806,11 +765,7 @@ struct NewChatScreen: View {
                 .frame(height: 0)
                 .accessibilityIdentifier("newChatPrimaryCard")
 
-            Text("User ID")
-                .font(.system(.headline, design: .rounded, weight: .semibold))
-                .foregroundStyle(palette.textPrimary)
-
-            TextField("User ID, hex, or link", text: $peerInput)
+            TextField("User ID or link", text: $peerInput)
                 .irisIdentifierInputModifiers()
                 .textFieldStyle(.plain)
                 .irisInputField()
@@ -1104,7 +1059,7 @@ struct NewGroupScreen: View {
                 IrisSectionCard {
                     CardHeader(title: "Add members")
 
-                    TextField("User ID, hex, or nostr:…", text: $memberInput)
+                    TextField("User ID or nostr:…", text: $memberInput)
                         .irisIdentifierInputModifiers()
                         .textFieldStyle(.plain)
                         .irisInputField()
@@ -1694,7 +1649,7 @@ struct GroupDetailsScreen: View {
                             subtitle: "Approve a new member by scan or paste."
                         )
 
-                        TextField("Member user ID, hex, or nostr:…", text: $memberInput)
+                        TextField("Member user ID or nostr:…", text: $memberInput)
                             .irisIdentifierInputModifiers()
                             .textFieldStyle(.plain)
                             .irisInputField()
@@ -1784,7 +1739,7 @@ struct DeviceRosterScreen: View {
                         subtitle: deviceAccessSubtitle
                     )
 
-                    TextField("Device ID, hex, or approval code", text: $deviceInput)
+                    TextField("Device ID or approval code", text: $deviceInput)
                         .irisIdentifierInputModifiers()
                         .textFieldStyle(.plain)
                         .irisInputField()
@@ -1988,7 +1943,7 @@ struct SettingsScreen: View {
             BackgroundFill()
 
             IrisScrollScreen {
-                LazyVGrid(columns: settingsColumns, spacing: 18) {
+                VStack(alignment: .leading, spacing: 18) {
                     if let account = manager.state.account {
                         ProfileEditorCard(
                             manager: manager,
@@ -2249,14 +2204,6 @@ struct SettingsScreen: View {
         }
     }
 
-    private var settingsColumns: [GridItem] {
-        #if os(macOS)
-        [GridItem(.adaptive(minimum: 360, maximum: 520), spacing: 18, alignment: .top)]
-        #else
-        [GridItem(.flexible(), spacing: 18, alignment: .top)]
-        #endif
-    }
-
 }
 
 private struct ImageProxySettingsSection: View {
@@ -2332,6 +2279,7 @@ private struct ImageProxySettingsSection: View {
 }
 
 private struct NostrRelaySettingsSection: View {
+    @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     @Binding var newRelayURL: String
     @Binding var editingRelayURL: String?
@@ -2399,6 +2347,11 @@ private struct NostrRelaySettingsSection: View {
             }
         } else {
             HStack(spacing: 8) {
+                Circle()
+                    .fill(relayRowStatusColor(relayURL, status: manager.state.networkStatus, palette: palette))
+                    .frame(width: 8, height: 8)
+                    .accessibilityHidden(true)
+
                 Text(relayURL)
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(.primary)
@@ -2433,6 +2386,13 @@ private struct NostrRelaySettingsSection: View {
             .replacingOccurrences(of: "/", with: "-")
             .replacingOccurrences(of: ".", with: "-")
             .replacingOccurrences(of: ":", with: "-")
+    }
+
+    private func relayRowStatusColor(_ relayURL: String, status: NetworkStatusSnapshot?, palette: IrisPalette) -> Color {
+        guard let status, status.relayUrls.contains(relayURL) else {
+            return palette.muted.opacity(0.55)
+        }
+        return relayStatusColor(status, palette: palette)
     }
 }
 

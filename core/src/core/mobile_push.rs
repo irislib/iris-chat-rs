@@ -1,7 +1,6 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use nostr::Tag;
-use std::collections::HashMap;
 
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
 const MOBILE_PUSH_RECEIPT_KIND: u64 = 15;
@@ -9,7 +8,7 @@ const MOBILE_PUSH_TYPING_KIND: u64 = 25;
 const MOBILE_PUSH_GROUP_METADATA_KIND: u64 = 40;
 const MOBILE_PUSH_SETTINGS_KIND: u64 = 30_078;
 const MOBILE_PUSH_AUTH_KIND: u16 = 27_235;
-const MOBILE_PUSH_DM_EVENT_KIND: u64 = codec::MESSAGE_EVENT_KIND as u64;
+const MOBILE_PUSH_DM_EVENT_KIND: u64 = MESSAGE_EVENT_KIND as u64;
 const MOBILE_PUSH_PRODUCTION_SERVER_URL: &str = "https://notifications.iris.to";
 const MOBILE_PUSH_SANDBOX_SERVER_URL: &str = "https://notifications-sandbox.iris.to";
 
@@ -25,36 +24,25 @@ impl AppCore {
 
         let mut sessions = Vec::new();
         let mut seen_state_json = HashSet::new();
-        let session_snapshot = logged_in.session_manager.snapshot();
-        let mut users_by_owner = session_snapshot
-            .users
-            .into_iter()
-            .map(|user| (user.owner_pubkey.to_string(), user))
-            .collect::<HashMap<_, _>>();
-        for owner_hex in sorted_hexes(self.protocol_owner_hexes()) {
-            let Some(user) = users_by_owner.remove(&owner_hex) else {
+        for owner_hex in sorted_hexes(self.tracked_peer_owner_hexes()) {
+            let Ok(owner) = PublicKey::parse(&owner_hex) else {
                 continue;
             };
             let display_name = self.owner_display_label(&owner_hex);
-            for device in user.devices {
-                if let Some(session) = device.active_session {
-                    push_mobile_push_session_snapshot(
-                        &mut sessions,
-                        &mut seen_state_json,
-                        &owner_hex,
-                        display_name.clone(),
-                        session,
-                    );
-                }
-                for session in device.inactive_sessions {
-                    push_mobile_push_session_snapshot(
-                        &mut sessions,
-                        &mut seen_state_json,
-                        &owner_hex,
-                        display_name.clone(),
-                        session,
-                    );
-                }
+            for session in logged_in
+                .ndr_runtime
+                .session_manager()
+                .get_message_push_session_states(owner)
+            {
+                push_mobile_push_session_snapshot(
+                    &mut sessions,
+                    &mut seen_state_json,
+                    &owner_hex,
+                    display_name.clone(),
+                    session.state,
+                    session.tracked_sender_pubkeys,
+                    session.has_receiving_capability,
+                );
             }
         }
 
@@ -72,6 +60,8 @@ fn push_mobile_push_session_snapshot(
     owner_hex: &str,
     display_name: String,
     session: SessionState,
+    tracked_sender_pubkeys: Vec<PublicKey>,
+    has_receiving_capability: bool,
 ) {
     let Ok(state_json) = serde_json::to_string(&session) else {
         return;
@@ -79,16 +69,17 @@ fn push_mobile_push_session_snapshot(
     if state_json.trim().is_empty() || !seen_state_json.insert(state_json.clone()) {
         return;
     }
-    let mut tracked = HashSet::new();
-    collect_expected_senders(&session, &mut tracked);
     sessions.push(MobilePushSessionSnapshot {
         recipient_pubkey_hex: owner_hex.to_string(),
         display_name,
         state_json,
-        tracked_sender_pubkeys: sorted_hexes(tracked),
-        has_receiving_capability: session.receiving_chain_key.is_some()
-            || session.receiving_chain_message_number > 0
-            || !session.skipped_keys.is_empty(),
+        tracked_sender_pubkeys: sorted_hexes(
+            tracked_sender_pubkeys
+                .into_iter()
+                .map(|pubkey| pubkey.to_hex())
+                .collect(),
+        ),
+        has_receiving_capability,
     });
 }
 

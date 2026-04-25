@@ -109,11 +109,6 @@ fun NewChatScreen(
                         .testTag("newChatPrimaryCard"),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(
-                    text = "User ID",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                )
                 TextField(
                     value = peerInput,
                     onValueChange = { peerInput = it },
@@ -123,7 +118,7 @@ fun NewChatScreen(
                             .testTag("newChatPeerInput"),
                     placeholder = {
                         Text(
-                            text = "User ID, hex, or link",
+                            text = "User ID or link",
                             color = IrisTheme.palette.muted,
                         )
                     },

@@ -412,6 +412,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-channel"
+version = "0.5.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "82b8f8f868b36967f9606790d1903570de9ceaf870a7bf9fbbd3016d636a2cb2"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
+
+[[package]]
 name = "crypto-common"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1229,7 +1244,6 @@ dependencies = [
  "nostr 0.35.0",
  "nostr 0.37.0",
  "nostr-double-ratchet",
- "nostr-double-ratchet-nostr",
  "nostr-sdk",
  "rand 0.8.5",
  "serde",
@@ -1338,9 +1352,10 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.88"
+version = "0.0.97"
 dependencies = [
  "base64",
+ "crossbeam-channel",
  "hex",
  "hkdf",
  "nostr 0.37.0",
@@ -1349,20 +1364,9 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.18",
-]
-
-[[package]]
-name = "nostr-double-ratchet-nostr"
-version = "0.0.88"
-dependencies = [
- "base64",
- "hex",
- "nostr 0.37.0",
- "nostr-double-ratchet",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
+ "tracing",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
@@ -2641,6 +2645,17 @@ name = "utf8_iter"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
+
+[[package]]
+name = "uuid"
+version = "1.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
+dependencies = [
+ "getrandom 0.4.2",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "version_check"

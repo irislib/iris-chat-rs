@@ -19,8 +19,7 @@ hmac = "0.12"
 nostr = { version = "0.37", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.37", default-features = false, features = ["nip44"] }
-nostr-double-ratchet = { path = "vendor/nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
-nostr-double-ratchet-nostr = { path = "vendor/nostr-double-ratchet/rust/crates/nostr-double-ratchet-nostr" }
+nostr-double-ratchet = { path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -2,30 +2,17 @@ package social.innode.ndr.demo.ui.navigation
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import social.innode.ndr.demo.account.AccountBootstrapState
 import social.innode.ndr.demo.core.AppContainer
 import social.innode.ndr.demo.rust.AppAction
-import social.innode.ndr.demo.rust.NetworkStatusSnapshot
 import social.innode.ndr.demo.rust.Screen
-import social.innode.ndr.demo.ui.theme.IrisTheme
 import social.innode.ndr.demo.ui.screens.ChatListScreen
 import social.innode.ndr.demo.ui.screens.ChatScreen
 import social.innode.ndr.demo.ui.screens.CreateAccountScreen
@@ -185,50 +172,5 @@ fun NdrApp(container: AppContainer) {
                 }
             }
         }
-
-        if (shouldShowRelayStatusDots(appState.networkStatus)) {
-            RelayStatusDots(
-                status = appState.networkStatus,
-                modifier =
-                    Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(top = 76.dp)
-                        .testTag("relayStatusDots"),
-            )
-        }
     }
 }
-
-@Composable
-private fun RelayStatusDots(
-    status: NetworkStatusSnapshot?,
-    modifier: Modifier = Modifier,
-) {
-    val count = (status?.relayUrls?.size ?: 0).coerceIn(1, 3)
-    Row(
-        modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(5.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        repeat(count) {
-            Box(
-                modifier =
-                    Modifier
-                        .size(7.dp)
-                        .background(relayStatusColor(status), CircleShape),
-            )
-        }
-    }
-}
-
-private fun shouldShowRelayStatusDots(status: NetworkStatusSnapshot?): Boolean =
-    status?.relayUrls?.isNotEmpty() == true
-
-@Composable
-private fun relayStatusColor(status: NetworkStatusSnapshot?): Color =
-    when {
-        status == null || status.relayUrls.isEmpty() -> IrisTheme.palette.muted.copy(alpha = 0.55f)
-        status.syncing || status.pendingOutboundCount > 0UL || status.pendingGroupControlCount > 0UL ->
-            Color(0xFFEAB308)
-        else -> Color(0xFF22C55E)
-    }

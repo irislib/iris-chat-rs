@@ -121,7 +121,13 @@ pub fn run_forever(bind_addr: &str) -> Result<()> {
                 .accept()
                 .await
                 .with_context(|| format!("accept relay client on {bind_addr}"))?;
-            let websocket = accept_async(stream).await.context("accept websocket")?;
+            let websocket = match accept_async(stream).await {
+                Ok(websocket) => websocket,
+                Err(error) => {
+                    eprintln!("Ignoring failed websocket handshake on {bind_addr}: {error}");
+                    continue;
+                }
+            };
             let state = state.clone();
             let client_id = next_client_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             tokio::spawn(async move {

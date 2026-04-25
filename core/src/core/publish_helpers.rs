@@ -25,30 +25,6 @@ pub(super) async fn publish_event_with_retry(
     Err(anyhow::anyhow!("{label}: {last_error}"))
 }
 
-pub(super) async fn publish_events_with_retry(
-    client: &Client,
-    relay_urls: &[RelayUrl],
-    events: Vec<Event>,
-    label: &str,
-) -> anyhow::Result<()> {
-    for event in events {
-        publish_event_with_retry(client, relay_urls, event, label).await?;
-    }
-    Ok(())
-}
-
-pub(super) async fn publish_events_first_ack(
-    client: &Client,
-    relay_urls: &[RelayUrl],
-    events: &[Event],
-    label: &str,
-) -> anyhow::Result<()> {
-    for event in events {
-        publish_event_first_ack(client, relay_urls, event, label).await?;
-    }
-    Ok(())
-}
-
 pub(super) async fn publish_event_first_ack(
     client: &Client,
     relay_urls: &[RelayUrl],

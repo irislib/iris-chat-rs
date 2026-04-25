@@ -219,7 +219,7 @@ fun GroupDetailsScreen(
                                 .testTag("groupDetailsAddMemberInput"),
                         placeholder = {
                             Text(
-                                text = "User ID, hex, or nostr:...",
+                                text = "User ID or nostr:...",
                                 color = IrisTheme.palette.muted,
                             )
                         },

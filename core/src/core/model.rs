@@ -1,13 +1,13 @@
 use super::*;
 
 pub(super) struct LoggedInState {
-    pub(super) owner_pubkey: OwnerPubkey,
+    pub(super) owner_pubkey: PublicKey,
     pub(super) owner_keys: Option<Keys>,
     pub(super) device_keys: Keys,
     pub(super) client: Client,
     pub(super) relay_urls: Vec<RelayUrl>,
-    pub(super) session_manager: SessionManager,
-    pub(super) group_manager: GroupManager,
+    pub(super) ndr_runtime: NdrRuntime,
+    pub(super) local_invite: Invite,
     pub(super) authorization_state: LocalAuthorizationState,
 }
 
@@ -36,159 +36,17 @@ fn message_order_key(message: &ChatMessageSnapshot) -> (u64, u64, &str) {
     )
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(untagged)]
-pub(super) enum PendingInbound {
-    Envelope {
-        envelope: MessageEnvelope,
-        #[serde(default)]
-        expires_at_secs: Option<u64>,
-    },
-    Decrypted {
-        sender_owner_hex: String,
-        payload: Vec<u8>,
-        created_at_secs: u64,
-        #[serde(default)]
-        expires_at_secs: Option<u64>,
-    },
-}
-
-impl PendingInbound {
-    pub(super) fn envelope(envelope: MessageEnvelope, expires_at_secs: Option<u64>) -> Self {
-        Self::Envelope {
-            envelope,
-            expires_at_secs,
-        }
-    }
-
-    pub(super) fn decrypted(
-        sender_owner: OwnerPubkey,
-        payload: Vec<u8>,
-        created_at_secs: u64,
-        expires_at_secs: Option<u64>,
-    ) -> Self {
-        Self::Decrypted {
-            sender_owner_hex: sender_owner.to_string(),
-            payload,
-            created_at_secs,
-            expires_at_secs,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct PreparedPublishBatch {
-    #[serde(default)]
-    pub(super) invite_events: Vec<Event>,
-    #[serde(default)]
-    pub(super) message_events: Vec<Event>,
-}
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) enum OutboundPublishMode {
-    FirstContactStaged,
-    OrdinaryFirstAck,
-    #[default]
-    WaitForPeer,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct PendingOutbound {
-    pub(super) message_id: String,
-    pub(super) chat_id: String,
-    pub(super) body: String,
-    #[serde(default)]
-    pub(super) expires_at_secs: Option<u64>,
-    #[serde(default)]
-    pub(super) prepared_publish: Option<PreparedPublishBatch>,
-    #[serde(default)]
-    pub(super) publish_mode: OutboundPublishMode,
-    #[serde(default)]
-    pub(super) reason: PendingSendReason,
-    #[serde(default)]
-    pub(super) next_retry_at_secs: u64,
-    #[serde(default)]
-    pub(super) in_flight: bool,
+pub(super) struct KnownAppKeys {
+    pub(super) owner_pubkey_hex: String,
+    pub(super) created_at_secs: u64,
+    pub(super) devices: Vec<KnownAppKeyDevice>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) enum PendingGroupControlKind {
-    Create {
-        name: String,
-        member_owner_hexes: Vec<String>,
-    },
-    Rename {
-        name: String,
-    },
-    AddMembers {
-        member_owner_hexes: Vec<String>,
-    },
-    RemoveMember {
-        owner_pubkey_hex: String,
-    },
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct PendingGroupControl {
-    pub(super) operation_id: String,
-    pub(super) group_id: String,
-    pub(super) target_owner_hexes: Vec<String>,
-    #[serde(default)]
-    pub(super) prepared_publish: Option<PreparedPublishBatch>,
-    #[serde(default)]
-    pub(super) reason: PendingSendReason,
-    #[serde(default)]
-    pub(super) next_retry_at_secs: u64,
-    #[serde(default)]
-    pub(super) in_flight: bool,
-    pub(super) kind: PendingGroupControlKind,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) struct AppDirectMessagePayload {
-    pub(super) version: u8,
-    pub(super) chat_id: String,
-    #[serde(default)]
-    pub(super) message_id: Option<String>,
-    pub(super) body: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) struct AppGroupMessagePayload {
-    pub(super) version: u8,
-    #[serde(default)]
-    pub(super) message_id: Option<String>,
-    pub(super) body: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) struct AppControlPayload {
-    pub(super) version: u8,
-    #[serde(rename = "type")]
-    pub(super) control_type: AppControlType,
-    #[serde(default)]
-    pub(super) chat_id: Option<String>,
-    #[serde(default)]
-    pub(super) message_ids: Vec<String>,
-    #[serde(rename = "messageTtlSeconds", default)]
-    pub(super) message_ttl_seconds: Option<u64>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum AppControlType {
-    Typing,
-    Delivered,
-    Seen,
-    ChatSettings,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum AppPayload {
-    DirectMessage(AppDirectMessagePayload),
-    GroupMessage(AppGroupMessagePayload),
-    Control(AppControlPayload),
-    LegacyText(String),
+pub(super) struct KnownAppKeyDevice {
+    pub(super) identity_pubkey_hex: String,
+    pub(super) created_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -213,16 +71,6 @@ pub(super) struct NostrProfileMetadata {
     pub(super) picture: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct RoutedChatMessage {
-    pub(super) chat_id: String,
-    pub(super) message_id: Option<String>,
-    pub(super) body: String,
-    pub(super) is_outgoing: bool,
-    pub(super) author: Option<String>,
-    pub(super) expires_at_secs: Option<u64>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct TypingIndicatorRecord {
     pub(super) chat_id: String,
@@ -245,47 +93,24 @@ pub(super) enum LocalAuthorizationState {
     Revoked,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) enum PendingSendReason {
-    #[default]
-    MissingRoster,
-    MissingDeviceInvite,
-    PublishingFirstContact,
-    PublishRetry,
-}
-
-#[derive(Debug, Clone)]
-pub(super) struct StagedOutboundSend {
-    pub(super) message_id: String,
-    pub(super) chat_id: String,
-    pub(super) invite_events: Vec<Event>,
-    pub(super) message_events: Vec<Event>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProtocolSubscriptionPlan {
-    pub(crate) roster_authors: Vec<String>,
-    pub(crate) invite_authors: Vec<String>,
-    pub(crate) invite_response_recipient: Option<String>,
-    pub(crate) message_authors: Vec<String>,
+    pub(crate) runtime_subscriptions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ProtocolSubscriptionRuntime {
-    pub(super) current_plan: Option<ProtocolSubscriptionPlan>,
-    pub(super) applying_plan: Option<ProtocolSubscriptionPlan>,
-    pub(super) refresh_in_flight: bool,
-    pub(super) refresh_dirty: bool,
-    pub(super) force_refresh_dirty: bool,
+    pub(super) active_subscriptions: HashSet<String>,
     pub(super) refresh_token: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct DebugEventCounters {
-    pub(super) roster_events: u64,
+    pub(super) app_keys_events: u64,
     pub(super) invite_events: u64,
     pub(super) invite_response_events: u64,
     pub(super) message_events: u64,
+    pub(super) group_events: u64,
     pub(super) other_events: u64,
 }
 
@@ -306,8 +131,6 @@ pub(super) struct RuntimeDebugSnapshot {
     pub(super) current_protocol_plan: Option<RuntimeProtocolPlanDebug>,
     pub(super) tracked_owner_hexes: Vec<String>,
     pub(super) known_users: Vec<RuntimeKnownUserDebug>,
-    pub(super) pending_outbound: Vec<RuntimePendingOutboundDebug>,
-    pub(super) pending_group_controls: Vec<RuntimePendingGroupControlDebug>,
     pub(super) recent_handshake_peers: Vec<RuntimeRecentHandshakeDebug>,
     pub(super) event_counts: DebugEventCounters,
     pub(super) recent_log: Vec<DebugLogEntry>,
@@ -337,8 +160,6 @@ pub(super) struct SupportBundle {
     pub(super) direct_chat_count: usize,
     pub(super) group_chat_count: usize,
     pub(super) unread_chat_count: usize,
-    pub(super) pending_outbound: Vec<RuntimePendingOutboundDebug>,
-    pub(super) pending_group_controls: Vec<RuntimePendingGroupControlDebug>,
     pub(super) protocol: Option<RuntimeProtocolPlanDebug>,
     pub(super) tracked_owner_hexes: Vec<String>,
     pub(super) known_users: Vec<RuntimeKnownUserDebug>,
@@ -351,12 +172,7 @@ pub(super) struct SupportBundle {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct RuntimeProtocolPlanDebug {
-    pub(super) roster_authors: Vec<String>,
-    pub(super) invite_authors: Vec<String>,
-    pub(super) invite_response_recipient: Option<String>,
-    pub(super) message_authors: Vec<String>,
-    pub(super) refresh_in_flight: bool,
-    pub(super) refresh_dirty: bool,
+    pub(super) runtime_subscriptions: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -368,25 +184,6 @@ pub(super) struct RuntimeKnownUserDebug {
     pub(super) authorized_device_count: usize,
     pub(super) active_session_device_count: usize,
     pub(super) inactive_session_count: usize,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct RuntimePendingOutboundDebug {
-    pub(super) message_id: String,
-    pub(super) chat_id: String,
-    pub(super) reason: String,
-    pub(super) publish_mode: String,
-    pub(super) in_flight: bool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub(super) struct RuntimePendingGroupControlDebug {
-    pub(super) operation_id: String,
-    pub(super) group_id: String,
-    pub(super) target_owner_hexes: Vec<String>,
-    pub(super) reason: String,
-    pub(super) in_flight: bool,
-    pub(super) kind: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -402,22 +199,17 @@ pub(super) struct PersistedState {
     #[serde(alias = "active_peer_hex")]
     pub(super) active_chat_id: Option<String>,
     pub(super) next_message_id: u64,
-    pub(super) session_manager: Option<SessionManagerSnapshot>,
-    #[serde(default)]
-    pub(super) group_manager: Option<GroupManagerSnapshot>,
     #[serde(default)]
     pub(super) owner_profiles: BTreeMap<String, OwnerProfileRecord>,
     #[serde(default)]
     pub(super) preferences: PersistedPreferences,
     #[serde(default)]
     pub(super) chat_message_ttl_seconds: BTreeMap<String, u64>,
+    #[serde(default)]
+    pub(super) app_keys: Vec<KnownAppKeys>,
+    #[serde(default)]
+    pub(super) groups: Vec<GroupData>,
     pub(super) threads: Vec<PersistedThread>,
-    #[serde(default)]
-    pub(super) pending_inbound: Vec<PendingInbound>,
-    #[serde(default)]
-    pub(super) pending_outbound: Vec<PendingOutbound>,
-    #[serde(default)]
-    pub(super) pending_group_controls: Vec<PendingGroupControl>,
     #[serde(default)]
     pub(super) seen_event_ids: Vec<String>,
     #[serde(default)]

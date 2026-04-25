@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -527,6 +528,12 @@ fun MyProfileSheet(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            Box(
+                                modifier =
+                                    Modifier
+                                        .size(8.dp)
+                                        .background(relayStatusColor(networkStatus, relayUrl), CircleShape),
+                            )
                             Text(
                                 text = relayUrl,
                                 style = MaterialTheme.typography.bodySmall,
@@ -793,6 +800,19 @@ fun MyProfileSheet(
         )
     }
 }
+
+@Composable
+private fun relayStatusColor(
+    status: NetworkStatusSnapshot?,
+    relayUrl: String,
+): Color =
+    when {
+        status == null || !status.relayUrls.contains(relayUrl) ->
+            IrisTheme.palette.muted.copy(alpha = 0.55f)
+        status.syncing || status.pendingOutboundCount > 0UL || status.pendingGroupControlCount > 0UL ->
+            Color(0xFFEAB308)
+        else -> Color(0xFF22C55E)
+    }
 
 @Composable
 private fun ProfilePictureDialog(

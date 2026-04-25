@@ -30,10 +30,9 @@ impl AppCore {
             active_chat_id: None,
             screen_stack: Vec::new(),
             next_message_id: 1,
-            pending_inbound: Vec::new(),
-            pending_outbound: Vec::new(),
-            pending_group_controls: Vec::new(),
             owner_profiles: BTreeMap::new(),
+            app_keys: BTreeMap::new(),
+            groups: BTreeMap::new(),
             typing_indicators: BTreeMap::new(),
             chat_message_ttl_seconds: BTreeMap::new(),
             preferences: state.preferences.clone(),
@@ -42,6 +41,7 @@ impl AppCore {
             seen_event_order: VecDeque::new(),
             device_invite_poll_token: 0,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
+            direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
             debug_log: VecDeque::new(),
             debug_event_counters: DebugEventCounters::default(),
         }
@@ -189,14 +189,6 @@ impl AppCore {
             InternalEvent::RelayEvent(event) => {
                 self.handle_relay_event(event);
             }
-            InternalEvent::RetryPendingOutbound => {
-                let now = unix_now();
-                self.retry_pending_outbound(now);
-                self.retry_pending_group_controls(now);
-                self.rebuild_state();
-                self.persist_best_effort();
-                self.emit_state();
-            }
             InternalEvent::FetchTrackedPeerCatchUp => {
                 let now = unix_now();
                 self.push_debug_log("protocol.catch_up.schedule", "fetch tracked peers");
@@ -221,9 +213,6 @@ impl AppCore {
                     self.handle_relay_event(event);
                 }
             }
-            InternalEvent::FetchPendingDeviceInvites(events) => {
-                self.handle_pending_device_invite_events(events);
-            }
             InternalEvent::DebugLog { category, detail } => {
                 self.push_debug_log(&category, detail);
                 self.persist_debug_snapshot_best_effort();
@@ -247,81 +236,16 @@ impl AppCore {
                 success,
             } => {
                 if success {
-                    self.pending_outbound
-                        .retain(|pending| pending.message_id != message_id);
                     self.update_message_delivery(&chat_id, &message_id, DeliveryState::Sent);
-                } else if let Some(pending) = self
-                    .pending_outbound
-                    .iter_mut()
-                    .find(|pending| pending.message_id == message_id)
-                {
-                    pending.in_flight = false;
-                    pending.reason = PendingSendReason::PublishRetry;
-                    let retry_after_secs = retry_delay_for_publish_mode(&pending.publish_mode);
-                    pending.next_retry_at_secs = unix_now().get().saturating_add(retry_after_secs);
+                } else {
                     self.update_message_delivery(&chat_id, &message_id, DeliveryState::Queued);
-                    self.schedule_pending_outbound_retry(Duration::from_secs(retry_after_secs));
                 }
-                self.schedule_next_pending_retry(unix_now().get());
                 self.rebuild_state();
                 self.persist_best_effort();
                 self.emit_state();
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);
-            }
-            InternalEvent::GroupControlPublishFinished {
-                operation_id,
-                success,
-            } => {
-                if success {
-                    self.pending_group_controls
-                        .retain(|pending| pending.operation_id != operation_id);
-                } else if let Some(pending) = self
-                    .pending_group_controls
-                    .iter_mut()
-                    .find(|pending| pending.operation_id == operation_id)
-                {
-                    pending.in_flight = false;
-                    pending.reason = PendingSendReason::PublishRetry;
-                    pending.next_retry_at_secs =
-                        unix_now().get().saturating_add(PENDING_RETRY_DELAY_SECS);
-                    self.schedule_pending_outbound_retry(Duration::from_secs(
-                        PENDING_RETRY_DELAY_SECS,
-                    ));
-                }
-                self.schedule_next_pending_retry(unix_now().get());
-                self.rebuild_state();
-                self.persist_best_effort();
-                self.emit_state();
-            }
-            InternalEvent::ProtocolSubscriptionRefreshCompleted {
-                token,
-                applied,
-                plan,
-            } => {
-                if token != self.protocol_subscription_runtime.refresh_token {
-                    return;
-                }
-                self.protocol_subscription_runtime.refresh_in_flight = false;
-                self.protocol_subscription_runtime.applying_plan = None;
-                if applied {
-                    self.push_debug_log(
-                        "protocol.subscription.applied",
-                        summarize_protocol_plan(plan.as_ref()),
-                    );
-                    self.protocol_subscription_runtime.current_plan = plan;
-                    self.fetch_recent_protocol_state();
-                    self.persist_best_effort();
-                } else {
-                    self.push_debug_log("protocol.subscription.failed", "apply returned false");
-                }
-                if self.protocol_subscription_runtime.refresh_dirty {
-                    let force_refresh = self.protocol_subscription_runtime.force_refresh_dirty;
-                    self.protocol_subscription_runtime.refresh_dirty = false;
-                    self.protocol_subscription_runtime.force_refresh_dirty = false;
-                    self.request_protocol_subscription_refresh_inner(force_refresh);
-                }
             }
             InternalEvent::SyncComplete => {
                 self.state.busy.syncing_network = false;

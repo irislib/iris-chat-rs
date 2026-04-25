@@ -13,25 +13,17 @@ pub(super) const COMPILED_DEFAULT_RELAYS_CSV: &str = env!("NDR_DEFAULT_RELAYS");
 pub(super) const RELAY_SET_ID: &str = env!("NDR_RELAY_SET_ID");
 pub(super) const TRUSTED_TEST_BUILD: &str = env!("NDR_TRUSTED_TEST_BUILD");
 pub(super) const MAX_SEEN_EVENT_IDS: usize = 2048;
-pub(super) const RECENT_HANDSHAKE_TTL_SECS: u64 = 10 * 60;
-pub(super) const PENDING_RETRY_DELAY_SECS: u64 = 2;
-pub(super) const FIRST_CONTACT_STAGE_DELAY_MS: u64 = 1500;
-pub(super) const FIRST_CONTACT_RETRY_DELAY_SECS: u64 = 5;
 pub(super) const CATCH_UP_LOOKBACK_SECS: u64 = 30;
-pub(super) const UNKNOWN_GROUP_RECOVERY_LOOKBACK_SECS: u64 = 24 * 60 * 60;
 pub(super) const DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS: u64 = 30 * 24 * 60 * 60;
 pub(super) const DEVICE_INVITE_DISCOVERY_LIMIT: usize = 256;
 pub(super) const DEVICE_INVITE_DISCOVERY_POLL_SECS: u64 = 5;
 pub(super) const RELAY_CONNECT_TIMEOUT_SECS: u64 = 5;
 pub(super) const RESUBSCRIBE_CATCH_UP_DELAY_SECS: u64 = 5;
-pub(super) const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
-pub(super) const APP_DIRECT_MESSAGE_PAYLOAD_VERSION: u8 = 1;
-pub(super) const APP_GROUP_MESSAGE_PAYLOAD_VERSION: u8 = 1;
 pub(super) const GROUP_CHAT_PREFIX: &str = "group:";
 pub(super) const CHAT_INVITE_ROOT_URL: &str = "https://chat.iris.to/";
 pub(super) const DEBUG_SNAPSHOT_FILENAME: &str = "ndr_demo_runtime_debug.json";
 pub(super) const MAX_DEBUG_LOG_ENTRIES: usize = 128;
-pub(super) const PERSISTED_STATE_VERSION: u32 = 11;
+pub(super) const PERSISTED_STATE_VERSION: u32 = 12;
 
 pub(crate) fn configured_relays() -> Vec<String> {
     let compiled_defaults = compiled_default_relays();
@@ -51,11 +43,6 @@ pub(crate) fn configured_relays() -> Vec<String> {
         }
         Err(_) => compiled_defaults,
     }
-}
-
-#[cfg(test)]
-pub(super) fn configured_relay_urls() -> Vec<RelayUrl> {
-    relay_urls_from_strings(&configured_relays())
 }
 
 pub(super) fn relay_urls_from_strings(relays: &[String]) -> Vec<RelayUrl> {
@@ -160,4 +147,17 @@ pub(super) async fn ensure_session_relays_configured(client: &Client, relay_urls
     for relay in relay_urls {
         let _ = client.add_relay(relay.clone()).await;
     }
+}
+
+pub(super) async fn sync_session_relays(
+    client: &Client,
+    previous_relay_urls: &[RelayUrl],
+    next_relay_urls: &[RelayUrl],
+) {
+    for relay in previous_relay_urls {
+        if !next_relay_urls.iter().any(|next| next == relay) {
+            let _ = client.remove_relay(relay).await;
+        }
+    }
+    ensure_session_relays_configured(client, next_relay_urls).await;
 }

@@ -426,7 +426,7 @@ fun AddDeviceScreen(
                             .testTag("linkOwnerInput"),
                     placeholder = {
                         Text(
-                            text = "User ID or hex",
+                            text = "User ID",
                             color = IrisTheme.palette.muted,
                         )
                     },

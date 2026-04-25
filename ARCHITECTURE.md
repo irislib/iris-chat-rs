@@ -37,8 +37,8 @@ Android and iOS are intentionally thin shells over one shared Rust app core.
 - `tools/`
   - higher-signal local run and doctor commands
 
-The protocol crates under `core/vendor/` are dependencies. The product boundary
-for this app is the `core/` crate in this repo.
+The protocol runtime is an external dependency. The product boundary for this
+app is the `core/` crate in this repo.
 
 ## Core Principles
 

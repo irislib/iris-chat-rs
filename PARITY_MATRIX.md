@@ -44,7 +44,7 @@ Legend:
 ## Current Notes
 
 - The repo is structured as `core/`, `android/`, and `ios/`, with protocol
-  crates vendored under `core/vendor/`.
+  runtime code consumed as an external Rust dependency.
 - Android and iOS both consume the same UniFFI surface from `core/`.
 - The device approval QR format is owned by `core/` and generated into both
   native clients.

@@ -75,7 +75,7 @@ impl AppCore {
                         .as_ref()
                         .map(|group| format!("{} members", group.members.len()))
                         .or_else(|| self.owner_secondary_identifier(&thread.chat_id)),
-                    group_id: group_snapshot.as_ref().map(|group| group.group_id.clone()),
+                    group_id: group_snapshot.as_ref().map(|group| group.id.clone()),
                     member_count: group_snapshot
                         .as_ref()
                         .map(|group| group.members.len() as u64)
@@ -131,7 +131,7 @@ impl AppCore {
 
     pub(super) fn build_account_snapshot(&self) -> Option<AccountSnapshot> {
         let logged_in = self.logged_in.as_ref()?;
-        let owner_public_key_hex = logged_in.owner_pubkey.to_string();
+        let owner_public_key_hex = logged_in.owner_pubkey.to_hex();
         let owner_npub = owner_npub_from_owner(logged_in.owner_pubkey)
             .unwrap_or_else(|| owner_public_key_hex.clone());
         let display_name = self.owner_display_label(&owner_public_key_hex);
@@ -165,47 +165,21 @@ impl AppCore {
         let current_device_npub = account.device_npub.clone();
         let mut entries = BTreeMap::<String, DeviceEntrySnapshot>::new();
 
-        if let Some(user) = logged_in
-            .session_manager
-            .snapshot()
-            .users
-            .into_iter()
-            .find(|user| user.owner_pubkey == logged_in.owner_pubkey)
-        {
-            if let Some(roster) = user.roster.as_ref() {
-                for authorized_device in roster.devices() {
-                    let device_pubkey_hex = authorized_device.device_pubkey.to_string();
-                    entries
-                        .entry(device_pubkey_hex.clone())
-                        .or_insert(DeviceEntrySnapshot {
-                            device_pubkey_hex: device_pubkey_hex.clone(),
-                            device_npub: device_npub(&device_pubkey_hex)
-                                .unwrap_or_else(|| device_pubkey_hex.clone()),
-                            is_current_device: device_pubkey_hex == current_device_pubkey_hex,
-                            is_authorized: true,
-                            is_stale: false,
-                            last_activity_secs: None,
-                        });
-                }
-            }
-
-            for device in user.devices {
-                let device_pubkey_hex = device.device_pubkey.to_string();
-                let entry =
-                    entries
-                        .entry(device_pubkey_hex.clone())
-                        .or_insert(DeviceEntrySnapshot {
-                            device_pubkey_hex: device_pubkey_hex.clone(),
-                            device_npub: device_npub(&device_pubkey_hex)
-                                .unwrap_or_else(|| device_pubkey_hex.clone()),
-                            is_current_device: device_pubkey_hex == current_device_pubkey_hex,
-                            is_authorized: device.authorized,
-                            is_stale: device.is_stale,
-                            last_activity_secs: device.last_activity.map(UnixSeconds::get),
-                        });
-                entry.is_authorized = device.authorized;
-                entry.is_stale = device.is_stale;
-                entry.last_activity_secs = device.last_activity.map(UnixSeconds::get);
+        if let Some(app_keys) = self.app_keys.get(&logged_in.owner_pubkey.to_hex()) {
+            for device in &app_keys.devices {
+                let device_pubkey_hex = device.identity_pubkey_hex.clone();
+                entries.insert(
+                    device_pubkey_hex.clone(),
+                    DeviceEntrySnapshot {
+                        device_pubkey_hex: device_pubkey_hex.clone(),
+                        device_npub: device_npub(&device_pubkey_hex)
+                            .unwrap_or_else(|| device_pubkey_hex.clone()),
+                        is_current_device: device_pubkey_hex == current_device_pubkey_hex,
+                        is_authorized: true,
+                        is_stale: false,
+                        last_activity_secs: Some(device.created_at_secs),
+                    },
+                );
             }
         }
 
@@ -246,10 +220,11 @@ impl AppCore {
     }
 
     pub(super) fn build_network_status_snapshot(&self) -> NetworkStatusSnapshot {
-        let recent_event_count = self.debug_event_counters.roster_events
+        let recent_event_count = self.debug_event_counters.app_keys_events
             + self.debug_event_counters.invite_events
             + self.debug_event_counters.invite_response_events
             + self.debug_event_counters.message_events
+            + self.debug_event_counters.group_events
             + self.debug_event_counters.other_events;
         let last_debug = self.debug_log.back();
 
@@ -257,8 +232,8 @@ impl AppCore {
             relay_set_id: RELAY_SET_ID.to_string(),
             relay_urls: self.preferences.nostr_relay_urls.clone(),
             syncing: self.state.busy.syncing_network,
-            pending_outbound_count: self.pending_outbound.len() as u64,
-            pending_group_control_count: self.pending_group_controls.len() as u64,
+            pending_outbound_count: 0,
+            pending_group_control_count: 0,
             recent_event_count,
             recent_log_count: self.debug_log.len() as u64,
             last_debug_category: last_debug.map(|entry| entry.category.clone()),
@@ -267,19 +242,14 @@ impl AppCore {
     }
 
     pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
-        let invite = self
-            .logged_in
-            .as_ref()?
-            .session_manager
-            .snapshot()
-            .local_invite?;
-        let url = codec::invite_url(&invite, CHAT_INVITE_ROOT_URL).ok()?;
+        let invite = &self.logged_in.as_ref()?.local_invite;
+        let url = invite.get_url(CHAT_INVITE_ROOT_URL).ok()?;
         Some(PublicInviteSnapshot { url })
     }
 
-    pub(super) fn group_snapshot_for_chat_id(&self, chat_id: &str) -> Option<GroupSnapshot> {
+    pub(super) fn group_snapshot_for_chat_id(&self, chat_id: &str) -> Option<GroupData> {
         let group_id = parse_group_id_from_chat_id(chat_id)?;
-        self.logged_in.as_ref()?.group_manager.group(&group_id)
+        self.groups.get(&group_id).cloned()
     }
 
     pub(super) fn build_group_details_snapshot(
@@ -287,20 +257,22 @@ impl AppCore {
         group_id: &str,
     ) -> Option<GroupDetailsSnapshot> {
         let logged_in = self.logged_in.as_ref()?;
-        let group = logged_in.group_manager.group(group_id)?;
-        let local_owner = logged_in.owner_pubkey;
+        let group = self.groups.get(group_id)?.clone();
+        let local_owner_hex = logged_in.owner_pubkey.to_hex();
         let mut members = group
             .members
             .iter()
-            .map(|owner| {
-                let owner_hex = owner.to_string();
+            .map(|owner_hex| {
+                let owner = PublicKey::parse(owner_hex).ok();
                 GroupMemberSnapshot {
                     owner_pubkey_hex: owner_hex.clone(),
-                    display_name: self.owner_display_label(&owner_hex),
-                    npub: owner_npub_from_owner(*owner).unwrap_or_else(|| owner_hex.clone()),
-                    is_admin: group.admins.iter().any(|admin| admin == owner),
-                    is_creator: group.created_by == *owner,
-                    is_local_owner: *owner == local_owner,
+                    display_name: self.owner_display_label(owner_hex),
+                    npub: owner
+                        .and_then(owner_npub_from_owner)
+                        .unwrap_or_else(|| owner_hex.clone()),
+                    is_admin: group.admins.iter().any(|admin| admin == owner_hex),
+                    is_creator: group.admins.first() == Some(owner_hex),
+                    is_local_owner: owner_hex == &local_owner_hex,
                 }
             })
             .collect::<Vec<_>>();
@@ -313,14 +285,23 @@ impl AppCore {
                 .then_with(|| left.owner_pubkey_hex.cmp(&right.owner_pubkey_hex))
         });
 
+        let creator = group
+            .admins
+            .first()
+            .cloned()
+            .unwrap_or_else(|| local_owner_hex.clone());
+        let creator_npub = PublicKey::parse(&creator)
+            .ok()
+            .and_then(owner_npub_from_owner)
+            .unwrap_or_else(|| creator.clone());
+
         Some(GroupDetailsSnapshot {
-            group_id: group.group_id,
+            group_id: group.id,
             name: group.name,
-            created_by_display_name: self.owner_display_label(&group.created_by.to_string()),
-            created_by_npub: owner_npub_from_owner(group.created_by)
-                .unwrap_or_else(|| group.created_by.to_string()),
-            can_manage: group.admins.iter().any(|admin| admin == &local_owner),
-            revision: group.revision,
+            created_by_display_name: self.owner_display_label(&creator),
+            created_by_npub: creator_npub,
+            can_manage: group.admins.iter().any(|admin| admin == &local_owner_hex),
+            revision: group.created_at,
             members,
         })
     }
@@ -349,7 +330,7 @@ impl AppCore {
             .or_else(|| {
                 self.logged_in
                     .as_ref()
-                    .map(|logged_in| logged_in.owner_pubkey.to_string())
+                    .map(|logged_in| logged_in.owner_pubkey.to_hex())
             })
             .unwrap_or_default();
         let _ = self.update_tx.send(AppUpdate::PersistAccountBundle {
