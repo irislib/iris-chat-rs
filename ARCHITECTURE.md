@@ -16,7 +16,8 @@ Keep as much product behavior as possible in Rust so that:
 - protocol and relay behavior are cross-platform
 - adding another native shell is mostly a rendering and platform-integration task
 
-Android and iOS are intentionally thin shells over one shared Rust app core.
+Android, iOS, and macOS are intentionally thin shells over one shared Rust app
+core.
 
 ## Repo Shape
 
@@ -220,8 +221,7 @@ Rust stores the rest of the durable app model.
 
 Examples:
 
-- session manager snapshot
-- group manager snapshot
+- upstream NDR runtime, group, and ratchet state
 - thread/message model
 - pending outbound state
 - owner profile cache
@@ -273,8 +273,9 @@ Heavier non-blocking confidence lane:
 
 ## Current Refactor Focus
 
-The architecture direction is correct. The next work is internal Rust
-modularization, not moving behavior out of Rust.
+The architecture direction is correct. The app should keep the upstream NDR
+runtime boundary and keep native shells thin.
 
-The main remaining hotspot is `core/src/core.rs`. It should become a
-coordinator over smaller modules while the public UniFFI boundary stays stable.
+The current cleanup focus is file shape, not a boundary redesign. Split large
+files by real responsibility when touching them, especially the remaining broad
+iOS SwiftUI views and any Rust modules that grow around active behavior changes.

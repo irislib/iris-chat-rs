@@ -1,194 +1,102 @@
 # Architecture Implementation Plan
 
-Implementation plan derived from [ARCHITECTURE.md](ARCHITECTURE.md) and
-[ARCHITECTURE_REVIEW.md](ARCHITECTURE_REVIEW.md).
+Implementation plan derived from [ARCHITECTURE.md](ARCHITECTURE.md) and the
+current review in [ARCHITECTURE_REVIEW.md](ARCHITECTURE_REVIEW.md).
 
 ## Goal
 
-Keep the current product direction:
+Keep Iris Chat Rust-first:
 
-- Rust owns navigation, app state, and business logic
-- Android and iOS remain thin shells
-
-Improve the implementation so that:
-
-- the Rust core is internally modular
-- the shell contract stays explicit and tested
-- iOS and Android shell behavior does not drift
-- another future shell can be added without re-implementing app behavior
+- Rust owns navigation, app state, protocol/runtime behavior, persistence, and
+  business rules.
+- Android, iOS, and macOS stay thin native shells.
+- The upstream `nostr-double-ratchet` runtime remains the protocol/runtime
+  boundary; this app does not add a compatibility adapter layer around it.
 
 ## Current Status
 
-### Completed in the pre-refactor hardening phase
+Completed:
 
-- `ARCHITECTURE.md` now describes the Rust-first ownership model directly.
-- Android and iOS `AppManager` code now has contract comments around restore,
-  side-effect persistence, stale update dropping, and logout/reset ownership.
-- Android shell contract tests exist in
-  `android/app/src/androidTest/java/social/innode/ndr/demo/core/AppManagerContractTest.kt`.
-- iOS shell contract tests exist in `ios/Tests/IrisChatTests.swift`.
-- Android no longer fabricates an authoritative logged-out snapshot during
-  reset/logout.
-- The repo now has explicit refactor gates:
-  - `just qa`
-  - `just qa-native-contract`
-  - `just qa-interop`
+- migrated away from the vendored NDR crate
+- wired the Rust core to upstream `NdrRuntime`
+- kept upstream `FileStorageAdapter` as runtime state storage
+- added and kept shell-contract coverage for Android and iOS
+- split Android chat UI by responsibility
+- split iOS chat UI into `ChatViews.swift`
+- split Rust chat behavior into reactions, receipts, settings, typing, and the
+  main chat flow
 
-### Not started yet
+Still worth improving:
 
-- internal modularization of `core/src/core.rs`
-- clearer separation of persisted source state from `AppState` projection
-- broader relay-backed iOS acceptance coverage
+- split the remaining non-chat `ios/Sources/Views.swift` screens/components
+- keep narrowing Rust modules when a behavior change naturally touches them
+- broaden relay-backed iOS acceptance over time
 
-## Non-Goals
+## Invariants
 
-This plan does not aim to:
+Do not change these without a specific architecture decision:
 
-- move routing into native code
-- replace full-state snapshots with granular deltas immediately
-- redesign the public UniFFI contract without evidence
-- duplicate business logic in native apps
-
-## Invariants To Preserve
-
-The following should stay true throughout the refactor:
-
-- `AppAction` remains the fire-and-forget input surface
-- `AppState` remains the Rust-owned render model
-- `Router` remains Rust-owned
-- native shells restore secrets and persist secure side effects
-- protocol and domain logic stay in Rust
-- mixed-platform behavior remains acceptance-testable through shared-core flows
+- `AppAction` remains the input surface from native shells to Rust.
+- `AppState` remains the Rust-owned render model.
+- `Router` and `Screen` remain Rust-owned.
+- Native shells restore secrets and persist secure side effects.
+- Protocol/domain logic stays in Rust.
+- Message history is app persistence, not native UI storage.
 
 ## Next Workstreams
 
-### Workstream 1: Split `core/src/core.rs` internally
+### 1. Remaining Apple View Split
 
-This is the highest-priority remaining work.
-
-Keep the external FFI stable while breaking the implementation into smaller
-modules behind it.
-
-Recommended extraction order:
-
-1. `storage`
-2. `state_projection`
-3. `subscriptions`
-4. `session`
-5. `threads_outbox`
-6. `groups`
-7. `support_debug`
+The chat surface has been split into `ios/Sources/ChatViews.swift`. Continue
+splitting `ios/Sources/Views.swift` into focused files for settings, profile,
+device roster, onboarding, and reusable controls as those areas change.
 
 Rules:
 
-- preserve behavior first
-- avoid redesigning the public contract and internal structure in the same pass
-- move tests with the extracted responsibility where practical
+- keep `AppManager.swift` as a thin Rust bridge
+- avoid moving business decisions into SwiftUI views
+- keep view files small enough to review visually and behaviorally
 
-### Workstream 2: Separate domain state from projection more clearly
+### 2. Rust Core Shape
 
-Clarify which fields are:
+The core is no longer a single-file hotspot. Future Rust splits should follow
+active work:
 
-- actor-internal source state
-- durable persisted state
-- derived projection for `AppState`
+- direct-message send/apply behavior
+- group-message send/apply behavior
+- attachment upload/download flow
+- state projection and persistence when schema work changes
 
-This work should land naturally while extracting `storage` and
-`state_projection`.
+Avoid splitting just to create more modules.
 
-### Workstream 3: Keep snapshot simplicity until data says otherwise
+### 3. Acceptance Coverage
 
-Continue using:
-
-- `AppUpdate::FullState`
-- secure side-effect updates for credential persistence
-
-Only revisit granular updates if:
-
-- large histories measurably hurt performance
-- FFI transfer or cloning is shown to be a bottleneck
-- snapshot persistence/update cost becomes unacceptable
-
-### Workstream 4: Expand heavy confidence coverage gradually
-
-The blocking gate is in place. The heavier lane should continue to grow as the
-Rust core is split.
-
-Keep exercising:
-
-- `scripts/mixed_platform_group_chat_matrix.sh`
-- `scripts/group_chat_restore_smoke.sh`
-- `scripts/linked_device_relay_matrix.sh`
-
-Broaden coverage later for:
-
-- iOS<->iOS relay-backed acceptance
-- iOS restore-history convergence
-- more real-device acceptance
-
-## Execution Order
-
-### Phase 1: Completed
-
-- finalize architecture docs
-- add Android shell contract tests
-- add iOS shell contract tests
-- remove the most obvious native policy drift
-- establish the blocking and heavy confidence lanes
-
-### Phase 2: Core shape cleanup
-
-- extract `storage`
-- extract `state_projection`
-- extract `subscriptions`
-
-### Phase 3: Messaging runtime modularization
-
-- extract `session`
-- extract `threads_outbox`
-- extract `groups`
-
-### Phase 4: Cleanup and tightening
-
-- extract `support_debug`
-- clean remaining shell drift if any reappears
-- update docs after each boundary change
-- decide whether any snapshot/performance work is actually needed
-
-## Recommended First Refactor
-
-The first code refactor after this hardening phase should be:
-
-- extract Rust persistence and state projection out of `core/src/core.rs`
-
-Why first:
-
-- high readability payoff
-- lower user-facing risk than transport/session changes
-- keeps the public model stable
-- makes later runtime extractions easier
-
-## Refactor Gate
-
-Before and during the Rust-core split, the minimum blocking gate is:
+Keep using:
 
 ```bash
 just qa-native-contract
 ```
 
-Use the heavier lane at milestone boundaries:
+as the blocking refactor gate, and:
 
 ```bash
 just qa-interop
 ```
 
+as the heavier relay-backed confidence lane.
+
+Broaden coverage later for:
+
+- iOS to iOS relay-backed direct and group chat
+- iOS restore-history convergence
+- real-device acceptance beyond local emulator/simulator lanes
+
 ## Done Criteria
 
 This plan is complete when:
 
-- Rust-first ownership is documented and enforced consistently
-- Android and iOS shells remain contract-tested
-- native code does not own correctness policy
-- `core/src/core.rs` is no longer the single implementation hotspot
-- adding another shell would primarily mean rendering and platform integration,
-  not re-implementing app behavior
+- native shells remain thin and contract-tested
+- runtime behavior is owned by Rust and upstream NDR
+- no vendored or compatibility runtime layer returns
+- large files are split around real responsibilities
+- adding another shell primarily means rendering and platform integration

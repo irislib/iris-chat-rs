@@ -1,0 +1,340 @@
+use super::*;
+
+impl AppCore {
+    pub(super) fn set_typing_indicators_enabled(&mut self, enabled: bool) {
+        if self.preferences.send_typing_indicators == enabled {
+            return;
+        }
+        self.preferences.send_typing_indicators = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_read_receipts_enabled(&mut self, enabled: bool) {
+        if self.preferences.send_read_receipts == enabled {
+            return;
+        }
+        self.preferences.send_read_receipts = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_chat_message_ttl(&mut self, chat_id: &str, ttl_seconds: Option<u64>) {
+        let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
+            return;
+        };
+        let normalized_ttl = match ttl_seconds {
+            Some(ttl_seconds) if ttl_seconds > 0 => {
+                self.chat_message_ttl_seconds
+                    .insert(normalized_chat_id.clone(), ttl_seconds);
+                Some(ttl_seconds)
+            }
+            _ => {
+                self.chat_message_ttl_seconds.remove(&normalized_chat_id);
+                None
+            }
+        };
+
+        let actor = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| self.owner_display_label(&logged_in.owner_pubkey.to_hex()))
+            .unwrap_or_else(|| "You".to_string());
+        self.push_system_notice(
+            &normalized_chat_id,
+            disappearing_timer_notice(&actor, normalized_ttl),
+            unix_now().get(),
+        );
+        if is_group_chat_id(&normalized_chat_id) {
+            let content = serde_json::json!({
+                "type": "chat-settings",
+                "v": 1,
+                "messageTtlSeconds": normalized_ttl.unwrap_or(0),
+            })
+            .to_string();
+            self.send_group_event(
+                &normalized_chat_id,
+                CHAT_SETTINGS_KIND,
+                &content,
+                Vec::new(),
+                None,
+            );
+        } else if let (Some(logged_in), Ok((_, peer))) = (
+            self.logged_in.as_ref(),
+            parse_peer_input(&normalized_chat_id),
+        ) {
+            let ttl = normalized_ttl.unwrap_or(0);
+            let _ = logged_in.ndr_runtime.send_chat_settings(peer, ttl);
+            self.process_runtime_events();
+        }
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_desktop_notifications_enabled(&mut self, enabled: bool) {
+        if self.preferences.desktop_notifications_enabled == enabled {
+            return;
+        }
+        self.preferences.desktop_notifications_enabled = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_startup_at_login_enabled(&mut self, enabled: bool) {
+        if self.preferences.startup_at_login_enabled == enabled {
+            return;
+        }
+        self.preferences.startup_at_login_enabled = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn add_nostr_relay(&mut self, relay_url: &str) {
+        let normalized = match normalize_nostr_relay_url(relay_url) {
+            Ok(url) => url,
+            Err(message) => return self.reject_relay_setting(message),
+        };
+        if self.preferences.nostr_relay_urls.contains(&normalized) {
+            return self.reject_relay_setting("Relay already exists.".to_string());
+        }
+
+        let mut next = self.preferences.nostr_relay_urls.clone();
+        next.push(normalized);
+        self.apply_nostr_relay_urls(next);
+    }
+
+    pub(super) fn update_nostr_relay(&mut self, old_relay_url: &str, new_relay_url: &str) {
+        let old_normalized = match normalize_nostr_relay_url(old_relay_url) {
+            Ok(url) => url,
+            Err(message) => return self.reject_relay_setting(message),
+        };
+        let new_normalized = match normalize_nostr_relay_url(new_relay_url) {
+            Ok(url) => url,
+            Err(message) => return self.reject_relay_setting(message),
+        };
+        let Some(index) = self
+            .preferences
+            .nostr_relay_urls
+            .iter()
+            .position(|relay| relay == &old_normalized)
+        else {
+            return self.reject_relay_setting("Relay not found.".to_string());
+        };
+        if old_normalized != new_normalized
+            && self.preferences.nostr_relay_urls.contains(&new_normalized)
+        {
+            return self.reject_relay_setting("Relay already exists.".to_string());
+        }
+
+        let mut next = self.preferences.nostr_relay_urls.clone();
+        next[index] = new_normalized;
+        self.apply_nostr_relay_urls(next);
+    }
+
+    pub(super) fn remove_nostr_relay(&mut self, relay_url: &str) {
+        let normalized = match normalize_nostr_relay_url(relay_url) {
+            Ok(url) => url,
+            Err(message) => return self.reject_relay_setting(message),
+        };
+        if self.preferences.nostr_relay_urls.len() <= 1 {
+            return self.reject_relay_setting("At least one relay is required.".to_string());
+        }
+        let Some(index) = self
+            .preferences
+            .nostr_relay_urls
+            .iter()
+            .position(|relay| relay == &normalized)
+        else {
+            return self.reject_relay_setting("Relay not found.".to_string());
+        };
+
+        let mut next = self.preferences.nostr_relay_urls.clone();
+        next.remove(index);
+        self.apply_nostr_relay_urls(next);
+    }
+
+    pub(super) fn reset_nostr_relays(&mut self) {
+        self.apply_nostr_relay_urls(configured_relays());
+    }
+
+    pub(super) fn set_image_proxy_enabled(&mut self, enabled: bool) {
+        if self.preferences.image_proxy_enabled == enabled {
+            return;
+        }
+        self.preferences.image_proxy_enabled = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_image_proxy_url(&mut self, url: &str) {
+        let normalized = normalized_setting(url, crate::image_proxy::DEFAULT_IMAGE_PROXY_URL);
+        if self.preferences.image_proxy_url == normalized {
+            return;
+        }
+        self.preferences.image_proxy_url = normalized;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_image_proxy_key_hex(&mut self, key_hex: &str) {
+        let normalized = normalized_setting(
+            &key_hex.to_ascii_lowercase(),
+            crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX,
+        );
+        if self.preferences.image_proxy_key_hex == normalized {
+            return;
+        }
+        self.preferences.image_proxy_key_hex = normalized;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_image_proxy_salt_hex(&mut self, salt_hex: &str) {
+        let normalized = normalized_setting(
+            &salt_hex.to_ascii_lowercase(),
+            crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX,
+        );
+        if self.preferences.image_proxy_salt_hex == normalized {
+            return;
+        }
+        self.preferences.image_proxy_salt_hex = normalized;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn reset_image_proxy_settings(&mut self) {
+        self.preferences.image_proxy_enabled = true;
+        self.preferences.image_proxy_url = crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string();
+        self.preferences.image_proxy_key_hex =
+            crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string();
+        self.preferences.image_proxy_salt_hex =
+            crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    fn apply_nostr_relay_urls(&mut self, relay_urls: Vec<String>) {
+        let normalized = normalize_nostr_relay_urls(&relay_urls);
+        if self.preferences.nostr_relay_urls == normalized {
+            return;
+        }
+
+        self.preferences.nostr_relay_urls = normalized;
+        let next_relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
+        let should_refresh = if let Some(logged_in) = self.logged_in.as_mut() {
+            let client = logged_in.client.clone();
+            let previous_relay_urls = logged_in.relay_urls.clone();
+            self.runtime.block_on(sync_session_relays(
+                &client,
+                &previous_relay_urls,
+                &next_relay_urls,
+            ));
+            logged_in.relay_urls = next_relay_urls;
+            true
+        } else {
+            false
+        };
+
+        if should_refresh {
+            self.schedule_session_connect();
+            self.request_protocol_subscription_refresh_forced();
+            self.fetch_recent_protocol_state();
+        }
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    fn reject_relay_setting(&mut self, message: String) {
+        self.state.toast = Some(message);
+        self.emit_state();
+    }
+
+    pub(super) fn apply_chat_settings_control(
+        &mut self,
+        chat_id: &str,
+        actor: &str,
+        ttl_seconds: Option<u64>,
+        created_at_secs: u64,
+    ) {
+        let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
+            return;
+        };
+        match ttl_seconds {
+            Some(ttl_seconds) if ttl_seconds > 0 => {
+                self.chat_message_ttl_seconds
+                    .insert(normalized_chat_id.clone(), ttl_seconds);
+            }
+            _ => {
+                self.chat_message_ttl_seconds.remove(&normalized_chat_id);
+            }
+        }
+        self.push_system_notice(
+            &normalized_chat_id,
+            disappearing_timer_notice(actor, ttl_seconds),
+            created_at_secs,
+        );
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+}
+
+fn disappearing_timer_notice(actor: &str, ttl_seconds: Option<u64>) -> String {
+    format!(
+        "{actor} set disappearing messages timer to {}",
+        disappearing_timer_label(ttl_seconds)
+    )
+}
+
+fn disappearing_timer_label(ttl_seconds: Option<u64>) -> String {
+    match ttl_seconds {
+        None | Some(0) => "Off".to_string(),
+        Some(300) => "5 minutes".to_string(),
+        Some(3600) => "1 hour".to_string(),
+        Some(86_400) => "24 hours".to_string(),
+        Some(604_800) => "1 week".to_string(),
+        Some(2_592_000) => "1 month".to_string(),
+        Some(7_776_000) => "3 months".to_string(),
+        Some(seconds) if seconds % 86_400 == 0 => {
+            let days = seconds / 86_400;
+            format!("{days} days")
+        }
+        Some(seconds) if seconds % 3600 == 0 => {
+            let hours = seconds / 3600;
+            if hours == 1 {
+                "1 hour".to_string()
+            } else {
+                format!("{hours} hours")
+            }
+        }
+        Some(seconds) if seconds % 60 == 0 => {
+            let minutes = seconds / 60;
+            if minutes == 1 {
+                "1 minute".to_string()
+            } else {
+                format!("{minutes} minutes")
+            }
+        }
+        Some(seconds) => format!("{seconds} seconds"),
+    }
+}
+
+fn normalized_setting(value: &str, fallback: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        fallback.to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
