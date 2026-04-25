@@ -35,6 +35,7 @@ impl AppCore {
             pending_group_controls: Vec::new(),
             owner_profiles: BTreeMap::new(),
             typing_indicators: BTreeMap::new(),
+            chat_message_ttl_seconds: BTreeMap::new(),
             preferences: state.preferences.clone(),
             recent_handshake_peers: BTreeMap::new(),
             seen_event_ids: HashSet::new(),
@@ -99,7 +100,16 @@ impl AppCore {
             AppAction::CreatePublicInvite => self.create_public_invite(),
             AppAction::AcceptInvite { invite_input } => self.accept_invite(&invite_input),
             AppAction::OpenChat { chat_id } => self.open_chat(&chat_id),
-            AppAction::SendMessage { chat_id, text } => self.send_message(&chat_id, &text),
+            AppAction::SendMessage { chat_id, text } => self.send_message(&chat_id, &text, None),
+            AppAction::SendDisappearingMessage {
+                chat_id,
+                text,
+                expires_at_secs,
+            } => self.send_message(&chat_id, &text, Some(expires_at_secs)),
+            AppAction::SetChatMessageTtl {
+                chat_id,
+                ttl_seconds,
+            } => self.set_chat_message_ttl(&chat_id, ttl_seconds),
             AppAction::SendAttachment {
                 chat_id,
                 file_path,

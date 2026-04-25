@@ -18,8 +18,8 @@ use nostr_double_ratchet::{
 };
 use nostr_double_ratchet_nostr::nostr as codec;
 use nostr_sdk::prelude::{
-    Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, RelayUrl, SubscriptionId,
-    Timestamp, ToBech32,
+    Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, RelayUrl, SecretKey,
+    SubscriptionId, Timestamp, ToBech32,
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
@@ -91,6 +91,7 @@ pub struct AppCore {
     pending_group_controls: Vec<PendingGroupControl>,
     owner_profiles: BTreeMap<String, OwnerProfileRecord>,
     typing_indicators: BTreeMap<String, TypingIndicatorRecord>,
+    chat_message_ttl_seconds: BTreeMap<String, u64>,
     preferences: PreferencesSnapshot,
     recent_handshake_peers: BTreeMap<String, RecentHandshakePeer>,
     seen_event_ids: HashSet<String>,

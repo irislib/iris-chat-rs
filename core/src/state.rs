@@ -184,6 +184,7 @@ pub struct CurrentChatSnapshot {
     pub subtitle: Option<String>,
     pub group_id: Option<String>,
     pub member_count: u64,
+    pub message_ttl_seconds: Option<u64>,
     pub messages: Vec<ChatMessageSnapshot>,
     pub typing_indicators: Vec<TypingIndicatorSnapshot>,
 }

@@ -112,7 +112,7 @@ impl AppCore {
         self.emit_state();
     }
 
-    pub(super) fn send_message(&mut self, chat_id: &str, text: &str) {
+    pub(super) fn send_message(&mut self, chat_id: &str, text: &str, expires_at_secs: Option<u64>) {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return;
@@ -150,14 +150,19 @@ impl AppCore {
             chat_id: normalized_chat_id.clone(),
         }];
         self.ensure_thread_record(&normalized_chat_id, now.get());
+        let expires_at_secs = expires_at_secs.or_else(|| {
+            self.chat_message_ttl_seconds
+                .get(&normalized_chat_id)
+                .map(|ttl_seconds| now.get().saturating_add(*ttl_seconds))
+        });
         self.state.busy.sending_message = true;
         self.rebuild_state();
         self.emit_state();
 
         if is_group_chat_id(&normalized_chat_id) {
-            self.send_group_message(&normalized_chat_id, trimmed, now);
+            self.send_group_message(&normalized_chat_id, trimmed, now, expires_at_secs);
         } else {
-            self.send_direct_message(&normalized_chat_id, trimmed, now);
+            self.send_direct_message(&normalized_chat_id, trimmed, now, expires_at_secs);
         }
 
         self.schedule_next_pending_retry(now.get());
@@ -167,7 +172,13 @@ impl AppCore {
         self.emit_state();
     }
 
-    pub(super) fn send_direct_message(&mut self, chat_id: &str, text: &str, now: UnixSeconds) {
+    pub(super) fn send_direct_message(
+        &mut self,
+        chat_id: &str,
+        text: &str,
+        now: UnixSeconds,
+        expires_at_secs: Option<u64>,
+    ) {
         let Ok((normalized_chat_id, peer_pubkey)) = parse_peer_input(chat_id) else {
             self.state.toast = Some("Invalid peer key.".to_string());
             return;
@@ -192,10 +203,23 @@ impl AppCore {
                 .prepare_send(&mut ctx, owner, payload)
         };
 
-        self.handle_prepared_direct_send(&normalized_chat_id, message_id, text, now, prepared);
+        self.handle_prepared_direct_send(
+            &normalized_chat_id,
+            message_id,
+            text,
+            now,
+            expires_at_secs,
+            prepared,
+        );
     }
 
-    pub(super) fn send_group_message(&mut self, chat_id: &str, text: &str, now: UnixSeconds) {
+    pub(super) fn send_group_message(
+        &mut self,
+        chat_id: &str,
+        text: &str,
+        now: UnixSeconds,
+        expires_at_secs: Option<u64>,
+    ) {
         let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
             self.state.toast = Some("Invalid group id.".to_string());
             return;
@@ -236,13 +260,14 @@ impl AppCore {
                         chat_id,
                         text.to_string(),
                         now.get(),
-                        None,
+                        expires_at_secs,
                         DeliveryState::Queued,
                     );
                     self.queue_pending_outbound(
                         message.id,
                         chat_id.to_string(),
                         text.to_string(),
+                        expires_at_secs,
                         None,
                         OutboundPublishMode::WaitForPeer,
                         pending_reason.clone(),
@@ -254,7 +279,7 @@ impl AppCore {
                         PENDING_RETRY_DELAY_SECS,
                     ));
                 } else {
-                    match build_group_prepared_publish_batch(&prepared) {
+                    match build_group_prepared_publish_batch(&prepared, expires_at_secs) {
                         Ok(Some(batch)) => {
                             let publish_mode = publish_mode_for_batch(&batch);
                             let message = self.push_outgoing_message_with_id(
@@ -262,13 +287,14 @@ impl AppCore {
                                 chat_id,
                                 text.to_string(),
                                 now.get(),
-                                None,
+                                expires_at_secs,
                                 DeliveryState::Pending,
                             );
                             self.queue_pending_outbound(
                                 message.id.clone(),
                                 chat_id.to_string(),
                                 text.to_string(),
+                                expires_at_secs,
                                 Some(batch.clone()),
                                 publish_mode.clone(),
                                 pending_reason_for_publish_mode(&publish_mode),
@@ -288,7 +314,7 @@ impl AppCore {
                                 chat_id,
                                 text.to_string(),
                                 now.get(),
-                                None,
+                                expires_at_secs,
                                 DeliveryState::Failed,
                             );
                             self.update_message_delivery(
@@ -313,6 +339,7 @@ impl AppCore {
         message_id: String,
         text: &str,
         now: UnixSeconds,
+        expires_at_secs: Option<u64>,
         prepared: Result<nostr_double_ratchet::PreparedSend, Error>,
     ) {
         match prepared {
@@ -332,13 +359,14 @@ impl AppCore {
                         chat_id,
                         text.to_string(),
                         now.get(),
-                        None,
+                        expires_at_secs,
                         DeliveryState::Queued,
                     );
                     self.queue_pending_outbound(
                         message.id,
                         chat_id.to_string(),
                         text.to_string(),
+                        expires_at_secs,
                         None,
                         OutboundPublishMode::WaitForPeer,
                         pending_reason.clone(),
@@ -350,7 +378,7 @@ impl AppCore {
                         PENDING_RETRY_DELAY_SECS,
                     ));
                 } else {
-                    match build_prepared_publish_batch(&prepared) {
+                    match build_prepared_publish_batch(&prepared, expires_at_secs) {
                         Ok(Some(batch)) => {
                             let publish_mode = publish_mode_for_batch(&batch);
                             let message = self.push_outgoing_message_with_id(
@@ -358,13 +386,14 @@ impl AppCore {
                                 chat_id,
                                 text.to_string(),
                                 now.get(),
-                                None,
+                                expires_at_secs,
                                 DeliveryState::Pending,
                             );
                             self.queue_pending_outbound(
                                 message.id.clone(),
                                 chat_id.to_string(),
                                 text.to_string(),
+                                expires_at_secs,
                                 Some(batch.clone()),
                                 publish_mode.clone(),
                                 pending_reason_for_publish_mode(&publish_mode),
@@ -384,7 +413,7 @@ impl AppCore {
                                 chat_id,
                                 text.to_string(),
                                 now.get(),
-                                None,
+                                expires_at_secs,
                                 DeliveryState::Failed,
                             );
                             self.update_message_delivery(
@@ -532,6 +561,18 @@ impl AppCore {
         let mut still_pending = Vec::new();
 
         for mut pending_message in pending {
+            if pending_message
+                .expires_at_secs
+                .is_some_and(|expires_at_secs| expires_at_secs <= now.get())
+            {
+                self.update_message_delivery(
+                    &pending_message.chat_id,
+                    &pending_message.message_id,
+                    DeliveryState::Failed,
+                );
+                continue;
+            }
+
             if pending_message.next_retry_at_secs > now.get() {
                 still_pending.push(pending_message);
                 continue;
@@ -622,7 +663,10 @@ impl AppCore {
                             pending_message.publish_mode = OutboundPublishMode::WaitForPeer;
                             still_pending.push(pending_message);
                         } else {
-                            match build_group_prepared_publish_batch(&prepared) {
+                            match build_group_prepared_publish_batch(
+                                &prepared,
+                                pending_message.expires_at_secs,
+                            ) {
                                 Ok(Some(batch)) => {
                                     pending_message.publish_mode = publish_mode_for_batch(&batch);
                                     pending_message.prepared_publish = Some(batch.clone());
@@ -754,7 +798,10 @@ impl AppCore {
                         pending_message.publish_mode = OutboundPublishMode::WaitForPeer;
                         still_pending.push(pending_message);
                     } else {
-                        match build_prepared_publish_batch(&prepared) {
+                        match build_prepared_publish_batch(
+                            &prepared,
+                            pending_message.expires_at_secs,
+                        ) {
                             Ok(Some(batch)) => {
                                 pending_message.publish_mode = publish_mode_for_batch(&batch);
                                 pending_message.prepared_publish = Some(batch.clone());
@@ -832,6 +879,7 @@ impl AppCore {
         message_id: String,
         chat_id: String,
         body: String,
+        expires_at_secs: Option<u64>,
         prepared_publish: Option<PreparedPublishBatch>,
         publish_mode: OutboundPublishMode,
         reason: PendingSendReason,
@@ -841,6 +889,7 @@ impl AppCore {
             message_id,
             chat_id,
             body,
+            expires_at_secs,
             prepared_publish,
             publish_mode,
             reason,
@@ -1088,6 +1137,24 @@ impl AppCore {
             return;
         }
         self.preferences.send_read_receipts = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_chat_message_ttl(&mut self, chat_id: &str, ttl_seconds: Option<u64>) {
+        let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
+            return;
+        };
+        match ttl_seconds {
+            Some(ttl_seconds) if ttl_seconds > 0 => {
+                self.chat_message_ttl_seconds
+                    .insert(normalized_chat_id, ttl_seconds);
+            }
+            _ => {
+                self.chat_message_ttl_seconds.remove(&normalized_chat_id);
+            }
+        }
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
@@ -1353,7 +1420,7 @@ impl AppCore {
             .session_manager
             .prepare_send(&mut ctx, owner, payload)
         {
-            Ok(prepared) => match build_prepared_publish_batch(&prepared) {
+            Ok(prepared) => match build_prepared_publish_batch(&prepared, None) {
                 Ok(Some(batch)) => {
                     let control_id = format!("control-{}", self.allocate_message_id());
                     let publish_mode = publish_mode_for_batch(&batch);
@@ -1397,7 +1464,7 @@ impl AppCore {
         match group_manager.send_message(session_manager, &mut ctx, &group_id, payload) {
             Ok(prepared) => {
                 self.publish_group_local_sibling_best_effort(&prepared);
-                match build_group_prepared_publish_batch(&prepared) {
+                match build_group_prepared_publish_batch(&prepared, None) {
                     Ok(Some(batch)) => {
                         let control_id = format!("control-{}", self.allocate_message_id());
                         let publish_mode = publish_mode_for_batch(&batch);

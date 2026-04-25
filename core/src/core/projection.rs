@@ -80,6 +80,10 @@ impl AppCore {
                         .as_ref()
                         .map(|group| group.members.len() as u64)
                         .unwrap_or(0),
+                    message_ttl_seconds: self
+                        .chat_message_ttl_seconds
+                        .get(&thread.chat_id)
+                        .copied(),
                     messages: thread.messages.clone(),
                     typing_indicators: self.typing_indicator_snapshots(&thread.chat_id),
                 }

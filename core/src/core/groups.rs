@@ -90,7 +90,7 @@ impl AppCore {
                     );
                     self.nudge_protocol_state_for_pending_reason(&reason);
                 } else {
-                    match build_group_prepared_publish_batch(&result.prepared) {
+                    match build_group_prepared_publish_batch(&result.prepared, None) {
                         Ok(Some(batch)) => {
                             let operation_id = self.allocate_message_id();
                             let publish_mode = publish_mode_for_batch(&batch);
@@ -689,7 +689,7 @@ impl AppCore {
                     );
                     self.nudge_protocol_state_for_pending_reason(&reason);
                 } else {
-                    match build_group_prepared_publish_batch(&prepared) {
+                    match build_group_prepared_publish_batch(&prepared, None) {
                         Ok(Some(batch)) => {
                             let operation_id = self.allocate_message_id();
                             let publish_mode = publish_mode_for_batch(&batch);
@@ -767,7 +767,7 @@ impl AppCore {
                         self.nudge_protocol_state_for_pending_reason(&reason);
                         still_pending.push(control);
                     } else {
-                        match build_group_prepared_publish_batch(&prepared) {
+                        match build_group_prepared_publish_batch(&prepared, None) {
                             Ok(Some(batch)) => {
                                 control.prepared_publish = Some(batch.clone());
                                 control.reason = pending_reason_for_publish_mode(

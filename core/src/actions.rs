@@ -40,6 +40,15 @@ pub enum AppAction {
         chat_id: String,
         text: String,
     },
+    SendDisappearingMessage {
+        chat_id: String,
+        text: String,
+        expires_at_secs: u64,
+    },
+    SetChatMessageTtl {
+        chat_id: String,
+        ttl_seconds: Option<u64>,
+    },
     SendAttachment {
         chat_id: String,
         file_path: String,

@@ -98,6 +98,8 @@ pub(super) struct PendingOutbound {
     pub(super) chat_id: String,
     pub(super) body: String,
     #[serde(default)]
+    pub(super) expires_at_secs: Option<u64>,
+    #[serde(default)]
     pub(super) prepared_publish: Option<PreparedPublishBatch>,
     #[serde(default)]
     pub(super) publish_mode: OutboundPublishMode,
@@ -404,6 +406,8 @@ pub(super) struct PersistedState {
     pub(super) owner_profiles: BTreeMap<String, OwnerProfileRecord>,
     #[serde(default)]
     pub(super) preferences: PersistedPreferences,
+    #[serde(default)]
+    pub(super) chat_message_ttl_seconds: BTreeMap<String, u64>,
     pub(super) threads: Vec<PersistedThread>,
     #[serde(default)]
     pub(super) pending_inbound: Vec<PendingInbound>,

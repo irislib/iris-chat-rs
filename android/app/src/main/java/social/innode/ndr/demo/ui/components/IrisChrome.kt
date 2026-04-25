@@ -89,6 +89,7 @@ fun IrisTopBar(
     title: String,
     modifier: Modifier = Modifier,
     onBack: (() -> Unit)? = null,
+    backBadgeCount: ULong = 0uL,
     leading: (@Composable RowScope.() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
@@ -112,14 +113,24 @@ fun IrisTopBar(
         ) {
             when {
                 onBack != null -> {
-                    IconButton(
-                        onClick = onBack,
-                        modifier = Modifier.size(40.dp),
+                    BadgedBox(
+                        badge = {
+                            if (backBadgeCount > 0uL) {
+                                Badge {
+                                    Text(if (backBadgeCount > 99uL) "99+" else backBadgeCount.toString())
+                                }
+                            }
+                        },
                     ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                            contentDescription = "Back",
-                        )
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier.size(40.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                contentDescription = "Back",
+                            )
+                        }
                     }
                 }
 

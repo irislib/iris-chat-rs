@@ -738,6 +738,38 @@ fn read_receipt_preference_updates_state_and_persists() {
 }
 
 #[test]
+fn chat_message_ttl_updates_state_and_persists() {
+    let data_dir = TempDir::new().expect("temp dir");
+    let mut core = test_core(data_dir.path());
+    start_primary_test_session(&mut core, 24, true, true).expect("start session");
+    let chat_id = pubkey_hex_for_fill(33);
+
+    core.handle_action(AppAction::SetChatMessageTtl {
+        chat_id: chat_id.clone(),
+        ttl_seconds: Some(300),
+    });
+    assert_eq!(core.chat_message_ttl_seconds.get(&chat_id), Some(&300));
+    assert_eq!(
+        persisted_state(data_dir.path())
+            .chat_message_ttl_seconds
+            .get(&chat_id),
+        Some(&300)
+    );
+
+    let mut restored = test_core(data_dir.path());
+    start_primary_test_session(&mut restored, 24, true, true).expect("restore session");
+    assert_eq!(restored.chat_message_ttl_seconds.get(&chat_id), Some(&300));
+
+    restored.handle_action(AppAction::SetChatMessageTtl {
+        chat_id: chat_id.clone(),
+        ttl_seconds: None,
+    });
+    assert!(!persisted_state(data_dir.path())
+        .chat_message_ttl_seconds
+        .contains_key(&chat_id));
+}
+
+#[test]
 fn disabled_read_receipts_suppress_delivered_and_seen_controls() {
     let data_dir = TempDir::new().expect("temp dir");
     let (alice_manager, _bob_manager, bob_chat_id) =
@@ -1216,6 +1248,7 @@ fn protocol_subscription_plan_sorts_roster_authors_stably() {
         message_id: "dup-owner-a".to_string(),
         chat_id: owner_a.clone(),
         body: "pending".to_string(),
+        expires_at_secs: None,
         prepared_publish: None,
         publish_mode: OutboundPublishMode::WaitForPeer,
         reason: PendingSendReason::MissingRoster,
@@ -1283,7 +1316,7 @@ fn established_send_stays_pending_until_publish_ack() {
         established_session_manager_pair(73, 74, 1_900_000_000);
     let mut core = logged_in_core_with_manager(data_dir.path(), 73, alice_manager);
 
-    core.send_message(&chat_id, "offline direct send");
+    core.send_message(&chat_id, "offline direct send", None);
 
     let last_message = core
         .state
@@ -1639,7 +1672,7 @@ fn retry_pending_outbound_reuses_same_prepared_events_without_advancing_session(
         established_session_manager_pair(77, 78, 1_900_000_100);
     let mut core = logged_in_core_with_manager(data_dir.path(), 77, alice_manager);
 
-    core.send_message(&chat_id, "retry me");
+    core.send_message(&chat_id, "retry me", None);
 
     let message_id = core.pending_outbound[0].message_id.clone();
     let event_ids_before = pending_publish_event_ids(&core, &message_id);
@@ -1730,7 +1763,7 @@ fn publish_finished_success_marks_message_sent_and_clears_pending() {
         established_session_manager_pair(79, 80, 1_900_000_300);
     let mut core = logged_in_core_with_manager(data_dir.path(), 79, alice_manager);
 
-    core.send_message(&chat_id, "mark me sent");
+    core.send_message(&chat_id, "mark me sent", None);
     let message_id = core.pending_outbound[0].message_id.clone();
 
     core.handle_internal(InternalEvent::PublishFinished {
@@ -1845,7 +1878,7 @@ fn prepared_pending_outbound_persists_across_restore() {
         established_session_manager_pair(79, 80, 1_900_000_300);
     let mut core = logged_in_core_with_manager(data_dir.path(), 79, alice_manager);
 
-    core.send_message(&chat_id, "persist me");
+    core.send_message(&chat_id, "persist me", None);
     let message_id = core.pending_outbound[0].message_id.clone();
     let event_ids_before = pending_publish_event_ids(&core, &message_id);
     core.persist_best_effort();

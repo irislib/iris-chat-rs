@@ -127,6 +127,7 @@ struct IrisTopBar: View {
     let title: String
     let canGoBack: Bool
     let onBack: () -> Void
+    let backBadgeCount: UInt64
     let leading: AnyView
     let trailing: AnyView
 
@@ -134,12 +135,14 @@ struct IrisTopBar: View {
         title: String,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
+        backBadgeCount: UInt64 = 0,
         leading: AnyView = AnyView(EmptyView()),
         trailing: AnyView = AnyView(EmptyView())
     ) {
         self.title = title
         self.canGoBack = canGoBack
         self.onBack = onBack
+        self.backBadgeCount = backBadgeCount
         self.leading = leading
         self.trailing = trailing
     }
@@ -152,14 +155,25 @@ struct IrisTopBar: View {
 
             if canGoBack {
                 Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(palette.textPrimary)
-                        .frame(width: 44, height: 44)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(palette.panel.opacity(0.64))
-                        )
+                    ZStack(alignment: .topTrailing) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 20, weight: .bold))
+                            .foregroundStyle(palette.textPrimary)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(palette.panel.opacity(0.64))
+                            )
+                        if backBadgeCount > 0 {
+                            Text(backBadgeCount > 99 ? "99+" : "\(backBadgeCount)")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color.white)
+                                .padding(.horizontal, 5)
+                                .frame(minWidth: 18, minHeight: 18)
+                                .background(Capsule().fill(palette.accent))
+                                .offset(x: 5, y: -5)
+                        }
+                    }
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Back")

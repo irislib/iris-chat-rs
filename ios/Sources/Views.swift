@@ -3,6 +3,15 @@ import SwiftUI
 
 private let irisSourceURL = URL(string: "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs")!
 private let irisSourceLabel = "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
+private let disappearingMessageOptions: [(String, UInt64?)] = [
+    ("Off", nil),
+    ("5 minutes", 300),
+    ("1 hour", 3_600),
+    ("24 hours", 86_400),
+    ("1 week", 604_800),
+    ("1 month", 2_592_000),
+    ("3 months", 7_776_000),
+]
 
 private func proxiedImageURL(
     _ rawURL: String?,
@@ -52,6 +61,7 @@ struct RootView: View {
                     canGoBack: manager.canNavigateBack,
                     onBack: manager.navigateBack,
                     networkStatus: manager.state.networkStatus,
+                    backBadgeCount: backUnreadCount,
                     leading: topBarLeadingItem,
                     trailing: topBarTrailingItem
                 ) {
@@ -127,23 +137,47 @@ struct RootView: View {
     private var topBarTrailingItem: AnyView {
         guard case .chat(let chatId) = manager.activeScreen,
               let chat = manager.state.currentChat,
-              chat.chatId == chatId,
-              chat.kind == .group,
-              let groupId = chat.groupId else {
+              chat.chatId == chatId else {
             return AnyView(EmptyView())
         }
 
         return AnyView(
-            Button(action: {
-                manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
-            }) {
-                Image(systemName: "person.3.fill")
+            Menu {
+                if chat.kind == .group, let groupId = chat.groupId {
+                    Button("Group details") {
+                        manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
+                    }
+                }
+                Menu("Disappearing messages") {
+                    ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
+                        Button(action: {
+                            manager.dispatch(.setChatMessageTtl(chatId: chat.chatId, ttlSeconds: ttlSeconds))
+                        }) {
+                            if chat.messageTtlSeconds == ttlSeconds {
+                                Label(label, systemImage: "checkmark")
+                            } else {
+                                Text(label)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
                     .font(.system(size: 16, weight: .semibold))
                     .frame(width: 40, height: 40)
             }
             .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-            .accessibilityIdentifier("chatGroupDetailsButton")
+            .accessibilityIdentifier("chatOverflowButton")
         )
+    }
+
+    private var backUnreadCount: UInt64 {
+        guard case .chat(let activeChatId) = manager.activeScreen else {
+            return 0
+        }
+        return manager.state.chatList
+            .filter { $0.chatId != activeChatId }
+            .reduce(UInt64(0)) { $0 + $1.unreadCount }
     }
 
     private func screenTitle(_ screen: Screen) -> String {
@@ -177,6 +211,7 @@ struct NavigationShell<Content: View>: View {
     let canGoBack: Bool
     let onBack: () -> Void
     let networkStatus: NetworkStatusSnapshot?
+    let backBadgeCount: UInt64
     let leading: AnyView
     let trailing: AnyView
     let content: () -> Content
@@ -186,6 +221,7 @@ struct NavigationShell<Content: View>: View {
         canGoBack: Bool,
         onBack: @escaping () -> Void,
         networkStatus: NetworkStatusSnapshot? = nil,
+        backBadgeCount: UInt64 = 0,
         leading: AnyView = AnyView(EmptyView()),
         trailing: AnyView = AnyView(EmptyView()),
         @ViewBuilder content: @escaping () -> Content
@@ -194,6 +230,7 @@ struct NavigationShell<Content: View>: View {
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.networkStatus = networkStatus
+        self.backBadgeCount = backBadgeCount
         self.leading = leading
         self.trailing = trailing
         self.content = content
@@ -205,6 +242,7 @@ struct NavigationShell<Content: View>: View {
                 title: title,
                 canGoBack: canGoBack,
                 onBack: onBack,
+                backBadgeCount: backBadgeCount,
                 leading: leading,
                 trailing: trailing
             )
@@ -2800,7 +2838,6 @@ private struct ChatMessageRow: View {
                         )
                     }
                 }
-                .onHover { isHovering = $0 }
 
                 if !reactions.isEmpty {
                     ReactionRow(reactions: reactions, isOutgoing: message.isOutgoing)
@@ -2817,8 +2854,7 @@ private struct ChatMessageRow: View {
                         Text(irisMessageClock(message.createdAtSecs))
                             .font(.system(.caption2, design: .rounded, weight: .medium))
                         if message.isOutgoing {
-                            Text(irisDeliveryLabel(message.delivery))
-                                .font(.system(.caption2, design: .rounded, weight: .medium))
+                            IrisDeliveryGlyph(delivery: message.delivery)
                         }
                     }
                     .foregroundStyle(palette.muted)
@@ -2826,8 +2862,50 @@ private struct ChatMessageRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
+            .contentShape(Rectangle())
+            .onHover { isHovering = $0 }
             .padding(.top, isFirstInCluster ? 10 : 4)
             .padding(.bottom, isLastInCluster ? 10 : 0)
+        }
+    }
+}
+
+private struct IrisDeliveryGlyph: View {
+    @Environment(\.irisPalette) private var palette
+    let delivery: DeliveryState
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(tint)
+            .accessibilityLabel(irisDeliveryLabel(delivery))
+    }
+
+    private var systemName: String {
+        switch delivery {
+        case .queued, .pending:
+            return "clock"
+        case .sent:
+            return "checkmark"
+        case .received:
+            return "checkmark"
+        case .seen:
+            return "checkmark.circle.fill"
+        case .failed:
+            return "exclamationmark.circle.fill"
+        }
+    }
+
+    private var tint: Color {
+        switch delivery {
+        case .received:
+            return palette.accentAlt
+        case .seen:
+            return palette.accent
+        case .failed:
+            return .red
+        default:
+            return palette.muted
         }
     }
 }

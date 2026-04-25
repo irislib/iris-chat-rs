@@ -1,6 +1,7 @@
 package social.innode.ndr.demo
 
 import android.Manifest
+import android.content.Intent
 import android.os.Bundle
 import android.os.Build
 import android.content.pm.PackageManager
@@ -10,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import social.innode.ndr.demo.core.AppContainer
+import social.innode.ndr.demo.rust.AppAction
 import social.innode.ndr.demo.ui.navigation.NdrApp
 import social.innode.ndr.demo.ui.theme.IrisChatTheme
 
@@ -20,12 +22,19 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Log.d(TAG, "onCreate")
         container = (application as IrisChatApp).container
+        handleLaunchIntent(intent)
 
         setContent {
             IrisChatTheme {
                 NdrApp(container = container)
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLaunchIntent(intent)
     }
 
     override fun onStart() {
@@ -42,7 +51,14 @@ class MainActivity : ComponentActivity() {
 
     private companion object {
         const val TAG = "NdrDebug"
+        const val ACTION_OPEN_CHAT_LIST = "social.innode.ndr.demo.OPEN_CHAT_LIST"
         const val NOTIFICATION_PERMISSION_REQUEST = 1001
+    }
+
+    private fun handleLaunchIntent(intent: Intent?) {
+        if (intent?.action == ACTION_OPEN_CHAT_LIST) {
+            container.appManager.dispatch(AppAction.UpdateScreenStack(emptyList()))
+        }
     }
 
     private fun requestNotificationPermissionIfNeeded() {

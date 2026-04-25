@@ -129,6 +129,17 @@ import social.innode.ndr.demo.ui.components.messageBubbleShape
 import social.innode.ndr.demo.ui.components.rememberIrisClipboard
 import social.innode.ndr.demo.ui.theme.IrisTheme
 
+private val DisappearingMessageOptions =
+    listOf(
+        "Off" to null,
+        "5 minutes" to 300uL,
+        "1 hour" to 3_600uL,
+        "24 hours" to 86_400uL,
+        "1 week" to 604_800uL,
+        "1 month" to 2_592_000uL,
+        "3 months" to 7_776_000uL,
+    )
+
 @Composable
 fun ChatScreen(
     appManager: AppManager,
@@ -148,6 +159,13 @@ fun ChatScreen(
     var replyTarget by remember(chatId) { mutableStateOf<ChatMessageSnapshot?>(null) }
     var imageViewerItem by remember(chatId) { mutableStateOf<DownloadedImageAttachment?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
+    var chatMenuOpen by remember(chatId) { mutableStateOf(false) }
+    val backUnreadCount =
+        remember(appState.chatList, chatId) {
+            appState.chatList
+                .filter { it.chatId != chatId }
+                .fold(0uL) { total, thread -> total + thread.unreadCount }
+        }
     val attachmentPicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isEmpty()) {
@@ -260,15 +278,56 @@ fun ChatScreen(
                         AppAction.UpdateScreenStack(appState.router.screenStack.dropLast(1)),
                     )
                 },
+                backBadgeCount = backUnreadCount,
                 actions = {
                     val groupId = chat?.groupId
-                    if (chat?.kind == ChatKind.GROUP && groupId != null) {
-                        IconButton(
-                            onClick = {
-                                appManager.pushScreen(Screen.GroupDetails(groupId))
-                            },
-                            modifier = Modifier.testTag("chatGroupDetailsButton"),
-                        ) {
+                    if (chat != null) {
+                        Box {
+                            IconButton(
+                                onClick = { chatMenuOpen = true },
+                                modifier = Modifier.testTag("chatOverflowButton"),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.MoreHoriz,
+                                    contentDescription = "Chat options",
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = chatMenuOpen,
+                                onDismissRequest = { chatMenuOpen = false },
+                            ) {
+                                if (chat.kind == ChatKind.GROUP && groupId != null) {
+                                    DropdownMenuItem(
+                                        text = { Text("Group details") },
+                                        onClick = {
+                                            chatMenuOpen = false
+                                            appManager.pushScreen(Screen.GroupDetails(groupId))
+                                        },
+                                    )
+                                }
+                                DisappearingMessageOptions.forEach { (label, ttlSeconds) ->
+                                    DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                if (chat.messageTtlSeconds == ttlSeconds) {
+                                                    "✓ $label"
+                                                } else {
+                                                    label
+                                                },
+                                            )
+                                        },
+                                        onClick = {
+                                            chatMenuOpen = false
+                                            appManager.dispatch(
+                                                AppAction.SetChatMessageTtl(chat.chatId, ttlSeconds),
+                                            )
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    } else if (groupId != null) {
+                        IconButton(onClick = { appManager.pushScreen(Screen.GroupDetails(groupId)) }) {
                             Icon(
                                 imageVector = IrisIcons.Devices,
                                 contentDescription = "Group details",

@@ -209,6 +209,7 @@ pub(super) fn pending_reason_from_group_prepared(
 
 pub(super) fn build_prepared_publish_batch(
     prepared: &nostr_double_ratchet::PreparedSend,
+    expires_at_secs: Option<u64>,
 ) -> anyhow::Result<Option<PreparedPublishBatch>> {
     let invite_events = prepared
         .invite_responses
@@ -218,7 +219,7 @@ pub(super) fn build_prepared_publish_batch(
     let message_events = prepared
         .deliveries
         .iter()
-        .map(|delivery| codec::message_event(&delivery.envelope))
+        .map(|delivery| message_event_with_expiration(&delivery.envelope, expires_at_secs))
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     if message_events.is_empty() {
@@ -233,18 +234,20 @@ pub(super) fn build_prepared_publish_batch(
 
 pub(super) fn build_group_prepared_publish_batch(
     prepared: &nostr_double_ratchet::GroupPreparedSend,
+    expires_at_secs: Option<u64>,
 ) -> anyhow::Result<Option<PreparedPublishBatch>> {
-    build_group_publish_batch(&prepared.remote)
+    build_group_publish_batch(&prepared.remote, expires_at_secs)
 }
 
 pub(super) fn build_group_local_sibling_publish_batch(
     prepared: &nostr_double_ratchet::GroupPreparedSend,
 ) -> anyhow::Result<Option<PreparedPublishBatch>> {
-    build_group_publish_batch(&prepared.local_sibling)
+    build_group_publish_batch(&prepared.local_sibling, None)
 }
 
 pub(super) fn build_group_publish_batch(
     prepared: &nostr_double_ratchet::GroupPreparedPublish,
+    expires_at_secs: Option<u64>,
 ) -> anyhow::Result<Option<PreparedPublishBatch>> {
     let invite_events = prepared
         .invite_responses
@@ -254,7 +257,7 @@ pub(super) fn build_group_publish_batch(
     let message_events = prepared
         .deliveries
         .iter()
-        .map(|delivery| codec::message_event(&delivery.envelope))
+        .map(|delivery| message_event_with_expiration(&delivery.envelope, expires_at_secs))
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     if message_events.is_empty() {
@@ -265,6 +268,36 @@ pub(super) fn build_group_publish_batch(
         invite_events,
         message_events,
     }))
+}
+
+fn message_event_with_expiration(
+    envelope: &MessageEnvelope,
+    expires_at_secs: Option<u64>,
+) -> anyhow::Result<Event> {
+    let Some(expires_at_secs) = expires_at_secs else {
+        return Ok(codec::message_event(envelope)?);
+    };
+    let author_secret_key = SecretKey::from_slice(&envelope.signer_secret_key)?;
+    let author_keys = Keys::new(author_secret_key);
+    let derived_sender = DevicePubkey::from_bytes(author_keys.public_key().to_bytes());
+    if derived_sender != envelope.sender {
+        anyhow::bail!("sender does not match signer secret");
+    }
+    let unsigned = EventBuilder::new(
+        Kind::from(codec::MESSAGE_EVENT_KIND as u16),
+        envelope.ciphertext.clone(),
+    )
+    .tag(nostr::Tag::parse([
+        "header",
+        envelope.encrypted_header.as_str(),
+    ])?)
+    .tag(nostr::Tag::parse([
+        "expiration",
+        &expires_at_secs.to_string(),
+    ])?)
+    .custom_created_at(Timestamp::from(envelope.created_at.get()))
+    .build(author_keys.public_key());
+    Ok(unsigned.sign_with_keys(&author_keys)?)
 }
 
 pub(super) fn publish_mode_for_batch(batch: &PreparedPublishBatch) -> OutboundPublishMode {

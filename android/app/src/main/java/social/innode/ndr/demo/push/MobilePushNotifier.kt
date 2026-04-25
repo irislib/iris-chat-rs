@@ -31,6 +31,7 @@ object MobilePushNotifier {
         val body = resolution.body.ifBlank { "New message" }
         val intent =
             Intent(context, MainActivity::class.java)
+                .setAction("social.innode.ndr.demo.OPEN_CHAT_LIST")
                 .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val pendingIntent =
             PendingIntent.getActivity(

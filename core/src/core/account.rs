@@ -166,6 +166,7 @@ impl AppCore {
         self.pending_outbound.clear();
         self.pending_group_controls.clear();
         self.owner_profiles.clear();
+        self.chat_message_ttl_seconds.clear();
         self.recent_handshake_peers.clear();
         self.seen_event_ids.clear();
         self.seen_event_order.clear();
@@ -353,6 +354,7 @@ impl AppCore {
         self.pending_outbound.clear();
         self.pending_group_controls.clear();
         self.owner_profiles.clear();
+        self.chat_message_ttl_seconds.clear();
         self.recent_handshake_peers.clear();
         self.seen_event_ids.clear();
         self.seen_event_order.clear();
@@ -360,6 +362,7 @@ impl AppCore {
         self.debug_log.clear();
         self.debug_event_counters = DebugEventCounters::default();
         self.next_message_id = 1;
+        self.chat_message_ttl_seconds.clear();
 
         let device_secret_bytes = device_keys.secret_key().to_secret_bytes();
         let local_device = DevicePubkey::from_bytes(device_keys.public_key().to_bytes());
@@ -392,6 +395,7 @@ impl AppCore {
             self.active_chat_id = persisted.active_chat_id.clone();
             self.next_message_id = persisted.next_message_id.max(1);
             self.owner_profiles = persisted.owner_profiles.clone();
+            self.chat_message_ttl_seconds = persisted.chat_message_ttl_seconds.clone();
             self.preferences.send_typing_indicators = persisted.preferences.send_typing_indicators;
             self.preferences.send_read_receipts = persisted.preferences.send_read_receipts;
             self.preferences.desktop_notifications_enabled =
@@ -547,6 +551,7 @@ impl AppCore {
             self.pending_inbound.clear();
             self.pending_outbound.clear();
             self.pending_group_controls.clear();
+            self.chat_message_ttl_seconds.clear();
         } else if let Some(chat_id) = self.active_chat_id.clone() {
             self.screen_stack = vec![Screen::Chat { chat_id }];
         }

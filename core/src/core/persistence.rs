@@ -47,6 +47,7 @@ impl AppCore {
                 image_proxy_key_hex: self.preferences.image_proxy_key_hex.clone(),
                 image_proxy_salt_hex: self.preferences.image_proxy_salt_hex.clone(),
             },
+            chat_message_ttl_seconds: self.chat_message_ttl_seconds.clone(),
             threads: self
                 .threads
                 .values()
