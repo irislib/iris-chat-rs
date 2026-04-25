@@ -80,6 +80,7 @@ import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.abs
 
 private val CardShape = RoundedCornerShape(24.dp)
 private val PillShape = RoundedCornerShape(100.dp)
@@ -407,11 +408,18 @@ fun DeliveryGlyph(delivery: DeliveryState) {
     )
 }
 
-fun formatRelativeTime(lastMessageAtSecs: Long?): String? {
+fun formatRelativeTime(
+    lastMessageAtSecs: Long?,
+    nowMillis: Long = System.currentTimeMillis(),
+): String? {
     val seconds = lastMessageAtSecs ?: return null
+    val timeMillis = seconds * 1000
+    if (abs(nowMillis - timeMillis) < DateUtils.MINUTE_IN_MILLIS) {
+        return "now"
+    }
     return DateUtils.getRelativeTimeSpanString(
-        seconds * 1000,
-        System.currentTimeMillis(),
+        timeMillis,
+        nowMillis,
         DateUtils.MINUTE_IN_MILLIS,
         DateUtils.FORMAT_ABBREV_RELATIVE,
     ).toString()

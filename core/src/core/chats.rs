@@ -51,6 +51,7 @@ impl AppCore {
         }];
         self.republish_local_identity_artifacts();
         self.request_protocol_subscription_refresh();
+        self.fetch_recent_protocol_state();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
         Ok(chat_id)
     }
@@ -125,6 +126,7 @@ impl AppCore {
         self.rebuild_state();
         self.persist_best_effort();
         self.request_protocol_subscription_refresh();
+        self.fetch_recent_protocol_state();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
         self.emit_state();
     }

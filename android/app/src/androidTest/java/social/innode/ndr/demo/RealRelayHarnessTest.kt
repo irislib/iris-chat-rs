@@ -95,6 +95,7 @@ class RealRelayHarnessTest {
         ensureLoggedIn()
         val inviteUrl = requiredArg("invite_url")
         val message = requiredArg("message")
+        val expectedChatId = optionalArg("expected_chat_id")
 
         appManager().dispatch(AppAction.AcceptInvite(inviteUrl))
         val chat =
@@ -105,7 +106,13 @@ class RealRelayHarnessTest {
                         fail("Invite accept failed: $toast")
                     }
                 }
-                state.currentChat?.takeIf { current -> !state.busy.acceptingInvite && current.chatId.isNotBlank() }
+                state.currentChat?.takeIf { current ->
+                    !state.busy.acceptingInvite &&
+                        current.chatId.isNotBlank() &&
+                        (expectedChatId?.let { expected ->
+                            current.chatId.equals(expected, ignoreCase = true)
+                        } ?: true)
+                }
             }
 
         appManager().sendText(chat.chatId, message)

@@ -9,7 +9,7 @@ import sys
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run an Android instrumentation harness test with quote-safe arguments.")
     parser.add_argument("--adb", required=True, help="Absolute path to adb")
-    parser.add_argument("--serial", required=True, help="adb device serial")
+    parser.add_argument("--serial", default="", help="adb device serial. Omit when adb has a single target device.")
     parser.add_argument("--runner", required=True, help="Instrumentation runner package/class")
     parser.add_argument("--class-name", required=True, help="Harness test class, without #method")
     parser.add_argument("--test-name", required=True, help="Harness test method")
@@ -24,8 +24,6 @@ def main() -> int:
 
     command = [
         args.adb,
-        "-s",
-        args.serial,
         "shell",
         "am",
         "instrument",
@@ -34,6 +32,8 @@ def main() -> int:
         "--user",
         args.user,
     ]
+    if args.serial:
+        command[1:1] = ["-s", args.serial]
     for item in args.arg:
         if "=" not in item:
             raise SystemExit(f"Invalid --arg `{item}`. Expected KEY=VALUE.")

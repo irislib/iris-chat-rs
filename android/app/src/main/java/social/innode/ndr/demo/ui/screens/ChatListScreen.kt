@@ -18,6 +18,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import social.innode.ndr.demo.core.AppManager
 import social.innode.ndr.demo.rust.AppState
 import social.innode.ndr.demo.rust.ChatKind
@@ -50,7 +52,15 @@ fun ChatListScreen(
     appState: AppState,
 ) {
     var showNewChooser by remember { mutableStateOf(false) }
+    var relativeNowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     val account = appState.account
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(15_000L)
+            relativeNowMillis = System.currentTimeMillis()
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -174,7 +184,7 @@ fun ChatListScreen(
                                 } else {
                                     chat.lastMessagePreview ?: subtitle.orEmpty()
                                 },
-                            timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong()),
+                            timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), relativeNowMillis),
                             unreadCount = chat.unreadCount.toLong(),
                             lastMessageMine = chat.lastMessageIsOutgoing == true,
                             lastDelivery = chat.lastMessageDelivery,

@@ -642,23 +642,25 @@ struct ChatListScreen: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 18)
             } else {
-                IrisSectionCard {
-                    ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
-                        IrisChatRow(
-                            title: chat.displayName,
-                            preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
-                            subtitle: chat.kind == .group ? chat.subtitle : nil,
-                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs),
-                            unreadCount: chat.unreadCount,
-                            onTap: {
-                                manager.dispatch(.openChat(chatId: chat.chatId))
-                            }
-                        )
-                        .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                TimelineView(.periodic(from: .now, by: 15)) { timeline in
+                    IrisSectionCard {
+                        ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
+                            IrisChatRow(
+                                title: chat.displayName,
+                                preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
+                                subtitle: chat.kind == .group ? chat.subtitle : nil,
+                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: timeline.date),
+                                unreadCount: chat.unreadCount,
+                                onTap: {
+                                    manager.dispatch(.openChat(chatId: chat.chatId))
+                                }
+                            )
+                            .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
 
-                        if index < manager.state.chatList.count - 1 {
-                            Divider()
-                                .overlay(palette.border)
+                            if index < manager.state.chatList.count - 1 {
+                                Divider()
+                                    .overlay(palette.border)
+                            }
                         }
                     }
                 }

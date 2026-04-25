@@ -46,7 +46,7 @@ impl AppCore {
                 self.active_chat_id = Some(chat_id.clone());
                 self.screen_stack = vec![Screen::Chat { chat_id }];
                 self.request_protocol_subscription_refresh_forced();
-                self.fetch_recent_messages_for_tracked_peers(unix_now());
+                self.fetch_recent_protocol_state();
                 self.persist_best_effort();
             }
             Err(error) => self.state.toast = Some(error.to_string()),
