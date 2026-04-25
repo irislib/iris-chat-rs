@@ -66,6 +66,7 @@ val buildTimestampUtc =
         ?: System.getenv("SOURCE_DATE_EPOCH")?.toLongOrNull()?.let { Instant.ofEpochSecond(it).toString() }
         ?: gitValue("log", "-1", "--format=%ct", "HEAD")?.toLongOrNull()?.let { Instant.ofEpochSecond(it).toString() }
         ?: Instant.now().toString()
+val mobilePushServerUrl = configValue("mobilePush.serverUrl", "NDR_MOBILE_PUSH_SERVER_URL") ?: ""
 
 data class BuildRelayConfig(
     val relaySetId: String,
@@ -165,6 +166,7 @@ android {
             buildConfigField("String", "BUILD_CHANNEL", stringLiteral("debug"))
             buildConfigField("String", "BUILD_GIT_SHA", stringLiteral(buildGitSha))
             buildConfigField("String", "BUILD_TIMESTAMP_UTC", stringLiteral(buildTimestampUtc))
+            buildConfigField("String", "MOBILE_PUSH_SERVER_URL", stringLiteral(mobilePushServerUrl))
             buildConfigField("String", "RELAY_SET_ID", stringLiteral(debugRelayConfig.relaySetId))
             buildConfigField("String", "DEFAULT_RELAYS_CSV", stringLiteral(debugRelayConfig.relaysCsv))
             buildConfigField("boolean", "TRUSTED_TEST_BUILD", debugRelayConfig.trustedTestBuild.toString())
@@ -187,6 +189,7 @@ android {
             buildConfigField("String", "BUILD_CHANNEL", stringLiteral("beta"))
             buildConfigField("String", "BUILD_GIT_SHA", stringLiteral(buildGitSha))
             buildConfigField("String", "BUILD_TIMESTAMP_UTC", stringLiteral(buildTimestampUtc))
+            buildConfigField("String", "MOBILE_PUSH_SERVER_URL", stringLiteral(mobilePushServerUrl))
             buildConfigField("String", "RELAY_SET_ID", stringLiteral(betaRelayConfig.relaySetId))
             buildConfigField("String", "DEFAULT_RELAYS_CSV", stringLiteral(betaRelayConfig.relaysCsv))
             buildConfigField("boolean", "TRUSTED_TEST_BUILD", betaRelayConfig.trustedTestBuild.toString())
@@ -201,6 +204,7 @@ android {
             buildConfigField("String", "BUILD_CHANNEL", stringLiteral("release"))
             buildConfigField("String", "BUILD_GIT_SHA", stringLiteral(buildGitSha))
             buildConfigField("String", "BUILD_TIMESTAMP_UTC", stringLiteral(buildTimestampUtc))
+            buildConfigField("String", "MOBILE_PUSH_SERVER_URL", stringLiteral(mobilePushServerUrl))
             buildConfigField("String", "RELAY_SET_ID", stringLiteral(releaseRelayConfig.relaySetId))
             buildConfigField("String", "DEFAULT_RELAYS_CSV", stringLiteral(releaseRelayConfig.relaysCsv))
             buildConfigField("boolean", "TRUSTED_TEST_BUILD", releaseRelayConfig.trustedTestBuild.toString())

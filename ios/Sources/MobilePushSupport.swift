@@ -1,3 +1,4 @@
+#if os(iOS)
 import Foundation
 import UIKit
 import UserNotifications
@@ -308,3 +309,4 @@ private extension String {
         isEmpty ? nil : self
     }
 }
+#endif

@@ -5,7 +5,7 @@ import UserNotifications
 import ServiceManagement
 #endif
 
-#if canImport(UIKit)
+#if os(iOS)
 import UIKit
 import WebKit
 
@@ -39,7 +39,7 @@ struct IrisAnimatedImageDataView: UIViewRepresentable {
         webView.loadHTMLString(irisAnimatedImageHTML(data: data), baseURL: nil)
     }
 }
-#elseif canImport(AppKit)
+#elseif os(macOS)
 import AppKit
 import WebKit
 
@@ -105,9 +105,9 @@ private func irisAnimatedImageHTML(data: Data) -> String {
 
 enum PlatformClipboard {
     static func string() -> String? {
-        #if canImport(UIKit)
+        #if os(iOS)
         UIPasteboard.general.string
-        #elseif canImport(AppKit)
+        #elseif os(macOS)
         NSPasteboard.general.string(forType: .string)
         #else
         nil
@@ -115,9 +115,9 @@ enum PlatformClipboard {
     }
 
     static func setString(_ value: String) {
-        #if canImport(UIKit)
+        #if os(iOS)
         UIPasteboard.general.string = value
-        #elseif canImport(AppKit)
+        #elseif os(macOS)
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(value, forType: .string)
@@ -127,9 +127,9 @@ enum PlatformClipboard {
 
 enum PlatformDocumentOpener {
     static func open(_ url: URL) -> Bool {
-        #if canImport(UIKit)
+        #if os(iOS)
         return IrisDocumentInteractionPresenter.shared.present(url)
-        #elseif canImport(AppKit)
+        #elseif os(macOS)
         return NSWorkspace.shared.open(url)
         #else
         return false
@@ -139,10 +139,10 @@ enum PlatformDocumentOpener {
 
 enum PlatformDeviceLabels {
     static var currentDeviceLabel: String {
-        #if canImport(UIKit)
+        #if os(iOS)
         let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "iPhone" : name
-        #elseif canImport(AppKit)
+        #elseif os(macOS)
         let name = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (name?.isEmpty == false) ? name! : "Mac"
         #else
@@ -151,9 +151,9 @@ enum PlatformDeviceLabels {
     }
 
     static var currentClientLabel: String {
-        #if canImport(UIKit)
+        #if os(iOS)
         return "Iris Chat Mobile"
-        #elseif canImport(AppKit)
+        #elseif os(macOS)
         return "Iris Chat Desktop"
         #else
         return "Iris Chat"
@@ -161,7 +161,7 @@ enum PlatformDeviceLabels {
     }
 }
 
-#if canImport(UIKit)
+#if os(iOS)
 private final class IrisDocumentInteractionPresenter: NSObject, UIDocumentInteractionControllerDelegate {
     static let shared = IrisDocumentInteractionPresenter()
 

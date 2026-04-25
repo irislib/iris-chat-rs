@@ -77,7 +77,7 @@ class AndroidMobilePushRuntime(
                 ownerNsec = ownerNsec,
                 platformKey = PLATFORM_KEY,
                 isRelease = !BuildConfig.DEBUG,
-                serverUrlOverride = null,
+                serverUrlOverride = mobilePushServerOverride(),
             ) ?: return storedId
         val response = perform(request)
         val body = response.body ?: return storedId
@@ -115,7 +115,7 @@ class AndroidMobilePushRuntime(
                 apnsTopic = null,
                 messageAuthorPubkeys = authors,
                 isRelease = !BuildConfig.DEBUG,
-                serverUrlOverride = null,
+                serverUrlOverride = mobilePushServerOverride(),
             ) ?: return false
         val response = perform(request)
         if (response.isSuccess) {
@@ -142,7 +142,7 @@ class AndroidMobilePushRuntime(
                 apnsTopic = null,
                 messageAuthorPubkeys = authors,
                 isRelease = !BuildConfig.DEBUG,
-                serverUrlOverride = null,
+                serverUrlOverride = mobilePushServerOverride(),
             ) ?: return
         val response = perform(request)
         if (!response.isSuccess) {
@@ -173,7 +173,7 @@ class AndroidMobilePushRuntime(
                 subscriptionId = storedId,
                 platformKey = PLATFORM_KEY,
                 isRelease = !BuildConfig.DEBUG,
-                serverUrlOverride = null,
+                serverUrlOverride = mobilePushServerOverride(),
             ) ?: return
         val response = perform(request)
         if (response.isSuccess || response.statusCode == 404) {
@@ -212,6 +212,9 @@ class AndroidMobilePushRuntime(
         const val TAG = "IrisPush"
         const val PLATFORM_KEY = "android"
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
+
+        fun mobilePushServerOverride(): String? =
+            BuildConfig.MOBILE_PUSH_SERVER_URL.trim().ifEmpty { null }
     }
 }
 

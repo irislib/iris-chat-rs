@@ -15,6 +15,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import social.innode.ndr.demo.core.AppManager
 import social.innode.ndr.demo.account.AccountBootstrapState
+import social.innode.ndr.demo.rust.AppAction
 import social.innode.ndr.demo.rust.CurrentChatSnapshot
 import social.innode.ndr.demo.rust.DeliveryState
 import social.innode.ndr.demo.rust.DeviceAuthorizationState
@@ -71,6 +72,42 @@ class RealRelayHarnessTest {
             "authorization_state" to account.authorizationState.name,
             "app_package" to appPackageName(),
             "data_dir" to appFilesDir().absolutePath,
+        )
+    }
+
+    @Test
+    fun create_public_invite_and_report_url() {
+        ensureLoggedIn()
+        appManager().dispatch(AppAction.CreatePublicInvite)
+
+        val invite =
+            waitForState("public invite", timeoutMs = 90_000) {
+                appManager().state.value.publicInvite
+            }
+
+        reportStatus(
+            "invite_url" to invite.url,
+        )
+    }
+
+    @Test
+    fun wait_for_mobile_push_author_from_args() {
+        ensureLoggedIn()
+        val authorInput = requiredArg("author_input")
+        val authorHex = normalizePeerInput(authorInput)
+
+        val snapshot =
+            waitForState("mobile push author $authorHex", timeoutMs = 90_000) {
+                appManager().state.value.mobilePush.takeIf { mobilePush ->
+                    mobilePush.messageAuthorPubkeys.any { it.equals(authorHex, ignoreCase = true) }
+                }
+            }
+
+        reportStatus(
+            "owner_pubkey_hex" to snapshot.ownerPubkeyHex.orEmpty(),
+            "author_pubkey_hex" to authorHex,
+            "message_author_pubkeys" to snapshot.messageAuthorPubkeys.joinToString(","),
+            "session_count" to snapshot.sessions.size.toString(),
         )
     }
 
