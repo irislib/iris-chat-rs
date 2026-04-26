@@ -904,10 +904,17 @@ private struct IrisPrimaryCircleButtonStyle: ButtonStyle {
 func irisRelativeTime(_ secs: UInt64?, relativeTo now: Date = Date()) -> String? {
     guard let secs else { return nil }
     let date = Date(timeIntervalSince1970: TimeInterval(secs))
-    if abs(date.timeIntervalSince(now)) < 60 {
+    let elapsedSeconds = abs(date.timeIntervalSince(now))
+    if elapsedSeconds < 60 {
         return "now"
     }
-    return RelativeDateTimeFormatter().localizedString(for: date, relativeTo: now)
+    if elapsedSeconds < 60 * 60 {
+        return "\(Int(elapsedSeconds / 60))m"
+    }
+    if elapsedSeconds < 24 * 60 * 60 {
+        return "\(Int(elapsedSeconds / (60 * 60)))h"
+    }
+    return "\(Int(elapsedSeconds / (24 * 60 * 60)))d"
 }
 
 func irisTimelineDay(_ secs: UInt64) -> String {

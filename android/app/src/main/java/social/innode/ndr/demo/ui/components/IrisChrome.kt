@@ -424,15 +424,17 @@ fun formatRelativeTime(
 ): String? {
     val seconds = lastMessageAtSecs ?: return null
     val timeMillis = seconds * 1000
-    if (abs(nowMillis - timeMillis) < DateUtils.MINUTE_IN_MILLIS) {
+    val elapsedMillis = abs(nowMillis - timeMillis)
+    if (elapsedMillis < DateUtils.MINUTE_IN_MILLIS) {
         return "now"
     }
-    return DateUtils.getRelativeTimeSpanString(
-        timeMillis,
-        nowMillis,
-        DateUtils.MINUTE_IN_MILLIS,
-        DateUtils.FORMAT_ABBREV_RELATIVE,
-    ).toString()
+    if (elapsedMillis < DateUtils.HOUR_IN_MILLIS) {
+        return "${elapsedMillis / DateUtils.MINUTE_IN_MILLIS}m"
+    }
+    if (elapsedMillis < DateUtils.DAY_IN_MILLIS) {
+        return "${elapsedMillis / DateUtils.HOUR_IN_MILLIS}h"
+    }
+    return "${elapsedMillis / DateUtils.DAY_IN_MILLIS}d"
 }
 
 fun formatMessageClock(createdAtSecs: Long): String =
