@@ -67,13 +67,13 @@ struct IrisPalette {
     )
 
     static let dark = IrisPalette(
-        background: Color(hex: 0x030918),
-        panel: Color(hex: 0x1B1C48),
-        panelAlt: Color(hex: 0x121212),
-        border: Color.white.opacity(0.16),
-        toolbar: Color(hex: 0x030918).opacity(0.92),
+        background: Color(hex: 0x101010),
+        panel: Color(hex: 0x242424),
+        panelAlt: Color(hex: 0x343434),
+        border: Color.white.opacity(0.12),
+        toolbar: Color(hex: 0x181818).opacity(0.96),
         bubbleMine: Color(hex: 0x702ACE),
-        bubbleTheirs: Color(hex: 0x2A3C5E),
+        bubbleTheirs: Color(hex: 0x3A3A3A),
         accent: Color(hex: 0x702ACE),
         accentAlt: Color(hex: 0xDB8216),
         textPrimary: .white,
@@ -545,7 +545,8 @@ struct IrisChatRow: View {
                         .background(Capsule(style: .continuous).fill(palette.accent))
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

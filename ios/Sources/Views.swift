@@ -80,15 +80,19 @@ struct RootView: View {
             ZStack(alignment: .top) {
                 BackgroundFill()
 
-                NavigationShell(
-                    title: screenTitle(manager.activeScreen),
-                    canGoBack: manager.canNavigateBack,
-                    onBack: manager.navigateBack,
-                    backBadgeCount: backUnreadCount,
-                    leading: topBarLeadingItem,
-                    trailing: topBarTrailingItem
-                ) {
-                    content
+                if usesDesktopChatShell {
+                    DesktopChatShell(manager: manager)
+                } else {
+                    NavigationShell(
+                        title: screenTitle(manager.activeScreen),
+                        canGoBack: manager.canNavigateBack,
+                        onBack: manager.navigateBack,
+                        backBadgeCount: backUnreadCount,
+                        leading: topBarLeadingItem,
+                        trailing: topBarTrailingItem
+                    ) {
+                        content
+                    }
                 }
 
                 if let toast = manager.toastMessage {
@@ -100,6 +104,18 @@ struct RootView: View {
                     LoadingOverlay()
                 }
             }
+        }
+    }
+
+    private var usesDesktopChatShell: Bool {
+        guard IrisLayout.usesDesktopChrome, manager.state.account != nil else {
+            return false
+        }
+        switch manager.activeScreen {
+        case .welcome, .createAccount, .restoreAccount, .addDevice, .awaitingDeviceApproval, .deviceRevoked:
+            return false
+        case .chatList, .newChat, .newGroup, .createInvite, .joinInvite, .settings, .chat, .groupDetails, .deviceRoster:
+            return true
         }
     }
 
@@ -158,40 +174,23 @@ struct RootView: View {
     }
 
     private var topBarTrailingItem: AnyView {
+        if case .chatList = manager.activeScreen {
+            return AnyView(
+                Button(action: { manager.dispatch(.pushScreen(screen: .newChat)) }) {
+                    Label("New", systemImage: "square.and.pencil")
+                }
+                .buttonStyle(IrisPrimaryButtonStyle(compact: true))
+                .accessibilityIdentifier("chatListNewChatButton")
+            )
+        }
+
         guard case .chat(let chatId) = manager.activeScreen,
               let chat = manager.state.currentChat,
               chat.chatId == chatId else {
             return AnyView(EmptyView())
         }
 
-        return AnyView(
-            Menu {
-                if chat.kind == .group, let groupId = chat.groupId {
-                    Button("Group details") {
-                        manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
-                    }
-                }
-                Menu("Disappearing messages") {
-                    ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
-                        Button(action: {
-                            manager.dispatch(.setChatMessageTtl(chatId: chat.chatId, ttlSeconds: ttlSeconds))
-                        }) {
-                            if chat.messageTtlSeconds == ttlSeconds {
-                                Label(label, systemImage: "checkmark")
-                            } else {
-                                Text(label)
-                            }
-                        }
-                    }
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 16, weight: .semibold))
-                    .frame(width: 40, height: 40)
-            }
-            .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-            .accessibilityIdentifier("chatOverflowButton")
-        )
+        return AnyView(ChatOverflowMenu(manager: manager, chat: chat))
     }
 
     private var backUnreadCount: UInt64 {
@@ -273,6 +272,432 @@ struct NavigationShell<Content: View>: View {
     }
 }
 
+private struct DesktopChatShell: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+
+    var body: some View {
+        HStack(spacing: 0) {
+            DesktopChatSidebar(manager: manager)
+                .frame(width: 352)
+
+            Rectangle()
+                .fill(palette.border)
+                .frame(width: 1)
+
+            VStack(spacing: 0) {
+                desktopContent
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(palette.background)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(palette.background)
+    }
+
+    @ViewBuilder
+    private var desktopContent: some View {
+        switch manager.activeScreen {
+        case .chatList, .newChat:
+            DesktopPaneTopBar(title: "New Chat")
+            NewChatScreen(manager: manager)
+        case .newGroup:
+            DesktopPaneTopBar(title: "New Group", canGoBack: manager.canNavigateBack, onBack: manager.navigateBack)
+            NewGroupScreen(manager: manager)
+        case .createInvite:
+            DesktopPaneTopBar(title: "Invite", canGoBack: manager.canNavigateBack, onBack: manager.navigateBack)
+            CreateInviteScreen(manager: manager)
+        case .joinInvite:
+            DesktopPaneTopBar(title: "Join Chat", canGoBack: manager.canNavigateBack, onBack: manager.navigateBack)
+            JoinInviteScreen(manager: manager)
+        case .settings:
+            DesktopPaneTopBar(title: "Settings", canGoBack: manager.canNavigateBack, onBack: manager.navigateBack)
+            SettingsScreen(manager: manager)
+        case .chat(let chatId):
+            let chat = manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
+            DesktopPaneTopBar(
+                title: chat?.displayName ?? "Chat",
+                subtitle: chat?.subtitle,
+                trailing: chat.map { AnyView(ChatOverflowMenu(manager: manager, chat: $0)) } ?? AnyView(EmptyView())
+            )
+            ChatScreen(manager: manager, chatId: chatId)
+        case .groupDetails(let groupId):
+            DesktopPaneTopBar(title: "Group", canGoBack: true, onBack: manager.navigateBack)
+            GroupDetailsScreen(manager: manager, groupId: groupId)
+        case .deviceRoster:
+            DesktopPaneTopBar(title: "Manage Devices", canGoBack: manager.canNavigateBack, onBack: manager.navigateBack)
+            DeviceRosterScreen(manager: manager)
+        case .welcome:
+            WelcomeScreen(manager: manager)
+        case .createAccount:
+            CreateAccountScreen(manager: manager)
+        case .restoreAccount:
+            RestoreAccountScreen(manager: manager)
+        case .addDevice:
+            AddDeviceScreen(manager: manager, awaitingApproval: false)
+        case .awaitingDeviceApproval:
+            AddDeviceScreen(manager: manager, awaitingApproval: true)
+        case .deviceRevoked:
+            DeviceRevokedScreen(manager: manager)
+        }
+    }
+}
+
+private struct DesktopPaneTopBar: View {
+    @Environment(\.irisPalette) private var palette
+
+    let title: String
+    let subtitle: String?
+    let canGoBack: Bool
+    let onBack: () -> Void
+    let trailing: AnyView
+
+    init(
+        title: String,
+        subtitle: String? = nil,
+        canGoBack: Bool = false,
+        onBack: @escaping () -> Void = {},
+        trailing: AnyView = AnyView(EmptyView())
+    ) {
+        self.title = title
+        self.subtitle = subtitle
+        self.canGoBack = canGoBack
+        self.onBack = onBack
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            if canGoBack {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("desktopPaneBackButton")
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineLimit(1)
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer(minLength: 12)
+
+            trailing
+        }
+        .padding(.horizontal, 24)
+        .frame(height: 58)
+        .background(palette.toolbar)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(palette.border)
+                .frame(height: 1)
+        }
+    }
+}
+
+private struct DesktopChatSidebar: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    @State private var searchText = ""
+
+    private var filteredChats: [ChatThreadSnapshot] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else {
+            return manager.state.chatList
+        }
+        return manager.state.chatList.filter { chat in
+            chat.displayName.lowercased().contains(query)
+                || (chat.lastMessagePreview?.lowercased().contains(query) ?? false)
+                || (chat.subtitle?.lowercased().contains(query) ?? false)
+        }
+    }
+
+    private var selectedChatId: String? {
+        if case .chat(let chatId) = manager.activeScreen {
+            return chatId
+        }
+        return nil
+    }
+
+    private var newChatSelected: Bool {
+        switch manager.activeScreen {
+        case .chatList, .newChat:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            sidebarHeader
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(palette.muted)
+                TextField("Search", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(palette.textPrimary)
+            }
+            .padding(.horizontal, 12)
+            .frame(height: 38)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(palette.panelAlt)
+            )
+            .padding(.horizontal, 14)
+            .padding(.bottom, 8)
+
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    DesktopSidebarActionRow(
+                        title: "New chat",
+                        subtitle: nil,
+                        systemImage: "message.fill",
+                        selected: newChatSelected
+                    ) {
+                        manager.dispatch(.pushScreen(screen: .newChat))
+                    }
+                    .accessibilityIdentifier("desktopNewChatRow")
+
+                    TimelineView(.periodic(from: .now, by: 15)) { timeline in
+                        ForEach(filteredChats, id: \.chatId) { chat in
+                            DesktopSidebarChatRow(
+                                manager: manager,
+                                chat: chat,
+                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: timeline.date),
+                                selected: selectedChatId == chat.chatId
+                            )
+                            .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                        }
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 16)
+            }
+        }
+        .background(palette.panel)
+    }
+
+    private var sidebarHeader: some View {
+        HStack(spacing: 12) {
+            if let account = manager.state.account {
+                Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
+                    IrisAvatar(
+                        label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                        size: 42,
+                        emphasize: true,
+                        imageURL: proxiedImageURL(account.pictureUrl, preferences: manager.state.preferences, width: 88, height: 88, square: true)
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chatListProfileButton")
+            }
+
+            Text("Chats")
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(palette.textPrimary)
+
+            Spacer()
+
+            Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("desktopSettingsButton")
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
+    }
+}
+
+private struct DesktopSidebarActionRow: View {
+    @Environment(\.irisPalette) private var palette
+
+    let title: String
+    let subtitle: String?
+    let systemImage: String
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(selected ? palette.onAccent : palette.textPrimary)
+                    .frame(width: 42, height: 42)
+                    .background(
+                        Circle()
+                            .fill(selected ? palette.accent : palette.panelAlt)
+                    )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineLimit(1)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 8)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .contentShape(Rectangle())
+            .background(rowBackground)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var rowBackground: some View {
+        RoundedRectangle(cornerRadius: 10, style: .continuous)
+            .fill(selected ? palette.panelAlt : Color.clear)
+    }
+}
+
+private struct DesktopSidebarChatRow: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    let chat: ChatThreadSnapshot
+    let timeLabel: String?
+    let selected: Bool
+
+    @State private var imageData: Data?
+
+    private var preview: String {
+        if chat.isTyping {
+            return "Typing"
+        }
+        return chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"
+    }
+
+    var body: some View {
+        Button {
+            manager.dispatch(.openChat(chatId: chat.chatId))
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                IrisAvatar(
+                    label: chat.displayName,
+                    size: 44,
+                    emphasize: chat.unreadCount > 0,
+                    imageURL: httpAvatarURL(chat.pictureUrl, preferences: manager.state.preferences, width: 96, height: 96),
+                    imageData: imageData
+                )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(chat.displayName)
+                            .font(.system(.headline, design: .rounded, weight: chat.unreadCount > 0 ? .bold : .semibold))
+                            .foregroundStyle(palette.textPrimary)
+                            .lineLimit(1)
+
+                        Spacer(minLength: 8)
+
+                        if let timeLabel, !timeLabel.isEmpty {
+                            Text(timeLabel)
+                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                .foregroundStyle(palette.muted)
+                                .lineLimit(1)
+                        }
+                    }
+
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(preview)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(chat.unreadCount > 0 ? palette.textPrimary : palette.muted)
+                            .lineLimit(2)
+
+                        Spacer(minLength: 6)
+
+                        if chat.unreadCount > 0 {
+                            Text(chat.unreadCount > 99 ? "99+" : "\(chat.unreadCount)")
+                                .font(.system(size: 11, weight: .bold, design: .rounded))
+                                .foregroundStyle(palette.onAccent)
+                                .padding(.horizontal, 7)
+                                .frame(minHeight: 20)
+                                .background(Capsule().fill(palette.accent))
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(selected ? palette.panelAlt : Color.clear)
+            )
+        }
+        .buttonStyle(.plain)
+        .task(id: chat.pictureUrl) {
+            guard let nhash = parseNhashURI(chat.pictureUrl) else {
+                imageData = nil
+                return
+            }
+            imageData = await manager.downloadHashtreeBytes(nhash: nhash)
+        }
+    }
+}
+
+private struct ChatOverflowMenu: View {
+    @ObservedObject var manager: AppManager
+    let chat: CurrentChatSnapshot
+
+    var body: some View {
+        Menu {
+            if chat.kind == .group, let groupId = chat.groupId {
+                Button("Group details") {
+                    manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
+                }
+            }
+            Menu("Disappearing messages") {
+                ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
+                    Button(action: {
+                        manager.dispatch(.setChatMessageTtl(chatId: chat.chatId, ttlSeconds: ttlSeconds))
+                    }) {
+                        if chat.messageTtlSeconds == ttlSeconds {
+                            Label(label, systemImage: "checkmark")
+                        } else {
+                            Text(label)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 40, height: 40)
+        }
+        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+        .accessibilityIdentifier("chatOverflowButton")
+    }
+}
+
 private func relayStatusColor(_ status: NetworkStatusSnapshot?, palette: IrisPalette) -> Color {
     guard let status, !status.relayUrls.isEmpty else {
         return palette.muted.opacity(0.55)
@@ -340,53 +765,57 @@ struct WelcomeScreen: View {
 
     var body: some View {
         IrisScrollScreen {
-            IrisAdaptiveColumns {
+            VStack(spacing: 18) {
                 IrisSectionCard(accent: true) {
                     Color.clear
                         .frame(height: 0)
                         .accessibilityIdentifier("welcomeChooserCard")
 
-                    Text("Iris Chat")
-                        .font(.system(.largeTitle, design: .rounded, weight: .bold))
-                        .foregroundStyle(palette.textPrimary)
-                    Button("Create account") {
-                        manager.dispatch(.pushScreen(screen: .createAccount))
-                    }
-                    .buttonStyle(IrisPrimaryButtonStyle())
-                    .accessibilityIdentifier("welcomeCreateAction")
+                    VStack(alignment: .leading, spacing: 18) {
+                        IrisAvatar(label: "Iris Chat", size: 62, emphasize: true)
 
-                    Button("Restore account") {
-                        manager.dispatch(.pushScreen(screen: .restoreAccount))
-                    }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .accessibilityIdentifier("welcomeRestoreAction")
+                        Text("Iris Chat")
+                            .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                            .foregroundStyle(palette.textPrimary)
 
-                    Button("Add this device") {
-                        manager.dispatch(.pushScreen(screen: .addDevice))
+                        VStack(spacing: 10) {
+                            Button("Create account") {
+                                manager.dispatch(.pushScreen(screen: .createAccount))
+                            }
+                            .buttonStyle(IrisPrimaryButtonStyle())
+                            .accessibilityIdentifier("welcomeCreateAction")
+
+                            Button("Restore account") {
+                                manager.dispatch(.pushScreen(screen: .restoreAccount))
+                            }
+                            .buttonStyle(IrisSecondaryButtonStyle())
+                            .accessibilityIdentifier("welcomeRestoreAction")
+
+                            Button("Add this device") {
+                                manager.dispatch(.pushScreen(screen: .addDevice))
+                            }
+                            .buttonStyle(IrisSecondaryButtonStyle())
+                            .accessibilityIdentifier("welcomeAddDeviceAction")
+                        }
                     }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .accessibilityIdentifier("welcomeAddDeviceAction")
                 }
-            } trailing: {
-                IrisSectionCard(accent: manager.trustedTestBuildEnabled()) {
-                    Color.clear
-                        .frame(height: 0)
-                        .accessibilityIdentifier("welcomeSecondaryCard")
 
-                    CardHeader(
-                        title: manager.trustedTestBuildEnabled() ? "Trusted test build" : "How this works",
-                        subtitle: manager.trustedTestBuildEnabled()
-                            ? "This beta uses a controlled relay set and should not be used for sensitive conversations."
-                            : nil
-                    )
+                if manager.trustedTestBuildEnabled() {
+                    IrisSectionCard(accent: true) {
+                        Color.clear
+                            .frame(height: 0)
+                            .accessibilityIdentifier("welcomeSecondaryCard")
 
-                    if manager.trustedTestBuildEnabled() {
+                        CardHeader(title: "Trusted test build")
+
                         Text(manager.buildSummaryText())
                             .font(.system(.footnote, design: .monospaced))
                             .foregroundStyle(palette.muted)
                     }
                 }
             }
+            .frame(maxWidth: 480)
+            .frame(maxWidth: .infinity)
         }
     }
 }
@@ -645,29 +1074,16 @@ struct ChatListScreen: View {
     @ObservedObject var manager: AppManager
 
     var body: some View {
-        IrisScrollScreen {
-            if IrisLayout.usesDesktopChrome, let account = manager.state.account {
-                IrisAdaptiveColumns {
-                    chatListHeroCard
-                } trailing: {
-                    accountCard(account)
-                }
-            } else {
-                chatListHeroCard
-                if let account = manager.state.account {
-                    accountCard(account)
-                }
-            }
-
+        ScrollView {
             if manager.state.chatList.isEmpty {
                 Text("No chats yet")
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.muted)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
+                    .padding(.vertical, 20)
             } else {
                 TimelineView(.periodic(from: .now, by: 15)) { timeline in
-                    IrisSectionCard {
+                    VStack(spacing: 0) {
                         ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
                             ChatListRowContainer(
                                 manager: manager,
@@ -685,60 +1101,7 @@ struct ChatListScreen: View {
                 }
             }
         }
-    }
-
-    private var newChatButton: some View {
-        Button {
-            manager.dispatch(.pushScreen(screen: .newChat))
-        } label: {
-            Label("New chat", systemImage: "message.fill")
-        }
-        .buttonStyle(IrisPrimaryButtonStyle())
-        .accessibilityIdentifier("chatListNewChatButton")
-    }
-
-    private var newGroupButton: some View {
-        Button {
-            manager.dispatch(.pushScreen(screen: .newGroup))
-        } label: {
-            Label("New group", systemImage: "person.3.fill")
-        }
-        .buttonStyle(IrisSecondaryButtonStyle())
-        .accessibilityIdentifier("chatListNewGroupButton")
-    }
-
-    private var chatListHeroCard: some View {
-        IrisSectionCard(accent: true) {
-            Color.clear
-                .frame(height: 0)
-                .accessibilityIdentifier("chatListHeroCard")
-
-            Text("Conversations")
-                .font(.system(.title3, design: .rounded, weight: .bold))
-                .foregroundStyle(palette.textPrimary)
-
-            HStack(spacing: 10) {
-                newChatButton
-                newGroupButton
-            }
-        }
-    }
-
-    private func accountCard(_ account: AccountSnapshot) -> some View {
-        IrisSectionCard {
-            HStack(spacing: 14) {
-                IrisAvatar(
-                    label: account.displayName.isEmpty ? account.npub : account.displayName,
-                    emphasize: true,
-                    imageURL: proxiedImageURL(account.pictureUrl, preferences: manager.state.preferences, width: 96, height: 96, square: true)
-                )
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(account.displayName.isEmpty ? "Your account" : account.displayName)
-                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.textPrimary)
-                }
-            }
-        }
+        .background(palette.background)
     }
 }
 

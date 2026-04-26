@@ -7,9 +7,9 @@ struct IrisChatMacApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(manager: manager)
-                .frame(minWidth: 860, minHeight: 620)
+                .frame(minWidth: 980, minHeight: 640)
         }
-        .defaultSize(width: 1180, height: 820)
+        .defaultSize(width: 1280, height: 820)
         .windowResizability(.automatic)
     }
 }
