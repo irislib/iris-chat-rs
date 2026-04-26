@@ -1459,7 +1459,6 @@ struct NewGroupScreen: View {
 
     private var canCreate: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !selectedOwners.isEmpty &&
         !manager.state.busy.creatingGroup
     }
 

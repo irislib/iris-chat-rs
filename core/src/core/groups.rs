@@ -28,12 +28,7 @@ impl AppCore {
             return;
         };
         let member_owners = match parse_owner_inputs(member_inputs, local_owner) {
-            Ok(member_owners) if !member_owners.is_empty() => member_owners,
-            Ok(_) => {
-                self.state.toast = Some("Groups need at least one other member.".to_string());
-                self.emit_state();
-                return;
-            }
+            Ok(member_owners) => member_owners,
             Err(error) => {
                 self.state.toast = Some(error.to_string());
                 self.emit_state();

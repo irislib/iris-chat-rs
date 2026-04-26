@@ -59,7 +59,7 @@ fun NewGroupScreen(
     val normalizedInput = normalizePeerInput(memberInput)
     val existingDirectChats =
         appState.chatList.filter { it.kind == ChatKind.DIRECT && it.chatId != localOwner }
-    val canCreate = name.isNotBlank() && selectedOwners.isNotEmpty() && !appState.busy.creatingGroup
+    val canCreate = name.isNotBlank() && !appState.busy.creatingGroup
 
     fun addOwner(ownerInput: String) {
         val normalized = normalizePeerInput(ownerInput)
