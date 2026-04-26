@@ -2,10 +2,8 @@ package social.innode.ndr.demo.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -14,7 +12,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -26,7 +23,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import social.innode.ndr.demo.core.AppManager
@@ -39,8 +35,6 @@ import social.innode.ndr.demo.ui.components.IrisChatListRow
 import social.innode.ndr.demo.ui.components.IrisDivider
 import social.innode.ndr.demo.ui.components.IrisIcons
 import social.innode.ndr.demo.ui.components.IrisPrimaryButton
-import social.innode.ndr.demo.ui.components.IrisSectionCard
-import social.innode.ndr.demo.ui.components.IrisSecondaryButton
 import social.innode.ndr.demo.ui.components.IrisTopBar
 import social.innode.ndr.demo.ui.components.formatRelativeTime
 import social.innode.ndr.demo.ui.theme.IrisTheme
@@ -51,7 +45,6 @@ fun ChatListScreen(
     appManager: AppManager,
     appState: AppState,
 ) {
-    var showNewChooser by remember { mutableStateOf(false) }
     var relativeNowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     val account = appState.account
 
@@ -97,7 +90,7 @@ fun ChatListScreen(
                 actions = {
                     IrisPrimaryButton(
                         text = "New",
-                        onClick = { showNewChooser = true },
+                        onClick = { appManager.pushScreen(Screen.NewChat) },
                         modifier = Modifier.testTag("chatListNewChatButton"),
                         icon = {
                             Icon(
@@ -117,45 +110,6 @@ fun ChatListScreen(
                     .padding(padding)
                     .background(MaterialTheme.colorScheme.background),
         ) {
-            item {
-                IrisSectionCard(
-                    modifier =
-                        Modifier
-                            .padding(horizontal = 16.dp, vertical = 14.dp)
-                            .testTag("chatListNewChatCard"),
-                ) {
-                    Text(
-                        text = "Conversations",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        IrisPrimaryButton(
-                            text = "New chat",
-                            onClick = { appManager.pushScreen(Screen.NewChat) },
-                            modifier = Modifier.testTag("chatListEmptyStateStartButton"),
-                            icon = {
-                                Icon(
-                                    imageVector = IrisIcons.NewChat,
-                                    contentDescription = null,
-                                )
-                            },
-                        )
-                        IrisSecondaryButton(
-                            text = "New group",
-                            onClick = { appManager.pushScreen(Screen.NewGroup) },
-                            modifier = Modifier.testTag("chatListEmptyStateGroupButton"),
-                            icon = {
-                                Icon(
-                                    imageVector = IrisIcons.NewGroup,
-                                    contentDescription = null,
-                                )
-                            },
-                        )
-                    }
-                }
-            }
-
             if (appState.chatList.isEmpty()) {
                 item {
                     Box(
@@ -201,56 +155,6 @@ fun ChatListScreen(
                         }
                         IrisDivider(modifier = Modifier.padding(start = 70.dp))
                     }
-                }
-            }
-        }
-    }
-
-    if (showNewChooser) {
-        ModalBottomSheet(
-            onDismissRequest = { showNewChooser = false },
-            containerColor = MaterialTheme.colorScheme.background,
-        ) {
-            Column(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                IrisSectionCard {
-                    Text(
-                        text = "New",
-                        style = MaterialTheme.typography.headlineSmall,
-                    )
-                    IrisPrimaryButton(
-                        text = "New chat",
-                        onClick = {
-                            showNewChooser = false
-                            appManager.pushScreen(Screen.NewChat)
-                        },
-                        modifier = Modifier.testTag("chatListNewChatOption"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.NewChat,
-                                contentDescription = null,
-                            )
-                        },
-                    )
-                    IrisSecondaryButton(
-                        text = "New group",
-                        onClick = {
-                            showNewChooser = false
-                            appManager.pushScreen(Screen.NewGroup)
-                        },
-                        modifier = Modifier.testTag("chatListNewGroupOption"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.NewGroup,
-                                contentDescription = null,
-                            )
-                        },
-                    )
                 }
             }
         }

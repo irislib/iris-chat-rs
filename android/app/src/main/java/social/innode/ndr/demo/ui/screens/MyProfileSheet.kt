@@ -82,7 +82,6 @@ fun MyProfileSheet(
     npub: String,
     displayName: String,
     pictureUrl: String?,
-    publicKeyHex: String,
     deviceNpub: String,
     canManageDevices: Boolean,
     sendTypingIndicators: Boolean,
@@ -259,6 +258,12 @@ fun MyProfileSheet(
                 IrisInlineAction(
                     text = "Copy user ID",
                     onClick = { clipboard.setText("User ID", npub) },
+                ) {
+                    Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                }
+                IrisInlineAction(
+                    text = "Copy device ID",
+                    onClick = { clipboard.setText("Device ID", deviceNpub) },
                 ) {
                     Icon(imageVector = IrisIcons.Copy, contentDescription = null)
                 }
@@ -467,15 +472,6 @@ fun MyProfileSheet(
                 )
                 Text(
                     text = deviceNpub,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                )
-                Text(
-                    text = "Public key hex",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = publicKeyHex,
                     style = MaterialTheme.typography.bodySmall,
                     color = IrisTheme.palette.muted,
                 )

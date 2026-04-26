@@ -22,6 +22,7 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertFalse
+import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -143,8 +144,6 @@ class PikaLikeUiTest {
     fun create_chat_and_send_message_locally() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
-        composeRule.waitForTag("chatListNewChatOption")
-        composeRule.onNodeWithTag("chatListNewChatOption", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newChatPeerInput")
         composeRule.onNodeWithTag("newChatScanQrButton", useUnmergedTree = true).assertIsDisplayed()
@@ -162,11 +161,44 @@ class PikaLikeUiTest {
     }
 
     @Test
+    fun tapping_message_on_mobile_reveals_actions() {
+        assumeTrue(composeRule.activity.resources.configuration.screenWidthDp < 600)
+
+        composeRule.ensureChatList()
+        composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
+
+        composeRule.waitForTag("newChatPeerInput")
+        composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
+            .performTextInput(VALID_PEER_NPUB)
+
+        composeRule.waitForTag("chatMessageInput")
+        val message = "tap actions ${System.nanoTime()}"
+        composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true)
+            .performTextInput(message)
+        composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).performClick()
+        composeRule.waitForText(message)
+
+        val messageId =
+            (composeRule.activity.application as IrisChatApp)
+                .container
+                .appManager
+                .state
+                .value
+                .currentChat
+                ?.messages
+                ?.firstOrNull { it.body == message }
+                ?.id
+                .orEmpty()
+        composeRule.onNodeWithTag("chatMessage-$messageId", useUnmergedTree = true).performClick()
+
+        composeRule.waitForTag("messageReactButton")
+        composeRule.onNodeWithTag("messageReactButton", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
     fun submitted_messages_stay_scrolled_to_latest() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
-        composeRule.waitForTag("chatListNewChatOption")
-        composeRule.onNodeWithTag("chatListNewChatOption", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newChatPeerInput")
         composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
@@ -188,8 +220,6 @@ class PikaLikeUiTest {
     fun enter_key_keeps_mobile_draft_unsent() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
-        composeRule.waitForTag("chatListNewChatOption")
-        composeRule.onNodeWithTag("chatListNewChatOption", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newChatPeerInput")
         composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
@@ -221,8 +251,6 @@ class PikaLikeUiTest {
     fun tapping_timeline_clears_message_input_focus() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
-        composeRule.waitForTag("chatListNewChatOption")
-        composeRule.onNodeWithTag("chatListNewChatOption", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newChatPeerInput")
         composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
@@ -244,8 +272,6 @@ class PikaLikeUiTest {
     fun scan_qr_starts_new_chat() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
-        composeRule.waitForTag("chatListNewChatOption")
-        composeRule.onNodeWithTag("chatListNewChatOption", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newChatPeerInput")
         composeRule.runOnUiThread {
@@ -291,12 +317,12 @@ class PikaLikeUiTest {
     }
 
     @Test
-    fun chat_list_new_chooser_opens_group_flow() {
+    fun new_chat_view_opens_group_flow() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
 
-        composeRule.waitForTag("chatListNewGroupOption")
-        composeRule.onNodeWithTag("chatListNewGroupOption", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("newChatNewGroupButton")
+        composeRule.onNodeWithTag("newChatNewGroupButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newGroupNameInput")
         composeRule.onNodeWithTag("newGroupCreateButton", useUnmergedTree = true).assertIsNotEnabled()
@@ -306,8 +332,8 @@ class PikaLikeUiTest {
     fun create_group_and_open_group_details() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
-        composeRule.waitForTag("chatListNewGroupOption")
-        composeRule.onNodeWithTag("chatListNewGroupOption", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("newChatNewGroupButton")
+        composeRule.onNodeWithTag("newChatNewGroupButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newGroupNameInput")
         composeRule.onNodeWithTag("newGroupNameInput", useUnmergedTree = true)

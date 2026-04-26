@@ -894,9 +894,7 @@ struct CreateInviteScreen: View {
 
     var body: some View {
         IrisScrollScreen {
-            IrisSectionCard(accent: true) {
-                CardHeader(title: "Invite")
-
+            VStack(spacing: 14) {
                 if manager.state.busy.creatingInvite && manager.state.publicInvite == nil {
                     ProgressView()
                         .frame(maxWidth: .infinity)
@@ -905,8 +903,6 @@ struct CreateInviteScreen: View {
                     QrCodeImage(text: invite.url)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .accessibilityIdentifier("createInviteQrCode")
-
-                    MonoValue(label: "Invite link", value: invite.url, identifier: "createInviteUrl")
 
                     HStack(spacing: 10) {
                         Button("Copy") {

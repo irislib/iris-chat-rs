@@ -82,69 +82,53 @@ fun CreateInviteScreen(
                     .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            IrisSectionCard {
-                Text(
-                    text = "Invite",
-                    style = MaterialTheme.typography.titleLarge,
+            if (qrBitmap != null && inviteUrl != null) {
+                Image(
+                    bitmap = qrBitmap.asImageBitmap(),
+                    contentDescription = "Invite QR code",
+                    modifier =
+                        Modifier
+                            .align(Alignment.CenterHorizontally)
+                            .size(260.dp)
+                            .background(Color.White)
+                            .padding(12.dp)
+                            .testTag("createInviteQrCode"),
                 )
-
-                if (qrBitmap != null && inviteUrl != null) {
-                    Image(
-                        bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "Invite QR code",
-                        modifier =
-                            Modifier
-                                .align(Alignment.CenterHorizontally)
-                                .size(260.dp)
-                                .background(Color.White)
-                                .padding(12.dp)
-                                .testTag("createInviteQrCode"),
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    IrisSecondaryButton(
+                        text = "Copy",
+                        onClick = { clipboard.setText("Invite link", inviteUrl) },
+                        modifier = Modifier.weight(1f).testTag("createInviteCopyButton"),
+                        icon = {
+                            Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                        },
                     )
-                    Text(
-                        text = inviteUrl,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("createInviteUrl"),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = IrisTheme.palette.muted,
+                    IrisPrimaryButton(
+                        text = "Share",
+                        onClick = {
+                            val intent =
+                                Intent(Intent.ACTION_SEND)
+                                    .setType("text/plain")
+                                    .putExtra(Intent.EXTRA_TEXT, inviteUrl)
+                            context.startActivity(Intent.createChooser(intent, "Share invite"))
+                        },
+                        modifier = Modifier.weight(1f).testTag("createInviteShareButton"),
+                        icon = {
+                            Icon(imageVector = IrisIcons.Share, contentDescription = null)
+                        },
                     )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        IrisSecondaryButton(
-                            text = "Copy",
-                            onClick = { clipboard.setText("Invite link", inviteUrl) },
-                            modifier = Modifier.weight(1f).testTag("createInviteCopyButton"),
-                            icon = {
-                                Icon(imageVector = IrisIcons.Copy, contentDescription = null)
-                            },
-                        )
-                        IrisPrimaryButton(
-                            text = "Share",
-                            onClick = {
-                                val intent =
-                                    Intent(Intent.ACTION_SEND)
-                                        .setType("text/plain")
-                                        .putExtra(Intent.EXTRA_TEXT, inviteUrl)
-                                context.startActivity(Intent.createChooser(intent, "Share invite"))
-                            },
-                            modifier = Modifier.weight(1f).testTag("createInviteShareButton"),
-                            icon = {
-                                Icon(imageVector = IrisIcons.Share, contentDescription = null)
-                            },
-                        )
-                    }
                 }
-
-                IrisSecondaryButton(
-                    text = if (appState.busy.creatingInvite) "Creating…" else "New invite",
-                    onClick = { appManager.dispatch(AppAction.CreatePublicInvite) },
-                    enabled = !appState.busy.creatingInvite,
-                    modifier = Modifier.fillMaxWidth().testTag("createInviteRefreshButton"),
-                    icon = {
-                        Icon(imageVector = IrisIcons.Refresh, contentDescription = null)
-                    },
-                )
             }
+
+            IrisSecondaryButton(
+                text = if (appState.busy.creatingInvite) "Creating…" else "New invite",
+                onClick = { appManager.dispatch(AppAction.CreatePublicInvite) },
+                enabled = !appState.busy.creatingInvite,
+                modifier = Modifier.fillMaxWidth().testTag("createInviteRefreshButton"),
+                icon = {
+                    Icon(imageVector = IrisIcons.Refresh, contentDescription = null)
+                },
+            )
         }
     }
 }

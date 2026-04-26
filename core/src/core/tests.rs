@@ -269,6 +269,32 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
 }
 
 #[test]
+fn newer_chat_message_clears_stale_typing_indicator() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("typing-newer-message", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let sender_hex = sender.public_key().to_hex();
+
+    core.set_typing_indicator(chat_id.clone(), sender_hex.clone(), 10);
+    core.push_outgoing_message_with_id(
+        "newer-local-message".to_string(),
+        &chat_id,
+        "ok".to_string(),
+        11,
+        None,
+        DeliveryState::Sent,
+    );
+    core.rebuild_state();
+
+    assert!(!core
+        .typing_indicators
+        .values()
+        .any(|record| { record.chat_id == chat_id && record.author_owner_hex == sender_hex }));
+}
+
+#[test]
 fn web_runtime_control_rumors_do_not_create_chat_messages() {
     let owner = Keys::generate();
     let device = Keys::generate();

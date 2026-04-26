@@ -400,9 +400,22 @@ private struct ChatMessageRow: View {
     let onOpenImage: (Data, String) -> Void
 
     @State private var isHovering = false
+    @State private var isMobileActionDockOpen = false
 
     private var bodyParts: ReplyParsedMessage {
         parseReplyEncodedMessage(message.body)
+    }
+
+    private var showActionDock: Bool {
+        IrisLayout.usesDesktopChrome ? isHovering : isMobileActionDockOpen
+    }
+
+    private var bubbleShape: ChatMessageBubbleShape {
+        ChatMessageBubbleShape(
+            isOutgoing: message.isOutgoing,
+            isFirstInCluster: isFirstInCluster,
+            isLastInCluster: isLastInCluster
+        )
     }
 
     var body: some View {
@@ -427,7 +440,7 @@ private struct ChatMessageRow: View {
                 }
 
                 HStack(alignment: .center, spacing: 6) {
-                    if IrisLayout.usesDesktopChrome && isHovering && message.isOutgoing {
+                    if showActionDock && message.isOutgoing {
                         ChatMessageActionDock(
                             onReact: { onReact("❤️") },
                             onReply: onReply,
@@ -466,9 +479,16 @@ private struct ChatMessageRow: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 11)
                     .background(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
+                        bubbleShape
                             .fill(message.isOutgoing ? palette.bubbleMine : palette.bubbleTheirs)
                     )
+                    .clipShape(bubbleShape)
+                    .contentShape(bubbleShape)
+                    .onTapGesture {
+                        if !IrisLayout.usesDesktopChrome {
+                            isMobileActionDockOpen.toggle()
+                        }
+                    }
                     .contextMenu {
                         Button("Reply", action: onReply)
                         Button("React 👍") { onReact("👍") }
@@ -480,7 +500,7 @@ private struct ChatMessageRow: View {
                     }
                     .accessibilityIdentifier("chatMessage-\(message.id)")
 
-                    if IrisLayout.usesDesktopChrome && isHovering && !message.isOutgoing {
+                    if showActionDock && !message.isOutgoing {
                         ChatMessageActionDock(
                             onReact: { onReact("❤️") },
                             onReply: onReply,
@@ -523,6 +543,65 @@ private struct ChatMessageRow: View {
     }
 }
 
+private struct ChatMessageBubbleShape: Shape {
+    let isOutgoing: Bool
+    let isFirstInCluster: Bool
+    let isLastInCluster: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let large: CGFloat = 22
+        let tail: CGFloat = 6
+        let radii: (topLeft: CGFloat, topRight: CGFloat, bottomRight: CGFloat, bottomLeft: CGFloat)
+
+        if isFirstInCluster && isLastInCluster {
+            radii = (large, large, large, large)
+        } else if isOutgoing && isFirstInCluster {
+            radii = (large, large, tail, large)
+        } else if isOutgoing && isLastInCluster {
+            radii = (large, tail, large, large)
+        } else if isOutgoing {
+            radii = (large, tail, tail, large)
+        } else if isFirstInCluster {
+            radii = (large, large, large, tail)
+        } else if isLastInCluster {
+            radii = (tail, large, large, large)
+        } else {
+            radii = (tail, large, large, tail)
+        }
+
+        let maxRadius = min(rect.width, rect.height) / 2
+        let topLeft = min(radii.topLeft, maxRadius)
+        let topRight = min(radii.topRight, maxRadius)
+        let bottomRight = min(radii.bottomRight, maxRadius)
+        let bottomLeft = min(radii.bottomLeft, maxRadius)
+
+        var path = Path()
+        path.move(to: CGPoint(x: rect.minX + topLeft, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - topRight, y: rect.minY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX, y: rect.minY + topRight),
+            control: CGPoint(x: rect.maxX, y: rect.minY)
+        )
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - bottomRight))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - bottomRight, y: rect.maxY),
+            control: CGPoint(x: rect.maxX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX + bottomLeft, y: rect.maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY - bottomLeft),
+            control: CGPoint(x: rect.minX, y: rect.maxY)
+        )
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + topLeft))
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + topLeft, y: rect.minY),
+            control: CGPoint(x: rect.minX, y: rect.minY)
+        )
+        path.closeSubpath()
+        return path
+    }
+}
+
 private struct IrisDeliveryGlyph: View {
     @Environment(\.irisPalette) private var palette
     let delivery: DeliveryState
@@ -554,7 +633,7 @@ private struct IrisDeliveryGlyph: View {
         case .received:
             return palette.accentAlt
         case .seen:
-            return palette.accent
+            return Color(.sRGB, red: 0.055, green: 0.647, blue: 0.914, opacity: 1)
         case .failed:
             return .red
         default:

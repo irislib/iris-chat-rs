@@ -119,7 +119,6 @@ fun NdrApp(container: AppContainer) {
                                 npub = account.npub,
                                 displayName = account.displayName,
                                 pictureUrl = account.pictureUrl,
-                                publicKeyHex = account.publicKeyHex,
                                 deviceNpub = account.deviceNpub,
                                 canManageDevices = account.hasOwnerSigningAuthority,
                                 sendTypingIndicators = appState.preferences.sendTypingIndicators,

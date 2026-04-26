@@ -78,9 +78,18 @@ internal fun MessageBubble(
 ) {
     val clipboard = rememberIrisClipboard()
     val parsed = remember(message.body) { parseReplyEncodedMessage(message.body) }
-    val showActionDock = LocalConfiguration.current.screenWidthDp >= 600
+    val showDesktopActionDock = LocalConfiguration.current.screenWidthDp >= 600
     val hoverInteractionSource = remember { MutableInteractionSource() }
     val isHovering by hoverInteractionSource.collectIsHoveredAsState()
+    var isMobileActionDockOpen by remember(message.id) { mutableStateOf(false) }
+    val showActionDock =
+        (showDesktopActionDock && isHovering) || (!showDesktopActionDock && isMobileActionDockOpen)
+    val bubbleShape =
+        messageBubbleShape(
+            isOutgoing = message.isOutgoing,
+            isFirstInCluster = isFirstInCluster,
+            isLastInCluster = isLastInCluster,
+        )
     Row(
         modifier =
             Modifier
@@ -96,7 +105,7 @@ internal fun MessageBubble(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (showActionDock && isHovering && message.isOutgoing) {
+                if (showActionDock && message.isOutgoing) {
                     MessageActionDock(
                         onReact = onReact,
                         onReply = onReply,
@@ -111,32 +120,32 @@ internal fun MessageBubble(
                 }
                 Surface(
                     modifier =
-                        Modifier.combinedClickable(
-                            onClick = {},
-                            onLongClick = {
-                                clipboard.setText("Message", copyableMessageText(message))
-                            },
-                        ),
+                        Modifier
+                            .clip(bubbleShape)
+                            .combinedClickable(
+                                onClick = {
+                                    if (!showDesktopActionDock) {
+                                        isMobileActionDockOpen = !isMobileActionDockOpen
+                                    }
+                                },
+                                onLongClick = {
+                                    clipboard.setText("Message", copyableMessageText(message))
+                                },
+                            )
+                            .testTag("chatMessage-${message.id}"),
                     color =
                         if (message.isOutgoing) {
                             IrisTheme.palette.bubbleMine
                         } else {
                             IrisTheme.palette.bubbleTheirs
                         },
-                    shape =
-                        messageBubbleShape(
-                            isOutgoing = message.isOutgoing,
-                            isFirstInCluster = isFirstInCluster,
-                            isLastInCluster = isLastInCluster,
-                        ),
+                    shape = bubbleShape,
                     tonalElevation = 0.dp,
                     shadowElevation = 0.dp,
                 ) {
                     Column(
                         modifier =
-                            Modifier
-                                .padding(horizontal = 14.dp, vertical = 10.dp)
-                                .testTag("chatMessage-${message.id}"),
+                            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                     ) {
                         if (!message.isOutgoing && chatKind == ChatKind.GROUP && isFirstInCluster) {
@@ -213,7 +222,7 @@ internal fun MessageBubble(
                         }
                     }
                 }
-                if (showActionDock && isHovering && !message.isOutgoing) {
+                if (showActionDock && !message.isOutgoing) {
                     MessageActionDock(
                         onReact = onReact,
                         onReply = onReply,

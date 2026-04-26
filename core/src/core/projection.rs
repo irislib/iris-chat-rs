@@ -102,8 +102,24 @@ impl AppCore {
 
     pub(super) fn prune_expired_typing_indicators(&mut self) {
         let now = unix_now().get();
-        self.typing_indicators
-            .retain(|_, indicator| indicator.expires_at_secs > now);
+        let latest_message_secs_by_chat = self
+            .threads
+            .iter()
+            .filter_map(|(chat_id, thread)| {
+                thread
+                    .messages
+                    .last()
+                    .map(|message| (chat_id.clone(), message.created_at_secs))
+            })
+            .collect::<BTreeMap<_, _>>();
+        self.typing_indicators.retain(|_, indicator| {
+            indicator.expires_at_secs > now
+                && latest_message_secs_by_chat
+                    .get(&indicator.chat_id)
+                    .map_or(true, |latest_message_secs| {
+                        *latest_message_secs <= indicator.last_event_secs
+                    })
+        });
     }
 
     pub(super) fn thread_has_typing_indicator(&self, chat_id: &str) -> bool {

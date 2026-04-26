@@ -76,6 +76,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import social.innode.ndr.demo.rust.DeliveryState
 import social.innode.ndr.demo.ui.theme.IrisTheme
+import social.innode.ndr.demo.ui.theme.Sky500
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -117,8 +118,14 @@ fun IrisTopBar(
                     BadgedBox(
                         badge = {
                             if (backBadgeCount > 0uL) {
-                                Badge {
-                                    Text(if (backBadgeCount > 99uL) "99+" else backBadgeCount.toString())
+                                Badge(
+                                    containerColor = IrisTheme.palette.accent,
+                                    contentColor = Color.White,
+                                ) {
+                                    Text(
+                                        if (backBadgeCount > 99uL) "99+" else backBadgeCount.toString(),
+                                        color = Color.White,
+                                    )
                                 }
                             }
                         },
@@ -367,8 +374,11 @@ fun IrisChatListRow(
                 if (unreadCount > 0) {
                     BadgedBox(
                         badge = {
-                            Badge(containerColor = palette.accent) {
-                                Text(if (unreadCount > 99) "99+" else unreadCount.toString())
+                            Badge(containerColor = palette.accent, contentColor = Color.White) {
+                                Text(
+                                    if (unreadCount > 99) "99+" else unreadCount.toString(),
+                                    color = Color.White,
+                                )
                             }
                         },
                     ) {
@@ -388,7 +398,7 @@ fun DeliveryGlyph(delivery: DeliveryState) {
             DeliveryState.PENDING -> IrisTheme.palette.muted
             DeliveryState.SENT -> IrisTheme.palette.muted
             DeliveryState.RECEIVED -> IrisTheme.palette.accentAlt
-            DeliveryState.SEEN -> IrisTheme.palette.accent
+            DeliveryState.SEEN -> Sky500
             DeliveryState.FAILED -> MaterialTheme.colorScheme.error
         }
     val imageVector =
