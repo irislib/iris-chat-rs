@@ -296,27 +296,67 @@ struct IrisAdaptiveColumns<Leading: View, Trailing: View>: View {
     }
 }
 
+func irisHtreeNhash(from rawURL: String?) -> String? {
+    guard let rawURL else { return nil }
+    let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    let prefix: String
+    if trimmed.hasPrefix("htree://") {
+        prefix = "htree://"
+    } else if trimmed.hasPrefix("nhash://") {
+        prefix = "nhash://"
+    } else {
+        return nil
+    }
+    let remainder = trimmed.dropFirst(prefix.count)
+    return remainder.split(separator: "/", maxSplits: 1).first.map(String.init)
+}
+
+func irisHttpAvatarURL(
+    _ rawURL: String?,
+    preferences: PreferencesSnapshot,
+    pixelSize: CGFloat
+) -> String? {
+    guard let rawURL else { return nil }
+    let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else {
+        return nil
+    }
+    let dim = UInt32(max(1, pixelSize.rounded()))
+    return proxiedImageUrl(
+        originalSrc: trimmed,
+        preferences: preferences,
+        width: dim,
+        height: dim,
+        square: true
+    )
+}
+
 struct IrisAvatar: View {
     @Environment(\.irisPalette) private var palette
 
     let label: String
     let size: CGFloat
     let emphasize: Bool
-    let imageURL: String?
-    let imageData: Data?
+    let pictureUrl: String?
+    let preferences: PreferencesSnapshot?
+    let manager: AppManager?
+
+    @State private var htreeData: Data?
 
     init(
         label: String,
         size: CGFloat = 42,
         emphasize: Bool = false,
-        imageURL: String? = nil,
-        imageData: Data? = nil
+        pictureUrl: String? = nil,
+        preferences: PreferencesSnapshot? = nil,
+        manager: AppManager? = nil
     ) {
         self.label = label
         self.size = size
         self.emphasize = emphasize
-        self.imageURL = imageURL
-        self.imageData = imageData
+        self.pictureUrl = pictureUrl
+        self.preferences = preferences
+        self.manager = manager
     }
 
     var body: some View {
@@ -325,12 +365,12 @@ struct IrisAvatar: View {
                 .fill(emphasize ? palette.accent : palette.panelAlt)
                 .overlay(Circle().stroke(palette.border, lineWidth: 1))
 
-            if let imageData, let image = PlatformImage(data: imageData) {
+            if let htreeData, let image = PlatformImage(data: htreeData) {
                 Image(platformImage: image)
                     .resizable()
                     .scaledToFill()
                     .clipShape(Circle())
-            } else if let imageURL, let url = URL(string: imageURL) {
+            } else if let httpURL, let url = URL(string: httpURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
@@ -347,6 +387,18 @@ struct IrisAvatar: View {
             }
         }
         .frame(width: size, height: size)
+        .task(id: pictureUrl) {
+            guard let manager, let nhash = irisHtreeNhash(from: pictureUrl) else {
+                htreeData = nil
+                return
+            }
+            htreeData = await manager.downloadHashtreeBytes(nhash: nhash)
+        }
+    }
+
+    private var httpURL: String? {
+        guard let preferences else { return nil }
+        return irisHttpAvatarURL(pictureUrl, preferences: preferences, pixelSize: size * 2)
     }
 
     private var avatarInitial: some View {
@@ -477,8 +529,9 @@ struct IrisChatRow: View {
     let subtitle: String?
     let timeLabel: String?
     let unreadCount: UInt64
-    let imageURL: String?
-    let imageData: Data?
+    let pictureUrl: String?
+    let preferences: PreferencesSnapshot?
+    let manager: AppManager?
     let onTap: () -> Void
 
     init(
@@ -487,8 +540,9 @@ struct IrisChatRow: View {
         subtitle: String?,
         timeLabel: String?,
         unreadCount: UInt64,
-        imageURL: String? = nil,
-        imageData: Data? = nil,
+        pictureUrl: String? = nil,
+        preferences: PreferencesSnapshot? = nil,
+        manager: AppManager? = nil,
         onTap: @escaping () -> Void
     ) {
         self.title = title
@@ -496,15 +550,22 @@ struct IrisChatRow: View {
         self.subtitle = subtitle
         self.timeLabel = timeLabel
         self.unreadCount = unreadCount
-        self.imageURL = imageURL
-        self.imageData = imageData
+        self.pictureUrl = pictureUrl
+        self.preferences = preferences
+        self.manager = manager
         self.onTap = onTap
     }
 
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 14) {
-                IrisAvatar(label: title, emphasize: unreadCount > 0, imageURL: imageURL, imageData: imageData)
+                IrisAvatar(
+                    label: title,
+                    emphasize: unreadCount > 0,
+                    pictureUrl: pictureUrl,
+                    preferences: preferences,
+                    manager: manager
+                )
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {

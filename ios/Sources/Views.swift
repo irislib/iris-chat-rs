@@ -37,29 +37,6 @@ private func proxiedImageURL(
     )
 }
 
-private func httpAvatarURL(
-    _ rawURL: String?,
-    preferences: PreferencesSnapshot,
-    width: UInt32,
-    height: UInt32,
-    square: Bool = true
-) -> String? {
-    guard let rawURL else { return nil }
-    let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else {
-        return nil
-    }
-    return proxiedImageURL(trimmed, preferences: preferences, width: width, height: height, square: square)
-}
-
-private func parseNhashURI(_ rawURL: String?) -> String? {
-    guard let rawURL else { return nil }
-    let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard trimmed.hasPrefix("nhash://") else { return nil }
-    let remainder = String(trimmed.dropFirst("nhash://".count))
-    return remainder.split(separator: "/", maxSplits: 1).first.map(String.init)
-}
-
 private enum SecretExportKind: Identifiable {
     case owner
     case device
@@ -165,7 +142,9 @@ struct RootView: View {
                 IrisAvatar(
                     label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
                     emphasize: true,
-                    imageURL: proxiedImageURL(account.pictureUrl, preferences: manager.state.preferences, width: 88, height: 88, square: true)
+                    pictureUrl: account.pictureUrl,
+                    preferences: manager.state.preferences,
+                    manager: manager
                 )
             }
             .buttonStyle(.plain)
@@ -318,9 +297,15 @@ private struct DesktopChatShell: View {
             DesktopPaneTopBar(
                 title: chat?.displayName ?? "Chat",
                 subtitle: chat?.subtitle,
-                leading: chat.map {
+                leading: chat.map { current in
                     AnyView(
-                        DesktopChatHeaderAvatar(manager: manager, chat: $0)
+                        IrisAvatar(
+                            label: current.displayName,
+                            size: 36,
+                            pictureUrl: current.pictureUrl,
+                            preferences: manager.state.preferences,
+                            manager: manager
+                        )
                     )
                 } ?? AnyView(EmptyView()),
                 trailing: chat.map { AnyView(ChatOverflowMenu(manager: manager, chat: $0)) } ?? AnyView(EmptyView())
@@ -513,7 +498,9 @@ private struct DesktopChatSidebar: View {
                         label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
                         size: 42,
                         emphasize: true,
-                        imageURL: proxiedImageURL(account.pictureUrl, preferences: manager.state.preferences, width: 88, height: 88, square: true)
+                        pictureUrl: account.pictureUrl,
+                        preferences: manager.state.preferences,
+                        manager: manager
                     )
                 }
                 .buttonStyle(.plain)
@@ -591,37 +578,12 @@ private struct DesktopSidebarActionRow: View {
     }
 }
 
-private struct DesktopChatHeaderAvatar: View {
-    @ObservedObject var manager: AppManager
-    let chat: CurrentChatSnapshot
-
-    @State private var imageData: Data?
-
-    var body: some View {
-        IrisAvatar(
-            label: chat.displayName,
-            size: 36,
-            imageURL: httpAvatarURL(chat.pictureUrl, preferences: manager.state.preferences, width: 96, height: 96),
-            imageData: imageData
-        )
-        .task(id: chat.pictureUrl) {
-            guard let nhash = parseNhashURI(chat.pictureUrl) else {
-                imageData = nil
-                return
-            }
-            imageData = await manager.downloadHashtreeBytes(nhash: nhash)
-        }
-    }
-}
-
 private struct DesktopSidebarChatRow: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     let chat: ChatThreadSnapshot
     let timeLabel: String?
     let selected: Bool
-
-    @State private var imageData: Data?
 
     private var preview: String {
         if chat.isTyping {
@@ -639,8 +601,9 @@ private struct DesktopSidebarChatRow: View {
                     label: chat.displayName,
                     size: 44,
                     emphasize: chat.unreadCount > 0,
-                    imageURL: httpAvatarURL(chat.pictureUrl, preferences: manager.state.preferences, width: 96, height: 96),
-                    imageData: imageData
+                    pictureUrl: chat.pictureUrl,
+                    preferences: manager.state.preferences,
+                    manager: manager
                 )
 
                 VStack(alignment: .leading, spacing: 4) {
@@ -688,13 +651,6 @@ private struct DesktopSidebarChatRow: View {
             )
         }
         .buttonStyle(.plain)
-        .task(id: chat.pictureUrl) {
-            guard let nhash = parseNhashURI(chat.pictureUrl) else {
-                imageData = nil
-                return
-            }
-            imageData = await manager.downloadHashtreeBytes(nhash: nhash)
-        }
     }
 }
 
@@ -1144,8 +1100,6 @@ private struct ChatListRowContainer: View {
     let chat: ChatThreadSnapshot
     let timeLabel: String?
 
-    @State private var imageData: Data?
-
     var body: some View {
         IrisChatRow(
             title: chat.displayName,
@@ -1153,19 +1107,13 @@ private struct ChatListRowContainer: View {
             subtitle: nil,
             timeLabel: timeLabel,
             unreadCount: chat.unreadCount,
-            imageURL: httpAvatarURL(chat.pictureUrl, preferences: manager.state.preferences, width: 96, height: 96),
-            imageData: imageData,
+            pictureUrl: chat.pictureUrl,
+            preferences: manager.state.preferences,
+            manager: manager,
             onTap: {
                 manager.dispatch(.openChat(chatId: chat.chatId))
             }
         )
-        .task(id: chat.pictureUrl) {
-            guard let nhash = parseNhashURI(chat.pictureUrl) else {
-                imageData = nil
-                return
-            }
-            imageData = await manager.downloadHashtreeBytes(nhash: nhash)
-        }
     }
 }
 
@@ -1638,7 +1586,6 @@ struct GroupDetailsScreen: View {
     @State private var memberInput = ""
     @State private var showingScanner = false
     @State private var showingGroupPicturePicker = false
-    @State private var groupPictureData: Data?
 
     private var normalizedMemberInput: String {
         normalizePeerInput(input: memberInput)
@@ -1662,8 +1609,9 @@ struct GroupDetailsScreen: View {
                             label: details.name,
                             size: 56,
                             emphasize: true,
-                            imageURL: httpAvatarURL(details.pictureUrl, preferences: manager.state.preferences, width: 128, height: 128),
-                            imageData: groupPictureData
+                            pictureUrl: details.pictureUrl,
+                            preferences: manager.state.preferences,
+                            manager: manager
                         )
                         if details.canManage {
                             Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Change photo") {
@@ -1791,13 +1739,6 @@ struct GroupDetailsScreen: View {
             if case let .success(urls) = result, let url = urls.first {
                 manager.updateGroupPicture(groupId: groupId, fileURL: url)
             }
-        }
-        .task(id: manager.state.groupDetails?.pictureUrl) {
-            guard let nhash = parseNhashURI(manager.state.groupDetails?.pictureUrl) else {
-                groupPictureData = nil
-                return
-            }
-            groupPictureData = await manager.downloadHashtreeBytes(nhash: nhash)
         }
     }
 
@@ -2625,7 +2566,9 @@ private struct ProfileEditorCard: View {
                     label: label,
                     size: 52,
                     emphasize: true,
-                    imageURL: proxiedImageURL(trimmedURL, preferences: manager.state.preferences, width: 104, height: 104, square: true)
+                    pictureUrl: account.pictureUrl,
+                    preferences: manager.state.preferences,
+                    manager: manager
                 )
             }
             .buttonStyle(.plain)
@@ -2636,7 +2579,9 @@ private struct ProfileEditorCard: View {
                 label: label,
                 size: 52,
                 emphasize: true,
-                imageURL: proxiedImageURL(account.pictureUrl, preferences: manager.state.preferences, width: 104, height: 104, square: true)
+                pictureUrl: account.pictureUrl,
+                preferences: manager.state.preferences,
+                manager: manager
             )
         }
     }

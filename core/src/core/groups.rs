@@ -180,7 +180,7 @@ impl AppCore {
         self.runtime.spawn(async move {
             let result = upload_file_to_hashtree(&secret_hex, &path)
                 .await
-                .map(|nhash| format!("nhash://{}/{}", nhash, urlencoding::encode(&filename)))
+                .map(|nhash| format!("htree://{}/{}", nhash, urlencoding::encode(&filename)))
                 .map_err(|error| error.to_string());
             let _ = sender.send(CoreMsg::Internal(Box::new(
                 InternalEvent::GroupPictureUploadFinished {

@@ -188,11 +188,13 @@ internal fun rememberNhashImageData(
 
 internal fun parseNhashUri(value: String?): String? {
     val trimmed = value?.trim().orEmpty()
-    if (!trimmed.startsWith("nhash://")) {
-        return null
+    val prefix = when {
+        trimmed.startsWith("htree://") -> "htree://"
+        trimmed.startsWith("nhash://") -> "nhash://"
+        else -> return null
     }
     return trimmed
-        .removePrefix("nhash://")
+        .removePrefix(prefix)
         .substringBefore("/")
         .takeIf(String::isNotBlank)
 }
