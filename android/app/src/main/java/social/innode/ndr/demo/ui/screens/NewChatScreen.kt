@@ -25,6 +25,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -66,6 +67,7 @@ fun NewChatScreen(
     var peerInput by remember { mutableStateOf("") }
     var submittedInput by remember { mutableStateOf<String?>(null) }
     var showScanner by remember { mutableStateOf(false) }
+    var showInviteQr by remember { mutableStateOf(false) }
     val trimmedInput = peerInput.trim()
     val normalizedInput = normalizePeerInput(peerInput)
     val isValidPeer = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput)
@@ -147,25 +149,22 @@ fun NewChatScreen(
                     color = IrisTheme.palette.muted,
                 )
 
-                if (qrBitmap != null && inviteUrl != null) {
-                    Image(
-                        bitmap = qrBitmap.asImageBitmap(),
-                        contentDescription = "Invite QR code",
-                        modifier =
-                            Modifier
-                                .align(Alignment.CenterHorizontally)
-                                .size(220.dp)
-                                .background(Color.White)
-                                .padding(12.dp)
-                                .testTag("newChatInviteQrCode"),
-                    )
+                if (inviteUrl != null) {
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         IrisSecondaryButton(
-                            text = "Copy",
+                            text = "Copy link",
                             onClick = { clipboard.setText("Invite link", inviteUrl) },
                             modifier = Modifier.weight(1f).testTag("newChatInviteCopyButton"),
                             icon = {
                                 Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                            },
+                        )
+                        IrisSecondaryButton(
+                            text = "Show QR",
+                            onClick = { showInviteQr = true },
+                            modifier = Modifier.weight(1f).testTag("newChatInviteQrButton"),
+                            icon = {
+                                Icon(imageVector = IrisIcons.ScanQr, contentDescription = null)
                             },
                         )
                         IrisPrimaryButton(
@@ -182,15 +181,6 @@ fun NewChatScreen(
                             modifier = Modifier.weight(1f).testTag("newChatInviteShareButton"),
                             icon = {
                                 Icon(imageVector = IrisIcons.Share, contentDescription = null)
-                            },
-                        )
-                        IrisSecondaryButton(
-                            text = "",
-                            onClick = { appManager.dispatch(AppAction.CreatePublicInvite) },
-                            enabled = !appState.busy.creatingInvite,
-                            modifier = Modifier.testTag("newChatInviteRefreshButton"),
-                            icon = {
-                                Icon(imageVector = IrisIcons.Refresh, contentDescription = "New invite")
                             },
                         )
                     }
@@ -302,6 +292,51 @@ fun NewChatScreen(
                 }
             },
         )
+    }
+
+    if (showInviteQr && qrBitmap != null && inviteUrl != null) {
+        Dialog(onDismissRequest = { showInviteQr = false }) {
+            Surface(
+                color = IrisTheme.palette.panel,
+                shape = RoundedCornerShape(20.dp),
+                border = BorderStroke(1.dp, IrisTheme.palette.border),
+            ) {
+                Column(
+                    modifier = Modifier.padding(20.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = "Invite QR code",
+                        modifier =
+                            Modifier
+                                .size(280.dp)
+                                .background(Color.White)
+                                .padding(12.dp)
+                                .testTag("newChatInviteQrCode"),
+                    )
+                    Text(
+                        text = inviteUrl,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = IrisTheme.palette.muted,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        IrisSecondaryButton(
+                            text = "Copy",
+                            onClick = { clipboard.setText("Invite link", inviteUrl) },
+                            icon = {
+                                Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                            },
+                        )
+                        IrisPrimaryButton(
+                            text = "Done",
+                            onClick = { showInviteQr = false },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 

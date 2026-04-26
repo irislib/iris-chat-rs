@@ -1148,6 +1148,7 @@ struct NewChatScreen: View {
     @State private var submittedInput: String?
     @State private var showingScanner = false
     @State private var shareText: String?
+    @State private var showingInviteQr = false
 
     private var trimmedInput: String {
         peerInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1186,6 +1187,9 @@ struct NewChatScreen: View {
         )) { payload in
             ShareSheet(text: payload.text)
         }
+        .sheet(isPresented: $showingInviteQr) {
+            inviteQrSheet
+        }
         .irisOnChange(of: peerInput) { _ in
             autoProceedIfReady()
         }
@@ -1201,40 +1205,59 @@ struct NewChatScreen: View {
             CardHeader(title: "Your invite", subtitle: "Share to start a chat")
 
             if let invite = manager.state.publicInvite {
-                QrCodeImage(text: invite.url)
-                    .frame(maxWidth: 240)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .accessibilityIdentifier("newChatInviteQrCode")
-
                 HStack(spacing: 10) {
-                    Button("Copy") {
+                    Button("Copy link") {
                         manager.copyToClipboard(invite.url)
                     }
                     .buttonStyle(IrisSecondaryButtonStyle())
                     .accessibilityIdentifier("newChatInviteCopyButton")
+
+                    Button("Show QR") {
+                        showingInviteQr = true
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("newChatInviteQrButton")
 
                     Button("Share") {
                         shareText = invite.url
                     }
                     .buttonStyle(IrisPrimaryButtonStyle())
                     .accessibilityIdentifier("newChatInviteShareButton")
-
-                    Button(action: { manager.dispatch(.createPublicInvite) }) {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(.body, weight: .semibold))
-                            .frame(width: 40, height: 40)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(manager.state.busy.creatingInvite)
-                    .accessibilityIdentifier("newChatInviteRefreshButton")
-                    .accessibilityLabel("New invite")
                 }
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var inviteQrSheet: some View {
+        if let invite = manager.state.publicInvite {
+            VStack(spacing: 18) {
+                QrCodeImage(text: invite.url)
+                    .frame(maxWidth: 320)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .accessibilityIdentifier("newChatInviteQrCode")
+
+                Text(invite.url)
+                    .font(.system(.footnote, design: .monospaced))
+                    .foregroundStyle(palette.muted)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
+
+                HStack(spacing: 10) {
+                    Button("Copy") { manager.copyToClipboard(invite.url) }
+                        .buttonStyle(IrisSecondaryButtonStyle())
+                    Button("Done") { showingInviteQr = false }
+                        .buttonStyle(IrisPrimaryButtonStyle())
+                }
+            }
+            .padding(24)
+        } else {
+            ProgressView()
+                .padding(40)
         }
     }
 
