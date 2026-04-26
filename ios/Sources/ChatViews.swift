@@ -284,6 +284,9 @@ struct ChatScreen: View {
                 }
             }
         }
+        .onDisappear {
+            stopTypingIfNeeded()
+        }
         .task(id: seenReceiptToken(for: chat)) {
             guard let chat else { return }
             let incomingIds = chat.messages

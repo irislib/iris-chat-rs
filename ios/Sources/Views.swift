@@ -321,6 +321,7 @@ private struct DesktopChatShell: View {
                 trailing: chat.map { AnyView(ChatOverflowMenu(manager: manager, chat: $0)) } ?? AnyView(EmptyView())
             )
             ChatScreen(manager: manager, chatId: chatId)
+                .id(chatId)
         case .groupDetails(let groupId):
             DesktopPaneTopBar(title: "Group", canGoBack: true, onBack: manager.navigateBack)
             GroupDetailsScreen(manager: manager, groupId: groupId)
