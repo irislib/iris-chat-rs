@@ -151,8 +151,7 @@ struct RootView: View {
                     emphasize: true,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
-                    manager: manager,
-                    loadedImageIdentifier: "chatListProfileAvatarImage"
+                    manager: manager
                 )
             }
             .buttonStyle(.plain)
@@ -508,8 +507,7 @@ private struct DesktopChatSidebar: View {
                         emphasize: true,
                         pictureUrl: account.pictureUrl,
                         preferences: manager.state.preferences,
-                        manager: manager,
-                        loadedImageIdentifier: "chatListProfileAvatarImage"
+                        manager: manager
                     )
                 }
                 .buttonStyle(.plain)
@@ -2622,8 +2620,7 @@ private struct ProfileEditorCard: View {
                     emphasize: true,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
-                    manager: manager,
-                    loadedImageIdentifier: "myProfileAvatarImage"
+                    manager: manager
                 )
             }
             .buttonStyle(.plain)
@@ -2636,8 +2633,7 @@ private struct ProfileEditorCard: View {
                 emphasize: true,
                 pictureUrl: account.pictureUrl,
                 preferences: manager.state.preferences,
-                manager: manager,
-                loadedImageIdentifier: "myProfileAvatarImage"
+                manager: manager
             )
         }
     }
