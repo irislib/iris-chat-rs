@@ -237,7 +237,7 @@ fun NewChatScreen(
             }
 
             NewChatActionRow(
-                text = "New group",
+                text = "Create group",
                 icon = { Icon(imageVector = IrisIcons.NewGroup, contentDescription = null) },
                 modifier = Modifier.testTag("newChatNewGroupButton"),
                 onClick = { appManager.pushScreen(Screen.NewGroup) },

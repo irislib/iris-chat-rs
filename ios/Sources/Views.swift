@@ -1251,7 +1251,7 @@ struct NewChatScreen: View {
                     .font(.system(.body, weight: .semibold))
                     .frame(width: 22)
                     .foregroundStyle(palette.accent)
-                Text("New group")
+                Text("Create group")
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
                 Spacer()
