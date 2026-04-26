@@ -67,18 +67,28 @@ impl AppCore {
     }
 
     pub(super) fn upload_profile_picture(&mut self, file_path: &str) {
+        self.push_debug_log(
+            "profile.picture.upload.start",
+            format!("path={file_path}"),
+        );
         let Some(logged_in) = self.logged_in.as_ref() else {
+            self.push_debug_log("profile.picture.upload.skip", "no_logged_in".to_string());
             self.state.toast = Some("Create or restore an account first.".to_string());
             self.emit_state();
             return;
         };
         let Some(owner_keys) = logged_in.owner_keys.as_ref() else {
+            self.push_debug_log("profile.picture.upload.skip", "no_owner_keys".to_string());
             self.state.toast = Some("Owner key is required to edit profile.".to_string());
             self.emit_state();
             return;
         };
         let path = PathBuf::from(file_path.trim());
         if !path.is_file() {
+            self.push_debug_log(
+                "profile.picture.upload.skip",
+                format!("missing_file={file_path}"),
+            );
             self.state.toast = Some("Profile picture was not found.".to_string());
             self.emit_state();
             return;

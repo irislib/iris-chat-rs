@@ -2558,8 +2558,9 @@ private struct ProfileEditorCard: View {
     private var profileAvatar: some View {
         let label = account.displayName.isEmpty ? "Profile" : account.displayName
         let trimmedURL = account.pictureUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let isViewable = trimmedURL.hasPrefix("http://") || trimmedURL.hasPrefix("https://")
         let displayURL = proxiedImageURL(trimmedURL, preferences: manager.state.preferences, width: 1024, height: 1024)
-        if !trimmedURL.isEmpty, let url = URL(string: displayURL ?? trimmedURL) {
+        if isViewable, let url = URL(string: displayURL ?? trimmedURL) {
             Button {
                 openProfilePicture(url)
             } label: {
@@ -2614,7 +2615,14 @@ private struct IrisProfilePictureViewer: View {
                         .scaledToFit()
                         .padding(22)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                default:
+                case .failure:
+                    Image(systemName: "photo.badge.exclamationmark")
+                        .font(.system(size: 56, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.7))
+                case .empty:
+                    ProgressView()
+                        .tint(.white)
+                @unknown default:
                     ProgressView()
                         .tint(.white)
                 }

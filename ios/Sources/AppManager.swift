@@ -377,11 +377,14 @@ final class AppManager: ObservableObject {
     }
 
     func uploadProfilePicture(fileURL: URL) {
+        print("[upload-profile-picture] picked: \(fileURL.path)")
         do {
             let staged = try stageOutgoingAttachment(fileURL)
+            print("[upload-profile-picture] staged: \(staged.path)")
             rust.dispatch(action: .uploadProfilePicture(filePath: staged.path))
         } catch {
-            showToast("Image could not be opened")
+            print("[upload-profile-picture] stage failed: \(error)")
+            showToast("Image could not be opened: \(error.localizedDescription)")
         }
     }
 
