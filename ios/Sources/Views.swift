@@ -1145,8 +1145,13 @@ struct NewChatScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     @State private var peerInput = ""
-    @State private var submittedPeerInput: String?
+    @State private var submittedInput: String?
     @State private var showingScanner = false
+    @State private var shareText: String?
+
+    private var trimmedInput: String {
+        peerInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     private var normalizedPeerInput: String {
         normalizePeerInput(input: peerInput)
@@ -1156,113 +1161,123 @@ struct NewChatScreen: View {
         !normalizedPeerInput.isEmpty && isValidPeerInput(input: normalizedPeerInput)
     }
 
+    private var looksLikeInviteLink: Bool {
+        let lower = trimmedInput.lowercased()
+        return lower.contains("://") && lower.contains("#")
+    }
+
     var body: some View {
         IrisScrollScreen {
             VStack(spacing: 18) {
-                directChatForm
-                secondaryActions
+                yourInviteCard
+                addContactCard
+                newGroupRow
             }
         }
         .sheet(isPresented: $showingScanner) {
             QrScannerSheet { code in
-                handleScannedCode(code)
+                handleNewChatInput(code)
                 showingScanner = false
             }
         }
-        .irisOnChange(of: normalizedPeerInput) { normalized in
-            guard !normalized.isEmpty,
-                  isValidPeerInput(input: normalized),
-                  submittedPeerInput != normalized
-            else { return }
-            submittedPeerInput = normalized
-            manager.dispatch(.createChat(peerInput: normalized))
+        .sheet(item: Binding(
+            get: { shareText.map(SharePayload.init(text:)) },
+            set: { shareText = $0?.text }
+        )) { payload in
+            ShareSheet(text: payload.text)
+        }
+        .irisOnChange(of: peerInput) { _ in
+            autoProceedIfReady()
+        }
+        .task {
+            if manager.state.publicInvite == nil && !manager.state.busy.creatingInvite {
+                manager.dispatch(.createPublicInvite)
+            }
         }
     }
 
-    private var directChatForm: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Color.clear
-                .frame(height: 0)
-                .accessibilityIdentifier("newChatPrimaryCard")
+    private var yourInviteCard: some View {
+        IrisSectionCard(accent: true) {
+            CardHeader(title: "Your invite", subtitle: "Share to start a chat")
 
-            TextField("User ID or link", text: $peerInput)
+            if let invite = manager.state.publicInvite {
+                QrCodeImage(text: invite.url)
+                    .frame(maxWidth: 240)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .accessibilityIdentifier("newChatInviteQrCode")
+
+                HStack(spacing: 10) {
+                    Button("Copy") {
+                        manager.copyToClipboard(invite.url)
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("newChatInviteCopyButton")
+
+                    Button("Share") {
+                        shareText = invite.url
+                    }
+                    .buttonStyle(IrisPrimaryButtonStyle())
+                    .accessibilityIdentifier("newChatInviteShareButton")
+
+                    Button(action: { manager.dispatch(.createPublicInvite) }) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(.body, weight: .semibold))
+                            .frame(width: 40, height: 40)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(manager.state.busy.creatingInvite)
+                    .accessibilityIdentifier("newChatInviteRefreshButton")
+                    .accessibilityLabel("New invite")
+                }
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            }
+        }
+    }
+
+    private var addContactCard: some View {
+        IrisSectionCard {
+            CardHeader(title: "Add contact", subtitle: "Paste a user ID or invite link")
+
+            TextField("npub… or invite link", text: $peerInput)
                 .irisIdentifierInputModifiers()
                 .textFieldStyle(.plain)
                 .irisInputField()
                 .accessibilityIdentifier("newChatPeerInput")
 
-            if !peerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !validPeerInput {
-                Text("Invalid user ID.")
+            if !trimmedInput.isEmpty && !validPeerInput && !looksLikeInviteLink {
+                Text("Invalid user ID or invite link.")
                     .font(.system(.footnote, design: .rounded))
                     .foregroundStyle(.red)
             }
 
             HStack(spacing: 10) {
-                pasteButton
-                scanButton
+                Button("Paste") {
+                    handleNewChatInput(PlatformClipboard.string() ?? "")
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("newChatPasteButton")
+
+                if irisSupportsQrScanning {
+                    Button("Scan QR") { showingScanner = true }
+                        .buttonStyle(IrisSecondaryButtonStyle())
+                        .accessibilityIdentifier("newChatScanQrButton")
+                }
             }
         }
     }
 
-    private var secondaryActions: some View {
-        VStack(spacing: 8) {
-            newChatActionRow(
-                title: "Join with invite",
-                systemImage: "link",
-                identifier: "newChatJoinInviteButton"
-            ) {
-                manager.dispatch(.pushScreen(screen: .joinInvite))
-            }
-
-            newChatActionRow(
-                title: "Create invite",
-                systemImage: "square.and.arrow.up",
-                identifier: "newChatCreateInviteButton"
-            ) {
-                manager.dispatch(.pushScreen(screen: .createInvite))
-            }
-
-            newChatActionRow(
-                title: "New group",
-                systemImage: "person.3.fill",
-                identifier: "newChatNewGroupButton"
-            ) {
-                manager.dispatch(.pushScreen(screen: .newGroup))
-            }
-        }
-    }
-
-    private var pasteButton: some View {
-        Button("Paste") {
-            handleNewChatInput(PlatformClipboard.string() ?? "")
-        }
-        .buttonStyle(IrisSecondaryButtonStyle())
-        .accessibilityIdentifier("newChatPasteButton")
-    }
-
-    private var scanButton: some View {
-        Group {
-            if irisSupportsQrScanning {
-                Button("Scan QR") { showingScanner = true }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .accessibilityIdentifier("newChatScanQrButton")
-            }
-        }
-    }
-
-    private func newChatActionRow(
-        title: String,
-        systemImage: String,
-        identifier: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
+    private var newGroupRow: some View {
+        Button(action: { manager.dispatch(.pushScreen(screen: .newGroup)) }) {
             HStack(spacing: 12) {
-                Image(systemName: systemImage)
+                Image(systemName: "person.3.fill")
                     .font(.system(.body, weight: .semibold))
                     .frame(width: 22)
                     .foregroundStyle(palette.accent)
-                Text(title)
+                Text("New group")
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
                 Spacer()
@@ -1282,18 +1297,26 @@ struct NewChatScreen: View {
             )
         }
         .buttonStyle(.plain)
-        .accessibilityIdentifier(identifier)
+        .accessibilityIdentifier("newChatNewGroupButton")
     }
 
-    private func handleScannedCode(_ code: String) {
-        handleNewChatInput(code)
+    private func autoProceedIfReady() {
+        if validPeerInput, submittedInput != normalizedPeerInput {
+            submittedInput = normalizedPeerInput
+            manager.dispatch(.createChat(peerInput: normalizedPeerInput))
+            return
+        }
+        if looksLikeInviteLink, submittedInput != trimmedInput {
+            submittedInput = trimmedInput
+            manager.dispatch(.acceptInvite(inviteInput: trimmedInput))
+        }
     }
 
     private func handleNewChatInput(_ raw: String) {
         let normalized = normalizePeerInput(input: raw)
         if !normalized.isEmpty, isValidPeerInput(input: normalized) {
             peerInput = normalized
-            submittedPeerInput = normalized
+            submittedInput = normalized
             manager.dispatch(.createChat(peerInput: normalized))
             return
         }
@@ -1301,6 +1324,7 @@ struct NewChatScreen: View {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             peerInput = trimmed
+            submittedInput = trimmed
             manager.dispatch(.acceptInvite(inviteInput: trimmed))
         }
     }

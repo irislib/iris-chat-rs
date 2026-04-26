@@ -1,16 +1,23 @@
 package social.innode.ndr.demo.ui.screens
 
+import android.content.Intent
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -27,6 +34,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -39,6 +48,8 @@ import social.innode.ndr.demo.rust.Screen
 import social.innode.ndr.demo.rust.isValidPeerInput
 import social.innode.ndr.demo.rust.normalizePeerInput
 import social.innode.ndr.demo.ui.components.IrisIcons
+import social.innode.ndr.demo.ui.components.IrisPrimaryButton
+import social.innode.ndr.demo.ui.components.IrisSectionCard
 import social.innode.ndr.demo.ui.components.IrisSecondaryButton
 import social.innode.ndr.demo.ui.components.IrisTopBar
 import social.innode.ndr.demo.ui.components.rememberIrisClipboard
@@ -50,18 +61,37 @@ fun NewChatScreen(
     appState: AppState,
 ) {
     val clipboard = rememberIrisClipboard()
+    val context = LocalContext.current
     val focusManager = LocalFocusManager.current
     var peerInput by remember { mutableStateOf("") }
-    var submittedPeerInput by remember { mutableStateOf<String?>(null) }
+    var submittedInput by remember { mutableStateOf<String?>(null) }
     var showScanner by remember { mutableStateOf(false) }
+    val trimmedInput = peerInput.trim()
     val normalizedInput = normalizePeerInput(peerInput)
     val isValidPeer = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput)
+    val looksLikeInviteLink =
+        trimmedInput.lowercase().let { it.contains("://") && it.contains("#") }
 
-    LaunchedEffect(isValidPeer, normalizedInput) {
-        if (isValidPeer && submittedPeerInput != normalizedInput) {
-            submittedPeerInput = normalizedInput
+    val inviteUrl = appState.publicInvite?.url
+    val qrBitmap = remember(inviteUrl) {
+        inviteUrl?.let { createQrBitmap(it, size = 768) }
+    }
+
+    LaunchedEffect(Unit) {
+        if (appState.publicInvite == null && !appState.busy.creatingInvite) {
+            appManager.dispatch(AppAction.CreatePublicInvite)
+        }
+    }
+
+    LaunchedEffect(isValidPeer, normalizedInput, looksLikeInviteLink, trimmedInput) {
+        if (isValidPeer && submittedInput != normalizedInput) {
+            submittedInput = normalizedInput
             focusManager.clearFocus()
             appManager.createChat(normalizedInput)
+        } else if (looksLikeInviteLink && submittedInput != trimmedInput) {
+            submittedInput = trimmedInput
+            focusManager.clearFocus()
+            appManager.dispatch(AppAction.AcceptInvite(trimmedInput))
         }
     }
 
@@ -69,7 +99,7 @@ fun NewChatScreen(
         val normalized = normalizePeerInput(raw)
         if (normalized.isNotBlank() && isValidPeerInput(normalized)) {
             peerInput = normalized
-            submittedPeerInput = normalized
+            submittedInput = normalized
             appManager.createChat(normalized)
             return
         }
@@ -77,6 +107,7 @@ fun NewChatScreen(
         val trimmed = raw.trim()
         if (trimmed.isNotBlank()) {
             peerInput = trimmed
+            submittedInput = trimmed
             appManager.dispatch(AppAction.AcceptInvite(trimmed))
         }
     }
@@ -99,16 +130,93 @@ fun NewChatScreen(
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
+                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Column(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("newChatPrimaryCard"),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
+            // Your invite — upfront QR + copy/share
+            IrisSectionCard {
+                Text(
+                    text = "Your invite",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "Share to start a chat",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = IrisTheme.palette.muted,
+                )
+
+                if (qrBitmap != null && inviteUrl != null) {
+                    Image(
+                        bitmap = qrBitmap.asImageBitmap(),
+                        contentDescription = "Invite QR code",
+                        modifier =
+                            Modifier
+                                .align(Alignment.CenterHorizontally)
+                                .size(220.dp)
+                                .background(Color.White)
+                                .padding(12.dp)
+                                .testTag("newChatInviteQrCode"),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        IrisSecondaryButton(
+                            text = "Copy",
+                            onClick = { clipboard.setText("Invite link", inviteUrl) },
+                            modifier = Modifier.weight(1f).testTag("newChatInviteCopyButton"),
+                            icon = {
+                                Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                            },
+                        )
+                        IrisPrimaryButton(
+                            text = "Share",
+                            onClick = {
+                                val intent =
+                                    Intent(Intent.ACTION_SEND)
+                                        .setType("text/plain")
+                                        .putExtra(Intent.EXTRA_TEXT, inviteUrl)
+                                context.startActivity(
+                                    Intent.createChooser(intent, "Share invite"),
+                                )
+                            },
+                            modifier = Modifier.weight(1f).testTag("newChatInviteShareButton"),
+                            icon = {
+                                Icon(imageVector = IrisIcons.Share, contentDescription = null)
+                            },
+                        )
+                        IrisSecondaryButton(
+                            text = "",
+                            onClick = { appManager.dispatch(AppAction.CreatePublicInvite) },
+                            enabled = !appState.busy.creatingInvite,
+                            modifier = Modifier.testTag("newChatInviteRefreshButton"),
+                            icon = {
+                                Icon(imageVector = IrisIcons.Refresh, contentDescription = "New invite")
+                            },
+                        )
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                        horizontalArrangement = Arrangement.Center,
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                }
+            }
+
+            // Add contact — paste / scan / type, auto-proceeds
+            IrisSectionCard {
+                Text(
+                    text = "Add contact",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                )
+                Text(
+                    text = "Paste a user ID or invite link",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = IrisTheme.palette.muted,
+                )
+
                 TextField(
                     value = peerInput,
                     onValueChange = { peerInput = it },
@@ -118,7 +226,7 @@ fun NewChatScreen(
                             .testTag("newChatPeerInput"),
                     placeholder = {
                         Text(
-                            text = "User ID or link",
+                            text = "npub… or invite link",
                             color = IrisTheme.palette.muted,
                         )
                     },
@@ -128,9 +236,7 @@ fun NewChatScreen(
                         KeyboardActions(
                             onDone = {
                                 focusManager.clearFocus()
-                                if (isValidPeer) {
-                                    appManager.createChat(normalizedInput)
-                                }
+                                handleNewChatInput(peerInput)
                             },
                         ),
                     colors =
@@ -144,9 +250,9 @@ fun NewChatScreen(
                         ),
                 )
 
-                if (peerInput.isNotBlank() && !isValidPeer) {
+                if (trimmedInput.isNotBlank() && !isValidPeer && !looksLikeInviteLink) {
                     Text(
-                        text = "Invalid user ID.",
+                        text = "Invalid user ID or invite link.",
                         color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -156,16 +262,11 @@ fun NewChatScreen(
                     IrisSecondaryButton(
                         text = "Paste",
                         onClick = {
-                            clipboard.getText { text ->
-                                handleNewChatInput(text)
-                            }
+                            clipboard.getText { text -> handleNewChatInput(text) }
                         },
                         modifier = Modifier.testTag("newChatPasteButton"),
                         icon = {
-                            Icon(
-                                imageVector = IrisIcons.Copy,
-                                contentDescription = null,
-                            )
+                            Icon(imageVector = IrisIcons.Copy, contentDescription = null)
                         },
                     )
                     IrisSecondaryButton(
@@ -173,36 +274,18 @@ fun NewChatScreen(
                         onClick = { showScanner = true },
                         modifier = Modifier.testTag("newChatScanQrButton"),
                         icon = {
-                            Icon(
-                                imageVector = IrisIcons.ScanQr,
-                                contentDescription = null,
-                            )
+                            Icon(imageVector = IrisIcons.ScanQr, contentDescription = null)
                         },
                     )
                 }
-
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                NewChatActionRow(
-                    text = "Join with invite",
-                    icon = { Icon(imageVector = IrisIcons.NewChat, contentDescription = null) },
-                    modifier = Modifier.testTag("newChatJoinInviteButton"),
-                    onClick = { appManager.pushScreen(Screen.JoinInvite) },
-                )
-                NewChatActionRow(
-                    text = "Create invite",
-                    icon = { Icon(imageVector = IrisIcons.Share, contentDescription = null) },
-                    modifier = Modifier.testTag("newChatCreateInviteButton"),
-                    onClick = { appManager.pushScreen(Screen.CreateInvite) },
-                )
-                NewChatActionRow(
-                    text = "New group",
-                    icon = { Icon(imageVector = IrisIcons.NewGroup, contentDescription = null) },
-                    modifier = Modifier.testTag("newChatNewGroupButton"),
-                    onClick = { appManager.pushScreen(Screen.NewGroup) },
-                )
-            }
+            NewChatActionRow(
+                text = "New group",
+                icon = { Icon(imageVector = IrisIcons.NewGroup, contentDescription = null) },
+                modifier = Modifier.testTag("newChatNewGroupButton"),
+                onClick = { appManager.pushScreen(Screen.NewGroup) },
+            )
         }
     }
 
