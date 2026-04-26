@@ -43,6 +43,13 @@ impl AppCore {
                     .as_ref()
                     .map(|group| group.members.len() as u64)
                     .unwrap_or(0);
+                let direct_picture = if group_snapshot.is_none() {
+                    self.owner_profiles
+                        .get(&thread.chat_id)
+                        .and_then(|profile| profile.picture.clone())
+                } else {
+                    None
+                };
                 ChatThreadSnapshot {
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
@@ -50,7 +57,8 @@ impl AppCore {
                     subtitle,
                     picture_url: group_snapshot
                         .as_ref()
-                        .and_then(|group| group.picture.clone()),
+                        .and_then(|group| group.picture.clone())
+                        .or(direct_picture),
                     member_count,
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
@@ -68,6 +76,13 @@ impl AppCore {
             .and_then(|chat_id| self.threads.get(chat_id))
             .map(|thread| {
                 let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
+                let direct_picture = if group_snapshot.is_none() {
+                    self.owner_profiles
+                        .get(&thread.chat_id)
+                        .and_then(|profile| profile.picture.clone())
+                } else {
+                    None
+                };
                 CurrentChatSnapshot {
                     chat_id: thread.chat_id.clone(),
                     kind: chat_kind_for_id(&thread.chat_id),
@@ -81,7 +96,8 @@ impl AppCore {
                         .or_else(|| self.owner_secondary_identifier(&thread.chat_id)),
                     picture_url: group_snapshot
                         .as_ref()
-                        .and_then(|group| group.picture.clone()),
+                        .and_then(|group| group.picture.clone())
+                        .or(direct_picture),
                     group_id: group_snapshot.as_ref().map(|group| group.id.clone()),
                     member_count: group_snapshot
                         .as_ref()

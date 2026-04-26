@@ -318,6 +318,11 @@ private struct DesktopChatShell: View {
             DesktopPaneTopBar(
                 title: chat?.displayName ?? "Chat",
                 subtitle: chat?.subtitle,
+                leading: chat.map {
+                    AnyView(
+                        DesktopChatHeaderAvatar(manager: manager, chat: $0)
+                    )
+                } ?? AnyView(EmptyView()),
                 trailing: chat.map { AnyView(ChatOverflowMenu(manager: manager, chat: $0)) } ?? AnyView(EmptyView())
             )
             ChatScreen(manager: manager, chatId: chatId)
@@ -351,6 +356,7 @@ private struct DesktopPaneTopBar: View {
     let subtitle: String?
     let canGoBack: Bool
     let onBack: () -> Void
+    let leading: AnyView
     let trailing: AnyView
 
     init(
@@ -358,12 +364,14 @@ private struct DesktopPaneTopBar: View {
         subtitle: String? = nil,
         canGoBack: Bool = false,
         onBack: @escaping () -> Void = {},
+        leading: AnyView = AnyView(EmptyView()),
         trailing: AnyView = AnyView(EmptyView())
     ) {
         self.title = title
         self.subtitle = subtitle
         self.canGoBack = canGoBack
         self.onBack = onBack
+        self.leading = leading
         self.trailing = trailing
     }
 
@@ -379,6 +387,8 @@ private struct DesktopPaneTopBar: View {
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("desktopPaneBackButton")
             }
+
+            leading
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
@@ -578,6 +588,29 @@ private struct DesktopSidebarActionRow: View {
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: 10, style: .continuous)
             .fill(selected ? palette.panelAlt : Color.clear)
+    }
+}
+
+private struct DesktopChatHeaderAvatar: View {
+    @ObservedObject var manager: AppManager
+    let chat: CurrentChatSnapshot
+
+    @State private var imageData: Data?
+
+    var body: some View {
+        IrisAvatar(
+            label: chat.displayName,
+            size: 36,
+            imageURL: httpAvatarURL(chat.pictureUrl, preferences: manager.state.preferences, width: 96, height: 96),
+            imageData: imageData
+        )
+        .task(id: chat.pictureUrl) {
+            guard let nhash = parseNhashURI(chat.pictureUrl) else {
+                imageData = nil
+                return
+            }
+            imageData = await manager.downloadHashtreeBytes(nhash: nhash)
+        }
     }
 }
 
