@@ -1157,6 +1157,7 @@ struct NewChatScreen: View {
             VStack(spacing: 18) {
                 newChatCard
                 joinChatCard
+                newGroupRow
             }
         }
         .sheet(isPresented: $showingScanner) {
@@ -1241,6 +1242,36 @@ struct NewChatScreen: View {
                 .accessibilityIdentifier("newChatScanQrButton")
             }
         }
+    }
+
+    private var newGroupRow: some View {
+        Button(action: { manager.dispatch(.pushScreen(screen: .newGroup)) }) {
+            HStack(spacing: 12) {
+                Image(systemName: "person.3.fill")
+                    .font(.system(.body, weight: .semibold))
+                    .frame(width: 22)
+                    .foregroundStyle(palette.accent)
+                Text("New group")
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(.footnote, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(palette.panel)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(palette.border, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("newChatNewGroupButton")
     }
 
     @ViewBuilder
