@@ -546,6 +546,7 @@ struct IrisComposerBar: View {
     let placeholder: String
     let isSending: Bool
     let isUploading: Bool
+    @FocusState.Binding var isFocused: Bool
     let onDraftChange: () -> Void
     let onAttach: ([URL]) -> Void
     let onSend: () -> Void
@@ -629,6 +630,7 @@ struct IrisComposerBar: View {
                     .irisDraftInputModifiers()
                     .irisInputField()
                     .irisDesktopSubmit(submitDraft)
+                    .focused($isFocused)
                     .irisOnChange(of: draft) { _ in onDraftChange() }
                     .accessibilityIdentifier("chatMessageInput")
 

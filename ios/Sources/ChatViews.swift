@@ -18,6 +18,7 @@ struct ChatScreen: View {
     @State private var replyTarget: ChatMessageSnapshot?
     @State private var imageViewerItem: ImageViewerItem?
     @State private var lastTypingSentAt: Date?
+    @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
@@ -107,6 +108,11 @@ struct ChatScreen: View {
                                     .padding(.vertical, 10)
                                     .accessibilityIdentifier("chatTimeline")
                                 }
+                                .simultaneousGesture(
+                                    TapGesture().onEnded {
+                                        isComposerFocused = false
+                                    }
+                                )
                                 .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
                                 .overlay {
                                     GeometryReader { geometry in
@@ -178,6 +184,7 @@ struct ChatScreen: View {
 
                                 if !isNearBottom && !chat.messages.isEmpty {
                                     Button {
+                                        isComposerFocused = false
                                         shouldFollowLatest = true
                                         scrollToBottom(proxy: proxy, animated: true)
                                     } label: {
@@ -215,6 +222,7 @@ struct ChatScreen: View {
                             placeholder: "Message",
                             isSending: manager.state.busy.sendingMessage,
                             isUploading: manager.state.busy.uploadingAttachment,
+                            isFocused: $isComposerFocused,
                             onDraftChange: {
                                 sendTypingIfNeeded()
                             },

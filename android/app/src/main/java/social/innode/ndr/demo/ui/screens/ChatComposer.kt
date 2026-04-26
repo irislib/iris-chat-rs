@@ -103,6 +103,7 @@ internal fun ComposerBar(
     selectedAttachments: List<PickedAttachment>,
     isSending: Boolean,
     isUploading: Boolean,
+    modifier: Modifier = Modifier,
     onDraftChange: (String) -> Unit,
     onAttach: () -> Unit,
     onRemoveAttachment: (PickedAttachment) -> Unit,
@@ -120,7 +121,7 @@ internal fun ComposerBar(
 
     Surface(
         modifier =
-            Modifier
+            modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .imePadding(),

@@ -14,6 +14,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -37,7 +40,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -77,6 +86,7 @@ fun ChatScreen(
     chatId: String,
 ) {
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     val chat = appState.currentChat?.takeIf { it.chatId == chatId }
     var draft by remember(chatId) { mutableStateOf("") }
     var selectedAttachments by remember(chatId) { mutableStateOf<List<PickedAttachment>>(emptyList()) }
@@ -90,6 +100,7 @@ fun ChatScreen(
     var imageViewerItem by remember(chatId) { mutableStateOf<DownloadedImageAttachment?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
     var chatMenuOpen by remember(chatId) { mutableStateOf(false) }
+    var composerBounds by remember { mutableStateOf<Rect?>(null) }
     val backUnreadCount =
         remember(appState.chatList, chatId) {
             appState.chatList
@@ -287,7 +298,10 @@ fun ChatScreen(
                 Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .background(MaterialTheme.colorScheme.background),
+                    .background(MaterialTheme.colorScheme.background)
+                    .clearFocusOnTapOutside(composerBounds) {
+                        focusManager.clearFocus()
+                    },
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Box(
@@ -399,6 +413,9 @@ fun ChatScreen(
                     selectedAttachments = selectedAttachments,
                     isSending = appState.busy.sendingMessage,
                     isUploading = appState.busy.uploadingAttachment,
+                    modifier = Modifier.onGloballyPositioned { coordinates ->
+                        composerBounds = coordinates.boundsInParent()
+                    },
                     onDraftChange = { value ->
                         draft = value
                         if (value.isNotBlank()) {
@@ -479,3 +496,17 @@ fun ChatScreen(
         }
     }
 }
+
+private fun Modifier.clearFocusOnTapOutside(
+    ignoredBounds: Rect?,
+    onTapOutside: () -> Unit,
+): Modifier =
+    pointerInput(ignoredBounds, onTapOutside) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Final)
+            val up = waitForUpOrCancellation(pass = PointerEventPass.Final)
+            if (up != null && ignoredBounds?.contains(down.position) != true) {
+                onTapOutside()
+            }
+        }
+    }

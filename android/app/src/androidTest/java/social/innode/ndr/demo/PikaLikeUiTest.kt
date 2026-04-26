@@ -4,8 +4,11 @@ import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -15,6 +18,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performKeyPress
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertFalse
@@ -211,6 +215,29 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).performClick()
         composeRule.waitForText(message)
         composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).assertIsNotEnabled()
+    }
+
+    @Test
+    fun tapping_timeline_clears_message_input_focus() {
+        composeRule.ensureChatList()
+        composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("chatListNewChatOption")
+        composeRule.onNodeWithTag("chatListNewChatOption", useUnmergedTree = true).performClick()
+
+        composeRule.waitForTag("newChatPeerInput")
+        composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
+            .performTextInput(VALID_PEER_NPUB)
+
+        composeRule.waitForTag("chatMessageInput")
+        composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true)
+            .performTextInput("dismiss keyboard")
+        composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true).assertIsFocused()
+
+        composeRule.onNodeWithTag("chatTimeline", useUnmergedTree = true).performTouchInput {
+            click(center)
+        }
+
+        composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true).assertIsNotFocused()
     }
 
     @Test
