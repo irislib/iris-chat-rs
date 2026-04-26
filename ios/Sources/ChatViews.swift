@@ -658,7 +658,7 @@ private struct IrisDeliveryGlyph: View {
         case .sent:
             Image(systemName: "checkmark")
         case .received, .seen:
-            HStack(spacing: -3) {
+            HStack(spacing: 1) {
                 Image(systemName: "checkmark")
                 Image(systemName: "checkmark")
             }
