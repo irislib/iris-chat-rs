@@ -558,7 +558,7 @@ impl AppCore {
         content: String,
         outer_event_id: Option<String>,
     ) {
-        let Ok(event) = serde_json::from_str::<UnsignedEvent>(&content) else {
+        let Some(runtime_rumor) = parse_runtime_rumor(&content) else {
             self.apply_runtime_text_message(
                 sender_owner,
                 None,
@@ -570,9 +570,11 @@ impl AppCore {
             return;
         };
 
-        if let Some(logged_in) = self.logged_in.as_ref() {
+        if let (Some(logged_in), Some(event)) =
+            (self.logged_in.as_ref(), runtime_rumor.unsigned.as_ref())
+        {
             for group_event in logged_in.ndr_runtime.group_handle_incoming_session_event(
-                &event,
+                event,
                 sender_owner,
                 sender_device,
             ) {
@@ -580,9 +582,9 @@ impl AppCore {
             }
         }
 
-        let kind = event.kind.as_u16() as u32;
-        let created_at_secs = event.created_at.as_u64();
-        let expires_at_secs = message_expiration_from_tags(event.tags.iter());
+        let kind = runtime_rumor.kind;
+        let created_at_secs = runtime_rumor.created_at_secs;
+        let expires_at_secs = message_expiration_from_tags(runtime_rumor.tags.iter());
         let Some(local_owner) = self
             .logged_in
             .as_ref()
@@ -590,47 +592,49 @@ impl AppCore {
         else {
             return;
         };
-        let chat_id = chat_id_for_rumor(sender_owner, local_owner, &event);
+        let chat_id = chat_id_for_tags(sender_owner, local_owner, runtime_rumor.tags.iter());
         let is_outgoing = sender_owner == local_owner;
+        let message_id = runtime_rumor.id.or_else(|| outer_event_id.clone());
 
         match kind {
             GROUP_METADATA_KIND => {
-                self.apply_group_metadata_rumor(sender_owner, &event);
+                if let Some(event) = runtime_rumor.unsigned.as_ref() {
+                    self.apply_group_metadata_rumor(sender_owner, event);
+                }
             }
             GROUP_SENDER_KEY_DISTRIBUTION_KIND => {}
             CHAT_MESSAGE_KIND => {
                 self.apply_runtime_text_message(
                     sender_owner,
                     Some(chat_id.clone()),
-                    event.content.clone(),
+                    runtime_rumor.content,
                     created_at_secs,
                     expires_at_secs,
-                    outer_event_id.clone(),
+                    message_id.clone(),
                 );
                 if !is_outgoing && self.preferences.send_read_receipts {
-                    let receipt_id = event
-                        .id
-                        .as_ref()
-                        .map(|id| id.to_string())
-                        .or(outer_event_id);
-                    if let Some(receipt_id) = receipt_id {
+                    if let Some(receipt_id) = message_id {
                         self.send_receipt(&chat_id, "delivered", vec![receipt_id]);
                     }
                 }
             }
             REACTION_KIND => {
-                for message_id in event_message_ids(&event) {
-                    self.apply_incoming_reaction_to_chat(&chat_id, &message_id, &event.content);
+                for message_id in message_ids_from_tags(runtime_rumor.tags.iter()) {
+                    self.apply_incoming_reaction_to_chat(
+                        &chat_id,
+                        &message_id,
+                        &runtime_rumor.content,
+                    );
                 }
             }
             RECEIPT_KIND => {
-                let delivery = match event.content.as_str() {
+                let delivery = match runtime_rumor.content.as_str() {
                     "seen" => DeliveryState::Seen,
                     _ => DeliveryState::Received,
                 };
                 self.apply_receipt_to_messages(
                     &chat_id,
-                    &event_message_ids(&event),
+                    &message_ids_from_tags(runtime_rumor.tags.iter()),
                     delivery,
                     is_outgoing,
                 );
@@ -645,7 +649,7 @@ impl AppCore {
                 self.apply_chat_settings_control(
                     &chat_id,
                     &actor,
-                    chat_settings_ttl_seconds(&event.content),
+                    chat_settings_ttl_seconds(&runtime_rumor.content),
                     created_at_secs,
                 );
             }

@@ -404,7 +404,11 @@ impl AppCore {
         self.send_group_event(chat_id, RECEIPT_KIND, receipt_type, tags, None);
     }
 
-    fn apply_group_metadata_notice(&mut self, previous: Option<&GroupData>, group: &GroupData) {
+    pub(super) fn apply_group_metadata_notice(
+        &mut self,
+        previous: Option<&GroupData>,
+        group: &GroupData,
+    ) {
         let chat_id = group_chat_id(&group.id);
         let now = unix_now().get();
         match previous {

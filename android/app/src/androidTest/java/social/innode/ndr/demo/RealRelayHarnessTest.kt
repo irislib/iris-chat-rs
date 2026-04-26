@@ -717,6 +717,7 @@ class RealRelayHarnessTest {
         val peerInput = arguments.getString("peer_input").orEmpty()
         val expectedChatId = arguments.getString("chat_id").orEmpty().takeIf { it.isNotBlank() }
         val direction = arguments.getString("direction").orEmpty().lowercase()
+        val expectedCount = optionalArg("expected_count")?.toIntOrNull()
         val seededChat =
             when {
                 !expectedChatId.isNullOrBlank() -> ensureChatOpenById(expectedChatId)
@@ -760,10 +761,18 @@ class RealRelayHarnessTest {
 
         resolvedChatId?.let(appManager()::openChat)
         val finalChatId = resolvedChatId ?: matchedChatId
+        if (expectedCount != null) {
+            SystemClock.sleep(5_000)
+            val actualCount = countMessages(finalChatId, expectedMessage, direction)
+            if (actualCount != expectedCount) {
+                fail("Expected $expectedCount matching message(s), found $actualCount for `$expectedMessage` in $finalChatId")
+            }
+        }
 
         reportStatus(
             "chat_id" to finalChatId,
             "message" to expectedMessage,
+            "matching_count" to countMessages(finalChatId, expectedMessage, direction).toString(),
         )
     }
 
@@ -1068,6 +1077,52 @@ class RealRelayHarnessTest {
             }
         }
         return null
+    }
+
+    private fun countMessages(
+        chatId: String,
+        expectedMessage: String,
+        direction: String,
+    ): Int {
+        val persistedCount =
+            readJsonObject(PERSISTED_STATE_FILENAME)?.let { persisted ->
+                countPersistedMessages(persisted, chatId, expectedMessage, direction)
+            } ?: 0
+        val stateCount =
+            appManager()
+                .state
+                .value
+                .currentChat
+                ?.takeIf { chat -> chat.chatId.equals(chatId, ignoreCase = true) }
+                ?.messages
+                ?.count { message ->
+                    message.body == expectedMessage &&
+                        messageDirectionMatches(message.isOutgoing, direction)
+                } ?: 0
+        return maxOf(persistedCount, stateCount)
+    }
+
+    private fun countPersistedMessages(
+        persisted: JSONObject,
+        chatId: String,
+        expectedMessage: String,
+        direction: String,
+    ): Int {
+        val threads = persisted.optJSONArray("threads") ?: return 0
+        for (index in 0 until threads.length()) {
+            val thread = threads.optJSONObject(index) ?: continue
+            val threadChatId = thread.optString("chat_id")
+            if (!threadChatId.equals(chatId, ignoreCase = true)) {
+                continue
+            }
+            val messages = thread.optJSONArray("messages") ?: return 0
+            return (0 until messages.length()).count { messageIndex ->
+                val message = messages.optJSONObject(messageIndex) ?: return@count false
+                message.optString("body") == expectedMessage &&
+                    messageDirectionMatches(message.optBoolean("is_outgoing"), direction)
+            }
+        }
+        return 0
     }
 
     private fun persistedHasPeerRoster(

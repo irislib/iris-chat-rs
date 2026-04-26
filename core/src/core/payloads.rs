@@ -46,13 +46,17 @@ pub(super) fn first_tag_value<'a>(
         .and_then(|tag| tag.as_slice().get(1).cloned())
 }
 
-pub(super) fn event_message_ids(event: &UnsignedEvent) -> Vec<String> {
-    event
-        .tags
-        .iter()
+pub(super) fn message_ids_from_tags<'a>(
+    tags: impl IntoIterator<Item = &'a nostr::Tag>,
+) -> Vec<String> {
+    tags.into_iter()
         .filter(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some("e"))
         .filter_map(|tag| tag.as_slice().get(1).cloned())
         .collect()
+}
+
+pub(super) fn event_message_ids(event: &UnsignedEvent) -> Vec<String> {
+    message_ids_from_tags(event.tags.iter())
 }
 
 pub(super) fn message_expiration_from_tags<'a>(
@@ -72,16 +76,17 @@ pub(super) fn message_expiration_from_tags<'a>(
     (value > 0).then_some(value)
 }
 
-pub(super) fn chat_id_for_rumor(
+pub(super) fn chat_id_for_tags<'a>(
     sender_owner: PublicKey,
     local_owner: PublicKey,
-    event: &UnsignedEvent,
+    tags: impl IntoIterator<Item = &'a nostr::Tag>,
 ) -> String {
-    if let Some(group_id) = first_tag_value(event.tags.iter(), "l") {
+    let tags = tags.into_iter().collect::<Vec<_>>();
+    if let Some(group_id) = first_tag_value(tags.iter().copied(), "l") {
         return group_chat_id(&group_id);
     }
     if sender_owner == local_owner {
-        if let Some(peer_hex) = first_tag_value(event.tags.iter(), "p") {
+        if let Some(peer_hex) = first_tag_value(tags.iter().copied(), "p") {
             if let Ok(peer) = PublicKey::parse(&peer_hex) {
                 if peer != local_owner {
                     return peer.to_hex();
@@ -90,6 +95,54 @@ pub(super) fn chat_id_for_rumor(
         }
     }
     sender_owner.to_hex()
+}
+
+pub(super) struct RuntimeRumor {
+    pub(super) id: Option<String>,
+    pub(super) kind: u32,
+    pub(super) content: String,
+    pub(super) created_at_secs: u64,
+    pub(super) tags: Vec<nostr::Tag>,
+    pub(super) unsigned: Option<UnsignedEvent>,
+}
+
+#[derive(Deserialize)]
+struct LooseRuntimeRumor {
+    #[serde(default)]
+    id: Option<String>,
+    kind: u32,
+    content: String,
+    created_at: u64,
+    #[serde(default)]
+    tags: Vec<Vec<String>>,
+}
+
+pub(super) fn parse_runtime_rumor(content: &str) -> Option<RuntimeRumor> {
+    if let Ok(event) = serde_json::from_str::<UnsignedEvent>(content) {
+        return Some(RuntimeRumor {
+            id: event.id.as_ref().map(ToString::to_string),
+            kind: event.kind.as_u16() as u32,
+            content: event.content.clone(),
+            created_at_secs: event.created_at.as_u64(),
+            tags: event.tags.iter().cloned().collect(),
+            unsigned: Some(event),
+        });
+    }
+
+    let loose = serde_json::from_str::<LooseRuntimeRumor>(content).ok()?;
+    let tags = loose
+        .tags
+        .iter()
+        .filter_map(|tag| nostr::Tag::parse(tag.iter().map(String::as_str)).ok())
+        .collect();
+    Some(RuntimeRumor {
+        id: loose.id,
+        kind: loose.kind,
+        content: loose.content,
+        created_at_secs: loose.created_at,
+        tags,
+        unsigned: None,
+    })
 }
 
 pub(super) fn chat_settings_ttl_seconds(content: &str) -> Option<u64> {

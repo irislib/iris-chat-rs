@@ -1,9 +1,8 @@
-# Iris Chat 2.6.22
+# Iris Chat 2.6.23
 
 Interop reliability release for the native Rust chat app.
 
-- Fixed bidirectional NDR interop with chat.iris.to.
-- Fetches recent protocol state immediately after opening or accepting chats.
-- Keeps queued setup messages moving to sent after runtime relay ACKs.
-- Uses live-updating relative timestamps and shows fresh messages as "now".
-- Adds live Android/browser interop coverage against public relays.
+- Dedupe browser-origin NDR messages by inner rumor ID instead of relay fanout IDs.
+- Keeps typing, receipt, seen, and reaction controls out of stored chat history.
+- Keeps disappearing-message and group metadata changes visible as system history.
+- Adds exact-count Android/browser interop coverage for duplicate regressions.

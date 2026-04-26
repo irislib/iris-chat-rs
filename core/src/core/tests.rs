@@ -201,6 +201,232 @@ fn queued_runtime_publish_completion_uses_inner_message_id() {
     );
 }
 
+#[test]
+fn web_runtime_message_duplicates_dedupe_by_inner_rumor_id() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("web-runtime-dedupe", &owner, &device);
+    let inner_id = "a".repeat(64);
+    let first_outer_id = "b".repeat(64);
+    let second_outer_id = "c".repeat(64);
+    let content = serde_json::json!({
+        "content": "ok",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_493u64,
+        "tags": [],
+        "pubkey": "0".repeat(64),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        content.clone(),
+        Some(first_outer_id),
+    );
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some(second_outer_id));
+
+    let chat_id = sender.public_key().to_hex();
+    let thread = core.threads.get(&chat_id).expect("thread");
+    let matching = thread
+        .messages
+        .iter()
+        .filter(|message| message.body == "ok")
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, inner_id);
+}
+
+#[test]
+fn web_runtime_typing_rumors_do_not_become_chat_messages() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("web-runtime-typing", &owner, &device);
+    let content = serde_json::json!({
+        "content": "typing",
+        "kind": TYPING_KIND,
+        "created_at": 1_777_159_483u64,
+        "tags": [["ms", "1777159483368"], ["expiration", "1777159543"]],
+        "pubkey": "0".repeat(64),
+        "id": "d".repeat(64),
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("e".repeat(64)));
+
+    let chat_id = sender.public_key().to_hex();
+    assert!(core
+        .threads
+        .get(&chat_id)
+        .map(|thread| thread.messages.is_empty())
+        .unwrap_or(true));
+    assert!(core.typing_indicators.values().any(|record| {
+        record.chat_id == chat_id && record.author_owner_hex == sender.public_key().to_hex()
+    }));
+}
+
+#[test]
+fn web_runtime_control_rumors_do_not_create_chat_messages() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let controls = [
+        (
+            RECEIPT_KIND,
+            "seen",
+            vec![vec!["e".to_string(), "1".to_string()]],
+        ),
+        (
+            REACTION_KIND,
+            "+",
+            vec![vec!["e".to_string(), "1".to_string()]],
+        ),
+    ];
+
+    for (index, (kind, body, tags)) in controls.into_iter().enumerate() {
+        let mut core =
+            logged_in_test_core(&format!("web-runtime-control-{index}"), &owner, &device);
+        let content = serde_json::json!({
+            "content": body,
+            "kind": kind,
+            "created_at": 1_777_159_483u64 + index as u64,
+            "tags": tags,
+            "pubkey": "0".repeat(64),
+            "id": format!("{:064x}", index + 10),
+        })
+        .to_string();
+
+        core.apply_decrypted_runtime_message(
+            sender.public_key(),
+            None,
+            content,
+            Some(format!("{:064x}", index + 20)),
+        );
+
+        let chat_id = sender.public_key().to_hex();
+        assert!(
+            core.threads
+                .get(&chat_id)
+                .map(|thread| thread.messages.is_empty())
+                .unwrap_or(true),
+            "control kind {kind} created a chat message"
+        );
+    }
+}
+
+#[test]
+fn web_runtime_chat_settings_create_system_notice() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("web-runtime-chat-settings", &owner, &device);
+    let content = serde_json::json!({
+        "content": "60",
+        "kind": CHAT_SETTINGS_KIND,
+        "created_at": 1_777_159_483u64,
+        "tags": [],
+        "pubkey": "0".repeat(64),
+        "id": "f".repeat(64),
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("1".repeat(64)));
+
+    let chat_id = sender.public_key().to_hex();
+    let thread = core.threads.get(&chat_id).expect("thread");
+    assert_eq!(thread.messages.len(), 1);
+    assert!(thread.messages[0]
+        .body
+        .contains("set disappearing messages timer"));
+}
+
+#[test]
+fn group_metadata_changes_create_system_notices() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("group-metadata-notices", &owner, &device);
+    let group_id = "group-notice-test".to_string();
+    let chat_id = group_chat_id(&group_id);
+    let initial = GroupData {
+        id: group_id.clone(),
+        name: "Original".to_string(),
+        description: None,
+        picture: None,
+        members: vec![owner.public_key().to_hex()],
+        admins: vec![owner.public_key().to_hex()],
+        created_at: 1,
+        secret: None,
+        accepted: Some(true),
+    };
+    let renamed = GroupData {
+        name: "Renamed".to_string(),
+        ..initial.clone()
+    };
+    let with_member = GroupData {
+        members: vec![
+            owner.public_key().to_hex(),
+            Keys::generate().public_key().to_hex(),
+        ],
+        ..renamed.clone()
+    };
+
+    core.apply_group_metadata_notice(None, &initial);
+    core.apply_group_metadata_notice(Some(&initial), &renamed);
+    core.apply_group_metadata_notice(Some(&renamed), &with_member);
+
+    let messages = &core.threads.get(&chat_id).expect("group thread").messages;
+    assert!(messages
+        .iter()
+        .any(|message| message.body == "Group created: Original"));
+    assert!(messages
+        .iter()
+        .any(|message| message.body == "Group renamed to Renamed"));
+    assert!(messages
+        .iter()
+        .any(|message| message.body == "Group members updated: 2 members"));
+}
+
+fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-{label}-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let device_id = device.public_key().to_hex();
+    let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+        .expect("local invite");
+    let runtime = NdrRuntime::new(
+        device.public_key(),
+        device.secret_key().to_secret_bytes(),
+        device_id,
+        owner.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    runtime.init().expect("runtime init");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: runtime,
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    core
+}
+
 fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
     for event in drain_signed_events(from, signer) {
         to.session_manager().process_received_event(event);
