@@ -115,8 +115,6 @@ impl AppCore {
                     .map(|account| account.display_name.clone())
                     .unwrap_or_else(|| "Iris".to_string());
                 self.update_profile_metadata(&name, Some(&picture_url));
-                self.state.toast = Some("Profile picture updated.".to_string());
-                self.emit_state();
             }
             Err(error) => {
                 self.push_debug_log("profile.picture.upload.error", error.clone());
