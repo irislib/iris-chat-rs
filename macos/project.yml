@@ -30,7 +30,7 @@ targets:
       - path: Sources
     settings:
       base:
-        PRODUCT_NAME: IrisChatMac
+        PRODUCT_NAME: Iris Chat
         DEFINES_MODULE: YES
         INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Iris Chat
