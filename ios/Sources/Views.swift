@@ -1491,7 +1491,7 @@ struct NewGroupScreen: View {
 
                     CardHeader(title: "Create group")
 
-                    TextField("Weekend plans", text: $name)
+                    TextField("Group name", text: $name)
                         .textFieldStyle(.plain)
                         .irisInputField()
                         .accessibilityIdentifier("newGroupNameInput")

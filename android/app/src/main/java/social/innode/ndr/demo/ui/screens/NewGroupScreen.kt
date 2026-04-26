@@ -100,7 +100,7 @@ fun NewGroupScreen(
                             .testTag("newGroupNameInput"),
                     placeholder = {
                         Text(
-                            text = "Weekend plans",
+                            text = "Group name",
                             color = IrisTheme.palette.muted,
                         )
                     },
