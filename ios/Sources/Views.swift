@@ -145,29 +145,19 @@ struct RootView: View {
         }
 
         return AnyView(
-            HStack(spacing: 0) {
-                Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
-                    IrisAvatar(
-                        label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
-                        emphasize: true,
-                        pictureUrl: account.pictureUrl,
-                        preferences: manager.state.preferences,
-                        manager: manager
-                    )
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("chatListProfileButton")
-                if hasHttpPicture(account.pictureUrl) {
-                    profileAvatarHasPictureMarker
-                }
+            Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
+                IrisAvatar(
+                    label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                    emphasize: true,
+                    pictureUrl: account.pictureUrl,
+                    preferences: manager.state.preferences,
+                    manager: manager,
+                    loadedImageIdentifier: "chatListProfileAvatarImage"
+                )
             }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("chatListProfileButton")
         )
-    }
-
-    private var profileAvatarHasPictureMarker: some View {
-        Text("")
-            .frame(width: 0, height: 0)
-            .accessibilityIdentifier("chatListProfileAvatarHasPicture")
     }
 
     private var topBarTrailingItem: AnyView {
@@ -518,16 +508,12 @@ private struct DesktopChatSidebar: View {
                         emphasize: true,
                         pictureUrl: account.pictureUrl,
                         preferences: manager.state.preferences,
-                        manager: manager
+                        manager: manager,
+                        loadedImageIdentifier: "chatListProfileAvatarImage"
                     )
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("chatListProfileButton")
-                Color.clear
-                    .frame(width: 1, height: 1)
-                    .accessibilityIdentifier(hasHttpPicture(account.pictureUrl)
-                        ? "chatListProfileAvatarHasPicture"
-                        : "chatListProfileAvatarMarkerEmpty")
             }
 
             Text("Chats")
@@ -1147,7 +1133,6 @@ struct NewChatScreen: View {
     @State private var peerInput = ""
     @State private var submittedInput: String?
     @State private var showingScanner = false
-    @State private var shareText: String?
     @State private var showingInviteQr = false
 
     private var trimmedInput: String {
@@ -1170,9 +1155,8 @@ struct NewChatScreen: View {
     var body: some View {
         IrisScrollScreen {
             VStack(spacing: 18) {
-                yourInviteCard
-                addContactCard
-                newGroupRow
+                newChatCard
+                joinChatCard
             }
         }
         .sheet(isPresented: $showingScanner) {
@@ -1180,12 +1164,6 @@ struct NewChatScreen: View {
                 handleNewChatInput(code)
                 showingScanner = false
             }
-        }
-        .sheet(item: Binding(
-            get: { shareText.map(SharePayload.init(text:)) },
-            set: { shareText = $0?.text }
-        )) { payload in
-            ShareSheet(text: payload.text)
         }
         .sheet(isPresented: $showingInviteQr) {
             inviteQrSheet
@@ -1200,29 +1178,35 @@ struct NewChatScreen: View {
         }
     }
 
-    private var yourInviteCard: some View {
-        IrisSectionCard(accent: true) {
-            CardHeader(title: "Your invite", subtitle: "Share to start a chat")
+    private var newChatCard: some View {
+        IrisSectionCard {
+            Text("New Chat")
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(palette.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .center)
 
             if let invite = manager.state.publicInvite {
+                Text("Share an invite link to start a chat")
+                    .font(.system(.footnote, design: .rounded))
+                    .foregroundStyle(palette.muted)
+                    .frame(maxWidth: .infinity, alignment: .center)
+
                 HStack(spacing: 10) {
-                    Button("Copy link") {
+                    Button("Copy") {
                         manager.copyToClipboard(invite.url)
                     }
                     .buttonStyle(IrisSecondaryButtonStyle())
                     .accessibilityIdentifier("newChatInviteCopyButton")
 
-                    Button("Show QR") {
-                        showingInviteQr = true
+                    Button(action: { showingInviteQr = true }) {
+                        Image(systemName: "qrcode")
+                            .font(.system(size: 16, weight: .semibold))
+                            .frame(width: 36, height: 36)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(IrisSecondaryButtonStyle())
                     .accessibilityIdentifier("newChatInviteQrButton")
-
-                    Button("Share") {
-                        shareText = invite.url
-                    }
-                    .buttonStyle(IrisPrimaryButtonStyle())
-                    .accessibilityIdentifier("newChatInviteShareButton")
+                    .accessibilityLabel("Show QR Code")
                 }
             } else {
                 ProgressView()
@@ -1232,95 +1216,58 @@ struct NewChatScreen: View {
         }
     }
 
+    private var joinChatCard: some View {
+        IrisSectionCard {
+            Text("Join Chat")
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(palette.textPrimary)
+                .frame(maxWidth: .infinity, alignment: .center)
+
+            TextField("Paste invite link", text: $peerInput)
+                .irisIdentifierInputModifiers()
+                .textFieldStyle(.plain)
+                .irisInputField()
+                .accessibilityIdentifier("newChatPeerInput")
+
+            if irisSupportsQrScanning {
+                Button(action: { showingScanner = true }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "qrcode.viewfinder")
+                        Text("Scan QR Code")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("newChatScanQrButton")
+            }
+        }
+    }
+
     @ViewBuilder
     private var inviteQrSheet: some View {
         if let invite = manager.state.publicInvite {
             VStack(spacing: 18) {
+                Text("Invite QR Code")
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .foregroundStyle(palette.textPrimary)
+
                 QrCodeImage(text: invite.url)
                     .frame(maxWidth: 320)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .accessibilityIdentifier("newChatInviteQrCode")
 
-                Text(invite.url)
-                    .font(.system(.footnote, design: .monospaced))
+                Text("Scan this code to start a chat")
+                    .font(.system(.footnote, design: .rounded))
                     .foregroundStyle(palette.muted)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
 
-                HStack(spacing: 10) {
-                    Button("Copy") { manager.copyToClipboard(invite.url) }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                    Button("Done") { showingInviteQr = false }
-                        .buttonStyle(IrisPrimaryButtonStyle())
-                }
+                Button("Copy") { manager.copyToClipboard(invite.url) }
+                    .buttonStyle(IrisSecondaryButtonStyle())
             }
             .padding(24)
         } else {
             ProgressView()
                 .padding(40)
         }
-    }
-
-    private var addContactCard: some View {
-        IrisSectionCard {
-            CardHeader(title: "Add contact", subtitle: "Paste a user ID or invite link")
-
-            TextField("npub… or invite link", text: $peerInput)
-                .irisIdentifierInputModifiers()
-                .textFieldStyle(.plain)
-                .irisInputField()
-                .accessibilityIdentifier("newChatPeerInput")
-
-            if !trimmedInput.isEmpty && !validPeerInput && !looksLikeInviteLink {
-                Text("Invalid user ID or invite link.")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(.red)
-            }
-
-            HStack(spacing: 10) {
-                Button("Paste") {
-                    handleNewChatInput(PlatformClipboard.string() ?? "")
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
-                .accessibilityIdentifier("newChatPasteButton")
-
-                if irisSupportsQrScanning {
-                    Button("Scan QR") { showingScanner = true }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                        .accessibilityIdentifier("newChatScanQrButton")
-                }
-            }
-        }
-    }
-
-    private var newGroupRow: some View {
-        Button(action: { manager.dispatch(.pushScreen(screen: .newGroup)) }) {
-            HStack(spacing: 12) {
-                Image(systemName: "person.3.fill")
-                    .font(.system(.body, weight: .semibold))
-                    .frame(width: 22)
-                    .foregroundStyle(palette.accent)
-                Text("New group")
-                    .font(.system(.body, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.textPrimary)
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(.footnote, weight: .semibold))
-                    .foregroundStyle(palette.muted)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(palette.panel)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .stroke(palette.border, lineWidth: 1)
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("newChatNewGroupButton")
     }
 
     private func autoProceedIfReady() {
@@ -2645,7 +2592,8 @@ private struct ProfileEditorCard: View {
                     emphasize: true,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
-                    manager: manager
+                    manager: manager,
+                    loadedImageIdentifier: "myProfileAvatarImage"
                 )
             }
             .buttonStyle(.plain)
@@ -2658,7 +2606,8 @@ private struct ProfileEditorCard: View {
                 emphasize: true,
                 pictureUrl: account.pictureUrl,
                 preferences: manager.state.preferences,
-                manager: manager
+                manager: manager,
+                loadedImageIdentifier: "myProfileAvatarImage"
             )
         }
     }
