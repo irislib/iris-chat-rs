@@ -644,24 +644,26 @@ private struct IrisDeliveryGlyph: View {
     let delivery: DeliveryState
 
     var body: some View {
-        Image(systemName: systemName)
+        glyph
             .font(.system(size: 11, weight: .bold))
             .foregroundStyle(tint)
             .accessibilityLabel(irisDeliveryLabel(delivery))
     }
 
-    private var systemName: String {
+    @ViewBuilder
+    private var glyph: some View {
         switch delivery {
         case .queued, .pending:
-            return "clock"
+            Image(systemName: "clock")
         case .sent:
-            return "checkmark"
-        case .received:
-            return "checkmark"
-        case .seen:
-            return "checkmark"
+            Image(systemName: "checkmark")
+        case .received, .seen:
+            HStack(spacing: -3) {
+                Image(systemName: "checkmark")
+                Image(systemName: "checkmark")
+            }
         case .failed:
-            return "exclamationmark.circle.fill"
+            Image(systemName: "exclamationmark.circle.fill")
         }
     }
 
