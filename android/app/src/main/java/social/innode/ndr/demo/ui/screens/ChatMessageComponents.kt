@@ -186,7 +186,8 @@ internal fun MessageBubble(
                         }
                         if (isLastInCluster) {
                             Row(
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 if (message.expiresAtSecs != null) {

@@ -451,7 +451,7 @@ private struct ChatMessageRow: View {
                         )
                     }
 
-                    VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 8) {
+                    VStack(alignment: .trailing, spacing: 8) {
                         if let reply = bodyParts.reply {
                             ReplyPreviewView(reply: reply, isOutgoing: message.isOutgoing)
                         }
@@ -472,6 +472,25 @@ private struct ChatMessageRow: View {
                                 downloadAttachment: downloadAttachment,
                                 openAttachment: openAttachment,
                                 onOpenImage: onOpenImage
+                            )
+                        }
+                        if isLastInCluster {
+                            HStack(spacing: 6) {
+                                if message.expiresAtSecs != nil {
+                                    Image(systemName: "timer")
+                                        .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                        .accessibilityLabel("Disappearing message")
+                                        .accessibilityIdentifier("chatMessageDisappearing-\(message.id)")
+                                }
+                                Text(irisMessageClock(message.createdAtSecs))
+                                    .font(.system(.caption2, design: .rounded, weight: .medium))
+                                if message.isOutgoing {
+                                    IrisDeliveryGlyph(delivery: message.delivery)
+                                }
+                            }
+                            .foregroundStyle(
+                                (message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
+                                    .opacity(0.72)
                             )
                         }
                     }
@@ -514,24 +533,6 @@ private struct ChatMessageRow: View {
 
                 if !reactions.isEmpty {
                     ReactionRow(reactions: reactions, isOutgoing: message.isOutgoing)
-                }
-
-                if isLastInCluster {
-                    HStack(spacing: 6) {
-                        if message.expiresAtSecs != nil {
-                            Image(systemName: "timer")
-                                .font(.system(.caption2, design: .rounded, weight: .semibold))
-                                .accessibilityLabel("Disappearing message")
-                                .accessibilityIdentifier("chatMessageDisappearing-\(message.id)")
-                        }
-                        Text(irisMessageClock(message.createdAtSecs))
-                            .font(.system(.caption2, design: .rounded, weight: .medium))
-                        if message.isOutgoing {
-                            IrisDeliveryGlyph(delivery: message.delivery)
-                        }
-                    }
-                    .foregroundStyle(palette.muted)
-                    .padding(.top, 1)
                 }
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
