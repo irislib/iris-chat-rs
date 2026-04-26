@@ -1,8 +1,9 @@
-# Iris Chat 2.6.23
+# Iris Chat 2.6.25
 
-Interop reliability release for the native Rust chat app.
+Mobile chat polish release for the native Rust chat app.
 
-- Dedupe browser-origin NDR messages by inner rumor ID instead of relay fanout IDs.
-- Keeps typing, receipt, seen, and reaction controls out of stored chat history.
-- Keeps disappearing-message and group metadata changes visible as system history.
-- Adds exact-count Android/browser interop coverage for duplicate regressions.
+- Tap message bubbles on mobile to reveal the same reply, react, and more actions shown on desktop hover.
+- Match Android tap feedback to the message bubble shape.
+- Clear stale typing indicators when a newer message arrives.
+- Improve chat-list and settings visual clarity, including readable unread counts and hidden raw key hex.
+- Simplify invite QR screens by showing the QR and actions without redundant labels or visible invite URL text.
