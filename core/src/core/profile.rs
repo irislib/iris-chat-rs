@@ -104,6 +104,10 @@ impl AppCore {
         self.state.busy.uploading_attachment = false;
         match result {
             Ok(picture_url) => {
+                self.push_debug_log(
+                    "profile.picture.upload.ok",
+                    format!("url={picture_url}"),
+                );
                 let name = self
                     .state
                     .account
@@ -111,10 +115,12 @@ impl AppCore {
                     .map(|account| account.display_name.clone())
                     .unwrap_or_else(|| "Iris".to_string());
                 self.update_profile_metadata(&name, Some(&picture_url));
+                self.state.toast = Some("Profile picture updated.".to_string());
+                self.emit_state();
             }
             Err(error) => {
-                self.push_debug_log("profile.picture.upload.error", error);
-                self.state.toast = Some("Profile picture upload failed.".to_string());
+                self.push_debug_log("profile.picture.upload.error", error.clone());
+                self.state.toast = Some(format!("Profile picture upload failed: {error}"));
                 self.emit_state();
             }
         }
