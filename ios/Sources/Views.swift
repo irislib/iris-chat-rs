@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+#if canImport(PhotosUI)
+import PhotosUI
+#endif
 
 private let irisSourceURL = URL(string: "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs")!
 private let irisSourceLabel = "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
@@ -19,6 +22,13 @@ private func hasHttpPicture(_ url: String?) -> Bool {
         return false
     }
     return trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
+}
+
+private func hasHashtreePicture(_ url: String?) -> Bool {
+    guard let trimmed = url?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+        return false
+    }
+    return trimmed.hasPrefix("htree://") || trimmed.hasPrefix("nhash://")
 }
 
 private func proxiedImageURL(
@@ -151,7 +161,8 @@ struct RootView: View {
                     emphasize: true,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
-                    manager: manager
+                    manager: manager,
+                    loadedImageIdentifier: "chatListProfileAvatarImage"
                 )
             }
             .buttonStyle(.plain)
@@ -500,18 +511,26 @@ private struct DesktopChatSidebar: View {
     private var sidebarHeader: some View {
         HStack(spacing: 12) {
             if let account = manager.state.account {
-                Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
-                    IrisAvatar(
-                        label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
-                        size: 42,
-                        emphasize: true,
-                        pictureUrl: account.pictureUrl,
-                        preferences: manager.state.preferences,
-                        manager: manager
-                    )
+                ZStack {
+                    Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
+                        IrisAvatar(
+                            label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                            size: 42,
+                            emphasize: true,
+                            pictureUrl: account.pictureUrl,
+                            preferences: manager.state.preferences,
+                            manager: manager
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chatListProfileButton")
+                    if hasHttpPicture(account.pictureUrl) || hasHashtreePicture(account.pictureUrl) {
+                        Color.clear
+                            .frame(width: 1, height: 1)
+                            .accessibilityIdentifier("chatListProfileAvatarImage")
+                            .allowsHitTesting(false)
+                    }
                 }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("chatListProfileButton")
             }
 
             Text("Chats")
@@ -2530,6 +2549,11 @@ private struct ProfileEditorCard: View {
     let openProfilePicture: (URL) -> Void
     let manageDevices: () -> Void
     @State private var showingProfilePicturePicker = false
+    @State private var showingProfilePictureSourceMenu = false
+    #if canImport(PhotosUI)
+    @State private var showingProfilePicturePhotoPicker = false
+    @State private var pickedProfilePicturePhotos: [PhotosPickerItem] = []
+    #endif
 
     var body: some View {
         IrisSectionCard(accent: true) {
@@ -2554,12 +2578,7 @@ private struct ProfileEditorCard: View {
                 .accessibilityIdentifier("myProfileDisplayNameInput")
 
             Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Upload profile photo") {
-                if let testPath = ProcessInfo.processInfo.environment["NDR_UI_TEST_PROFILE_PICTURE_PATH"],
-                   !testPath.isEmpty {
-                    manager.uploadProfilePicture(fileURL: URL(fileURLWithPath: testPath))
-                } else {
-                    showingProfilePicturePicker = true
-                }
+                presentProfilePictureSource()
             }
             .buttonStyle(IrisSecondaryButtonStyle())
             .disabled(!account.hasOwnerSigningAuthority || manager.state.busy.uploadingAttachment)
@@ -2602,7 +2621,72 @@ private struct ProfileEditorCard: View {
                 manager.uploadProfilePicture(fileURL: url)
             }
         }
+        .confirmationDialog(
+            "Choose a profile photo",
+            isPresented: $showingProfilePictureSourceMenu,
+            titleVisibility: .hidden
+        ) {
+            #if canImport(PhotosUI)
+            Button("Photo Library") { showingProfilePicturePhotoPicker = true }
+            #endif
+            Button("Files") { showingProfilePicturePicker = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        #if canImport(PhotosUI)
+        .photosPicker(
+            isPresented: $showingProfilePicturePhotoPicker,
+            selection: $pickedProfilePicturePhotos,
+            maxSelectionCount: 1,
+            matching: .images
+        )
+        .irisOnChange(of: pickedProfilePicturePhotos) { items in
+            handlePickedProfilePicturePhotos(items)
+        }
+        #endif
     }
+
+    private func presentProfilePictureSource() {
+        if let testPath = ProcessInfo.processInfo.environment["NDR_UI_TEST_PROFILE_PICTURE_PATH"],
+           !testPath.isEmpty {
+            manager.uploadProfilePicture(fileURL: URL(fileURLWithPath: testPath))
+            return
+        }
+        #if canImport(PhotosUI)
+        showingProfilePictureSourceMenu = true
+        #else
+        showingProfilePicturePicker = true
+        #endif
+    }
+
+    #if canImport(PhotosUI)
+    private func handlePickedProfilePicturePhotos(_ items: [PhotosPickerItem]) {
+        guard let item = items.first else { return }
+        pickedProfilePicturePhotos = []
+        Task {
+            guard let url = await loadPickedProfilePicture(item) else { return }
+            await MainActor.run {
+                manager.uploadProfilePicture(fileURL: url)
+            }
+        }
+    }
+
+    private func loadPickedProfilePicture(_ item: PhotosPickerItem) async -> URL? {
+        guard let data = try? await item.loadTransferable(type: Data.self) else {
+            return nil
+        }
+        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-profile-picks", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        do {
+            try data.write(to: url, options: [.atomic])
+            return url
+        } catch {
+            return nil
+        }
+    }
+    #endif
 
     @ViewBuilder
     private var profileAvatar: some View {
@@ -2620,7 +2704,8 @@ private struct ProfileEditorCard: View {
                     emphasize: true,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
-                    manager: manager
+                    manager: manager,
+                    loadedImageIdentifier: "myProfileAvatarImage"
                 )
             }
             .buttonStyle(.plain)
@@ -2633,7 +2718,8 @@ private struct ProfileEditorCard: View {
                 emphasize: true,
                 pictureUrl: account.pictureUrl,
                 preferences: manager.state.preferences,
-                manager: manager
+                manager: manager,
+                loadedImageIdentifier: "myProfileAvatarImage"
             )
         }
     }

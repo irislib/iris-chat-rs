@@ -376,7 +376,12 @@ struct IrisAvatar: View {
                     .resizable()
                     .scaledToFill()
                     .clipShape(Circle())
-                    .modifier(IrisAvatarLoadedTag(identifier: loadedImageIdentifier))
+                if let loadedImageIdentifier {
+                    Color.clear
+                        .frame(width: 1, height: 1)
+                        .accessibilityIdentifier(loadedImageIdentifier)
+                        .allowsHitTesting(false)
+                }
             } else if let httpURL, let url = URL(string: httpURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -384,7 +389,6 @@ struct IrisAvatar: View {
                         image
                             .resizable()
                             .scaledToFill()
-                            .modifier(IrisAvatarLoadedTag(identifier: loadedImageIdentifier))
                     default:
                         avatarInitial
                     }
@@ -413,18 +417,6 @@ struct IrisAvatar: View {
         Text(String((label.trimmingCharacters(in: .whitespacesAndNewlines).first ?? "?")).uppercased())
             .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
             .foregroundStyle(emphasize ? palette.onAccent : palette.textPrimary)
-    }
-}
-
-private struct IrisAvatarLoadedTag: ViewModifier {
-    let identifier: String?
-
-    func body(content: Content) -> some View {
-        if let identifier {
-            content.accessibilityIdentifier(identifier)
-        } else {
-            content
-        }
     }
 }
 

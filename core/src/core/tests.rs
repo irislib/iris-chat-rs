@@ -562,3 +562,31 @@ fn drain_text_messages(runtime: &NdrRuntime) -> Vec<String> {
         })
         .collect()
 }
+
+/// End-to-end round-trip: upload a real image to the hashtree network and
+/// verify the same bytes can be read back via the same path the iOS shell
+/// uses. Marked `ignore` because it depends on external network reachability.
+/// Run manually with: cargo test profile_picture_hashtree_roundtrip --ignored -- --nocapture
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn profile_picture_hashtree_roundtrip() {
+    let owner = Keys::generate();
+    let secret_hex = owner.secret_key().to_secret_hex();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("ios/UITests/Fixtures/cat.jpg");
+    let url = super::attachment_upload::upload_profile_picture_to_blossom(&secret_hex, &path)
+        .await
+        .expect("upload");
+    let nhash = url.strip_prefix("htree://").expect("htree:// prefix");
+    let b64 = super::attachment_upload::download_hashtree_attachment_base64(nhash)
+        .await
+        .expect("download bytes");
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .expect("b64 decode");
+    let original = std::fs::read(&path).expect("read original");
+    assert_eq!(bytes, original, "downloaded bytes match original");
+}

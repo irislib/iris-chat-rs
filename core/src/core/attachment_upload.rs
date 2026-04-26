@@ -258,21 +258,12 @@ pub(super) async fn upload_profile_picture_to_blossom(
         anyhow::bail!("profile picture must be an image");
     }
 
-    let secret_key = nostr35::SecretKey::from_hex(secret_hex)
-        .map_err(|error| anyhow::anyhow!("invalid upload key: {error}"))?;
-    let keys = nostr35::Keys::new(secret_key);
-    let (read_servers, write_servers) = blossom_servers_from_config();
-    if write_servers.is_empty() {
-        anyhow::bail!("no blossom write servers configured");
-    }
-    let client = BlossomClient::new_empty(keys)
-        .with_read_servers(read_servers)
-        .with_write_servers(write_servers);
-    let (hash, _) = client
-        .upload_if_missing(&data)
-        .await
-        .map_err(|error| anyhow::anyhow!("profile picture upload failed: {error}"))?;
-    Ok(format!("https://cdn.iris.to/{hash}"))
+    // Push the picture into the hashtree network (same path as message attachments
+    // and group photos). The public blossom write servers (blossom.iris.to /
+    // upload.iris.to) either resolve unreliably or only accept encrypted blobs,
+    // so the cdn URLs they hand back tend to 404 immediately.
+    let nhash = upload_file_to_hashtree(secret_hex, path).await?;
+    Ok(format!("htree://{nhash}"))
 }
 
 fn looks_like_image(path: &Path, data: &[u8]) -> bool {
@@ -298,7 +289,7 @@ fn download_hashtree_attachment_blocking(nhash: &str) -> anyhow::Result<String> 
     runtime.block_on(download_hashtree_attachment_base64(nhash))
 }
 
-async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::Result<String> {
+pub(super) async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::Result<String> {
     let nhash = nhash.trim();
     if nhash.is_empty() {
         anyhow::bail!("missing attachment hash");
