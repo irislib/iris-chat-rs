@@ -429,7 +429,7 @@ fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
 
 fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
     for event in drain_signed_events(from, signer) {
-        to.session_manager().process_received_event(event);
+        to.process_received_event(event);
     }
 }
 

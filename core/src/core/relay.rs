@@ -70,10 +70,7 @@ impl AppCore {
         }
 
         if let Some(logged_in) = self.logged_in.as_ref() {
-            logged_in
-                .ndr_runtime
-                .session_manager()
-                .process_received_event(event);
+            logged_in.ndr_runtime.process_received_event(event);
         }
         self.remember_event(event_id);
         self.process_runtime_events();
