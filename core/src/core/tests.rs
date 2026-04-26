@@ -465,6 +465,29 @@ fn group_metadata_changes_create_system_notices() {
         .any(|message| message.body.contains("became an admin")));
 }
 
+#[test]
+fn profile_picture_upload_propagates_to_account_snapshot() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("profile-picture-upload", &owner, &device);
+    core.rebuild_state();
+    assert!(core.state.account.is_some(), "account snapshot exists");
+    assert!(
+        core.state.account.as_ref().unwrap().picture_url.is_none(),
+        "no picture before upload"
+    );
+
+    let picture_url = "https://cdn.iris.to/abc123".to_string();
+    core.handle_profile_picture_upload_finished(Ok(picture_url.clone()));
+
+    let account = core.state.account.as_ref().expect("account after upload");
+    assert_eq!(
+        account.picture_url.as_deref(),
+        Some(picture_url.as_str()),
+        "picture url propagated to account snapshot"
+    );
+}
+
 fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
     let mut core = AppCore::new(
         flume::unbounded().0,
