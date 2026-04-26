@@ -14,6 +14,13 @@ private let disappearingMessageOptions: [(String, UInt64?)] = [
     ("3 months", 7_776_000),
 ]
 
+private func hasHttpPicture(_ url: String?) -> Bool {
+    guard let trimmed = url?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
+        return false
+    }
+    return trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://")
+}
+
 private func proxiedImageURL(
     _ rawURL: String?,
     preferences: PreferencesSnapshot,
@@ -139,13 +146,20 @@ struct RootView: View {
 
         return AnyView(
             Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
-                IrisAvatar(
-                    label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
-                    emphasize: true,
-                    pictureUrl: account.pictureUrl,
-                    preferences: manager.state.preferences,
-                    manager: manager
-                )
+                ZStack {
+                    IrisAvatar(
+                        label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                        emphasize: true,
+                        pictureUrl: account.pictureUrl,
+                        preferences: manager.state.preferences,
+                        manager: manager
+                    )
+                    if hasHttpPicture(account.pictureUrl) {
+                        Color.clear
+                            .frame(width: 1, height: 1)
+                            .accessibilityIdentifier("chatListProfileAvatarHasPicture")
+                    }
+                }
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("chatListProfileButton")
@@ -2509,7 +2523,12 @@ private struct ProfileEditorCard: View {
                 .accessibilityIdentifier("myProfileDisplayNameInput")
 
             Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Upload profile photo") {
-                showingProfilePicturePicker = true
+                if let testPath = ProcessInfo.processInfo.environment["NDR_UI_TEST_PROFILE_PICTURE_PATH"],
+                   !testPath.isEmpty {
+                    manager.uploadProfilePicture(fileURL: URL(fileURLWithPath: testPath))
+                } else {
+                    showingProfilePicturePicker = true
+                }
             }
             .buttonStyle(IrisSecondaryButtonStyle())
             .disabled(!account.hasOwnerSigningAuthority || manager.state.busy.uploadingAttachment)

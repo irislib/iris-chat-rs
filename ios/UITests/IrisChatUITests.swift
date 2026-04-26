@@ -158,16 +158,63 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "awaitingApprovalDeviceNpub").waitForExistence(timeout: 10))
     }
 
-    private func launchCleanApp(qrValue: String? = nil) -> XCUIApplication {
+    private func launchCleanApp(
+        qrValue: String? = nil,
+        profilePicturePath: String? = nil
+    ) -> XCUIApplication {
         let app = XCUIApplication()
         app.launchEnvironment["NDR_UI_TEST_RESET"] = "1"
         app.launchEnvironment["NDR_UI_TEST_RUN_ID"] = UUID().uuidString
         if let qrValue {
             app.launchEnvironment["NDR_QR_TEST_VALUE"] = qrValue
         }
+        if let profilePicturePath {
+            app.launchEnvironment["NDR_UI_TEST_PROFILE_PICTURE_PATH"] = profilePicturePath
+        }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         return app
+    }
+
+    func testUploadProfilePictureUpdatesAvatarsInSettingsAndChatList() throws {
+        let bundle = Bundle(for: type(of: self))
+        guard let fixturePath = bundle.path(forResource: "cat", ofType: "jpg") else {
+            throw XCTSkip("cat.jpg fixture not bundled with UI test target")
+        }
+
+        let app = launchCleanApp(profilePicturePath: fixturePath)
+        createAccount(app)
+
+        // Chat list top avatar exists, has no picture yet.
+        XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
+        XCTAssertFalse(element(app, "chatListProfileAvatarHasPicture").exists)
+
+        // Open settings; profile picture viewer should not be reachable yet.
+        element(app, "chatListProfileButton").tap()
+        XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "myProfileUploadPictureButton").waitForExistence(timeout: 5))
+        XCTAssertFalse(element(app, "myProfilePictureButton").exists)
+
+        // Trigger upload via the test escape hatch (env-var supplies the file path,
+        // bypassing the file picker). Upload calls a real Blossom server, so allow
+        // generous time for the round trip.
+        element(app, "myProfileUploadPictureButton").tap()
+
+        // Once the picture URL lands in state, the settings avatar becomes a button
+        // that opens the viewer (myProfilePictureButton).
+        XCTAssertTrue(
+            element(app, "myProfilePictureButton").waitForExistence(timeout: 90),
+            "profile picture URL did not propagate to account snapshot after upload"
+        )
+
+        // Going back to chat list should also reflect the new picture.
+        if element(app, "navigationBackButton").exists {
+            element(app, "navigationBackButton").tap()
+        }
+        XCTAssertTrue(
+            element(app, "chatListProfileAvatarHasPicture").waitForExistence(timeout: 30),
+            "chat list top avatar did not pick up the uploaded profile picture"
+        )
     }
 
     private func createAccount(_ app: XCUIApplication) {

@@ -37,3 +37,22 @@ targets:
     dependencies:
       - framework: Frameworks/NdrDemoCore.xcframework
         embed: false
+
+  IrisChatMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    settings:
+      base:
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        PRODUCT_MODULE_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: IrisChatMac
+    sources:
+      - path: ../ios/UITests
+        excludes:
+          - Fixtures
+      - path: ../ios/UITests/Fixtures
+        buildPhase: resources
+        type: folder
+    dependencies:
+      - target: IrisChatMac
