@@ -623,7 +623,7 @@ private struct IrisDeliveryGlyph: View {
         case .received:
             return "checkmark"
         case .seen:
-            return "checkmark.circle.fill"
+            return "checkmark"
         case .failed:
             return "exclamationmark.circle.fill"
         }
