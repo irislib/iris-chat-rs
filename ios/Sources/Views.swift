@@ -145,8 +145,8 @@ struct RootView: View {
         }
 
         return AnyView(
-            Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
-                ZStack {
+            HStack(spacing: 0) {
+                Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
                     IrisAvatar(
                         label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
                         emphasize: true,
@@ -154,16 +154,20 @@ struct RootView: View {
                         preferences: manager.state.preferences,
                         manager: manager
                     )
-                    if hasHttpPicture(account.pictureUrl) {
-                        Color.clear
-                            .frame(width: 1, height: 1)
-                            .accessibilityIdentifier("chatListProfileAvatarHasPicture")
-                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("chatListProfileButton")
+                if hasHttpPicture(account.pictureUrl) {
+                    profileAvatarHasPictureMarker
                 }
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("chatListProfileButton")
         )
+    }
+
+    private var profileAvatarHasPictureMarker: some View {
+        Text("")
+            .frame(width: 0, height: 0)
+            .accessibilityIdentifier("chatListProfileAvatarHasPicture")
     }
 
     private var topBarTrailingItem: AnyView {
@@ -519,6 +523,11 @@ private struct DesktopChatSidebar: View {
                 }
                 .buttonStyle(.plain)
                 .accessibilityIdentifier("chatListProfileButton")
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityIdentifier(hasHttpPicture(account.pictureUrl)
+                        ? "chatListProfileAvatarHasPicture"
+                        : "chatListProfileAvatarMarkerEmpty")
             }
 
             Text("Chats")

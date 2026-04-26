@@ -178,7 +178,9 @@ final class IrisChatUITests: XCTestCase {
 
     func testUploadProfilePictureUpdatesAvatarsInSettingsAndChatList() throws {
         let bundle = Bundle(for: type(of: self))
-        guard let fixturePath = bundle.path(forResource: "cat", ofType: "jpg") else {
+        let fixturePath = bundle.path(forResource: "cat", ofType: "jpg")
+            ?? bundle.path(forResource: "cat", ofType: "jpg", inDirectory: "Fixtures")
+        guard let fixturePath else {
             throw XCTSkip("cat.jpg fixture not bundled with UI test target")
         }
 
@@ -227,7 +229,15 @@ final class IrisChatUITests: XCTestCase {
         nameField.tap()
         nameField.typeText("ios tester")
         element(app, "generateKeyButton").tap()
-        XCTAssertTrue(element(app, "chatListNewChatButton").waitForExistence(timeout: 20))
+
+        // Mobile shows chatListNewChatButton in the top bar; the desktop chrome shows
+        // desktopNewChatRow in the sidebar. Either one signals that we've reached the
+        // chat list after account creation.
+        let newChatTopBar = element(app, "chatListNewChatButton")
+        let newChatSidebar = element(app, "desktopNewChatRow")
+        let landed = newChatTopBar.waitForExistence(timeout: 20)
+            || newChatSidebar.waitForExistence(timeout: 5)
+        XCTAssertTrue(landed, "chat list never appeared after account creation")
     }
 
     private func openGroupDetails(_ app: XCUIApplication) {
