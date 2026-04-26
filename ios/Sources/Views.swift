@@ -517,7 +517,8 @@ private struct DesktopChatSidebar: View {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
-                    .frame(width: 34, height: 34)
+                    .frame(width: 40, height: 40)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .accessibilityIdentifier("desktopSettingsButton")
