@@ -122,6 +122,12 @@ pub enum ChatKind {
     Group,
 }
 
+#[derive(uniffi::Enum, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ChatMessageKind {
+    User,
+    System,
+}
+
 #[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MessageAttachmentSnapshot {
     pub nhash: String,
@@ -144,6 +150,7 @@ pub struct MessageReactionSnapshot {
 pub struct ChatMessageSnapshot {
     pub id: String,
     pub chat_id: String,
+    pub kind: ChatMessageKind,
     pub author: String,
     pub body: String,
     pub attachments: Vec<MessageAttachmentSnapshot>,
@@ -167,6 +174,7 @@ pub struct ChatThreadSnapshot {
     pub kind: ChatKind,
     pub display_name: String,
     pub subtitle: Option<String>,
+    pub picture_url: Option<String>,
     pub member_count: u64,
     pub last_message_preview: Option<String>,
     pub last_message_at_secs: Option<u64>,
@@ -182,6 +190,7 @@ pub struct CurrentChatSnapshot {
     pub kind: ChatKind,
     pub display_name: String,
     pub subtitle: Option<String>,
+    pub picture_url: Option<String>,
     pub group_id: Option<String>,
     pub member_count: u64,
     pub message_ttl_seconds: Option<u64>,
@@ -203,6 +212,7 @@ pub struct GroupMemberSnapshot {
 pub struct GroupDetailsSnapshot {
     pub group_id: String,
     pub name: String,
+    pub picture_url: Option<String>,
     pub created_by_display_name: String,
     pub created_by_npub: String,
     pub can_manage: bool,

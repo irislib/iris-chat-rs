@@ -147,6 +147,9 @@ pub(super) fn parse_runtime_rumor(content: &str) -> Option<RuntimeRumor> {
 
 pub(super) fn chat_settings_ttl_seconds(content: &str) -> Option<u64> {
     let value = serde_json::from_str::<serde_json::Value>(content).ok()?;
+    if let Some(ttl) = value.as_u64() {
+        return Some(ttl);
+    }
     value
         .get("messageTtlSeconds")
         .or_else(|| value.get("message_ttl_seconds"))

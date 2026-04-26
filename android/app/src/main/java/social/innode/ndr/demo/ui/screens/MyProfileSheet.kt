@@ -4,6 +4,8 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -100,6 +102,21 @@ fun MyProfileSheet(
     val clipboard = rememberIrisClipboard()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val profilePicturePicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) {
+                return@rememberLauncherForActivityResult
+            }
+            coroutineScope.launch {
+                val picked =
+                    withContext(Dispatchers.IO) {
+                        copyAttachmentToCache(context, uri)
+                    }
+                if (picked != null) {
+                    appManager.uploadProfilePicture(picked.path)
+                }
+            }
+        }
     val qrBitmap =
         remember(npub) {
             createQrBitmap(npub, size = 768)
@@ -108,7 +125,6 @@ fun MyProfileSheet(
     var pendingSecretExport by remember { mutableStateOf<SecretExportKind?>(null) }
     var showDeleteAllConfirmation by remember { mutableStateOf(false) }
     var profileName by remember(displayName) { mutableStateOf(displayName) }
-    var profilePictureUrl by remember(pictureUrl) { mutableStateOf(pictureUrl.orEmpty()) }
     var showProfilePicture by remember { mutableStateOf(false) }
     var newRelayUrl by remember { mutableStateOf("") }
     var editingRelayUrl by remember { mutableStateOf<String?>(null) }
@@ -198,28 +214,31 @@ fun MyProfileSheet(
                     enabled = canManageDevices,
                     modifier = Modifier.fillMaxWidth().testTag("myProfileDisplayNameInput"),
                 )
-                TextField(
-                    value = profilePictureUrl,
-                    onValueChange = { profilePictureUrl = it },
-                    label = { Text("Profile picture URL") },
-                    singleLine = true,
-                    enabled = canManageDevices,
-                    modifier = Modifier.fillMaxWidth().testTag("myProfilePictureUrlInput"),
-                )
+                if (canManageDevices) {
+                    IrisSecondaryButton(
+                        text = "Change picture",
+                        onClick = { profilePicturePicker.launch(arrayOf("image/*")) },
+                        enabled = true,
+                        modifier = Modifier.testTag("myProfilePictureUploadButton"),
+                        icon = {
+                            Icon(
+                                imageVector = IrisIcons.Image,
+                                contentDescription = null,
+                            )
+                        },
+                    )
+                }
                 IrisSecondaryButton(
                     text = "Save profile",
                     onClick = {
                         appManager.updateProfileMetadata(
                             name = profileName,
-                            pictureUrl = profilePictureUrl,
+                            pictureUrl = pictureUrl,
                         )
                     },
                     enabled = canManageDevices &&
                         profileName.trim().isNotEmpty() &&
-                        (
-                            profileName.trim() != displayName.trim() ||
-                                profilePictureUrl.trim() != pictureUrl.orEmpty().trim()
-                        ),
+                        profileName.trim() != displayName.trim(),
                     modifier = Modifier.testTag("myProfileSaveProfileButton"),
                 )
                 Text(

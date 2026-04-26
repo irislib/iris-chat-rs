@@ -363,6 +363,7 @@ impl AppCore {
         let message = ChatMessageSnapshot {
             id: message_id,
             chat_id: chat_id.to_string(),
+            kind: ChatMessageKind::User,
             author: self
                 .state
                 .account
@@ -411,6 +412,7 @@ impl AppCore {
             return;
         }
         let author = author.unwrap_or_else(|| self.owner_display_label(chat_id));
+        let should_count_unread = !self.is_chat_visible(chat_id);
         let thread = self
             .threads
             .entry(chat_id.to_string())
@@ -420,7 +422,7 @@ impl AppCore {
                 updated_at_secs: created_at_secs,
                 messages: Vec::new(),
             });
-        if self.active_chat_id.as_deref() != Some(chat_id) {
+        if should_count_unread {
             thread.unread_count = thread.unread_count.saturating_add(1);
         }
         thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
@@ -428,6 +430,7 @@ impl AppCore {
         thread.insert_message_sorted(ChatMessageSnapshot {
             id: message_id,
             chat_id: chat_id.to_string(),
+            kind: ChatMessageKind::User,
             author,
             body,
             attachments,
@@ -441,6 +444,7 @@ impl AppCore {
 
     pub(super) fn push_system_notice(&mut self, chat_id: &str, body: String, created_at_secs: u64) {
         let message_id = self.allocate_message_id();
+        let should_count_unread = !self.is_chat_visible(chat_id);
         let thread = self
             .threads
             .entry(chat_id.to_string())
@@ -457,13 +461,14 @@ impl AppCore {
         {
             return;
         }
-        if self.active_chat_id.as_deref() != Some(chat_id) {
+        if should_count_unread {
             thread.unread_count = thread.unread_count.saturating_add(1);
         }
         thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         thread.insert_message_sorted(ChatMessageSnapshot {
             id: message_id,
             chat_id: chat_id.to_string(),
+            kind: ChatMessageKind::System,
             author: "Iris".to_string(),
             body,
             attachments: Vec::new(),
@@ -641,7 +646,12 @@ impl AppCore {
             }
             TYPING_KIND => {
                 if !is_outgoing {
-                    self.set_typing_indicator(chat_id, sender_owner.to_hex(), created_at_secs);
+                    self.apply_typing_event(
+                        chat_id,
+                        sender_owner.to_hex(),
+                        created_at_secs,
+                        expires_at_secs,
+                    );
                 }
             }
             CHAT_SETTINGS_KIND => {

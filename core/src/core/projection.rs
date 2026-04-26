@@ -34,10 +34,11 @@ impl AppCore {
                     .as_ref()
                     .map(|group| group.name.clone())
                     .unwrap_or_else(|| self.owner_display_label(&thread.chat_id));
-                let subtitle = group_snapshot
-                    .as_ref()
-                    .map(|group| format!("{} members", group.members.len()))
-                    .or_else(|| self.owner_secondary_identifier(&thread.chat_id));
+                let subtitle = if group_snapshot.is_some() {
+                    None
+                } else {
+                    self.owner_secondary_identifier(&thread.chat_id)
+                };
                 let member_count = group_snapshot
                     .as_ref()
                     .map(|group| group.members.len() as u64)
@@ -47,6 +48,9 @@ impl AppCore {
                     kind: thread_kind,
                     display_name,
                     subtitle,
+                    picture_url: group_snapshot
+                        .as_ref()
+                        .and_then(|group| group.picture.clone()),
                     member_count,
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
@@ -75,6 +79,9 @@ impl AppCore {
                         .as_ref()
                         .map(|group| format!("{} members", group.members.len()))
                         .or_else(|| self.owner_secondary_identifier(&thread.chat_id)),
+                    picture_url: group_snapshot
+                        .as_ref()
+                        .and_then(|group| group.picture.clone()),
                     group_id: group_snapshot.as_ref().map(|group| group.id.clone()),
                     member_count: group_snapshot
                         .as_ref()
@@ -314,6 +321,7 @@ impl AppCore {
         Some(GroupDetailsSnapshot {
             group_id: group.id,
             name: group.name,
+            picture_url: group.picture,
             created_by_display_name: self.owner_display_label(&creator),
             created_by_npub: creator_npub,
             can_manage: group.admins.iter().any(|admin| admin == &local_owner_hex),

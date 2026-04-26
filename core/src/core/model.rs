@@ -289,6 +289,8 @@ pub(super) struct PersistedMessage {
     pub(super) id: String,
     #[serde(alias = "peer_input")]
     pub(super) chat_id: String,
+    #[serde(default = "default_message_kind")]
+    pub(super) kind: ChatMessageKind,
     pub(super) author: String,
     pub(super) body: String,
     #[serde(default)]
@@ -300,6 +302,10 @@ pub(super) struct PersistedMessage {
     #[serde(default)]
     pub(super) expires_at_secs: Option<u64>,
     pub(super) delivery: PersistedDeliveryState,
+}
+
+fn default_message_kind() -> ChatMessageKind {
+    ChatMessageKind::User
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

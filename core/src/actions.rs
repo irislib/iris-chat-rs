@@ -68,6 +68,9 @@ pub enum AppAction {
     SendTyping {
         chat_id: String,
     },
+    StopTyping {
+        chat_id: String,
+    },
     SetTypingIndicatorsEnabled {
         enabled: bool,
     },
@@ -116,13 +119,26 @@ pub enum AppAction {
         group_id: String,
         name: String,
     },
+    UpdateGroupPicture {
+        group_id: String,
+        file_path: String,
+        filename: String,
+    },
     AddGroupMembers {
         group_id: String,
         member_inputs: Vec<String>,
     },
+    SetGroupAdmin {
+        group_id: String,
+        owner_pubkey_hex: String,
+        is_admin: bool,
+    },
     RemoveGroupMember {
         group_id: String,
         owner_pubkey_hex: String,
+    },
+    UploadProfilePicture {
+        file_path: String,
     },
     AddAuthorizedDevice {
         device_input: String,

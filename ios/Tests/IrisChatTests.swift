@@ -175,6 +175,7 @@ private func makeChatThread(
         kind: .direct,
         displayName: "Bob",
         subtitle: nil,
+        pictureUrl: nil,
         memberCount: 2,
         lastMessagePreview: preview,
         lastMessageAtSecs: 100,

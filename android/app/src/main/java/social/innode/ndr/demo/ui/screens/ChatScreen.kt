@@ -99,7 +99,9 @@ fun ChatScreen(
     var replyTarget by remember(chatId) { mutableStateOf<ChatMessageSnapshot?>(null) }
     var imageViewerItem by remember(chatId) { mutableStateOf<DownloadedImageAttachment?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
+    var hasSentTyping by remember(chatId) { mutableStateOf(false) }
     var chatMenuOpen by remember(chatId) { mutableStateOf(false) }
+    var disappearingMenuOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
     val backUnreadCount =
         remember(appState.chatList, chatId) {
@@ -235,9 +237,37 @@ fun ChatScreen(
                             }
                             DropdownMenu(
                                 expanded = chatMenuOpen,
-                                onDismissRequest = { chatMenuOpen = false },
+                                onDismissRequest = {
+                                    chatMenuOpen = false
+                                    disappearingMenuOpen = false
+                                },
                             ) {
-                                if (chat.kind == ChatKind.GROUP && groupId != null) {
+                                if (disappearingMenuOpen) {
+                                    DropdownMenuItem(
+                                        text = { Text("Back") },
+                                        onClick = { disappearingMenuOpen = false },
+                                    )
+                                    DisappearingMessageOptions.forEach { (label, ttlSeconds) ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    if (chat.messageTtlSeconds == ttlSeconds) {
+                                                        "✓ $label"
+                                                    } else {
+                                                        label
+                                                    },
+                                                )
+                                            },
+                                            onClick = {
+                                                chatMenuOpen = false
+                                                disappearingMenuOpen = false
+                                                appManager.dispatch(
+                                                    AppAction.SetChatMessageTtl(chat.chatId, ttlSeconds),
+                                                )
+                                            },
+                                        )
+                                    }
+                                } else if (chat.kind == ChatKind.GROUP && groupId != null) {
                                     DropdownMenuItem(
                                         text = { Text("Group details") },
                                         onClick = {
@@ -245,24 +275,16 @@ fun ChatScreen(
                                             appManager.pushScreen(Screen.GroupDetails(groupId))
                                         },
                                     )
-                                }
-                                DisappearingMessageOptions.forEach { (label, ttlSeconds) ->
                                     DropdownMenuItem(
-                                        text = {
-                                            Text(
-                                                if (chat.messageTtlSeconds == ttlSeconds) {
-                                                    "✓ $label"
-                                                } else {
-                                                    label
-                                                },
-                                            )
-                                        },
+                                        text = { Text("Disappearing messages") },
                                         onClick = {
-                                            chatMenuOpen = false
-                                            appManager.dispatch(
-                                                AppAction.SetChatMessageTtl(chat.chatId, ttlSeconds),
-                                            )
+                                            disappearingMenuOpen = true
                                         },
+                                    )
+                                } else {
+                                    DropdownMenuItem(
+                                        text = { Text("Disappearing messages") },
+                                        onClick = { disappearingMenuOpen = true },
                                     )
                                 }
                             }
@@ -418,10 +440,17 @@ fun ChatScreen(
                     },
                     onDraftChange = { value ->
                         draft = value
-                        if (value.isNotBlank()) {
+                        if (value.isBlank()) {
+                            if (hasSentTyping) {
+                                hasSentTyping = false
+                                lastTypingSentMs = 0L
+                                appManager.dispatch(AppAction.StopTyping(chatId))
+                            }
+                        } else {
                             val nowMs = System.currentTimeMillis()
                             if (nowMs - lastTypingSentMs >= 3_000L) {
                                 lastTypingSentMs = nowMs
+                                hasSentTyping = true
                                 appManager.dispatch(AppAction.SendTyping(chatId))
                             }
                         }
@@ -452,6 +481,11 @@ fun ChatScreen(
                             selectedAttachments = emptyList()
                         }
                         draft = ""
+                        if (hasSentTyping) {
+                            hasSentTyping = false
+                            lastTypingSentMs = 0L
+                            appManager.dispatch(AppAction.StopTyping(chatId))
+                        }
                     },
                 )
             }

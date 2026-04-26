@@ -18,6 +18,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -129,6 +130,19 @@ fun ChatListScreen(
             } else {
                 items(appState.chatList, key = { it.chatId }) { chat ->
                     val subtitle = chat.subtitle
+                    val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
+                    val avatarUrl =
+                        chat.pictureUrl
+                            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                            ?.let { url ->
+                                proxiedImageUrl(
+                                    originalSrc = url,
+                                    preferences = appState.preferences,
+                                    width = 84u,
+                                    height = 84u,
+                                    square = true,
+                                )
+                            }
                     Column(modifier = Modifier.fillMaxWidth()) {
                         IrisChatListRow(
                             title = chat.displayName,
@@ -137,8 +151,10 @@ fun ChatListScreen(
                                     "Typing"
                                 } else {
                                     chat.lastMessagePreview ?: subtitle.orEmpty()
-                                },
+                            },
                             timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), relativeNowMillis),
+                            imageUrl = avatarUrl,
+                            imageData = avatarData,
                             unreadCount = chat.unreadCount.toLong(),
                             lastMessageMine = chat.lastMessageIsOutgoing == true,
                             lastDelivery = chat.lastMessageDelivery,
@@ -159,4 +175,24 @@ fun ChatListScreen(
             }
         }
     }
+}
+
+@Composable
+internal fun rememberNhashImageData(
+    appManager: AppManager,
+    pictureUrl: String?,
+) = produceState<ByteArray?>(initialValue = null, pictureUrl) {
+    val nhash = parseNhashUri(pictureUrl)
+    value = if (nhash == null) null else appManager.downloadHashtreeBytes(nhash)
+}
+
+internal fun parseNhashUri(value: String?): String? {
+    val trimmed = value?.trim().orEmpty()
+    if (!trimmed.startsWith("nhash://")) {
+        return null
+    }
+    return trimmed
+        .removePrefix("nhash://")
+        .substringBefore("/")
+        .takeIf(String::isNotBlank)
 }

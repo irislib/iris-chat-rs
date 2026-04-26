@@ -140,6 +140,14 @@ class AppManager(
         )
     }
 
+    fun uploadProfilePicture(filePath: String) {
+        val trimmedPath = filePath.trim()
+        if (trimmedPath.isEmpty()) {
+            return
+        }
+        rust.dispatch(AppAction.UploadProfilePicture(trimmedPath))
+    }
+
     fun restoreSession(nsecOrHex: String) {
         val trimmed = nsecOrHex.trim()
         if (trimmed.isEmpty()) {
@@ -212,6 +220,20 @@ class AppManager(
         rust.dispatch(AppAction.UpdateGroupName(trimmedGroupId, trimmedName))
     }
 
+    fun updateGroupPicture(
+        groupId: String,
+        filePath: String,
+        filename: String,
+    ) {
+        val trimmedGroupId = groupId.trim()
+        val trimmedPath = filePath.trim()
+        val trimmedFilename = filename.trim()
+        if (trimmedGroupId.isEmpty() || trimmedPath.isEmpty() || trimmedFilename.isEmpty()) {
+            return
+        }
+        rust.dispatch(AppAction.UpdateGroupPicture(trimmedGroupId, trimmedPath, trimmedFilename))
+    }
+
     fun addGroupMembers(
         groupId: String,
         memberInputs: List<String>,
@@ -234,6 +256,19 @@ class AppManager(
             return
         }
         rust.dispatch(AppAction.RemoveGroupMember(trimmedGroupId, trimmedOwner))
+    }
+
+    fun setGroupAdmin(
+        groupId: String,
+        ownerPubkeyHex: String,
+        isAdmin: Boolean,
+    ) {
+        val trimmedGroupId = groupId.trim()
+        val trimmedOwner = ownerPubkeyHex.trim()
+        if (trimmedGroupId.isEmpty() || trimmedOwner.isEmpty()) {
+            return
+        }
+        rust.dispatch(AppAction.SetGroupAdmin(trimmedGroupId, trimmedOwner, isAdmin))
     }
 
     fun openChat(chatId: String) {
@@ -324,6 +359,18 @@ class AppManager(
                 cacheDownloadedAttachment(attachment, data)
             }
             data
+        }
+
+    suspend fun downloadHashtreeBytes(nhash: String): ByteArray? =
+        withContext(ioDispatcher) {
+            val trimmed = nhash.trim()
+            if (trimmed.isEmpty()) {
+                return@withContext null
+            }
+            val result = downloadHashtreeAttachment(nhash = trimmed)
+            result.dataBase64
+                ?.takeIf(String::isNotBlank)
+                ?.let { encoded -> Base64.decode(encoded, Base64.NO_WRAP) }
         }
 
     fun logout() {

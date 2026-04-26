@@ -66,6 +66,60 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn upload_profile_picture(&mut self, file_path: &str) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            self.state.toast = Some("Create or restore an account first.".to_string());
+            self.emit_state();
+            return;
+        };
+        let Some(owner_keys) = logged_in.owner_keys.as_ref() else {
+            self.state.toast = Some("Owner key is required to edit profile.".to_string());
+            self.emit_state();
+            return;
+        };
+        let path = PathBuf::from(file_path.trim());
+        if !path.is_file() {
+            self.state.toast = Some("Profile picture was not found.".to_string());
+            self.emit_state();
+            return;
+        }
+        let secret_hex = owner_keys.secret_key().to_secret_hex();
+        let sender = self.core_sender.clone();
+        self.state.busy.uploading_attachment = true;
+        self.emit_state();
+        self.runtime.spawn(async move {
+            let result = upload_profile_picture_to_blossom(&secret_hex, &path)
+                .await
+                .map_err(|error| error.to_string());
+            let _ = sender.send(CoreMsg::Internal(Box::new(
+                InternalEvent::ProfilePictureUploadFinished { result },
+            )));
+        });
+    }
+
+    pub(super) fn handle_profile_picture_upload_finished(
+        &mut self,
+        result: Result<String, String>,
+    ) {
+        self.state.busy.uploading_attachment = false;
+        match result {
+            Ok(picture_url) => {
+                let name = self
+                    .state
+                    .account
+                    .as_ref()
+                    .map(|account| account.display_name.clone())
+                    .unwrap_or_else(|| "Iris".to_string());
+                self.update_profile_metadata(&name, Some(&picture_url));
+            }
+            Err(error) => {
+                self.push_debug_log("profile.picture.upload.error", error);
+                self.state.toast = Some("Profile picture upload failed.".to_string());
+                self.emit_state();
+            }
+        }
+    }
+
     pub(super) fn apply_profile_metadata_event(&mut self, event: &Event) -> bool {
         let owner_hex = event.pubkey.to_hex();
         let Some(record) = parse_owner_profile_record(&event.content, event.created_at.as_u64())

@@ -1255,6 +1255,7 @@ dependencies = [
  "tokio-util",
  "uniffi",
  "url",
+ "urlencoding",
 ]
 
 [[package]]

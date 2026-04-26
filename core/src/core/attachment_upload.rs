@@ -184,7 +184,7 @@ fn prepare_outgoing_attachments(
     Ok(prepared)
 }
 
-fn display_filename(filename: &str, file_path: &Path) -> String {
+pub(super) fn display_filename(filename: &str, file_path: &Path) -> String {
     let from_input = filename.trim();
     let candidate = if from_input.is_empty() {
         file_path.file_name().and_then(|value| value.to_str())
@@ -212,7 +212,10 @@ async fn upload_files_to_hashtree(
     Ok(uploaded)
 }
 
-async fn upload_file_to_hashtree(secret_hex: &str, path: &Path) -> anyhow::Result<String> {
+pub(super) async fn upload_file_to_hashtree(
+    secret_hex: &str,
+    path: &Path,
+) -> anyhow::Result<String> {
     let secret_key = nostr35::SecretKey::from_hex(secret_hex)
         .map_err(|error| anyhow::anyhow!("invalid upload key: {error}"))?;
     let keys = nostr35::Keys::new(secret_key);
@@ -238,6 +241,54 @@ async fn upload_file_to_hashtree(secret_hex: &str, path: &Path) -> anyhow::Resul
         decrypt_key: cid.key,
     })
     .map_err(|error| anyhow::anyhow!("nhash encode failed: {error}"))
+}
+
+pub(super) async fn upload_profile_picture_to_blossom(
+    secret_hex: &str,
+    path: &Path,
+) -> anyhow::Result<String> {
+    let data = tokio::fs::read(path).await?;
+    if data.is_empty() {
+        anyhow::bail!("profile picture is empty");
+    }
+    if data.len() > 10 * 1024 * 1024 {
+        anyhow::bail!("profile picture is too large");
+    }
+    if !looks_like_image(path, &data) {
+        anyhow::bail!("profile picture must be an image");
+    }
+
+    let secret_key = nostr35::SecretKey::from_hex(secret_hex)
+        .map_err(|error| anyhow::anyhow!("invalid upload key: {error}"))?;
+    let keys = nostr35::Keys::new(secret_key);
+    let (read_servers, write_servers) = blossom_servers_from_config();
+    if write_servers.is_empty() {
+        anyhow::bail!("no blossom write servers configured");
+    }
+    let client = BlossomClient::new_empty(keys)
+        .with_read_servers(read_servers)
+        .with_write_servers(write_servers);
+    let (hash, _) = client
+        .upload_if_missing(&data)
+        .await
+        .map_err(|error| anyhow::anyhow!("profile picture upload failed: {error}"))?;
+    Ok(format!("https://cdn.iris.to/{hash}"))
+}
+
+fn looks_like_image(path: &Path, data: &[u8]) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "avif" | "bmp" | "gif" | "heic" | "heif" | "jpg" | "jpeg" | "png" | "webp"
+    ) || data.starts_with(b"\x89PNG")
+        || data.starts_with(b"\xff\xd8\xff")
+        || data.starts_with(b"GIF87a")
+        || data.starts_with(b"GIF89a")
+        || data.starts_with(b"RIFF")
 }
 
 fn download_hashtree_attachment_blocking(nhash: &str) -> anyhow::Result<String> {

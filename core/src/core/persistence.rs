@@ -68,6 +68,7 @@ impl AppCore {
                         .map(|message| PersistedMessage {
                             id: message.id.clone(),
                             chat_id: message.chat_id.clone(),
+                            kind: message.kind.clone(),
                             author: message.author.clone(),
                             body: message.body.clone(),
                             attachments: message.attachments.clone(),

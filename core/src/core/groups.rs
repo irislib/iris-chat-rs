@@ -135,6 +135,107 @@ impl AppCore {
         self.apply_local_group_update(group_id, updated, Some("group.rename"));
     }
 
+    pub(super) fn update_group_picture(&mut self, group_id: &str, file_path: &str, filename: &str) {
+        let Some(local_owner_hex) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex())
+        else {
+            return;
+        };
+        let Some(group) = self.groups.get(group_id).cloned() else {
+            self.state.toast = Some("Unknown group.".to_string());
+            self.emit_state();
+            return;
+        };
+        if !group.admins.iter().any(|admin| admin == &local_owner_hex) {
+            self.state.toast = Some("Only group admins can edit the group.".to_string());
+            self.emit_state();
+            return;
+        }
+        let path = PathBuf::from(file_path.trim());
+        if !path.is_file() {
+            self.state.toast = Some("Group photo was not found.".to_string());
+            self.emit_state();
+            return;
+        }
+        let Some(secret_hex) = self
+            .logged_in
+            .as_ref()
+            .and_then(|logged_in| {
+                logged_in
+                    .owner_keys
+                    .as_ref()
+                    .or(Some(&logged_in.device_keys))
+            })
+            .map(|keys| keys.secret_key().to_secret_hex())
+        else {
+            return;
+        };
+        let filename = display_filename(filename, &path);
+        let sender = self.core_sender.clone();
+        let upload_group_id = group_id.to_string();
+        self.state.busy.uploading_attachment = true;
+        self.emit_state();
+        self.runtime.spawn(async move {
+            let result = upload_file_to_hashtree(&secret_hex, &path)
+                .await
+                .map(|nhash| format!("nhash://{}/{}", nhash, urlencoding::encode(&filename)))
+                .map_err(|error| error.to_string());
+            let _ = sender.send(CoreMsg::Internal(Box::new(
+                InternalEvent::GroupPictureUploadFinished {
+                    group_id: upload_group_id,
+                    result,
+                },
+            )));
+        });
+    }
+
+    pub(super) fn handle_group_picture_upload_finished(
+        &mut self,
+        group_id: String,
+        result: Result<String, String>,
+    ) {
+        self.state.busy.uploading_attachment = false;
+        match result {
+            Ok(picture_uri) => {
+                self.update_group_picture_uri(&group_id, &picture_uri);
+            }
+            Err(error) => {
+                self.push_debug_log("group.picture.upload.error", error);
+                self.state.toast = Some("Group photo upload failed.".to_string());
+                self.emit_state();
+            }
+        }
+    }
+
+    fn update_group_picture_uri(&mut self, group_id: &str, picture_uri: &str) {
+        let Some(local_owner_hex) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex())
+        else {
+            return;
+        };
+        let Some(group) = self.groups.get(group_id).cloned() else {
+            return;
+        };
+        let Some(updated) = update_group_data(
+            &group,
+            &GroupUpdate {
+                name: None,
+                description: None,
+                picture: Some(picture_uri.to_string()),
+            },
+            &local_owner_hex,
+        ) else {
+            self.state.toast = Some("Only group admins can edit the group.".to_string());
+            self.emit_state();
+            return;
+        };
+        self.apply_local_group_update(group_id, updated, Some("group.picture"));
+    }
+
     pub(super) fn add_group_members(&mut self, group_id: &str, member_inputs: &[String]) {
         let Some(local_owner) = self
             .logged_in
@@ -170,6 +271,50 @@ impl AppCore {
             }
         }
         self.apply_local_group_update(group_id, updated, Some("group.add_members"));
+    }
+
+    pub(super) fn set_group_admin(
+        &mut self,
+        group_id: &str,
+        owner_pubkey_hex: &str,
+        is_admin: bool,
+    ) {
+        let Some(local_owner) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return;
+        };
+        let Some(group) = self.groups.get(group_id).cloned() else {
+            self.state.toast = Some("Unknown group.".to_string());
+            self.emit_state();
+            return;
+        };
+        let Ok(owner) = parse_owner_input(owner_pubkey_hex) else {
+            self.state.toast = Some("Invalid member key.".to_string());
+            self.emit_state();
+            return;
+        };
+        let updated = if is_admin {
+            add_group_admin(&group, &owner.to_hex(), &local_owner.to_hex())
+        } else {
+            remove_group_admin(&group, &owner.to_hex(), &local_owner.to_hex())
+        };
+        let Some(updated) = updated else {
+            self.state.toast = Some("Only group admins can manage admins.".to_string());
+            self.emit_state();
+            return;
+        };
+        self.apply_local_group_update(
+            group_id,
+            updated,
+            Some(if is_admin {
+                "group.add_admin"
+            } else {
+                "group.remove_admin"
+            }),
+        );
     }
 
     pub(super) fn remove_group_member(&mut self, group_id: &str, owner_pubkey_hex: &str) {
@@ -380,7 +525,12 @@ impl AppCore {
             }
             TYPING_KIND => {
                 if !is_outgoing {
-                    self.set_typing_indicator(chat_id, sender_owner.to_hex(), created_at_secs);
+                    self.apply_typing_event(
+                        chat_id,
+                        sender_owner.to_hex(),
+                        created_at_secs,
+                        expires_at_secs,
+                    );
                 }
             }
             CHAT_SETTINGS_KIND => {
@@ -415,17 +565,47 @@ impl AppCore {
             None => {
                 self.push_system_notice(&chat_id, format!("Group created: {}", group.name), now);
             }
-            Some(previous) if previous.name != group.name => {
-                self.push_system_notice(&chat_id, format!("Group renamed to {}", group.name), now);
+            Some(previous) => {
+                if previous.name != group.name {
+                    self.push_system_notice(
+                        &chat_id,
+                        format!("Group renamed to {}", group.name),
+                        now,
+                    );
+                }
+                if previous.picture != group.picture {
+                    self.push_system_notice(&chat_id, "Group photo changed".to_string(), now);
+                }
+                for owner in group
+                    .members
+                    .iter()
+                    .filter(|owner| !previous.members.iter().any(|existing| existing == *owner))
+                {
+                    self.push_system_notice(
+                        &chat_id,
+                        format!("{} joined the group", self.owner_display_label(owner)),
+                        now,
+                    );
+                }
+                for owner in previous
+                    .members
+                    .iter()
+                    .filter(|owner| !group.members.iter().any(|existing| existing == *owner))
+                {
+                    self.push_system_notice(
+                        &chat_id,
+                        format!("{} left the group", self.owner_display_label(owner)),
+                        now,
+                    );
+                }
+                if previous.admins != group.admins {
+                    self.push_system_notice(
+                        &chat_id,
+                        self.admin_change_notice(previous, group),
+                        now,
+                    );
+                }
             }
-            Some(previous) if previous.members != group.members => {
-                self.push_system_notice(
-                    &chat_id,
-                    format!("Group members updated: {} members", group.members.len()),
-                    now,
-                );
-            }
-            _ => {}
         }
     }
 
@@ -438,5 +618,22 @@ impl AppCore {
                 self.push_debug_log("group.sync.error", error.to_string());
             }
         }
+    }
+    fn admin_change_notice(&self, previous: &GroupData, group: &GroupData) -> String {
+        let added = group
+            .admins
+            .iter()
+            .find(|admin| !previous.admins.iter().any(|existing| existing == *admin));
+        if let Some(owner) = added {
+            return format!("{} became an admin", self.owner_display_label(owner));
+        }
+        let removed = previous
+            .admins
+            .iter()
+            .find(|admin| !group.admins.iter().any(|existing| existing == *admin));
+        if let Some(owner) = removed {
+            return format!("{} is no longer an admin", self.owner_display_label(owner));
+        }
+        "Group admins changed".to_string()
     }
 }

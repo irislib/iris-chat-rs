@@ -283,18 +283,22 @@ final class AppManager: ObservableObject {
             return cached
         }
 
+        return await downloadHashtreeBytes(nhash: attachment.nhash).flatMap { data in
+            _ = try? cachedDownloadedAttachmentURL(for: attachment, data: data)
+            return data
+        }
+    }
+
+    func downloadHashtreeBytes(nhash: String) async -> Data? {
         return await Task.detached(priority: .userInitiated) { () -> Data? in
             let result = downloadHashtreeAttachment(
-                nhash: attachment.nhash
+                nhash: nhash
             )
             guard let encoded = result.dataBase64, !encoded.isEmpty else {
                 return nil
             }
             return Data(base64Encoded: encoded)
-        }.value.flatMap { data in
-            _ = try? cachedDownloadedAttachmentURL(for: attachment, data: data)
-            return data
-        }
+        }.value
     }
 
     func openAttachment(_ attachment: MessageAttachmentSnapshot) async {
@@ -349,6 +353,36 @@ final class AppManager: ObservableObject {
                 caption: caption.trimmingCharacters(in: .whitespacesAndNewlines)
             )
         )
+    }
+
+    func updateGroupPicture(groupId: String, fileURL: URL) {
+        do {
+            let staged = try stageOutgoingAttachment(fileURL)
+            rust.dispatch(action: .updateGroupPicture(
+                groupId: groupId,
+                filePath: staged.path,
+                filename: staged.filename
+            ))
+        } catch {
+            showToast("Image could not be opened")
+        }
+    }
+
+    func setGroupAdmin(groupId: String, ownerPubkeyHex: String, isAdmin: Bool) {
+        rust.dispatch(action: .setGroupAdmin(
+            groupId: groupId,
+            ownerPubkeyHex: ownerPubkeyHex,
+            isAdmin: isAdmin
+        ))
+    }
+
+    func uploadProfilePicture(fileURL: URL) {
+        do {
+            let staged = try stageOutgoingAttachment(fileURL)
+            rust.dispatch(action: .uploadProfilePicture(filePath: staged.path))
+        } catch {
+            showToast("Image could not be opened")
+        }
     }
 
     func stageOutgoingAttachments(_ sourceURLs: [URL]) throws -> [StagedAttachment] {

@@ -21,6 +21,50 @@ impl AppCore {
         }
     }
 
+    pub(super) fn stop_typing(&mut self, chat_id: &str) {
+        if !self.preferences.send_typing_indicators {
+            return;
+        }
+        let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
+            return;
+        };
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
+        };
+        if is_group_chat_id(&normalized_chat_id) {
+            self.send_group_event(
+                &normalized_chat_id,
+                TYPING_KIND,
+                "typing",
+                vec![vec!["expiration".to_string(), "1".to_string()]],
+                None,
+            );
+        } else if let Ok((_, peer)) = parse_peer_input(&normalized_chat_id) {
+            let _ = logged_in.ndr_runtime.send_typing(
+                peer,
+                Some(SendOptions {
+                    expires_at: Some(1),
+                    ttl_seconds: None,
+                }),
+            );
+            self.process_runtime_events();
+        }
+    }
+
+    pub(super) fn apply_typing_event(
+        &mut self,
+        chat_id: String,
+        author_owner_hex: String,
+        event_secs: u64,
+        expires_at_secs: Option<u64>,
+    ) {
+        if expires_at_secs.is_some_and(|expires_at| expires_at <= event_secs) {
+            self.clear_typing_indicator(&chat_id, &author_owner_hex);
+            return;
+        }
+        self.set_typing_indicator(chat_id, author_owner_hex, event_secs);
+    }
+
     pub(super) fn set_typing_indicator(
         &mut self,
         chat_id: String,

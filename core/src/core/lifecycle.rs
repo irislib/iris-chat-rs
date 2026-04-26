@@ -127,6 +127,7 @@ impl AppCore {
                 emoji,
             } => self.toggle_reaction(&chat_id, &message_id, &emoji),
             AppAction::SendTyping { chat_id } => self.send_typing(&chat_id),
+            AppAction::StopTyping { chat_id } => self.stop_typing(&chat_id),
             AppAction::SetTypingIndicatorsEnabled { enabled } => {
                 self.set_typing_indicators_enabled(enabled)
             }
@@ -164,14 +165,27 @@ impl AppCore {
             AppAction::UpdateGroupName { group_id, name } => {
                 self.update_group_name(&group_id, &name)
             }
+            AppAction::UpdateGroupPicture {
+                group_id,
+                file_path,
+                filename,
+            } => self.update_group_picture(&group_id, &file_path, &filename),
             AppAction::AddGroupMembers {
                 group_id,
                 member_inputs,
             } => self.add_group_members(&group_id, &member_inputs),
+            AppAction::SetGroupAdmin {
+                group_id,
+                owner_pubkey_hex,
+                is_admin,
+            } => self.set_group_admin(&group_id, &owner_pubkey_hex, is_admin),
             AppAction::RemoveGroupMember {
                 group_id,
                 owner_pubkey_hex,
             } => self.remove_group_member(&group_id, &owner_pubkey_hex),
+            AppAction::UploadProfilePicture { file_path } => {
+                self.upload_profile_picture(&file_path)
+            }
             AppAction::AddAuthorizedDevice { device_input } => {
                 self.add_authorized_device(&device_input)
             }
@@ -246,6 +260,12 @@ impl AppCore {
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);
+            }
+            InternalEvent::GroupPictureUploadFinished { group_id, result } => {
+                self.handle_group_picture_upload_finished(group_id, result);
+            }
+            InternalEvent::ProfilePictureUploadFinished { result } => {
+                self.handle_profile_picture_upload_finished(result);
             }
             InternalEvent::SyncComplete => {
                 self.state.busy.syncing_network = false;

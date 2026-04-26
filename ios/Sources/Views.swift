@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 private let irisSourceURL = URL(string: "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs")!
 private let irisSourceLabel = "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
@@ -34,6 +35,29 @@ private func proxiedImageURL(
         height: height,
         square: square
     )
+}
+
+private func httpAvatarURL(
+    _ rawURL: String?,
+    preferences: PreferencesSnapshot,
+    width: UInt32,
+    height: UInt32,
+    square: Bool = true
+) -> String? {
+    guard let rawURL else { return nil }
+    let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("http://") || trimmed.hasPrefix("https://") else {
+        return nil
+    }
+    return proxiedImageURL(trimmed, preferences: preferences, width: width, height: height, square: square)
+}
+
+private func parseNhashURI(_ rawURL: String?) -> String? {
+    guard let rawURL else { return nil }
+    let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard trimmed.hasPrefix("nhash://") else { return nil }
+    let remainder = String(trimmed.dropFirst("nhash://".count))
+    return remainder.split(separator: "/", maxSplits: 1).first.map(String.init)
 }
 
 private enum SecretExportKind: Identifiable {
@@ -645,15 +669,10 @@ struct ChatListScreen: View {
                 TimelineView(.periodic(from: .now, by: 15)) { timeline in
                     IrisSectionCard {
                         ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
-                            IrisChatRow(
-                                title: chat.displayName,
-                                preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
-                                subtitle: chat.kind == .group ? chat.subtitle : nil,
-                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: timeline.date),
-                                unreadCount: chat.unreadCount,
-                                onTap: {
-                                    manager.dispatch(.openChat(chatId: chat.chatId))
-                                }
+                            ChatListRowContainer(
+                                manager: manager,
+                                chat: chat,
+                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: timeline.date)
                             )
                             .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
 
@@ -723,6 +742,36 @@ struct ChatListScreen: View {
     }
 }
 
+private struct ChatListRowContainer: View {
+    @ObservedObject var manager: AppManager
+    let chat: ChatThreadSnapshot
+    let timeLabel: String?
+
+    @State private var imageData: Data?
+
+    var body: some View {
+        IrisChatRow(
+            title: chat.displayName,
+            preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
+            subtitle: nil,
+            timeLabel: timeLabel,
+            unreadCount: chat.unreadCount,
+            imageURL: httpAvatarURL(chat.pictureUrl, preferences: manager.state.preferences, width: 96, height: 96),
+            imageData: imageData,
+            onTap: {
+                manager.dispatch(.openChat(chatId: chat.chatId))
+            }
+        )
+        .task(id: chat.pictureUrl) {
+            guard let nhash = parseNhashURI(chat.pictureUrl) else {
+                imageData = nil
+                return
+            }
+            imageData = await manager.downloadHashtreeBytes(nhash: nhash)
+        }
+    }
+}
+
 struct NewChatScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
@@ -751,7 +800,7 @@ struct NewChatScreen: View {
                 showingScanner = false
             }
         }
-        .onChange(of: normalizedPeerInput) { normalized in
+        .irisOnChange(of: normalizedPeerInput) { normalized in
             guard !normalized.isEmpty,
                   isValidPeerInput(input: normalized),
                   submittedPeerInput != normalized
@@ -1191,6 +1240,8 @@ struct GroupDetailsScreen: View {
     @State private var groupName = ""
     @State private var memberInput = ""
     @State private var showingScanner = false
+    @State private var showingGroupPicturePicker = false
+    @State private var groupPictureData: Data?
 
     private var normalizedMemberInput: String {
         normalizePeerInput(input: memberInput)
@@ -1208,6 +1259,24 @@ struct GroupDetailsScreen: View {
                         title: "Group settings",
                         subtitle: "Created by \(details.createdByDisplayName). Revision \(details.revision)."
                     )
+
+                    HStack(spacing: 14) {
+                        IrisAvatar(
+                            label: details.name,
+                            size: 56,
+                            emphasize: true,
+                            imageURL: httpAvatarURL(details.pictureUrl, preferences: manager.state.preferences, width: 128, height: 128),
+                            imageData: groupPictureData
+                        )
+                        if details.canManage {
+                            Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Change photo") {
+                                showingGroupPicturePicker = true
+                            }
+                            .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                            .disabled(manager.state.busy.uploadingAttachment)
+                            .accessibilityIdentifier("groupDetailsChangePhotoButton")
+                        }
+                    }
 
                     TextField("Name", text: Binding(
                         get: { groupName.isEmpty ? details.name : groupName },
@@ -1236,26 +1305,40 @@ struct GroupDetailsScreen: View {
 
                     ForEach(Array(details.members.enumerated()), id: \.element.ownerPubkeyHex) { index, member in
                         let primary = primaryDisplayName(displayName: member.displayName, fallback: member.npub)
-                        HStack(alignment: .top, spacing: 12) {
-                            IrisAvatar(label: primary, size: 38, emphasize: member.isLocalOwner)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .top, spacing: 12) {
+                                IrisAvatar(label: primary, size: 38, emphasize: member.isLocalOwner)
 
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(primary)
-                                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(palette.textPrimary)
-                                if member.isLocalOwner {
-                                    IrisInfoPill("You")
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(primary)
+                                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                                        .foregroundStyle(palette.textPrimary)
+                                    HStack(spacing: 6) {
+                                        if member.isLocalOwner {
+                                            IrisInfoPill("You")
+                                        }
+                                        if member.isCreator {
+                                            IrisInfoPill("Creator")
+                                        } else if member.isAdmin {
+                                            IrisInfoPill("Admin")
+                                        }
+                                    }
                                 }
+
+                                Spacer()
                             }
 
-                            Spacer()
-
                             if details.canManage && !member.isLocalOwner {
-                                Button("Remove", role: .destructive) {
-                                    manager.dispatch(.removeGroupMember(groupId: groupId, ownerPubkeyHex: member.ownerPubkeyHex))
+                                ViewThatFits(in: .horizontal) {
+                                    HStack(spacing: 8) {
+                                        memberAdminButton(member)
+                                        removeMemberButton(member)
+                                    }
+                                    VStack(spacing: 8) {
+                                        memberAdminButton(member)
+                                        removeMemberButton(member)
+                                    }
                                 }
-                                .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-                                .accessibilityIdentifier("groupDetailsRemoveMember-\(String(member.ownerPubkeyHex.prefix(12)))")
                             }
                         }
 
@@ -1303,6 +1386,44 @@ struct GroupDetailsScreen: View {
                 showingScanner = false
             }
         }
+        .fileImporter(
+            isPresented: $showingGroupPicturePicker,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: false
+        ) { result in
+            if case let .success(urls) = result, let url = urls.first {
+                manager.updateGroupPicture(groupId: groupId, fileURL: url)
+            }
+        }
+        .task(id: manager.state.groupDetails?.pictureUrl) {
+            guard let nhash = parseNhashURI(manager.state.groupDetails?.pictureUrl) else {
+                groupPictureData = nil
+                return
+            }
+            groupPictureData = await manager.downloadHashtreeBytes(nhash: nhash)
+        }
+    }
+
+    private func memberAdminButton(_ member: GroupMemberSnapshot) -> some View {
+        Button(member.isAdmin ? "Dismiss admin" : "Make admin") {
+            manager.setGroupAdmin(
+                groupId: groupId,
+                ownerPubkeyHex: member.ownerPubkeyHex,
+                isAdmin: !member.isAdmin
+            )
+        }
+        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+        .disabled(manager.state.busy.updatingGroup || member.isCreator)
+        .accessibilityIdentifier("groupDetailsAdminMember-\(String(member.ownerPubkeyHex.prefix(12)))")
+    }
+
+    private func removeMemberButton(_ member: GroupMemberSnapshot) -> some View {
+        Button("Remove", role: .destructive) {
+            manager.dispatch(.removeGroupMember(groupId: groupId, ownerPubkeyHex: member.ownerPubkeyHex))
+        }
+        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+        .disabled(manager.state.busy.updatingGroup || member.isCreator)
+        .accessibilityIdentifier("groupDetailsRemoveMember-\(String(member.ownerPubkeyHex.prefix(12)))")
     }
 }
 
@@ -1555,7 +1676,6 @@ struct SettingsScreen: View {
     @State private var pendingSecretExport: SecretExportKind?
     @State private var showingDeleteAllConfirmation = false
     @State private var profileName = ""
-    @State private var profilePictureURL = ""
     @State private var profilePictureViewerURL: URL?
     @State private var newRelayURL = ""
     @State private var editingRelayURL: String?
@@ -1572,7 +1692,6 @@ struct SettingsScreen: View {
                             manager: manager,
                             account: account,
                             profileName: $profileName,
-                            profilePictureURL: $profilePictureURL,
                             openProfilePicture: { profilePictureViewerURL = $0 },
                             manageDevices: {
                                 manager.dispatch(.pushScreen(screen: .deviceRoster))
@@ -2024,9 +2143,9 @@ private struct ProfileEditorCard: View {
     @ObservedObject var manager: AppManager
     let account: AccountSnapshot
     @Binding var profileName: String
-    @Binding var profilePictureURL: String
     let openProfilePicture: (URL) -> Void
     let manageDevices: () -> Void
+    @State private var showingProfilePicturePicker = false
 
     var body: some View {
         IrisSectionCard(accent: true) {
@@ -2040,13 +2159,9 @@ private struct ProfileEditorCard: View {
             }
             .onAppear {
                 profileName = account.displayName
-                profilePictureURL = account.pictureUrl ?? ""
             }
             .irisOnChange(of: account.displayName) { value in
                 profileName = value
-            }
-            .irisOnChange(of: account.pictureUrl) { value in
-                profilePictureURL = value ?? ""
             }
 
             TextField("Display name", text: $profileName)
@@ -2054,14 +2169,15 @@ private struct ProfileEditorCard: View {
                 .disabled(!account.hasOwnerSigningAuthority)
                 .accessibilityIdentifier("myProfileDisplayNameInput")
 
-            TextField("Profile picture URL", text: $profilePictureURL)
-                .textFieldStyle(.roundedBorder)
-                .autocorrectionDisabled()
-                .disabled(!account.hasOwnerSigningAuthority)
-                .accessibilityIdentifier("myProfilePictureUrlInput")
+            Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Upload profile photo") {
+                showingProfilePicturePicker = true
+            }
+            .buttonStyle(IrisSecondaryButtonStyle())
+            .disabled(!account.hasOwnerSigningAuthority || manager.state.busy.uploadingAttachment)
+            .accessibilityIdentifier("myProfileUploadPictureButton")
 
             Button("Save profile") {
-                manager.updateProfileMetadata(name: profileName, pictureURL: profilePictureURL)
+                manager.updateProfileMetadata(name: profileName, pictureURL: account.pictureUrl)
             }
             .buttonStyle(IrisSecondaryButtonStyle())
             .disabled(!account.hasOwnerSigningAuthority || normalizedProfileName.isEmpty || !profileMetadataChanged)
@@ -2086,6 +2202,15 @@ private struct ProfileEditorCard: View {
                     .buttonStyle(IrisSecondaryButtonStyle())
                 Button("Copy device ID") { manager.copyToClipboard(account.deviceNpub) }
                     .buttonStyle(IrisSecondaryButtonStyle())
+            }
+        }
+        .fileImporter(
+            isPresented: $showingProfilePicturePicker,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: false
+        ) { result in
+            if case let .success(urls) = result, let url = urls.first {
+                manager.uploadProfilePicture(fileURL: url)
             }
         }
     }
@@ -2120,16 +2245,11 @@ private struct ProfileEditorCard: View {
     }
 
     private var profileMetadataChanged: Bool {
-        normalizedProfileName != account.displayName.trimmingCharacters(in: .whitespacesAndNewlines) ||
-            normalizedProfilePictureURL != (account.pictureUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        normalizedProfileName != account.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var normalizedProfileName: String {
         profileName.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var normalizedProfilePictureURL: String {
-        profilePictureURL.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

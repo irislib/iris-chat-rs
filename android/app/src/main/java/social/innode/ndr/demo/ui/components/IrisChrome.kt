@@ -61,6 +61,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -178,6 +179,7 @@ fun IrisAvatar(
     size: Dp = 40.dp,
     emphasize: Boolean = false,
     imageUrl: String? = null,
+    imageData: ByteArray? = null,
 ) {
     val palette = IrisTheme.palette
     val avatarBitmap =
@@ -203,7 +205,17 @@ fun IrisAvatar(
                 .border(1.dp, palette.border, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        avatarBitmap.value?.let { bitmap ->
+        val dataBitmap = remember(imageData) {
+            imageData?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+        }
+        dataBitmap?.let { bitmap ->
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(size),
+            )
+        } ?: avatarBitmap.value?.let { bitmap ->
             Image(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = null,
@@ -317,6 +329,8 @@ fun IrisChatListRow(
     title: String,
     preview: String,
     timeLabel: String?,
+    imageUrl: String? = null,
+    imageData: ByteArray? = null,
     unreadCount: Long,
     lastMessageMine: Boolean,
     lastDelivery: DeliveryState?,
@@ -333,7 +347,7 @@ fun IrisChatListRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        IrisAvatar(label = title, size = 42.dp)
+        IrisAvatar(label = title, size = 42.dp, imageUrl = imageUrl, imageData = imageData)
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),

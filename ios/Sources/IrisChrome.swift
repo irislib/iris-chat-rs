@@ -303,12 +303,20 @@ struct IrisAvatar: View {
     let size: CGFloat
     let emphasize: Bool
     let imageURL: String?
+    let imageData: Data?
 
-    init(label: String, size: CGFloat = 42, emphasize: Bool = false, imageURL: String? = nil) {
+    init(
+        label: String,
+        size: CGFloat = 42,
+        emphasize: Bool = false,
+        imageURL: String? = nil,
+        imageData: Data? = nil
+    ) {
         self.label = label
         self.size = size
         self.emphasize = emphasize
         self.imageURL = imageURL
+        self.imageData = imageData
     }
 
     var body: some View {
@@ -317,7 +325,12 @@ struct IrisAvatar: View {
                 .fill(emphasize ? palette.accent : palette.panelAlt)
                 .overlay(Circle().stroke(palette.border, lineWidth: 1))
 
-            if let imageURL, let url = URL(string: imageURL) {
+            if let imageData, let image = PlatformImage(data: imageData) {
+                Image(platformImage: image)
+                    .resizable()
+                    .scaledToFill()
+                    .clipShape(Circle())
+            } else if let imageURL, let url = URL(string: imageURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
                     case .success(let image):
@@ -464,12 +477,34 @@ struct IrisChatRow: View {
     let subtitle: String?
     let timeLabel: String?
     let unreadCount: UInt64
+    let imageURL: String?
+    let imageData: Data?
     let onTap: () -> Void
+
+    init(
+        title: String,
+        preview: String,
+        subtitle: String?,
+        timeLabel: String?,
+        unreadCount: UInt64,
+        imageURL: String? = nil,
+        imageData: Data? = nil,
+        onTap: @escaping () -> Void
+    ) {
+        self.title = title
+        self.preview = preview
+        self.subtitle = subtitle
+        self.timeLabel = timeLabel
+        self.unreadCount = unreadCount
+        self.imageURL = imageURL
+        self.imageData = imageData
+        self.onTap = onTap
+    }
 
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 14) {
-                IrisAvatar(label: title, emphasize: unreadCount > 0)
+                IrisAvatar(label: title, emphasize: unreadCount > 0, imageURL: imageURL, imageData: imageData)
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {

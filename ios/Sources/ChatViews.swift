@@ -18,6 +18,7 @@ struct ChatScreen: View {
     @State private var replyTarget: ChatMessageSnapshot?
     @State private var imageViewerItem: ImageViewerItem?
     @State private var lastTypingSentAt: Date?
+    @State private var sentTypingIndicator = false
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -129,6 +130,8 @@ struct ChatScreen: View {
                                     shouldFollowLatest = true
                                     forceScrollToLatest = false
                                     renderedMessageCount = 0
+                                    lastTypingSentAt = nil
+                                    sentTypingIndicator = false
                                 }
                                 .onPreferenceChange(ChatTimelineViewportMaxYPreferenceKey.self) { value in
                                     timelineViewportMaxY = value
@@ -203,11 +206,16 @@ struct ChatScreen: View {
                                     .shadow(color: .black.opacity(0.16), radius: 16, y: 10)
                                     .accessibilityIdentifier("chatJumpToBottom")
                                 }
-                            }
-                        }
 
-                        if !chat.typingIndicators.isEmpty {
-                            IrisTypingIndicatorRow(indicators: chat.typingIndicators)
+                                if !chat.typingIndicators.isEmpty {
+                                    IrisTypingIndicatorRow(indicators: chat.typingIndicators)
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                                        .padding(.leading, IrisLayout.usesDesktopChrome ? 22 : 16)
+                                        .padding(.trailing, 76)
+                                        .padding(.bottom, 16)
+                                        .allowsHitTesting(false)
+                                }
+                            }
                         }
 
                         if let replyTarget {
@@ -238,6 +246,7 @@ struct ChatScreen: View {
                         ) {
                             let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                             guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
+                            stopTypingIfNeeded()
                             shouldFollowLatest = true
                             forceScrollToLatest = true
                             let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
@@ -287,13 +296,24 @@ struct ChatScreen: View {
 
     private func sendTypingIfNeeded() {
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else {
+            stopTypingIfNeeded()
+            return
+        }
         let now = Date()
         if let lastTypingSentAt, now.timeIntervalSince(lastTypingSentAt) < 3 {
             return
         }
         lastTypingSentAt = now
+        sentTypingIndicator = true
         manager.dispatch(.sendTyping(chatId: chatId))
+    }
+
+    private func stopTypingIfNeeded() {
+        guard sentTypingIndicator else { return }
+        sentTypingIndicator = false
+        lastTypingSentAt = nil
+        manager.dispatch(.stopTyping(chatId: chatId))
     }
 
     private func seenReceiptToken(for chat: CurrentChatSnapshot?) -> String {
@@ -429,6 +449,21 @@ private struct ChatMessageRow: View {
                 .padding(.vertical, 14)
             }
 
+            if message.kind == .system {
+                HStack {
+                    Spacer(minLength: 24)
+                    Text(message.body)
+                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Capsule(style: .continuous).fill(palette.panel.opacity(0.74)))
+                    Spacer(minLength: 24)
+                }
+                .padding(.vertical, 8)
+                .accessibilityIdentifier("chatSystemMessage-\(message.id)")
+            } else {
             VStack(
                 alignment: message.isOutgoing ? .trailing : .leading,
                 spacing: 6
@@ -442,7 +477,7 @@ private struct ChatMessageRow: View {
                 HStack(alignment: .center, spacing: 6) {
                     if showActionDock && message.isOutgoing {
                         ChatMessageActionDock(
-                            onReact: { onReact("❤️") },
+                            onReact: onReact,
                             onReply: onReply,
                             onCopyInfo: {
                                 PlatformClipboard.setString("Message \(message.id) · \(irisMessageClock(message.createdAtSecs))")
@@ -521,7 +556,7 @@ private struct ChatMessageRow: View {
 
                     if showActionDock && !message.isOutgoing {
                         ChatMessageActionDock(
-                            onReact: { onReact("❤️") },
+                            onReact: onReact,
                             onReply: onReply,
                             onCopyInfo: {
                                 PlatformClipboard.setString("Message \(message.id) · \(irisMessageClock(message.createdAtSecs))")
@@ -540,6 +575,7 @@ private struct ChatMessageRow: View {
             .onHover { isHovering = $0 }
             .padding(.top, isFirstInCluster ? 10 : 4)
             .padding(.bottom, isLastInCluster ? 10 : 0)
+            }
         }
     }
 }
@@ -645,14 +681,23 @@ private struct IrisDeliveryGlyph: View {
 
 private struct ChatMessageActionDock: View {
     @Environment(\.irisPalette) private var palette
-    let onReact: () -> Void
+    let onReact: (String) -> Void
     let onReply: () -> Void
     let onCopyInfo: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
         HStack(spacing: 2) {
-            dockButton("face.smiling.fill", action: onReact)
+            Menu {
+                ForEach(["👍", "❤️", "😂", "😮", "😢", "🙏"], id: \.self) { emoji in
+                    Button(emoji) { onReact(emoji) }
+                }
+            } label: {
+                Image(systemName: "face.smiling.fill")
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(width: 26, height: 24)
+            }
+            .buttonStyle(.plain)
             dockButton("arrowshape.turn.up.left.fill", action: onReply)
             Menu {
                 Button("Message info", action: onCopyInfo)
@@ -707,10 +752,10 @@ private struct IrisTypingIndicatorRow: View {
                 .foregroundStyle(palette.muted)
                 .lineLimit(1)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 22 : 18)
+        .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Rectangle().fill(palette.toolbar))
+        .background(Capsule(style: .continuous).fill(palette.toolbar.opacity(0.9)))
+        .frame(maxWidth: 260, alignment: .leading)
         .accessibilityIdentifier("chatTypingIndicator")
     }
 }

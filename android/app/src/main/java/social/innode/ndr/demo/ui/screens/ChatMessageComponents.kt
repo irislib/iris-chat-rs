@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.AddReaction
+import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.DropdownMenu
@@ -52,6 +53,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import social.innode.ndr.demo.rust.ChatKind
+import social.innode.ndr.demo.rust.ChatMessageKind
 import social.innode.ndr.demo.rust.ChatMessageSnapshot
 import social.innode.ndr.demo.rust.MessageAttachmentSnapshot
 import social.innode.ndr.demo.rust.MessageReactionSnapshot
@@ -76,6 +78,11 @@ internal fun MessageBubble(
     downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
     onOpenImage: (ByteArray, String) -> Unit,
 ) {
+    if (message.kind == ChatMessageKind.SYSTEM) {
+        SystemMessageChip(message = message)
+        return
+    }
+
     val clipboard = rememberIrisClipboard()
     val parsed = remember(message.body) { parseReplyEncodedMessage(message.body) }
     val showDesktopActionDock = LocalConfiguration.current.screenWidthDp >= 600
@@ -239,6 +246,39 @@ internal fun MessageBubble(
             }
             if (reactions.isNotEmpty()) {
                 ReactionRow(reactions = reactions)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SystemMessageChip(message: ChatMessageSnapshot) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Surface(
+            color = IrisTheme.palette.panel.copy(alpha = 0.68f),
+            shape = RoundedCornerShape(100.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Info,
+                    contentDescription = null,
+                    tint = IrisTheme.palette.muted,
+                    modifier = Modifier.size(14.dp),
+                )
+                Text(
+                    text = message.body,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = IrisTheme.palette.muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }
@@ -456,12 +496,8 @@ internal fun TypingIndicatorBubble(
             modifier
                 .widthIn(max = 280.dp)
                 .testTag("chatTypingIndicator"),
-        color = IrisTheme.palette.bubbleTheirs.copy(alpha = 0.94f),
-        shape = messageBubbleShape(
-            isOutgoing = false,
-            isFirstInCluster = true,
-            isLastInCluster = true,
-        ),
+        color = IrisTheme.palette.panel.copy(alpha = 0.82f),
+        shape = RoundedCornerShape(100.dp),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),

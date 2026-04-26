@@ -381,6 +381,7 @@ impl AppCore {
                                     ChatMessageSnapshot {
                                         id: message.id.clone(),
                                         chat_id: message.chat_id.clone(),
+                                        kind: message.kind.clone(),
                                         author: message.author.clone(),
                                         body,
                                         attachments: if message.attachments.is_empty() {

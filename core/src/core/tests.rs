@@ -179,6 +179,7 @@ fn queued_runtime_publish_completion_uses_inner_message_id() {
             messages: vec![ChatMessageSnapshot {
                 id: inner_message_id.clone(),
                 chat_id: chat_id.clone(),
+                kind: ChatMessageKind::User,
                 author: owner.public_key().to_hex(),
                 body: "queued".to_string(),
                 attachments: Vec::new(),
@@ -266,6 +267,38 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
     assert!(core.typing_indicators.values().any(|record| {
         record.chat_id == chat_id && record.author_owner_hex == sender.public_key().to_hex()
     }));
+}
+
+#[test]
+fn web_runtime_typing_stop_clears_indicator() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("web-runtime-typing-stop", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let sender_hex = sender.public_key().to_hex();
+    core.set_typing_indicator(chat_id.clone(), sender_hex.clone(), 1);
+    let content = serde_json::json!({
+        "content": "typing",
+        "kind": TYPING_KIND,
+        "created_at": 1_777_159_484u64,
+        "tags": [["expiration", "1"]],
+        "pubkey": "0".repeat(64),
+        "id": "a".repeat(64),
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("b".repeat(64)));
+
+    assert!(!core
+        .typing_indicators
+        .values()
+        .any(|record| { record.chat_id == chat_id && record.author_owner_hex == sender_hex }));
+    assert!(core
+        .threads
+        .get(&chat_id)
+        .map(|thread| thread.messages.is_empty())
+        .unwrap_or(true));
 }
 
 #[test]
@@ -391,17 +424,25 @@ fn group_metadata_changes_create_system_notices() {
         name: "Renamed".to_string(),
         ..initial.clone()
     };
+    let member = Keys::generate().public_key().to_hex();
     let with_member = GroupData {
-        members: vec![
-            owner.public_key().to_hex(),
-            Keys::generate().public_key().to_hex(),
-        ],
+        members: vec![owner.public_key().to_hex(), member.clone()],
         ..renamed.clone()
+    };
+    let member_removed = GroupData {
+        members: vec![owner.public_key().to_hex()],
+        ..with_member.clone()
     };
 
     core.apply_group_metadata_notice(None, &initial);
     core.apply_group_metadata_notice(Some(&initial), &renamed);
     core.apply_group_metadata_notice(Some(&renamed), &with_member);
+    core.apply_group_metadata_notice(Some(&with_member), &member_removed);
+    let with_admin = GroupData {
+        admins: with_member.members.clone(),
+        ..with_member.clone()
+    };
+    core.apply_group_metadata_notice(Some(&with_member), &with_admin);
 
     let messages = &core.threads.get(&chat_id).expect("group thread").messages;
     assert!(messages
@@ -412,7 +453,16 @@ fn group_metadata_changes_create_system_notices() {
         .any(|message| message.body == "Group renamed to Renamed"));
     assert!(messages
         .iter()
-        .any(|message| message.body == "Group members updated: 2 members"));
+        .any(|message| message.body.contains("joined the group")));
+    assert!(messages
+        .iter()
+        .any(|message| message.body.contains("left the group")));
+    assert!(messages
+        .iter()
+        .any(|message| message.kind == ChatMessageKind::System));
+    assert!(messages
+        .iter()
+        .any(|message| message.body.contains("became an admin")));
 }
 
 fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
