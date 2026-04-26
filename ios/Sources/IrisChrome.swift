@@ -1,5 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
+#if canImport(PhotosUI)
+import PhotosUI
+#endif
 
 enum IrisLayout {
     #if canImport(AppKit)
@@ -340,6 +343,7 @@ struct IrisAvatar: View {
     let pictureUrl: String?
     let preferences: PreferencesSnapshot?
     let manager: AppManager?
+    let loadedImageIdentifier: String?
 
     @State private var htreeData: Data?
 
@@ -349,7 +353,8 @@ struct IrisAvatar: View {
         emphasize: Bool = false,
         pictureUrl: String? = nil,
         preferences: PreferencesSnapshot? = nil,
-        manager: AppManager? = nil
+        manager: AppManager? = nil,
+        loadedImageIdentifier: String? = nil
     ) {
         self.label = label
         self.size = size
@@ -357,6 +362,7 @@ struct IrisAvatar: View {
         self.pictureUrl = pictureUrl
         self.preferences = preferences
         self.manager = manager
+        self.loadedImageIdentifier = loadedImageIdentifier
     }
 
     var body: some View {
@@ -370,6 +376,7 @@ struct IrisAvatar: View {
                     .resizable()
                     .scaledToFill()
                     .clipShape(Circle())
+                    .modifier(IrisAvatarLoadedTag(identifier: loadedImageIdentifier))
             } else if let httpURL, let url = URL(string: httpURL) {
                 AsyncImage(url: url) { phase in
                     switch phase {
@@ -377,6 +384,7 @@ struct IrisAvatar: View {
                         image
                             .resizable()
                             .scaledToFill()
+                            .modifier(IrisAvatarLoadedTag(identifier: loadedImageIdentifier))
                     default:
                         avatarInitial
                     }
@@ -405,6 +413,18 @@ struct IrisAvatar: View {
         Text(String((label.trimmingCharacters(in: .whitespacesAndNewlines).first ?? "?")).uppercased())
             .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
             .foregroundStyle(emphasize ? palette.onAccent : palette.textPrimary)
+    }
+}
+
+private struct IrisAvatarLoadedTag: ViewModifier {
+    let identifier: String?
+
+    func body(content: Content) -> some View {
+        if let identifier {
+            content.accessibilityIdentifier(identifier)
+        } else {
+            content
+        }
     }
 }
 
@@ -639,6 +659,11 @@ struct IrisComposerBar: View {
     @State private var showingAttachmentPicker = false
     @State private var showingEmojiPicker = false
     @State private var isDropTargeted = false
+    @State private var showingAttachmentMenu = false
+    #if canImport(PhotosUI)
+    @State private var showingPhotoPicker = false
+    @State private var pickedPhotos: [PhotosPickerItem] = []
+    #endif
 
     let placeholder: String
     let isSending: Bool
@@ -692,7 +717,7 @@ struct IrisComposerBar: View {
 
             HStack(alignment: .bottom, spacing: 12) {
                 Button {
-                    showingAttachmentPicker = true
+                    presentAttachmentSource()
                 } label: {
                     Image(systemName: isUploading ? "ellipsis.circle.fill" : "paperclip")
                         .font(.system(size: 19, weight: .semibold))
@@ -770,7 +795,71 @@ struct IrisComposerBar: View {
             }
             onAttach(urls)
         }
+        .confirmationDialog("Attach", isPresented: $showingAttachmentMenu, titleVisibility: .hidden) {
+            #if canImport(PhotosUI)
+            Button("Photo Library") { showingPhotoPicker = true }
+            #endif
+            Button("Files") { showingAttachmentPicker = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        #if canImport(PhotosUI)
+        .photosPicker(
+            isPresented: $showingPhotoPicker,
+            selection: $pickedPhotos,
+            maxSelectionCount: 10,
+            matching: .any(of: [.images, .videos])
+        )
+        .irisOnChange(of: pickedPhotos) { items in
+            handlePickedPhotos(items)
+        }
+        #endif
     }
+
+    private func presentAttachmentSource() {
+        #if canImport(PhotosUI)
+        showingAttachmentMenu = true
+        #else
+        showingAttachmentPicker = true
+        #endif
+    }
+
+    #if canImport(PhotosUI)
+    private func handlePickedPhotos(_ items: [PhotosPickerItem]) {
+        guard !items.isEmpty else { return }
+        let snapshot = items
+        pickedPhotos = []
+        Task {
+            var urls: [URL] = []
+            for item in snapshot {
+                guard let url = await loadPickedPhoto(item) else { continue }
+                urls.append(url)
+            }
+            if !urls.isEmpty {
+                let captured = urls
+                await MainActor.run {
+                    onAttach(captured)
+                }
+            }
+        }
+    }
+
+    private func loadPickedPhoto(_ item: PhotosPickerItem) async -> URL? {
+        guard let data = try? await item.loadTransferable(type: Data.self) else {
+            return nil
+        }
+        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-photo-picks", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        do {
+            try data.write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+    #endif
 
     private func submitDraft() {
         guard canSend else {
