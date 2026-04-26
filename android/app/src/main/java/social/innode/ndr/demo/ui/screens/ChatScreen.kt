@@ -30,6 +30,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -202,6 +203,16 @@ fun ChatScreen(
     LaunchedEffect(chatId, unseenIncomingIds) {
         if (unseenIncomingIds.isNotEmpty()) {
             appManager.dispatch(AppAction.MarkMessagesSeen(chatId, unseenIncomingIds))
+        }
+    }
+
+    DisposableEffect(chatId) {
+        onDispose {
+            if (hasSentTyping) {
+                hasSentTyping = false
+                lastTypingSentMs = 0L
+                appManager.dispatch(AppAction.StopTyping(chatId))
+            }
         }
     }
 
