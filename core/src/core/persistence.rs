@@ -36,6 +36,11 @@ impl AppCore {
             return;
         };
 
+        // Build the serialisable snapshot on the calling thread (cheap clones)
+        // but push the JSON serialisation + fs::write to a background task.
+        // Hot UI paths (open_chat, send_message, ...) used to block on a
+        // ~few-MB JSON write, which on Android debug builds was visible as
+        // multi-second view transitions.
         let persisted = PersistedState {
             version: PERSISTED_STATE_VERSION,
             active_chat_id: self.active_chat_id.clone(),
@@ -85,11 +90,14 @@ impl AppCore {
             seen_event_ids: self.seen_event_order.iter().cloned().collect(),
             authorization_state: Some(logged_in.authorization_state.into()),
         };
-
-        if let Ok(bytes) = serde_json::to_vec_pretty(&persisted) {
-            let _ = fs::create_dir_all(&self.data_dir);
-            let _ = fs::write(self.persistence_path(), bytes);
-        }
+        let path = self.persistence_path();
+        let data_dir = self.data_dir.clone();
+        self.runtime.spawn_blocking(move || {
+            if let Ok(bytes) = serde_json::to_vec_pretty(&persisted) {
+                let _ = fs::create_dir_all(&data_dir);
+                let _ = fs::write(path, bytes);
+            }
+        });
         self.persist_debug_snapshot_best_effort();
     }
 
@@ -108,9 +116,14 @@ impl AppCore {
         if self.logged_in.is_none() {
             return;
         }
-        if let Ok(bytes) = serde_json::to_vec_pretty(&self.build_runtime_debug_snapshot()) {
-            let _ = fs::create_dir_all(&self.data_dir);
-            let _ = fs::write(self.debug_snapshot_path(), bytes);
-        }
+        let snapshot = self.build_runtime_debug_snapshot();
+        let path = self.debug_snapshot_path();
+        let data_dir = self.data_dir.clone();
+        self.runtime.spawn_blocking(move || {
+            if let Ok(bytes) = serde_json::to_vec_pretty(&snapshot) {
+                let _ = fs::create_dir_all(&data_dir);
+                let _ = fs::write(path, bytes);
+            }
+        });
     }
 }
