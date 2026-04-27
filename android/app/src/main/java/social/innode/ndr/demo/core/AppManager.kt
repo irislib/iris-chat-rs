@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import social.innode.ndr.demo.BuildConfig
 import social.innode.ndr.demo.account.AccountBootstrapState
 import social.innode.ndr.demo.account.AccountState
@@ -110,6 +111,8 @@ class AppManager(
 
     private var rust = createRustApp()
     private var rustGeneration: Long = 0
+    @Volatile
+    private var appInForeground: Boolean = false
 
     private var lastRevApplied: ULong = 0u
     private var restoreCheckComplete = false
@@ -247,7 +250,12 @@ class AppManager(
     }
 
     fun appForegrounded() {
+        appInForeground = true
         rust.dispatch(AppAction.AppForegrounded)
+    }
+
+    fun appBackgrounded() {
+        appInForeground = false
     }
 
     fun createChat(peerInput: String) {
@@ -634,6 +642,28 @@ class AppManager(
             deviceNsec = bundle.deviceNsec,
             rawPayloadJson = payloadJson,
         )
+    }
+
+    fun shouldSuppressNotificationForActiveChat(
+        resolution: social.innode.ndr.demo.rust.MobilePushNotificationResolution,
+    ): Boolean {
+        if (!appInForeground || !resolution.shouldShow) {
+            return false
+        }
+        val activeChatId = mutableState.value.currentChat?.chatId?.trim()?.lowercase()
+            ?: return false
+        if (activeChatId.isEmpty()) {
+            return false
+        }
+
+        val payload = runCatching { JSONObject(resolution.payloadJson) }.getOrNull()
+            ?: return false
+        return listOf(
+            payload.optString("group_id"),
+            payload.optString("sender_pubkey"),
+        ).any { candidate ->
+            candidate.trim().lowercase() == activeChatId
+        }
     }
 
     private suspend fun persistBundle(bundle: StoredAccountBundle) {

@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         Log.d(TAG, "onStop")
+        container.appManager.appBackgrounded()
         super.onStop()
     }
 

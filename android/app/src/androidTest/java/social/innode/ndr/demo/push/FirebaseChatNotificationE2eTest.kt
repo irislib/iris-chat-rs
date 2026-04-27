@@ -86,6 +86,37 @@ class FirebaseChatNotificationE2eTest {
     }
 
     @Test
+    fun wait_for_active_chat_push_suppression() {
+        val expectedBody = requiredArg("message")
+        val timeoutMs = arguments.getString("timeout_ms")?.toLongOrNull() ?: 120_000L
+        val snapshot =
+            waitForSnapshot("active-chat push suppression", timeoutMs) {
+                val candidate = PushNotificationProbe.snapshot(context)
+                if (candidate.optString("error").isNotEmpty()) {
+                    throw AssertionError("Push notification resolution failed: ${candidate.optString("error")}")
+                }
+                if (candidate.optString("body") != expectedBody) {
+                    return@waitForSnapshot null
+                }
+                if (candidate.optString("blocked_reason") != "active_chat_open") {
+                    return@waitForSnapshot null
+                }
+                if (activeNotificationSnapshots().any { it.body == expectedBody }) {
+                    throw AssertionError("Expected no active Android notification for open chat body `$expectedBody`")
+                }
+                candidate
+            }
+
+        reportStatus(
+            "suppressed" to "true",
+            "blocked_reason" to snapshot.optString("blocked_reason"),
+            "title" to snapshot.optString("title"),
+            "body" to snapshot.optString("body"),
+            "snapshot" to snapshot.toString(),
+        )
+    }
+
+    @Test
     fun wait_for_firebase_chat_notifications() {
         val expectedBodies = jsonStringArray(requiredArg("messages_json"))
         val expectedTitle = optionalArg("expected_title")

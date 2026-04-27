@@ -39,6 +39,11 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "FCM message suppressed by resolver")
             return
         }
+        if (appManager?.shouldSuppressNotificationForActiveChat(resolution) == true) {
+            Log.d(TAG, "FCM message suppressed because matching chat is open")
+            PushNotificationProbe.recordNotificationBlocked(this, "active_chat_open")
+            return
+        }
         MobilePushNotifier.show(this, resolution)
     }
 

@@ -915,6 +915,56 @@ class RealRelayHarnessTest {
         )
     }
 
+    /**
+     * Verifies the foreground Android notification gate with the same
+     * decrypted payload the FCM path uses. The ActivityScenario rule keeps
+     * the app foregrounded; opening the matching chat should therefore
+     * suppress the notification, while background/killed app delivery still
+     * falls through to the normal notifier.
+     */
+    @Test
+    fun suppress_notification_for_open_chat_from_args() {
+        ensureLoggedIn()
+        val outerEventJson = requiredArg("outer_event_json")
+        val expectedBody = requiredArg("expected_body")
+        val chatId = requiredArg("chat_id")
+
+        val openChat = ensureChatOpenById(chatId)
+        val payload = JSONObject().apply {
+            put("event", outerEventJson)
+            put("sender_name", "Iris Chat")
+            put("title", "New message")
+            put("body", "New activity")
+        }.toString()
+
+        val resolution =
+            kotlinx.coroutines.runBlocking {
+                appManager().decryptOrResolveNotificationPayload(payload)
+            }
+
+        if (!resolution.shouldShow) {
+            fail("Notification resolver suppressed before active-chat gate: ${resolution.payloadJson}")
+        }
+        if (resolution.body != expectedBody) {
+            fail(
+                "Notification body did not match decrypted plaintext. " +
+                    "expected=`$expectedBody` got=`${resolution.body}` payload=${resolution.payloadJson}",
+            )
+        }
+        if (!appManager().shouldSuppressNotificationForActiveChat(resolution)) {
+            fail(
+                "Expected active chat `${openChat.chatId}` to suppress notification. " +
+                    "Resolution payload=${resolution.payloadJson}",
+            )
+        }
+
+        reportStatus(
+            "chat_id" to openChat.chatId,
+            "body" to resolution.body,
+            "suppressed" to "true",
+        )
+    }
+
 /**
      * Strict variant of [wait_for_message_from_args]. The other helper falls
      * back to opening the matching chat from the chat list when the message
