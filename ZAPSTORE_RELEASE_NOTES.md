@@ -1,8 +1,25 @@
-# Iris Chat 2.6.29
+# Iris Chat 2.6.30
 
-Push notifications now show the decrypted message + sender name.
+Test infrastructure fixes that block running the matrix smokes.
 
-- Android `IrisFirebaseMessagingService` and the new iOS Notification Service Extension run the encrypted Nostr event from `payload['event']` through the persisted double-ratchet state and render the system notification with the sender's display name (or "<sender> in <group>") as the title and the plaintext message as the body — instead of the generic "New activity" placeholder. Falls back to the original payload when keys aren't available.
-- iOS bundle id moves to `to.iris.chat` (matching iris-chat-flutter), Apple dev team `J8PPJKD7TA`. Shared App Group `group.to.iris.chat` and shared Keychain Access Group `to.iris.chat` so the NSE can read the same persisted state the foreground app writes; legacy `Application Support/iris-chat` migrates to the App Group container on first launch.
-- New Android e2e in `RealRelayHarnessTest`: `decrypt_notification_payload_from_args` (feeds a captured kind:1060 wrapper through `AppManager.decryptOrResolveNotificationPayload` and asserts title + body), plus `update_profile_metadata_from_args` and `wait_for_peer_profile_name_from_args` for setting + observing a peer's display name across devices. Driven by `scripts/notification_decrypt_e2e.sh` against any two adb devices already online (no AVD auto-spawn) using the local relay.
-- `direct_chat_live_update_smoke.sh` no longer requires a specific AVD pair; it picks up whatever two devices are online and overrides via `DEVICE_A_SERIAL` / `DEVICE_B_SERIAL`. Also mirrors the matrix harness pattern of using `pm clear` + inline session bootstrap rather than explicit `wait_for_peer_transport_ready`.
+- `RealRelayHarnessTest.matchesPeerInput` couldn't find existing direct
+  chats by npub since `bdd3695` ("hide raw user ids") stopped exposing
+  the peer's npub in the chat-thread `subtitle`. The hex `chatId` never
+  matched the npub-form `normalizePeerInput` returned. Add a new
+  `peerInputToHex` FFI helper and use it for the comparison so the
+  harness recognises existing chats again.
+- Two new strict harness methods (`decrypt_notification_payload_from_args`,
+  `wait_for_incoming_message_in_open_chat_strict_from_args`) were
+  reading args directly via `arguments.getString(...)` but the harness
+  base64-encodes everything as `<name>_b64`. Switch to the existing
+  `requiredArg` / `optionalArg` helpers so the tests actually receive
+  their inputs.
+- `direct_chat_live_update_smoke.sh` and `notification_decrypt_e2e.sh`
+  now parse `am instrument`'s output for `FAILURES!!!` /
+  `INSTRUMENTATION_STATUS_CODE: -[0-9]` markers — `adb shell am
+  instrument` returns 0 even when tests fail, so without this the
+  smoke printed "passed" when the underlying test failed.
+
+Carries forward the 2.6.29 work: notification decryption with sender +
+group name on Android and iOS, App Group / shared-keychain layout for
+the iOS Notification Service Extension, bundle id `to.iris.chat`.
