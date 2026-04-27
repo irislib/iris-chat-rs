@@ -244,6 +244,26 @@ final class AppManager: ObservableObject {
         rust.dispatch(action: action)
     }
 
+    func handleChatLink(_ url: URL) {
+        guard url.scheme?.lowercased() == "https",
+              url.host?.lowercased() == "chat.iris.to" else {
+            return
+        }
+
+        if isInviteChatLink(url) {
+            rust.dispatch(action: .acceptInvite(inviteInput: url.absoluteString))
+            return
+        }
+
+        for candidate in chatLinkPeerCandidates(url) {
+            let normalized = normalizePeerInput(input: candidate)
+            if !normalized.isEmpty, isValidPeerInput(input: normalized) {
+                rust.dispatch(action: .createChat(peerInput: normalized))
+                return
+            }
+        }
+    }
+
     func setStartupAtLoginEnabled(_ enabled: Bool) {
         do {
             try PlatformStartupAtLogin.setEnabled(enabled)
@@ -697,6 +717,49 @@ final class AppManager: ObservableObject {
             }
         }
     }
+}
+
+private func isInviteChatLink(_ url: URL) -> Bool {
+    if url.pathComponents.dropFirst().first?.lowercased() == "invite",
+       url.pathComponents.count >= 3 {
+        return true
+    }
+
+    let fragmentComponents = chatLinkFragmentComponents(url)
+    return fragmentComponents.first?.lowercased() == "invite" && fragmentComponents.count >= 2
+}
+
+private func chatLinkPeerCandidates(_ url: URL) -> [String] {
+    var candidates: [String] = []
+
+    if let lastPathComponent = url.pathComponents.last,
+       lastPathComponent != "/" {
+        candidates.append(lastPathComponent)
+    }
+
+    if let firstFragmentComponent = chatLinkFragmentComponents(url).first {
+        candidates.append(firstFragmentComponent)
+    }
+
+    if let fragment = url.fragment,
+       !fragment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        candidates.append(fragment)
+    }
+
+    return candidates
+}
+
+private func chatLinkFragmentComponents(_ url: URL) -> [String] {
+    guard let fragment = url.fragment else {
+        return []
+    }
+
+    return fragment
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .drop(while: { $0 == "/" })
+        .split(separator: "/")
+        .map(String.init)
+        .filter { !$0.isEmpty }
 }
 
 final class UpdateBridge: NSObject, AppReconciler, @unchecked Sendable {

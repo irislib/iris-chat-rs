@@ -10,6 +10,15 @@ struct IrisChatApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(manager: manager)
+                .onOpenURL { url in
+                    manager.handleChatLink(url)
+                }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    guard let url = activity.webpageURL else {
+                        return
+                    }
+                    manager.handleChatLink(url)
+                }
         }
     }
 }
