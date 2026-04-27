@@ -914,8 +914,13 @@ class RealRelayHarnessTest {
     fun wait_for_incoming_message_in_open_chat_strict_from_args() {
         ensureLoggedIn()
         val expectedMessage = requiredArg("message")
-        val peerInput = arguments.getString("peer_input").orEmpty()
-        val expectedChatId = arguments.getString("chat_id").orEmpty().takeIf { it.isNotBlank() }
+        // Args go through run_harness.py which base64-encodes everything
+        // under `<name>_b64`, so use the helpers (`optionalArg` /
+        // `requiredArg`) — `arguments.getString("peer_input")` is always
+        // null here. This was breaking the strict variant on first run
+        // even though the smoke was passing the args correctly.
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val expectedChatId = optionalArg("chat_id")?.takeIf { it.isNotBlank() }
         val timeoutMs = optionalArg("timeout_ms")?.toLong() ?: 180_000L
 
         val seededChat =

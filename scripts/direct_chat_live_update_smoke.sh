@@ -92,7 +92,15 @@ run_test() {
     cmd+=(--arg "$1=$2")
     shift 2
   done
-  "${cmd[@]}"
+  local output
+  output="$("${cmd[@]}")"
+  printf '%s\n' "${output}"
+  # `adb shell am instrument` returns 0 even when tests fail, so the
+  # only way to surface the failure to the surrounding script is to
+  # parse the instrumentation output for the standard markers.
+  if printf '%s\n' "${output}" | grep -Eq '^(FAILURES!!!|INSTRUMENTATION_STATUS_CODE: -[0-9]|Error in )'; then
+    return 1
+  fi
 }
 
 extract_status() {

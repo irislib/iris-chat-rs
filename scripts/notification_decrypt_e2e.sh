@@ -71,7 +71,12 @@ run_test() {
     --arg "clearPackageData=false"
   )
   while [[ $# -gt 0 ]]; do cmd+=(--arg "$1=$2"); shift 2; done
-  "${cmd[@]}"
+  local output
+  output="$("${cmd[@]}")"
+  printf '%s\n' "${output}"
+  if printf '%s\n' "${output}" | grep -Eq '^(FAILURES!!!|INSTRUMENTATION_STATUS_CODE: -[0-9]|Error in )'; then
+    return 1
+  fi
 }
 extract_status() { sed -n "s/^INSTRUMENTATION_STATUS: $1=//p" | tail -n 1; }
 require_value() { [[ -n "$2" ]] || { echo "missing $1" >&2; exit 1; }; }
