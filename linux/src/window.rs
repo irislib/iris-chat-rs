@@ -5,8 +5,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use gtk::glib;
 use ndr_demo_core::{
-    proxied_image_url, AppAction, AppState, AppUpdate, ChatThreadSnapshot, CurrentChatSnapshot,
-    Screen,
+    proxied_image_url, AccountSnapshot, AppAction, AppState, AppUpdate, ChatThreadSnapshot,
+    CurrentChatSnapshot, Screen,
 };
 
 use crate::app_manager::AppManager;
@@ -60,7 +60,9 @@ pub fn build_ui(app: &adw::Application) {
     }
     header.pack_end(&new_chat_button);
 
-    let settings_button = gtk::Button::from_icon_name("preferences-system-symbolic");
+    let settings_button = gtk::Button::new();
+    settings_button.add_css_class("flat");
+    settings_button.add_css_class("circular");
     settings_button.set_tooltip_text(Some("Settings"));
     settings_button.set_visible(false);
     {
@@ -220,9 +222,16 @@ fn apply_state(
     header
         .new_chat
         .set_visible(matches!(screen, Screen::ChatList));
-    header
-        .settings
-        .set_visible(matches!(screen, Screen::ChatList));
+    let show_settings =
+        matches!(screen, Screen::ChatList) && state.account.is_some();
+    header.settings.set_visible(show_settings);
+    if show_settings {
+        if let Some(account) = state.account.as_ref() {
+            header.settings.set_child(Some(&build_own_avatar(account, state)));
+        }
+    } else {
+        header.settings.set_child(gtk::Widget::NONE);
+    }
     header
         .chat_info
         .set_visible(matches!(screen, Screen::Chat { .. }));
@@ -262,6 +271,28 @@ fn apply_state(
     clamp.set_child(Some(&widget));
     clamp.set_vexpand(true);
     slot.append(&clamp);
+}
+
+fn build_own_avatar(account: &AccountSnapshot, state: &AppState) -> gtk::Widget {
+    let label = if account.display_name.is_empty() {
+        account.npub.as_str()
+    } else {
+        account.display_name.as_str()
+    };
+    let avatar = adw::Avatar::new(28, Some(label), true);
+    if let Some(url) = account.picture_url.as_deref() {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let proxied = proxied_image_url(
+                url.to_string(),
+                state.preferences.clone(),
+                Some(56),
+                Some(56),
+                true,
+            );
+            image_cache::fetch_into_avatar(&avatar, &proxied);
+        }
+    }
+    avatar.upcast()
 }
 
 fn build_chat_header_avatar(chat: &CurrentChatSnapshot, state: &AppState) -> gtk::Widget {
