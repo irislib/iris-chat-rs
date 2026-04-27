@@ -245,10 +245,11 @@ fn apply_state(
             attach_chat_title_click(&header.title_slot, manager, chat);
         }
     } else {
-        // Detach any leftover click controller from previous chat header.
         for ctrl in header.title_slot.observe_controllers().into_iter().flatten() {
-            if ctrl.is::<gtk::GestureClick>() {
-                header.title_slot.remove_controller(&ctrl);
+            if let Ok(ev) = ctrl.downcast::<gtk::EventController>() {
+                if ev.is::<gtk::GestureClick>() {
+                    header.title_slot.remove_controller(&ev);
+                }
             }
         }
     }
@@ -285,10 +286,11 @@ fn attach_chat_title_click(
     manager: &Rc<AppManager>,
     chat: &CurrentChatSnapshot,
 ) {
-    // Drop any prior click controller.
     for ctrl in slot.observe_controllers().into_iter().flatten() {
-        if ctrl.is::<gtk::GestureClick>() {
-            slot.remove_controller(&ctrl);
+        if let Ok(ev) = ctrl.downcast::<gtk::EventController>() {
+            if ev.is::<gtk::GestureClick>() {
+                slot.remove_controller(&ev);
+            }
         }
     }
     let gesture = gtk::GestureClick::new();

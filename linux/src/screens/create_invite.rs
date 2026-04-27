@@ -24,22 +24,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     if let Some(invite) = state.public_invite.as_ref() {
         container.append(&qr::build(&invite.url, 240));
 
-        let url = gtk::Label::new(Some(&invite.url));
-        url.add_css_class("monospace");
-        url.add_css_class("dim-label");
-        url.add_css_class("caption");
-        url.set_wrap(true);
-        url.set_wrap_mode(gtk::pango::WrapMode::Char);
-        url.set_max_width_chars(36);
-        url.set_width_chars(36);
-        url.set_lines(3);
-        url.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        url.set_selectable(true);
-        url.set_xalign(0.5);
-        url.set_halign(gtk::Align::Center);
-        container.append(&url);
-
-        let copy = primary_button("Copy");
+        let copy = primary_button("Copy link");
         copy.set_halign(gtk::Align::Center);
         copy.set_width_request(220);
         let invite_url = invite.url.clone();
