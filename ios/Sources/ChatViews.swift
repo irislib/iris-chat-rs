@@ -438,6 +438,7 @@ private struct ChatMessageRow: View {
     let onOpenImage: (Data, String) -> Void
 
     @State private var isHovering = false
+    @State private var showReactionPicker = false
 
     private var isMobileActionDockOpen: Bool {
         activeActionDockMessageId == message.id
@@ -566,12 +567,24 @@ private struct ChatMessageRow: View {
                     }
                     .contextMenu {
                         Button("Reply", action: onReply)
-                        Button("React 👍") { onReact("👍") }
-                        Button("React ❤️") { onReact("❤️") }
+                        Button("React") {
+                            showReactionPicker = true
+                        }
                         Button("Copy") {
                             PlatformClipboard.setString(copyableMessageText(message))
                         }
                         Button("Delete locally", role: .destructive, action: onDelete)
+                    }
+                    .popover(isPresented: $showReactionPicker, arrowEdge: .top) {
+                        let picker = IrisEmojiPicker { emoji in
+                            showReactionPicker = false
+                            onReact(emoji)
+                        }
+                        if #available(iOS 16.4, macOS 13.3, *) {
+                            picker.presentationCompactAdaptation(.popover)
+                        } else {
+                            picker
+                        }
                     }
                     .accessibilityIdentifier("chatMessage-\(message.id)")
 
@@ -719,7 +732,7 @@ private struct ChatMessageActionDock: View {
             Button {
                 showEmojiPicker = true
             } label: {
-                Image(systemName: "face.smiling.fill")
+                Image(systemName: "face.smiling")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 26, height: 24)
             }
@@ -735,7 +748,7 @@ private struct ChatMessageActionDock: View {
                     picker
                 }
             }
-            dockButton("arrowshape.turn.up.left.fill", action: onReply)
+            dockButton("arrowshape.turn.up.left", action: onReply)
             Menu {
                 Button("Message info", action: onCopyInfo)
                 Button("Delete message", role: .destructive, action: onDelete)
