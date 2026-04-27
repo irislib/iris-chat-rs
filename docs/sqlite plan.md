@@ -4,11 +4,11 @@
 
 SQLite is a good fit for the Rust core. It should work on every native platform this repo currently ships:
 
-- Android: `cargo ndk -t arm64-v8a -P 26` builds the Rust core into the APK. A bundled SQLite or bundled SQLCipher build avoids depending on the Android framework SQLite version.
+- Android: `cargo ndk -t arm64-v8a -P 26` builds the Rust core into the APK. Bundled SQLite avoids depending on the Android framework SQLite version.
 - iOS: the core already builds static libraries for `aarch64-apple-ios` and `aarch64-apple-ios-sim`. Bundled SQLite builds with the same clang setup as the rest of the Rust static library.
 - macOS: the current arm64 build, and optional x86_64 build, can use the same Rust dependency.
 - Linux: the Docker release path can build bundled SQLite without relying on distro SQLite features.
-- Windows: the MSVC target can build bundled SQLite. SQLCipher with vendored OpenSSL is feasible but needs a Windows build spike because it adds C toolchain and OpenSSL build requirements.
+- Windows: the MSVC target can build bundled SQLite.
 
 The caveat is Web/WASM: this project has no browser target today. If a browser build becomes real, it should use a separate storage backend such as SQLite WASM/OPFS or IndexedDB, behind the same storage interface.
 
@@ -18,13 +18,12 @@ Recommended dependency shape:
 [features]
 default = ["sqlite-bundled"]
 sqlite-bundled = ["rusqlite/bundled"]
-sqlite-sqlcipher = ["rusqlite/bundled-sqlcipher-vendored-openssl"]
 
 [dependencies]
 rusqlite = { version = "0.39", default-features = false, features = ["backup", "hooks", "limits", "serde_json"] }
 ```
 
-For production, prefer the SQLCipher feature if the cross-platform build spike is clean. If SQLCipher becomes too heavy for first landing, ship plain bundled SQLite only with a deliberate at-rest encryption decision and a short follow-up task, not by accident.
+Use plain bundled SQLite. Do not add SQLCipher for the first production storage pass.
 
 ## Signal Android Takeaways
 
@@ -67,12 +66,12 @@ Useful local reference files in `~/src/Signal-iOS`:
 
 Patterns worth copying conceptually:
 
-- GRDB plus SQLCipher is their iOS production stack, so the iOS reference agrees with the Android reference: encrypted SQLite is the mature path for local message storage.
-- The database key is created and stored in keychain, and database open fails when protected keychain data is unavailable. Our notification-service design must make that failure mode explicit.
+- GRDB plus SQLCipher is their iOS production stack, so the iOS reference agrees with the Android reference that encrypted SQLite is a mature option. We are intentionally not copying that part for this app.
+- Their database key is created and stored in keychain, and database open fails when protected keychain data is unavailable. Skipping SQLCipher avoids that extra notification-service failure mode.
 - They separate schema migrations from data migrations. Even greenfield, this is a useful discipline: schema changes should be fast and required; data backfills can be resumable/lazy.
 - They reopen the database pool after schema migrations. In Rust we probably have one core-owned connection, but if we add read pools later, stale pooled connections after DDL are a real concern.
 - They actively manage WAL growth with truncating checkpoints outside write transactions.
-- They expose quick check, cipher integrity check, FTS integrity/rebuild, and FTS merge/optimize utilities as normal maintenance operations.
+- They expose quick check, FTS integrity/rebuild, and FTS merge/optimize utilities as normal maintenance operations. The cipher integrity check is specific to their SQLCipher setup and is not needed here.
 - Extensions and the main app coordinate around database path/changes. Our current notification preview path is read-only, but if future extensions write, cross-process coordination becomes a first-class requirement.
 
 ## Greenfield Decision
@@ -83,8 +82,20 @@ Treat SQLite as the first durable storage format:
 - Do not migrate `data_dir/ndr_runtime/*`.
 - It is acceptable to remove or ignore existing local development state when the SQLite store lands.
 - Keep native secure stores for secrets, but move ordinary app state, messages, relay event dedupe, and NDR runtime key-value state into SQLite.
+- Do not encrypt the SQLite database with SQLCipher. Rely on OS disk encryption, app sandboxing, and keeping app data out of backups/support bundles.
 
 The Rust core remains authoritative. Android, iOS, macOS, Linux, and Windows shells should keep passing `data_dir` and secure restore inputs over UniFFI; they should not query or mutate the SQLite database directly.
+
+## Local Encryption Stance
+
+SQLCipher is intentionally out of scope. A local database key stored on the same device does not protect message history from a live compromised device, which is the main realistic compromise case. It mostly protects copied database files when the key is not copied with them, but it adds build complexity, key-management failure modes, notification-extension edge cases, and performance cost.
+
+This project should instead:
+
+- Keep account/device secrets in Android Keystore, iOS/macOS Keychain, Windows Credential Manager, and equivalent desktop secure stores.
+- Exclude app data from cloud/device backups where the platform allows it.
+- Keep support bundles redacted and never include message bodies, ratchet state, or raw database files by default.
+- Revisit database encryption only if we later need protection against offline file-copy attacks beyond what OS disk encryption and app sandboxing provide.
 
 ## Storage Layout
 
@@ -99,8 +110,6 @@ data_dir/
   support/
 ```
 
-If SQLCipher is enabled, the database key should come from native secure storage. Because this is greenfield, extend the existing stored account bundle with a random `database_key_hex` generated once per install/account. The same key must be available to the Android FCM service and iOS notification service extension if they need read-only notification preview decrypts.
-
 Open-time PRAGMAs:
 
 ```sql
@@ -112,16 +121,6 @@ PRAGMA secure_delete = ON;
 ```
 
 Choose `PRAGMA synchronous = NORMAL` or `FULL` deliberately after the build spike. `NORMAL` is usually the mobile WAL default for performance; `FULL` is safer for power-loss durability. Ratchet state and outbox commits should be tested under whichever mode we choose.
-
-SQLCipher-only open sequence:
-
-```sql
-PRAGMA key = "x'<database_key_hex>'";
-PRAGMA cipher_page_size = 4096;
-PRAGMA kdf_iter = 256000;
-```
-
-Do not copy Signal's low KDF iteration values; those are legacy compatibility choices in that codebase.
 
 ## Rust Module Shape
 
@@ -139,7 +138,7 @@ core/src/storage/
 
 Responsibilities:
 
-- `connection.rs`: open database, apply PRAGMAs, set SQLCipher key if enabled, run quick integrity checks in debug/test builds.
+- `connection.rs`: open database, apply PRAGMAs, run quick integrity checks in debug/test builds.
 - `schema.rs`: create schema and apply numbered migrations. Since this is greenfield, version 1 can be the complete initial schema.
 - `store.rs`: app-level read/write methods used by `AppCore`.
 - `ndr_storage.rs`: SQLite-backed implementation of `nostr_double_ratchet::StorageAdapter`.
@@ -332,7 +331,7 @@ FTS should be maintained by insert/update/delete triggers or by explicit rebuild
 ## Code Change Plan
 
 1. Build spike.
-   Add `rusqlite` behind the feature layout above. Verify `cargo test`, Android `buildRustAndroidDebug`, iOS `ios-rust`, macOS `macos-rust`, Linux release Docker, and Windows `windows-rust`. Do this once with plain bundled SQLite and once with SQLCipher before committing to encryption in default builds.
+   Add `rusqlite` behind the feature layout above. Verify `cargo test`, Android `buildRustAndroidDebug`, iOS `ios-rust`, macOS `macos-rust`, Linux release Docker, and Windows `windows-rust`.
 
 2. Add storage module.
    Implement opening, PRAGMAs, schema versioning, transaction helper, enum conversions, and integrity-check helpers. Add unit tests that use real tempdir SQLite files.
@@ -368,7 +367,6 @@ Use real SQLite files in tempdirs, not mocks.
 - Outbox test: queued local event survives restart and can be marked published.
 - Expiring message test: expiry query removes messages and updates thread summaries.
 - Integrity test: `PRAGMA quick_check` returns `ok` for normal DBs.
-- SQLCipher test, if enabled: opening without the key fails, opening with the key succeeds.
 
 Native confidence lanes:
 
@@ -395,4 +393,4 @@ Native confidence lanes:
 - Restart restores chats, groups, preferences, seen-event dedupe, and ratchet state from SQLite.
 - Notification preview decrypt remains read-only with respect to ratchet state.
 - Tests cover real restart behavior and transaction atomicity.
-- The chosen encryption stance is explicit and verified on every release target.
+- Plain SQLite is the explicit storage decision; SQLCipher is not part of the build.
