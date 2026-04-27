@@ -7,6 +7,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.testTag
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -95,6 +96,8 @@ fun IrisTopBar(
     backBadgeCount: ULong = 0uL,
     leading: (@Composable RowScope.() -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
+    titleAccessoryLeading: (@Composable () -> Unit)? = null,
+    onTitleClick: (() -> Unit)? = null,
 ) {
     val palette = IrisTheme.palette
     Surface(
@@ -156,12 +159,29 @@ fun IrisTopBar(
                 }
             }
 
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-            )
+            Row(
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .let { base ->
+                            if (onTitleClick != null) {
+                                base
+                                    .clickable(onClick = onTitleClick)
+                                    .testTag("chatHeaderTitleButton")
+                            } else {
+                                base
+                            }
+                        },
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                titleAccessoryLeading?.invoke()
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
 
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),

@@ -133,6 +133,8 @@ struct IrisTopBar: View {
     let backBadgeCount: UInt64
     let leading: AnyView
     let trailing: AnyView
+    let titleAccessoryLeading: AnyView
+    let onTitleTap: (() -> Void)?
 
     init(
         title: String,
@@ -140,7 +142,9 @@ struct IrisTopBar: View {
         onBack: @escaping () -> Void,
         backBadgeCount: UInt64 = 0,
         leading: AnyView = AnyView(EmptyView()),
-        trailing: AnyView = AnyView(EmptyView())
+        trailing: AnyView = AnyView(EmptyView()),
+        titleAccessoryLeading: AnyView = AnyView(EmptyView()),
+        onTitleTap: (() -> Void)? = nil
     ) {
         self.title = title
         self.canGoBack = canGoBack
@@ -148,6 +152,19 @@ struct IrisTopBar: View {
         self.backBadgeCount = backBadgeCount
         self.leading = leading
         self.trailing = trailing
+        self.titleAccessoryLeading = titleAccessoryLeading
+        self.onTitleTap = onTitleTap
+    }
+
+    @ViewBuilder
+    private var titleContent: some View {
+        HStack(spacing: 8) {
+            titleAccessoryLeading
+            Text(title)
+                .font(.system(.title3, design: .rounded, weight: .bold))
+                .lineLimit(1)
+                .foregroundStyle(palette.textPrimary)
+        }
     }
 
     var body: some View {
@@ -186,11 +203,18 @@ struct IrisTopBar: View {
                     .frame(minWidth: 44, alignment: .leading)
             }
 
-            Text(title)
-                .font(.system(.title3, design: .rounded, weight: .bold))
-                .lineLimit(1)
-                .foregroundStyle(palette.textPrimary)
-                .frame(maxWidth: .infinity, alignment: .center)
+            Group {
+                if let onTitleTap {
+                    Button(action: onTitleTap) {
+                        titleContent
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chatHeaderTitleButton")
+                } else {
+                    titleContent
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
 
             trailing
                 .frame(minWidth: 44, alignment: .trailing)

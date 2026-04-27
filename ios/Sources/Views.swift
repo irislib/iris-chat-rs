@@ -83,7 +83,9 @@ struct RootView: View {
                         onBack: manager.navigateBack,
                         backBadgeCount: backUnreadCount,
                         leading: topBarLeadingItem,
-                        trailing: topBarTrailingItem
+                        trailing: topBarTrailingItem,
+                        titleAccessoryLeading: chatHeaderTitleAvatar,
+                        onTitleTap: chatHeaderOnTap
                     ) {
                         content
                     }
@@ -199,6 +201,33 @@ struct RootView: View {
             .reduce(UInt64(0)) { $0 + $1.unreadCount }
     }
 
+    private var chatHeaderTitleAvatar: AnyView {
+        guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
+            return AnyView(EmptyView())
+        }
+        return AnyView(
+            IrisAvatar(
+                label: chat.displayName,
+                size: 30,
+                pictureUrl: chat.pictureUrl,
+                preferences: manager.state.preferences,
+                manager: manager
+            )
+        )
+    }
+
+    private var chatHeaderOnTap: (() -> Void)? {
+        guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
+            return nil
+        }
+        guard let groupId = chat.groupId else {
+            return nil
+        }
+        return { [weak manager] in
+            manager?.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
+        }
+    }
+
     private func screenTitle(_ screen: Screen) -> String {
         switch screen {
         case .welcome: return "Welcome"
@@ -232,6 +261,8 @@ struct NavigationShell<Content: View>: View {
     let backBadgeCount: UInt64
     let leading: AnyView
     let trailing: AnyView
+    let titleAccessoryLeading: AnyView
+    let onTitleTap: (() -> Void)?
     let content: () -> Content
 
     init(
@@ -241,6 +272,8 @@ struct NavigationShell<Content: View>: View {
         backBadgeCount: UInt64 = 0,
         leading: AnyView = AnyView(EmptyView()),
         trailing: AnyView = AnyView(EmptyView()),
+        titleAccessoryLeading: AnyView = AnyView(EmptyView()),
+        onTitleTap: (() -> Void)? = nil,
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
@@ -249,6 +282,8 @@ struct NavigationShell<Content: View>: View {
         self.backBadgeCount = backBadgeCount
         self.leading = leading
         self.trailing = trailing
+        self.titleAccessoryLeading = titleAccessoryLeading
+        self.onTitleTap = onTitleTap
         self.content = content
     }
 
@@ -260,7 +295,9 @@ struct NavigationShell<Content: View>: View {
                 onBack: onBack,
                 backBadgeCount: backBadgeCount,
                 leading: leading,
-                trailing: trailing
+                trailing: trailing,
+                titleAccessoryLeading: titleAccessoryLeading,
+                onTitleTap: onTitleTap
             )
 
             content()
@@ -315,6 +352,13 @@ private struct DesktopChatShell: View {
             DesktopPaneTopBar(
                 title: chat?.displayName ?? "Chat",
                 subtitle: chat?.subtitle,
+                onTitleTap: chat.map { current in
+                    {
+                        if let groupId = current.groupId {
+                            manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
+                        }
+                    }
+                },
                 leading: chat.map { current in
                     AnyView(
                         IrisAvatar(
@@ -359,6 +403,7 @@ private struct DesktopPaneTopBar: View {
     let subtitle: String?
     let canGoBack: Bool
     let onBack: () -> Void
+    let onTitleTap: (() -> Void)?
     let leading: AnyView
     let trailing: AnyView
 
@@ -367,6 +412,7 @@ private struct DesktopPaneTopBar: View {
         subtitle: String? = nil,
         canGoBack: Bool = false,
         onBack: @escaping () -> Void = {},
+        onTitleTap: (() -> Void)? = nil,
         leading: AnyView = AnyView(EmptyView()),
         trailing: AnyView = AnyView(EmptyView())
     ) {
@@ -374,8 +420,30 @@ private struct DesktopPaneTopBar: View {
         self.subtitle = subtitle
         self.canGoBack = canGoBack
         self.onBack = onBack
+        self.onTitleTap = onTitleTap
         self.leading = leading
         self.trailing = trailing
+    }
+
+    @ViewBuilder
+    private var titleStack: some View {
+        HStack(spacing: 10) {
+            leading
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineLimit(1)
+
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
+            }
+        }
     }
 
     var body: some View {
@@ -391,20 +459,12 @@ private struct DesktopPaneTopBar: View {
                 .accessibilityIdentifier("desktopPaneBackButton")
             }
 
-            leading
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.textPrimary)
-                    .lineLimit(1)
-
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(palette.muted)
-                        .lineLimit(1)
-                }
+            if let onTitleTap {
+                Button(action: onTitleTap) { titleStack }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("chatHeaderTitleButton")
+            } else {
+                titleStack
             }
 
             Spacer(minLength: 12)

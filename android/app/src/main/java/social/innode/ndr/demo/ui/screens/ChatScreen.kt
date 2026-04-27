@@ -63,6 +63,8 @@ import social.innode.ndr.demo.rust.ChatMessageSnapshot
 import social.innode.ndr.demo.rust.DeliveryState
 import social.innode.ndr.demo.rust.OutgoingAttachment
 import social.innode.ndr.demo.rust.Screen
+import social.innode.ndr.demo.rust.proxiedImageUrl
+import social.innode.ndr.demo.ui.components.IrisAvatar
 import social.innode.ndr.demo.ui.components.IrisIcons
 import social.innode.ndr.demo.ui.components.IrisTopBar
 import social.innode.ndr.demo.ui.components.formatTimelineDay
@@ -220,6 +222,7 @@ fun ChatScreen(
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
+            val chatHeaderAvatarBytes by rememberNhashImageData(appManager, chat?.pictureUrl)
             IrisTopBar(
                 title =
                     when {
@@ -233,6 +236,37 @@ fun ChatScreen(
                     )
                 },
                 backBadgeCount = backUnreadCount,
+                titleAccessoryLeading =
+                    if (chat != null) {
+                        {
+                            IrisAvatar(
+                                label = chat.displayName,
+                                size = 36.dp,
+                                emphasize = false,
+                                imageUrl =
+                                    chat.pictureUrl
+                                        ?.takeIf {
+                                            it.startsWith("http://") || it.startsWith("https://")
+                                        }
+                                        ?.let { url ->
+                                            proxiedImageUrl(
+                                                originalSrc = url,
+                                                preferences = appState.preferences,
+                                                width = 72u,
+                                                height = 72u,
+                                                square = true,
+                                            )
+                                        },
+                                imageData = chatHeaderAvatarBytes,
+                            )
+                        }
+                    } else {
+                        null
+                    },
+                onTitleClick =
+                    chat?.groupId?.let { groupId ->
+                        { appManager.pushScreen(Screen.GroupDetails(groupId)) }
+                    },
                 actions = {
                     val groupId = chat?.groupId
                     if (chat != null) {

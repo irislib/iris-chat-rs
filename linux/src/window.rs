@@ -4,11 +4,15 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
-use ndr_demo_core::{AppAction, AppState, AppUpdate, ChatThreadSnapshot, Screen};
+use ndr_demo_core::{
+    proxied_image_url, AppAction, AppState, AppUpdate, ChatThreadSnapshot, CurrentChatSnapshot,
+    Screen,
+};
 
 use crate::app_manager::AppManager;
 use crate::platform::notifications;
 use crate::screens;
+use crate::widgets::image_cache;
 
 const APP_ID: &str = "to.iris.chat";
 
@@ -25,7 +29,10 @@ pub fn build_ui(app: &adw::Application) {
     let header = adw::HeaderBar::new();
     let title_label = gtk::Label::new(None);
     title_label.add_css_class("heading");
-    header.set_title_widget(Some(&title_label));
+    let title_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    title_slot.set_valign(gtk::Align::Center);
+    title_slot.append(&title_label);
+    header.set_title_widget(Some(&title_slot));
 
     let back_button = gtk::Button::from_icon_name("go-previous-symbolic");
     back_button.set_tooltip_text(Some("Back"));
@@ -117,6 +124,7 @@ pub fn build_ui(app: &adw::Application) {
         settings: settings_button.clone(),
         chat_info: chat_info_button.clone(),
         title: title_label.clone(),
+        title_slot: title_slot.clone(),
     };
     apply_state(&content_slot, &header_widgets, &manager, &current.borrow());
     show_toast_if_changed(&toast_overlay, &last_toast, &current.borrow().toast);
@@ -194,6 +202,7 @@ struct HeaderWidgets {
     settings: gtk::Button,
     chat_info: gtk::Button,
     title: gtk::Label,
+    title_slot: gtk::Box,
 }
 
 fn apply_state(
@@ -221,6 +230,29 @@ fn apply_state(
     let title_text = chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());
     header.title.set_label(&title_text);
 
+    // Tear down any avatar from a previous render.
+    while let Some(child) = header.title_slot.first_child() {
+        if child == header.title.clone().upcast::<gtk::Widget>() {
+            // Keep the heading label in place.
+            break;
+        }
+        header.title_slot.remove(&child);
+    }
+    if matches!(screen, Screen::Chat { .. }) {
+        if let Some(chat) = state.current_chat.as_ref() {
+            let avatar = build_chat_header_avatar(chat, state);
+            header.title_slot.prepend(&avatar);
+            attach_chat_title_click(&header.title_slot, manager, chat);
+        }
+    } else {
+        // Detach any leftover click controller from previous chat header.
+        for ctrl in header.title_slot.observe_controllers().into_iter().flatten() {
+            if ctrl.is::<gtk::GestureClick>() {
+                header.title_slot.remove_controller(&ctrl);
+            }
+        }
+    }
+
     let widget = screens::render(&screen, state, manager);
     let clamp = adw::Clamp::builder()
         .maximum_size(600)
@@ -229,6 +261,61 @@ fn apply_state(
     clamp.set_child(Some(&widget));
     clamp.set_vexpand(true);
     slot.append(&clamp);
+}
+
+fn build_chat_header_avatar(chat: &CurrentChatSnapshot, state: &AppState) -> gtk::Widget {
+    let avatar = adw::Avatar::new(28, Some(&chat.display_name), true);
+    if let Some(url) = chat.picture_url.as_deref() {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let proxied = proxied_image_url(
+                url.to_string(),
+                state.preferences.clone(),
+                Some(56),
+                Some(56),
+                true,
+            );
+            image_cache::fetch_into_avatar(&avatar, &proxied);
+        }
+    }
+    avatar.upcast()
+}
+
+fn attach_chat_title_click(
+    slot: &gtk::Box,
+    manager: &Rc<AppManager>,
+    chat: &CurrentChatSnapshot,
+) {
+    // Drop any prior click controller.
+    for ctrl in slot.observe_controllers().into_iter().flatten() {
+        if ctrl.is::<gtk::GestureClick>() {
+            slot.remove_controller(&ctrl);
+        }
+    }
+    let gesture = gtk::GestureClick::new();
+    let manager = manager.clone();
+    let chat_id = chat.chat_id.clone();
+    let group_id = chat.group_id.clone();
+    let display_name = chat.display_name.clone();
+    let subtitle = chat.subtitle.clone();
+    gesture.connect_released(move |gesture, _, _, _| {
+        let widget = gesture
+            .widget()
+            .and_then(|w| w.root())
+            .and_then(|r| r.downcast::<gtk::Window>().ok());
+        if let Some(group_id) = group_id.clone() {
+            manager.dispatch(AppAction::PushScreen {
+                screen: Screen::GroupDetails { group_id },
+            });
+        } else {
+            crate::screens::chat::present_chat_info(
+                widget.as_ref(),
+                &display_name,
+                &chat_id,
+                subtitle.as_deref(),
+            );
+        }
+    });
+    slot.add_controller(gesture);
 }
 
 fn notify_new_messages(
