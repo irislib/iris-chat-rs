@@ -795,13 +795,8 @@ private struct DirectChatInfoSheet: View {
                                 .padding(.horizontal, 24)
                         }
 
-                        Button {
-                            PlatformClipboard.setString(chatId)
-                        } label: {
-                            Label("Copy user ID", systemImage: "doc.on.doc")
-                        }
-                        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-                        .accessibilityIdentifier("directChatCopyUserIdButton")
+                        IrisCopyButton(label: "Copy user ID", value: chatId)
+                            .accessibilityIdentifier("directChatCopyUserIdButton")
 
                         IrisSectionCard {
                             CardHeader(
@@ -2773,10 +2768,8 @@ private struct ProfileEditorCard: View {
             MonoValue(label: "Device ID", value: account.deviceNpub)
 
             VStack(spacing: 10) {
-                Button("Copy user ID") { manager.copyToClipboard(account.npub) }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                Button("Copy device ID") { manager.copyToClipboard(account.deviceNpub) }
-                    .buttonStyle(IrisSecondaryButtonStyle())
+                IrisCopyButton(label: "Copy user ID", value: account.npub, compact: false)
+                IrisCopyButton(label: "Copy device ID", value: account.deviceNpub, compact: false)
             }
         }
         .fileImporter(

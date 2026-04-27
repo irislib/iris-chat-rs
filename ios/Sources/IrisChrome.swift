@@ -533,6 +533,62 @@ extension View {
     }
 }
 
+/// A reusable button that copies a string and briefly swaps its label to
+/// "Copied" without changing the button's width.
+struct IrisCopyButton: View {
+    let label: String
+    let value: String
+    var copiedLabel: String = "Copied"
+    var systemImage: String? = "doc.on.doc"
+    var copiedSystemImage: String? = "checkmark"
+    var compact: Bool = true
+    var feedbackDuration: Double = 1.4
+
+    @State private var copied = false
+    @State private var resetTask: Task<Void, Never>?
+
+    var body: some View {
+        Button(action: copy) {
+            ZStack {
+                inner(text: label, icon: systemImage)
+                    .opacity(copied ? 0 : 1)
+                inner(text: copiedLabel, icon: copiedSystemImage)
+                    .opacity(copied ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+        }
+        .buttonStyle(IrisSecondaryButtonStyle(compact: compact))
+        .accessibilityLabel(copied ? copiedLabel : label)
+    }
+
+    @ViewBuilder
+    private func inner(text: String, icon: String?) -> some View {
+        if let icon, !icon.isEmpty {
+            Label(text, systemImage: icon)
+        } else {
+            Text(text)
+        }
+    }
+
+    private func copy() {
+        PlatformClipboard.setString(value)
+        resetTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.15)) {
+            copied = true
+        }
+        resetTask = Task { [feedbackDuration] in
+            try? await Task.sleep(nanoseconds: UInt64(feedbackDuration * 1_000_000_000))
+            if !Task.isCancelled {
+                await MainActor.run {
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        copied = false
+                    }
+                }
+            }
+        }
+    }
+}
+
 struct IrisInfoPill: View {
     @Environment(\.irisPalette) private var palette
 
