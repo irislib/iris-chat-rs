@@ -208,6 +208,56 @@ fn mobile_push_fallback_suppresses_opaque_encrypted_events() {
 }
 
 #[test]
+fn mobile_push_fallback_suppresses_decrypted_non_message_kinds() {
+    for kind in [
+        0_u64,
+        TYPING_KIND as u64,
+        RECEIPT_KIND as u64,
+        GROUP_METADATA_KIND as u64,
+        CHAT_SETTINGS_KIND as u64,
+        12345,
+    ] {
+        let inner_event = serde_json::json!({
+            "kind": kind,
+            "content": "not a chat message",
+            "created_at": 1_777_159_483u64,
+            "tags": [],
+            "pubkey": "0".repeat(64),
+            "id": format!("{kind:064x}"),
+        });
+        let payload = serde_json::json!({
+            "inner_event_json": inner_event.to_string(),
+            "title": "Iris Chat",
+            "body": "New message",
+        })
+        .to_string();
+
+        let resolution = resolve_mobile_push_notification(payload);
+
+        assert!(
+            !resolution.should_show,
+            "inner kind {kind} should not produce a visible mobile push"
+        );
+    }
+}
+
+#[test]
+fn mobile_push_fallback_allows_chat_message_kind() {
+    let payload = serde_json::json!({
+        "inner_kind": CHAT_MESSAGE_KIND.to_string(),
+        "title": "Alice",
+        "body": "hello",
+    })
+    .to_string();
+
+    let resolution = resolve_mobile_push_notification(payload);
+
+    assert!(resolution.should_show);
+    assert_eq!(resolution.title, "Alice");
+    assert_eq!(resolution.body, "hello");
+}
+
+#[test]
 fn app_keys_device_projection_is_deterministic() {
     let owner = Keys::generate().public_key();
     let device_a = Keys::generate().public_key();

@@ -5,12 +5,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
-const MOBILE_PUSH_RECEIPT_KIND: u64 = 15;
-const MOBILE_PUSH_TYPING_KIND: u64 = 25;
-const MOBILE_PUSH_GROUP_METADATA_KIND: u64 = 40;
-const MOBILE_PUSH_SETTINGS_KIND: u64 = 30_078;
 const MOBILE_PUSH_AUTH_KIND: u16 = 27_235;
-const MOBILE_PUSH_DM_EVENT_KIND: u64 = MESSAGE_EVENT_KIND as u64;
+const MOBILE_PUSH_CHAT_MESSAGE_KIND: u64 = CHAT_MESSAGE_KIND as u64;
+const MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND: u64 = MESSAGE_EVENT_KIND as u64;
 const MOBILE_PUSH_PRODUCTION_SERVER_URL: &str = "https://notifications.iris.to";
 const MOBILE_PUSH_SANDBOX_SERVER_URL: &str = "https://notifications-sandbox.iris.to";
 
@@ -153,8 +150,8 @@ pub(crate) fn decrypt_mobile_push_notification(
     let inner_kind = inner_value
         .get("kind")
         .and_then(|value| value.as_u64())
-        .unwrap_or(MOBILE_PUSH_DM_EVENT_KIND);
-    if should_suppress_mobile_push_kind(inner_kind) {
+        .unwrap_or(MOBILE_PUSH_CHAT_MESSAGE_KIND);
+    if !should_show_mobile_push_kind(inner_kind) {
         return MobilePushNotificationResolution {
             should_show: false,
             title: String::new(),
@@ -380,7 +377,7 @@ pub(crate) fn resolve_mobile_push_notification(
         .or_else(|| event_kind(payload.get("inner_event_json")))
         .or_else(|| event_kind(payload.get("inner_event")));
 
-    if inner_kind.is_some_and(should_suppress_mobile_push_kind) {
+    if inner_kind.is_some_and(|kind| !should_show_mobile_push_kind(kind)) {
         return MobilePushNotificationResolution {
             should_show: false,
             title: String::new(),
@@ -388,7 +385,9 @@ pub(crate) fn resolve_mobile_push_notification(
             payload_json: "{}".to_string(),
         };
     }
-    if inner_kind.is_none() && event_kind(payload.get("event")) == Some(MOBILE_PUSH_DM_EVENT_KIND) {
+    if inner_kind.is_none()
+        && event_kind(payload.get("event")) == Some(MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND)
+    {
         return MobilePushNotificationResolution {
             should_show: false,
             title: String::new(),
@@ -598,7 +597,7 @@ fn mobile_push_subscription_body_json(
         "fcm_tokens": if platform == "android" { vec![token.to_string()] } else { Vec::<String>::new() },
         "apns_tokens": if platform == "ios" { vec![token.to_string()] } else { Vec::<String>::new() },
         "filter": {
-            "kinds": [MOBILE_PUSH_DM_EVENT_KIND],
+            "kinds": [MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND],
             "authors": authors,
         },
     });
@@ -723,12 +722,9 @@ fn event_content(value: Option<&String>) -> Option<String> {
     normalized_value(Some(&content))
 }
 
-fn should_suppress_mobile_push_kind(kind: u64) -> bool {
+fn should_show_mobile_push_kind(kind: u64) -> bool {
     matches!(
         kind,
-        MOBILE_PUSH_RECEIPT_KIND
-            | MOBILE_PUSH_TYPING_KIND
-            | MOBILE_PUSH_GROUP_METADATA_KIND
-            | MOBILE_PUSH_SETTINGS_KIND
+        MOBILE_PUSH_CHAT_MESSAGE_KIND | MOBILE_PUSH_REACTION_KIND
     )
 }
