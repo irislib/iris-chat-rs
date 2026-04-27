@@ -133,6 +133,11 @@ struct ChatScreen: View {
                                     }
                                 }
                                 .irisInteractiveKeyboardDismiss()
+                                .irisOnChange(of: isComposerFocused) { focused in
+                                    if focused {
+                                        activeActionDockMessageId = nil
+                                    }
+                                }
                                 .irisOnChange(of: chatId) { _ in
                                     initialScrollPending = true
                                     isNearBottom = true
