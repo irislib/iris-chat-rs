@@ -190,7 +190,11 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
 }
 
 #[test]
-fn mobile_push_decrypt_preview_renders_typing_activity() {
+fn mobile_push_decrypt_suppresses_typing_rumors() {
+    // Even with valid keys and a working ratchet, the notification
+    // extension should suppress non-chat-message rumors. Typing/seen/
+    // reaction wrappers are noise as standalone notifications — the
+    // chat list updates when the user opens the app.
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -260,8 +264,7 @@ fn mobile_push_decrypt_preview_renders_typing_activity() {
         payload,
     );
 
-    assert!(resolution.should_show);
-    assert_eq!(resolution.body, "is typing");
+    assert!(!resolution.should_show, "typing rumors must not surface as standalone notifications");
 }
 
 #[test]

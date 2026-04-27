@@ -94,8 +94,23 @@ pub(crate) fn decrypt_mobile_push_notification(
     };
 
     let outer_event_id = outer_event.id.to_string();
-    let cached_fallback =
-        || lookup_mobile_push_preview(&data_dir, &outer_event_id).unwrap_or_else(|| fallback());
+    // When NDR decrypt fails (the foreground app already advanced
+    // the ratchet past this event) we look up the message body the
+    // foreground stored in SQLite. If even that misses we suppress
+    // rather than show a meaningless "New activity" — the foreground
+    // saw the wrapper as a non-message rumor (typing, receipt,
+    // reaction, settings) and there's nothing useful to show.
+    let cached_fallback = || {
+        lookup_mobile_push_preview(&data_dir, &outer_event_id)
+            .unwrap_or_else(suppressed_resolution)
+    };
+
+    // If the foreground app already wrote a chat message for this
+    // wrapper event, prefer that body — it's faster than NDR decrypt
+    // and matches exactly what the user would see in-app.
+    if let Some(resolution) = lookup_mobile_push_preview(&data_dir, &outer_event_id) {
+        return resolution;
+    }
 
     let owner_pubkey = match nostr::PublicKey::parse(owner_pubkey_hex.trim()) {
         Ok(pubkey) => pubkey,
@@ -155,6 +170,19 @@ pub(crate) fn decrypt_mobile_push_notification(
         .get("kind")
         .and_then(|value| value.as_u64())
         .unwrap_or(MOBILE_PUSH_CHAT_MESSAGE_KIND);
+    if !should_show_mobile_push_kind(inner_kind) {
+        // Typing rumors, read receipts, group/settings control events,
+        // and reactions are noise as standalone notifications. The
+        // foreground app already updates its in-memory state when it
+        // sees the same wrapper event, so the user gets the right UX
+        // by tapping into the chat.
+        return MobilePushNotificationResolution {
+            should_show: false,
+            title: String::new(),
+            body: String::new(),
+            payload_json: "{}".to_string(),
+        };
+    }
 
     let inner_content = inner_value
         .get("content")
@@ -242,28 +270,14 @@ fn lookup_mobile_push_preview(
     outer_event_id: &str,
 ) -> Option<MobilePushNotificationResolution> {
     let conn = open_lookup_connection(data_dir)?;
-    let (chat_id, kind, body, author_hex, attachments_json): (
-        String,
-        String,
-        String,
-        String,
-        String,
-    ) = conn
+    let (chat_id, body, author_hex): (String, String, String) = conn
         .query_row(
-            "SELECT chat_id, kind, body, author, attachments_json
+            "SELECT chat_id, body, author
              FROM messages
              WHERE source_event_id = ?1
              LIMIT 1",
             [outer_event_id],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                ))
-            },
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .ok()?;
 
@@ -299,15 +313,12 @@ fn lookup_mobile_push_preview(
         (None, sender) => sender.to_string(),
     };
 
-    // Persisted body has the attachment markup stripped already. If
-    // the message carried attachments and the visible body is empty,
-    // fall back to the kind-specific placeholder so the user gets
-    // something rather than a blank notification.
-    let inner_kind = parse_kind(&kind);
-    let body_text = if body.trim().is_empty() && attachments_json != "[]" {
-        decrypted_mobile_push_body(inner_kind, "")
-    } else if body.trim().is_empty() {
-        decrypted_mobile_push_body(inner_kind, "")
+    // Persisted body has the attachment markup stripped already; if
+    // it's empty (e.g. an attachment-only message) fall back to the
+    // chat-message placeholder so the user sees something rather than
+    // a blank notification.
+    let body_text = if body.trim().is_empty() {
+        decrypted_mobile_push_body(MOBILE_PUSH_CHAT_MESSAGE_KIND, "")
     } else {
         body.clone()
     };
@@ -323,7 +334,7 @@ fn lookup_mobile_push_preview(
     );
     payload.insert(
         "inner_kind".to_string(),
-        serde_json::Value::String(inner_kind.to_string()),
+        serde_json::Value::String(MOBILE_PUSH_CHAT_MESSAGE_KIND.to_string()),
     );
     if let Some(pubkey) = sender_pubkey {
         payload.insert(
@@ -346,13 +357,6 @@ fn lookup_mobile_push_preview(
         body: body_text,
         payload_json,
     })
-}
-
-fn parse_kind(raw: &str) -> u64 {
-    match raw {
-        "system" => CHAT_MESSAGE_KIND as u64,
-        _ => CHAT_MESSAGE_KIND as u64,
-    }
 }
 
 fn looks_like_hex_pubkey(value: &str) -> bool {
@@ -439,6 +443,15 @@ impl StorageAdapter for NotificationPreviewStorage {
         let mut keys: Vec<String> = keys.into_iter().collect();
         keys.sort();
         Ok(keys)
+    }
+}
+
+fn suppressed_resolution() -> MobilePushNotificationResolution {
+    MobilePushNotificationResolution {
+        should_show: false,
+        title: String::new(),
+        body: String::new(),
+        payload_json: "{}".to_string(),
     }
 }
 
@@ -896,8 +909,9 @@ fn reaction_push_body(content: &str) -> String {
 }
 
 fn should_show_mobile_push_kind(kind: u64) -> bool {
-    matches!(
-        kind,
-        MOBILE_PUSH_CHAT_MESSAGE_KIND | MOBILE_PUSH_REACTION_KIND
-    )
+    // Only chat messages get a foreground push. Reactions, read
+    // receipts, typing rumors, group/settings control events, and
+    // app-keys updates are noise as standalone notifications — the
+    // user sees the right state when they open the chat.
+    matches!(kind, MOBILE_PUSH_CHAT_MESSAGE_KIND)
 }
