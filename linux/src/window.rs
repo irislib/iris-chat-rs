@@ -34,6 +34,19 @@ pub fn build_ui(app: &adw::Application) {
     }
     header.pack_start(&back_button);
 
+    let new_chat_button = gtk::Button::from_icon_name("list-add-symbolic");
+    new_chat_button.set_tooltip_text(Some("New chat"));
+    new_chat_button.set_visible(false);
+    {
+        let manager = manager.clone();
+        new_chat_button.connect_clicked(move |_| {
+            manager.dispatch(AppAction::PushScreen {
+                screen: Screen::NewChat,
+            });
+        });
+    }
+    header.pack_end(&new_chat_button);
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
 
@@ -47,6 +60,7 @@ pub fn build_ui(app: &adw::Application) {
     apply_state(
         &content_slot,
         &back_button,
+        &new_chat_button,
         &title_label,
         &manager,
         &current.borrow(),
@@ -55,6 +69,7 @@ pub fn build_ui(app: &adw::Application) {
     let update_rx = manager.update_rx();
     let content_for_updates = content_slot.clone();
     let back_for_updates = back_button.clone();
+    let new_chat_for_updates = new_chat_button.clone();
     let title_for_updates = title_label.clone();
     let manager_for_updates = manager.clone();
     let current_for_updates = current.clone();
@@ -67,6 +82,7 @@ pub fn build_ui(app: &adw::Application) {
                     apply_state(
                         &content_for_updates,
                         &back_for_updates,
+                        &new_chat_for_updates,
                         &title_for_updates,
                         &manager_for_updates,
                         &slot,
@@ -82,6 +98,7 @@ pub fn build_ui(app: &adw::Application) {
 fn apply_state(
     slot: &gtk::Box,
     back: &gtk::Button,
+    new_chat: &gtk::Button,
     title: &gtk::Label,
     manager: &Rc<AppManager>,
     state: &AppState,
@@ -92,6 +109,7 @@ fn apply_state(
 
     let screen = current_screen(state);
     back.set_visible(!state.router.screen_stack.is_empty());
+    new_chat.set_visible(matches!(screen, Screen::ChatList));
     title.set_label(screens::title(&screen));
 
     let widget = screens::render(&screen, state, manager);

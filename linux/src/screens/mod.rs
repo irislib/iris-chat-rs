@@ -6,7 +6,10 @@ use ndr_demo_core::{AppState, Screen};
 use crate::app_manager::AppManager;
 
 mod add_device;
+mod chat;
+mod chat_list;
 mod create_account;
+mod new_chat;
 mod restore_account;
 mod welcome;
 
@@ -16,6 +19,9 @@ pub fn render(screen: &Screen, state: &AppState, manager: &Rc<AppManager>) -> gt
         Screen::CreateAccount => create_account::render(state, manager),
         Screen::RestoreAccount => restore_account::render(state, manager),
         Screen::AddDevice => add_device::render(state, manager),
+        Screen::ChatList => chat_list::render(state, manager),
+        Screen::NewChat => new_chat::render(state, manager),
+        Screen::Chat { chat_id } => chat::render(chat_id, state, manager),
         other => placeholder(other),
     }
 }
