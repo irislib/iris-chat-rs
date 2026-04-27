@@ -778,6 +778,230 @@ fn group_metadata_changes_create_system_notices() {
 }
 
 #[test]
+fn appcore_restart_restores_threads_groups_and_seen_events() {
+    // End-to-end check that the persistence/load round trip survives a
+    // full AppCore drop+recreate against the same `data_dir`.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let other_device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir_str = temp_dir.path().to_string_lossy().to_string();
+
+    let chat_id = "deadbeef".repeat(8);
+    let group_id = "group-restart".to_string();
+    let group_chat = group_chat_id(&group_id);
+
+    {
+        let mut core = AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            data_dir_str.clone(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        let invite = Invite::create_new(device.public_key(), Some(device.public_key().to_hex()), None)
+            .expect("local invite");
+        let runtime = NdrRuntime::new(
+            device.public_key(),
+            device.secret_key().to_secret_bytes(),
+            device.public_key().to_hex(),
+            owner.public_key(),
+            None,
+            Some(invite.clone()),
+        );
+        runtime.init().expect("runtime init");
+        core.logged_in = Some(LoggedInState {
+            owner_pubkey: owner.public_key(),
+            owner_keys: Some(owner.clone()),
+            device_keys: device.clone(),
+            client: Client::new(device.clone()),
+            relay_urls: Vec::new(),
+            ndr_runtime: runtime,
+            local_invite: invite,
+            authorization_state: LocalAuthorizationState::Authorized,
+        });
+
+        core.next_message_id = 17;
+        core.active_chat_id = Some(chat_id.clone());
+        core.app_keys.insert(
+            owner.public_key().to_hex(),
+            known_app_keys_from_ndr(
+                owner.public_key(),
+                &AppKeys::new(vec![DeviceEntry::new(other_device.public_key(), 5)]),
+                10,
+            ),
+        );
+        core.groups.insert(
+            group_id.clone(),
+            GroupData {
+                id: group_id.clone(),
+                name: "Brunch".to_string(),
+                description: None,
+                picture: None,
+                members: vec![owner.public_key().to_hex()],
+                admins: vec![owner.public_key().to_hex()],
+                created_at: 1_000,
+                secret: None,
+                accepted: Some(true),
+            },
+        );
+        core.threads.insert(
+            chat_id.clone(),
+            ThreadRecord {
+                chat_id: chat_id.clone(),
+                unread_count: 3,
+                updated_at_secs: 200,
+                messages: vec![
+                    ChatMessageSnapshot {
+                        id: "m1".to_string(),
+                        chat_id: chat_id.clone(),
+                        kind: ChatMessageKind::User,
+                        author: owner.public_key().to_hex(),
+                        body: "hello world".to_string(),
+                        attachments: Vec::new(),
+                        reactions: Vec::new(),
+                        reactors: Vec::new(),
+                        is_outgoing: true,
+                        created_at_secs: 100,
+                        expires_at_secs: None,
+                        delivery: DeliveryState::Sent,
+                    },
+                    ChatMessageSnapshot {
+                        id: "m2".to_string(),
+                        chat_id: chat_id.clone(),
+                        kind: ChatMessageKind::User,
+                        author: "peer".to_string(),
+                        body: "right back atcha".to_string(),
+                        attachments: Vec::new(),
+                        reactions: Vec::new(),
+                        reactors: Vec::new(),
+                        is_outgoing: false,
+                        created_at_secs: 110,
+                        expires_at_secs: None,
+                        delivery: DeliveryState::Received,
+                    },
+                ],
+            },
+        );
+        core.threads.insert(
+            group_chat.clone(),
+            ThreadRecord {
+                chat_id: group_chat.clone(),
+                unread_count: 0,
+                updated_at_secs: 50,
+                messages: vec![ChatMessageSnapshot {
+                    id: "g-system".to_string(),
+                    chat_id: group_chat.clone(),
+                    kind: ChatMessageKind::System,
+                    author: owner.public_key().to_hex(),
+                    body: "Group created: Brunch".to_string(),
+                    attachments: Vec::new(),
+                    reactions: Vec::new(),
+                    reactors: Vec::new(),
+                    is_outgoing: false,
+                    created_at_secs: 50,
+                    expires_at_secs: None,
+                    delivery: DeliveryState::Received,
+                }],
+            },
+        );
+        core.seen_event_order.push_back("evt-1".to_string());
+        core.seen_event_order.push_back("evt-2".to_string());
+        core.seen_event_ids = core.seen_event_order.iter().cloned().collect();
+        core.preferences.send_typing_indicators = true;
+
+        core.persist_best_effort_inner();
+    }
+
+    // New AppCore over the same directory: load_persisted should return
+    // exactly what we wrote.
+    let mut restarted = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir_str,
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let loaded = restarted
+        .load_persisted()
+        .expect("load_persisted")
+        .expect("state persisted");
+    assert_eq!(loaded.next_message_id, 17);
+    assert_eq!(loaded.active_chat_id.as_deref(), Some(chat_id.as_str()));
+    assert!(loaded.preferences.send_typing_indicators);
+    assert_eq!(loaded.threads.len(), 2);
+    let dm_thread = loaded
+        .threads
+        .iter()
+        .find(|thread| thread.chat_id == chat_id)
+        .expect("dm thread present");
+    assert_eq!(dm_thread.messages.len(), 2);
+    assert_eq!(dm_thread.unread_count, 3);
+    assert_eq!(dm_thread.messages[0].body, "hello world");
+    assert_eq!(dm_thread.messages[1].body, "right back atcha");
+    let group_thread = loaded
+        .threads
+        .iter()
+        .find(|thread| thread.chat_id == group_chat)
+        .expect("group thread present");
+    assert!(matches!(
+        group_thread.messages[0].kind,
+        ChatMessageKind::System
+    ));
+    assert_eq!(loaded.groups.len(), 1);
+    assert_eq!(loaded.groups[0].name, "Brunch");
+    assert_eq!(loaded.app_keys.len(), 1);
+    assert_eq!(loaded.seen_event_ids, vec!["evt-1", "evt-2"]);
+    assert!(matches!(
+        loaded.authorization_state,
+        Some(PersistedAuthorizationState::Authorized)
+    ));
+
+    // Assert nothing was persisted in the legacy JSON layout.
+    let legacy_meta = std::path::Path::new(&restarted.data_dir).join("core").join("meta.json");
+    assert!(!legacy_meta.exists(), "legacy core/meta.json must not be created");
+}
+
+#[test]
+fn appcore_clear_persistence_drops_sqlite_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir_str = temp_dir.path().to_string_lossy().to_string();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir_str.clone(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let invite = Invite::create_new(device.public_key(), Some(device.public_key().to_hex()), None)
+        .expect("invite");
+    let runtime = NdrRuntime::new(
+        device.public_key(),
+        device.secret_key().to_secret_bytes(),
+        device.public_key().to_hex(),
+        owner.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    runtime.init().expect("runtime init");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: runtime,
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    core.next_message_id = 5;
+    core.persist_best_effort_inner();
+    assert!(core.load_persisted().unwrap().is_some());
+
+    core.clear_persistence_best_effort();
+    assert!(core.load_persisted().unwrap().is_none());
+}
+
+#[test]
 fn profile_picture_upload_propagates_to_account_snapshot() {
     let owner = Keys::generate();
     let device = Keys::generate();

@@ -13,7 +13,7 @@ impl AppCore {
         self.data_dir.join(DEBUG_SNAPSHOT_FILENAME)
     }
 
-    pub(super) fn load_persisted(&self) -> anyhow::Result<Option<PersistedState>> {
+    pub(super) fn load_persisted(&mut self) -> anyhow::Result<Option<PersistedState>> {
         self.app_store.load_state()
     }
 

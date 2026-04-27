@@ -39,19 +39,18 @@ impl AppCore {
 }
 
 /// Decrypt the encrypted Nostr event the notification server forwarded
-/// (key `event`), look up the sender's display name from
-/// `profiles.json` or the direct chat thread, look up the group title
-/// (when the rumor carries a `["l", group_id]` tag) from `groups.json`,
-/// and return a notification resolution whose `title` and `body` are
-/// the decrypted plaintext — not the generic "New activity" placeholder
-/// the server sent.
+/// (key `event`), look up the sender's display name and the group
+/// title (when the rumor carries a `["l", group_id]` tag) from the
+/// shared SQLite database, and return a notification resolution whose
+/// `title` and `body` are the decrypted plaintext — not the generic
+/// "New activity" placeholder the server sent.
 ///
 /// Designed to run in the FCM service / iOS Notification Service
-/// Extension where there's no live `AppCore`. We spin up a one-shot
-/// `NdrRuntime` against a read-through preview of the same
-/// `FileStorageAdapter` directory the main app uses, decrypt against
-/// the persisted ratchet state, then drop the runtime. Writes stay in
-/// the preview overlay so a notification preview cannot advance or
+/// Extension where there's no live `AppCore`. We open a fresh
+/// connection to `data_dir/core.sqlite3`, wrap a `SqliteStorageAdapter`
+/// in a read-through `NotificationPreviewStorage` overlay, run a
+/// one-shot `NdrRuntime` against it, then drop everything. Writes stay
+/// in the overlay so a notification preview cannot advance or
 /// otherwise mutate the chat runtime's persisted ratchet state before
 /// the foreground app processes the same relay event. If anything
 /// fails (no keys, foreign event, storage unavailable) we fall through
