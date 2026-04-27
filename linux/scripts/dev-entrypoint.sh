@@ -35,6 +35,12 @@ if ! pgrep -x x11vnc >/dev/null 2>&1; then
         -noxdamage -noxrecord -noxfixes >/dev/null 2>&1
 fi
 
+# A session bus is required for GApplication's single-instance behaviour.
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    eval "$(dbus-launch --sh-syntax)"
+    export DBUS_SESSION_BUS_ADDRESS DBUS_SESSION_BUS_PID
+fi
+
 if [ "$#" -eq 0 ]; then
     exec bash
 fi

@@ -17,6 +17,11 @@ use crate::widgets::image_cache;
 const APP_ID: &str = "to.iris.chat";
 
 pub fn build_ui(app: &adw::Application) {
+    if let Some(window) = app.active_window() {
+        window.present();
+        return;
+    }
+
     let manager = Rc::new(AppManager::new());
 
     let window = adw::ApplicationWindow::builder()
