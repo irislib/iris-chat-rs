@@ -1,0 +1,9 @@
+<UserControl x:Class="IrisChat.Chrome.SectionCard"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border Background="{StaticResource Panel}"
+            CornerRadius="{StaticResource SectionRadius}"
+            Padding="20,18">
+        <StackPanel x:Name="ContentHost" />
+    </Border>
+</UserControl>

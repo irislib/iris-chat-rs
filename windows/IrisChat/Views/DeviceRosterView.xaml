@@ -1,0 +1,41 @@
+<UserControl x:Class="IrisChat.Views.DeviceRosterView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="32" MaxWidth="640" HorizontalAlignment="Stretch">
+            <TextBlock Text="Authorized devices"
+                       Style="{StaticResource HeadingText}"
+                       Margin="0,0,0,8" />
+            <TextBlock x:Name="HeaderHint"
+                       Style="{StaticResource MutedText}"
+                       Text=""
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,16" />
+
+            <ItemsControl x:Name="DevicesList" />
+
+            <Border x:Name="AddBlock"
+                    Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="16"
+                    Margin="0,16,0,0"
+                    Visibility="Collapsed">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource SectionTitleText}"
+                               Text="Add a new device"
+                               Margin="0,0,0,8" />
+                    <TextBlock Style="{StaticResource MutedText}"
+                               Text="Paste the new device's npub or scan its QR. The other device must be on the Add Device screen."
+                               TextWrapping="Wrap"
+                               Margin="0,0,0,8" />
+                    <TextBox x:Name="DeviceInput" />
+                    <Button Style="{StaticResource PrimaryButton}"
+                            Click="OnAdd"
+                            Margin="0,12,0,0">
+                        <TextBlock Text="Authorize device" />
+                    </Button>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

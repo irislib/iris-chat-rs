@@ -1,0 +1,143 @@
+using System;
+using System.ComponentModel;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using IrisChat.Bindings;
+
+namespace IrisChat.Views;
+
+public partial class GroupDetailsView : UserControl
+{
+    public string? GroupId { get; set; }
+
+    public GroupDetailsView()
+    {
+        InitializeComponent();
+        Loaded += (_, _) =>
+        {
+            App.CurrentManager.PropertyChanged += OnChanged;
+            Refresh();
+        };
+        Unloaded += (_, _) => App.CurrentManager.PropertyChanged -= OnChanged;
+    }
+
+    private void OnChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
+
+    private void Refresh()
+    {
+        var details = App.CurrentManager.GroupDetails;
+        if (details == null || (GroupId != null && details.groupId != GroupId)) return;
+
+        GroupAvatar.Label = details.name;
+        GroupAvatar.PictureUrl = details.pictureUrl;
+        if (!GroupNameInput.IsKeyboardFocused)
+            GroupNameInput.Text = details.name;
+        GroupSubtitle.Text = $"{details.members.Length} members · created by {details.createdByDisplayName}";
+        SaveNameButton.IsEnabled = details.canManage;
+        AddMemberInput.IsEnabled = details.canManage;
+
+        MembersList.Items.Clear();
+        foreach (var m in details.members)
+        {
+            MembersList.Items.Add(BuildMember(details, m));
+        }
+    }
+
+    private FrameworkElement BuildMember(GroupDetailsSnapshot details, GroupMemberSnapshot m)
+    {
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        info.Children.Add(new TextBlock
+        {
+            Text = m.displayName + (m.isLocalOwner ? " (you)" : string.Empty),
+            Foreground = (Brush)Application.Current.Resources["TextPrimary"],
+            FontWeight = FontWeights.SemiBold,
+        });
+        info.Children.Add(new TextBlock
+        {
+            Text = m.isCreator ? "creator" : (m.isAdmin ? "admin" : "member"),
+            Foreground = (Brush)Application.Current.Resources["TextMuted"],
+            FontSize = 12,
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+        Grid.SetColumn(info, 0);
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        if (details.canManage && !m.isLocalOwner)
+        {
+            var toggleAdmin = new Button
+            {
+                Style = (Style)FindResource("CompactSecondaryButton"),
+                Content = new TextBlock { Text = m.isAdmin ? "Remove admin" : "Make admin" },
+                Margin = new Thickness(0, 0, 6, 0),
+            };
+            toggleAdmin.Click += (_, _) =>
+                App.CurrentManager.SetGroupAdmin(details.groupId, m.ownerPubkeyHex, !m.isAdmin);
+            actions.Children.Add(toggleAdmin);
+
+            var remove = new Button
+            {
+                Style = (Style)FindResource("CompactSecondaryButton"),
+                Content = new TextBlock
+                {
+                    Text = "Remove",
+                    Foreground = (Brush)Application.Current.Resources["Danger"],
+                },
+            };
+            remove.Click += (_, _) =>
+                App.CurrentManager.RemoveGroupMember(details.groupId, m.ownerPubkeyHex);
+            actions.Children.Add(remove);
+        }
+
+        Grid.SetColumn(actions, 1);
+
+        grid.Children.Add(info);
+        grid.Children.Add(actions);
+
+        return new Border
+        {
+            Background = Brushes.Transparent,
+            Padding = new Thickness(8, 8, 8, 8),
+            BorderBrush = (Brush)Application.Current.Resources["Border"],
+            BorderThickness = new Thickness(0, 0, 0, 1),
+            Child = grid,
+        };
+    }
+
+    private void OnSaveName(object sender, RoutedEventArgs e)
+    {
+        var details = App.CurrentManager.GroupDetails;
+        if (details == null) return;
+        var newName = GroupNameInput.Text?.Trim();
+        if (string.IsNullOrEmpty(newName) || newName == details.name) return;
+        App.CurrentManager.UpdateGroupName(details.groupId, newName!);
+    }
+
+    private void OnPickPicture(object sender, RoutedEventArgs e)
+    {
+        var details = App.CurrentManager.GroupDetails;
+        if (details == null) return;
+        var file = PlatformFilePicker.PickImage("Choose group picture");
+        if (string.IsNullOrEmpty(file)) return;
+        App.CurrentManager.UpdateGroupPicture(details.groupId, file!);
+    }
+
+    private void OnAddMember(object sender, RoutedEventArgs e)
+    {
+        var details = App.CurrentManager.GroupDetails;
+        if (details == null) return;
+        var input = AddMemberInput.Text?.Trim();
+        if (string.IsNullOrEmpty(input)) return;
+        App.CurrentManager.AddGroupMembers(details.groupId, new[] { input });
+        AddMemberInput.Clear();
+    }
+}

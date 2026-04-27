@@ -1,0 +1,148 @@
+using System;
+using System.ComponentModel;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using IrisChat.Bindings;
+
+namespace IrisChat.Views;
+
+public partial class DeviceRosterView : UserControl
+{
+    public DeviceRosterView()
+    {
+        InitializeComponent();
+        Loaded += (_, _) =>
+        {
+            App.CurrentManager.PropertyChanged += OnChanged;
+            Refresh();
+        };
+        Unloaded += (_, _) => App.CurrentManager.PropertyChanged -= OnChanged;
+    }
+
+    private void OnChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
+
+    private void Refresh()
+    {
+        var roster = App.CurrentManager.DeviceRoster;
+        DevicesList.Items.Clear();
+
+        if (roster == null)
+        {
+            HeaderHint.Text = "Sign in first to manage your devices.";
+            AddBlock.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        AddBlock.Visibility = roster.canManageDevices ? Visibility.Visible : Visibility.Collapsed;
+
+        HeaderHint.Text = roster.canManageDevices
+            ? "Authorize new devices, revoke old ones, and see when each device last synced."
+            : "Only the device that owns the signing key can change this list.";
+
+        foreach (var d in roster.devices)
+        {
+            DevicesList.Items.Add(BuildRow(roster, d));
+        }
+    }
+
+    private FrameworkElement BuildRow(DeviceRosterSnapshot roster, DeviceEntrySnapshot d)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 0, 0, 8) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var iconText = new TextBlock
+        {
+            Text = "💻",
+            FontSize = 18,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 12, 0),
+        };
+        Grid.SetColumn(iconText, 0);
+
+        var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var primary = new TextBlock
+        {
+            Text = TruncateNpub(d.deviceNpub) +
+                   (d.isCurrentDevice ? "  (this device)" : string.Empty),
+            Foreground = (Brush)Application.Current.Resources["TextPrimary"],
+            FontWeight = FontWeights.SemiBold,
+        };
+        info.Children.Add(primary);
+
+        var meta = new TextBlock
+        {
+            Foreground = (Brush)Application.Current.Resources["TextMuted"],
+            FontSize = 12,
+            Text = StatusText(d),
+            Margin = new Thickness(0, 2, 0, 0),
+        };
+        info.Children.Add(meta);
+        Grid.SetColumn(info, 1);
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+
+        if (roster.canManageDevices && !d.isCurrentDevice && d.isAuthorized)
+        {
+            var revoke = new Button
+            {
+                Style = (Style)FindResource("DangerButton"),
+                Content = new TextBlock { Text = "Revoke" },
+                Padding = new Thickness(10, 6, 10, 6),
+            };
+            revoke.Click += (_, _) => App.CurrentManager.RemoveAuthorizedDevice(d.devicePubkeyHex);
+            actions.Children.Add(revoke);
+        }
+
+        Grid.SetColumn(actions, 2);
+
+        grid.Children.Add(iconText);
+        grid.Children.Add(info);
+        grid.Children.Add(actions);
+
+        return new Border
+        {
+            Background = (Brush)Application.Current.Resources["Panel"],
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(14, 10, 14, 10),
+            Margin = new Thickness(0, 0, 0, 8),
+            Child = grid,
+        };
+    }
+
+    private static string TruncateNpub(string npub)
+    {
+        if (string.IsNullOrEmpty(npub) || npub.Length < 16) return npub;
+        return $"{npub.Substring(0, 10)}…{npub.Substring(npub.Length - 6)}";
+    }
+
+    private static string StatusText(DeviceEntrySnapshot d)
+    {
+        var status = d.isAuthorized ? (d.isStale ? "stale" : "active") : "revoked";
+        if (d.lastActivitySecs is { } secs && secs > 0)
+        {
+            var t = DateTimeOffset.FromUnixTimeSeconds((long)secs).LocalDateTime;
+            var ago = DateTime.Now - t;
+            string when = ago.TotalMinutes < 1 ? "just now"
+                       : ago.TotalHours < 1 ? $"{(int)ago.TotalMinutes}m ago"
+                       : ago.TotalDays < 1 ? $"{(int)ago.TotalHours}h ago"
+                       : $"{(int)ago.TotalDays}d ago";
+            return $"{status} · {when}";
+        }
+        return status;
+    }
+
+    private void OnAdd(object sender, RoutedEventArgs e)
+    {
+        var input = DeviceInput.Text?.Trim();
+        if (string.IsNullOrEmpty(input)) return;
+        App.CurrentManager.AddAuthorizedDevice(input);
+        DeviceInput.Clear();
+    }
+}

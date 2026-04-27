@@ -432,9 +432,7 @@ impl Store for UploadingBlossomStore {
                 // shared cache above already retains it. We propagate `true`
                 // so HashTree::put_stream completes; a future re-upload pass
                 // can push the cached chunks once the network recovers.
-                eprintln!(
-                    "blossom upload failed for {hash_hex} ({error}); kept in local cache"
-                );
+                eprintln!("blossom upload failed for {hash_hex} ({error}); kept in local cache");
                 Ok(true)
             }
         }

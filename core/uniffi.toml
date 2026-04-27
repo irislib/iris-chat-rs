@@ -4,3 +4,8 @@ cdylib_name = "ndr_demo_core"
 
 [bindings.swift]
 module_name = "NdrDemoCore"
+
+[bindings.csharp]
+namespace = "IrisChat.Bindings"
+access_modifier = "public"
+global_methods_class_name = "Native"

@@ -1,0 +1,185 @@
+<UserControl x:Class="IrisChat.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:chrome="clr-namespace:IrisChat.Chrome">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="32" MaxWidth="720" HorizontalAlignment="Stretch">
+
+            <!-- profile editor -->
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <chrome:Avatar x:Name="ProfileAvatar"
+                                       Grid.Column="0"
+                                       Size="64" />
+                        <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                            <TextBox x:Name="ProfileNameInput" />
+                            <TextBlock x:Name="NpubText"
+                                       Style="{StaticResource MutedText}"
+                                       FontFamily="Consolas, 'Cascadia Mono', monospace"
+                                       Margin="0,6,0,0" />
+                        </StackPanel>
+                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                            <Button Style="{StaticResource SecondaryButton}"
+                                    Click="OnPickPicture"
+                                    Margin="0,0,8,0">
+                                <TextBlock Text="Picture" />
+                            </Button>
+                            <Button Style="{StaticResource PrimaryButton}"
+                                    Click="OnSaveProfile">
+                                <TextBlock Text="Save" />
+                            </Button>
+                        </StackPanel>
+                    </Grid>
+
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Click="OnManageDevices"
+                            Margin="0,16,0,0"
+                            HorizontalAlignment="Left">
+                        <TextBlock Text="Manage devices" />
+                    </Button>
+                </StackPanel>
+            </Border>
+
+            <!-- messaging -->
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Messaging"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,12" />
+                    <CheckBox x:Name="TypingToggle" Content="Send typing indicators" Margin="0,0,0,8"
+                              Checked="OnTypingChanged" Unchecked="OnTypingChanged" />
+                    <CheckBox x:Name="ReceiptsToggle" Content="Send read receipts" Margin="0,0,0,8"
+                              Checked="OnReceiptsChanged" Unchecked="OnReceiptsChanged" />
+                    <CheckBox x:Name="NotificationsToggle" Content="Desktop notifications" Margin="0,0,0,8"
+                              Checked="OnNotificationsChanged" Unchecked="OnNotificationsChanged" />
+                    <CheckBox x:Name="StartupToggle" Content="Open at login"
+                              Checked="OnStartupChanged" Unchecked="OnStartupChanged" />
+                </StackPanel>
+            </Border>
+
+            <!-- relays -->
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Nostr relays"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,8" />
+                    <ItemsControl x:Name="RelaysList" />
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="NewRelayInput" Grid.Column="0" />
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Grid.Column="1"
+                                Click="OnAddRelay"
+                                Margin="8,0,0,0">
+                            <TextBlock Text="Add" />
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}"
+                                Grid.Column="2"
+                                Click="OnResetRelays"
+                                Margin="6,0,0,0">
+                            <TextBlock Text="Reset" />
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- security -->
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Security"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,12" />
+                    <Button x:Name="ExportOwnerKeyButton"
+                            Style="{StaticResource SecondaryButton}"
+                            Click="OnExportOwner"
+                            Margin="0,0,0,8"
+                            HorizontalAlignment="Left">
+                        <TextBlock Text="Copy owner key (nsec)" />
+                    </Button>
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Click="OnExportDevice"
+                            HorizontalAlignment="Left">
+                        <TextBlock Text="Copy device key (nsec)" />
+                    </Button>
+                </StackPanel>
+            </Border>
+
+            <!-- about -->
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="About"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,12" />
+                    <TextBlock x:Name="VersionText"
+                               Foreground="{StaticResource TextPrimary}"
+                               Margin="0,0,0,4" />
+                    <TextBlock x:Name="RelaySetText"
+                               Style="{StaticResource MutedText}" />
+                    <TextBlock x:Name="NetworkText"
+                               Style="{StaticResource MutedText}"
+                               Margin="0,4,0,0" />
+                </StackPanel>
+            </Border>
+
+            <!-- support -->
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Support"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,12" />
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Click="OnExportSupport"
+                            HorizontalAlignment="Left">
+                        <TextBlock Text="Save support bundle" />
+                    </Button>
+                </StackPanel>
+            </Border>
+
+            <!-- danger -->
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Danger zone"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,12" />
+                    <Button Style="{StaticResource DangerButton}"
+                            Click="OnLogout"
+                            HorizontalAlignment="Left">
+                        <TextBlock Text="Sign out / reset device" />
+                    </Button>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

@@ -22,3 +22,24 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 rqrr = "0.7"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 v4l = "0.14"
+
+[package.metadata.deb]
+name = "iris-chat"
+maintainer = "Iris <hi@iris.to>"
+copyright = "Iris"
+extended-description = "Iris Chat — encrypted Nostr messenger."
+section = "net"
+priority = "optional"
+assets = [
+    ["target/release/iris-chat", "usr/bin/", "755"],
+    ["resources/iris-chat-16.png", "usr/share/icons/hicolor/16x16/apps/iris-chat.png", "644"],
+    ["resources/iris-chat-22.png", "usr/share/icons/hicolor/22x22/apps/iris-chat.png", "644"],
+    ["resources/iris-chat-24.png", "usr/share/icons/hicolor/24x24/apps/iris-chat.png", "644"],
+    ["resources/iris-chat-32.png", "usr/share/icons/hicolor/32x32/apps/iris-chat.png", "644"],
+    ["resources/iris-chat-48.png", "usr/share/icons/hicolor/48x48/apps/iris-chat.png", "644"],
+    ["resources/iris-chat-64.png", "usr/share/icons/hicolor/64x64/apps/iris-chat.png", "644"],
+    ["resources/iris-chat-128.png", "usr/share/icons/hicolor/128x128/apps/iris-chat.png", "644"],
+    ["resources/iris-chat-256.png", "usr/share/icons/hicolor/256x256/apps/iris-chat.png", "644"],
+    ["resources/iris-chat-512.png", "usr/share/icons/hicolor/512x512/apps/iris-chat.png", "644"],
+    ["resources/iris-chat.desktop", "usr/share/applications/iris-chat.desktop", "644"],
+]

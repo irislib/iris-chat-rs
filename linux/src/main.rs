@@ -52,7 +52,10 @@ fn main() -> glib::ExitCode {
         .application_id(APP_ID)
         .build();
 
-    app.connect_startup(|_| install_css());
+    app.connect_startup(|_| {
+        install_css();
+        gtk::Window::set_default_icon_name("iris-chat");
+    });
     app.connect_activate(window::build_ui);
     app.run()
 }

@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>IrisChat</RootNamespace>
+    <AssemblyName>IrisChat</AssemblyName>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <LangVersion>latest</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>Resources\IrisChat.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <!-- Native Rust DLL produced by scripts/windows-build, copied next to exe.
+       Generated C# bindings under Bindings/ are picked up by the SDK's default
+       Compile glob — no explicit ItemGroup needed. -->
+  <ItemGroup>
+    <Content Include="Frameworks\ndr_demo_core.dll" Condition="Exists('Frameworks\ndr_demo_core.dll')">
+      <Link>ndr_demo_core.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

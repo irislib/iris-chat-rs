@@ -127,7 +127,8 @@ impl AppCore {
     }
 
     fn thread_path(&self, chat_id: &str) -> PathBuf {
-        self.threads_dir().join(format!("{}.json", thread_filename(chat_id)))
+        self.threads_dir()
+            .join(format!("{}.json", thread_filename(chat_id)))
     }
 
     pub(super) fn load_persisted(&self) -> anyhow::Result<Option<PersistedState>> {
@@ -163,7 +164,8 @@ impl AppCore {
             read_optional_json(&self.seen_events_path())?.unwrap_or_default();
         let preferences = read_optional_json(&self.preferences_path())?.unwrap_or_default();
         let owner_profiles = read_optional_json(&self.profiles_path())?.unwrap_or_default();
-        let app_keys: Vec<KnownAppKeys> = read_optional_json(&self.app_keys_path())?.unwrap_or_default();
+        let app_keys: Vec<KnownAppKeys> =
+            read_optional_json(&self.app_keys_path())?.unwrap_or_default();
         let groups: Vec<GroupData> = read_optional_json(&self.groups_path())?.unwrap_or_default();
         let chat_message_ttl_seconds: BTreeMap<String, u64> =
             read_optional_json(&self.chat_ttls_path())?.unwrap_or_default();
@@ -477,9 +479,6 @@ mod tests {
             thread_filename("a4d2d3bb0827f6c3aef2bbbf0d94dfbc"),
             "a4d2d3bb0827f6c3aef2bbbf0d94dfbc"
         );
-        assert_eq!(
-            thread_filename("g_a4d2/d3bb"),
-            "g_a4d2_d3bb"
-        );
+        assert_eq!(thread_filename("g_a4d2/d3bb"), "g_a4d2_d3bb");
     }
 }

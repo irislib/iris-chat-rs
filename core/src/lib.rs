@@ -141,8 +141,9 @@ impl FfiApp {
                 let mut latest_full_state: Option<AppUpdate> = None;
                 let mut sidecar: Vec<AppUpdate> = Vec::new();
                 let process = |update: AppUpdate,
-                                   latest: &mut Option<AppUpdate>,
-                                   side: &mut Vec<AppUpdate>| match update {
+                               latest: &mut Option<AppUpdate>,
+                               side: &mut Vec<AppUpdate>| match update
+                {
                     full @ AppUpdate::FullState(_) => *latest = Some(full),
                     other => side.push(other),
                 };

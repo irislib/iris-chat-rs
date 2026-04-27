@@ -9,11 +9,13 @@ MACOS_DIR="$ROOT/macos"
 MACOS_FRAMEWORKS_DIR="$MACOS_DIR/Frameworks"
 MACOS_BUILD_DIR="$MACOS_DIR/.build"
 PROFILE="${NDR_MACOS_RUST_PROFILE:-debug}"
-TARGETS="${NDR_MACOS_RUST_TARGETS:-aarch64-apple-darwin x86_64-apple-darwin}"
+TARGETS="${NDR_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
+MACOS_DIST_DIR="$ROOT/dist/macos"
+MACOS_APP_NAME="${NDR_MACOS_APP_NAME:-Iris Chat.app}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build>
+usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-app|macos-dmg>
 EOF
 }
 
@@ -154,10 +156,16 @@ run_macos_xcframework() {
   cp "$header_path" "$headers_dir/"
   cp "$modulemap_path" "$headers_dir/module.modulemap"
 
-  lipo -create \
-    "$(target_static_lib aarch64-apple-darwin)" \
-    "$(target_static_lib x86_64-apple-darwin)" \
-    -output "$universal_lib"
+  local libs=()
+  for target in $TARGETS; do
+    libs+=("$(target_static_lib "$target")")
+  done
+
+  if [[ "${#libs[@]}" -eq 1 ]]; then
+    cp "${libs[0]}" "$universal_lib"
+  else
+    lipo -create "${libs[@]}" -output "$universal_lib"
+  fi
 
   xcodebuild -create-xcframework \
     -library "$universal_lib" \
@@ -182,12 +190,91 @@ run_macos_build() {
     build
 }
 
+run_macos_app() {
+  PROFILE="release"
+  TARGETS="${NDR_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
+  export NDR_MACOS_RUST_PROFILE="release"
+
+  run_macos_xcframework
+  run_macos_xcodeproj
+
+  mkdir -p "$MACOS_DIST_DIR"
+  local derived="$MACOS_DIST_DIR/.derived"
+  rm -rf "$derived"
+
+  xcodebuild \
+    -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
+    -scheme IrisChatMac \
+    -configuration Release \
+    -derivedDataPath "$derived" \
+    -destination 'generic/platform=macOS,name=Any Mac' \
+    ARCHS=arm64 \
+    VALID_ARCHS=arm64 \
+    ONLY_ACTIVE_ARCH=NO \
+    CODE_SIGN_STYLE=Manual \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGN_IDENTITY="" \
+    DEVELOPMENT_TEAM="" \
+    build
+
+  local app_src
+  app_src="$(find "$derived/Build/Products/Release" -maxdepth 1 -name '*.app' | head -n 1)"
+  if [[ -z "${app_src:-}" || ! -d "$app_src" ]]; then
+    echo "macos-app: no .app produced under $derived/Build/Products/Release" >&2
+    exit 1
+  fi
+
+  local dest="$MACOS_DIST_DIR/$MACOS_APP_NAME"
+  rm -rf "$dest"
+  cp -R "$app_src" "$dest"
+  printf '%s\n' "$dest"
+}
+
+run_macos_dmg() {
+  local app="$MACOS_DIST_DIR/$MACOS_APP_NAME"
+  if [[ ! -d "$app" ]]; then
+    run_macos_app >/dev/null
+  fi
+
+  local tag="${NDR_RELEASE_TAG:-}"
+  if [[ -z "$tag" && -f "$ROOT/scripts/release_common.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "$ROOT/scripts/release_common.sh"
+    load_release_env "$ROOT"
+    resolve_shared_build_metadata "$ROOT"
+    tag="v${NDR_APP_VERSION_NAME}"
+  fi
+  tag="${tag:-vdev}"
+
+  local dmg="$MACOS_DIST_DIR/iris-chat-${tag}-macos-arm64.dmg"
+  rm -f "$dmg"
+
+  local stage
+  stage="$(mktemp -d "${TMPDIR:-/tmp}/iris-chat-dmg.XXXXXX")"
+  cp -R "$app" "$stage/"
+  ln -s /Applications "$stage/Applications"
+
+  hdiutil create \
+    -volname "Iris Chat" \
+    -srcfolder "$stage" \
+    -fs HFS+ \
+    -format UDZO \
+    -ov \
+    "$dmg"
+
+  rm -rf "$stage"
+  printf '%s\n' "$dmg"
+}
+
 case "${1:-}" in
   macos-gen-swift) run_macos_gen_swift ;;
   macos-rust) run_macos_rust ;;
   macos-xcframework) run_macos_xcframework ;;
   macos-xcodeproj) run_macos_xcodeproj ;;
   macos-build) run_macos_build ;;
+  macos-app) run_macos_app ;;
+  macos-dmg) run_macos_dmg ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

@@ -10,6 +10,7 @@ info:
     @echo "  just run-android"
     @echo "  just run-ios"
     @echo "  just run-macos"
+    @echo "  just run-windows"
     @echo
     @echo "Bindings and native builds"
     @echo "  just gen-kotlin"
@@ -26,8 +27,20 @@ info:
     @echo "  just macos-xcframework"
     @echo "  just macos-xcodeproj"
     @echo "  just macos-build"
+    @echo "  just windows-doctor"
+    @echo "  just windows-rust"
+    @echo "  just windows-gen-cs"
+    @echo "  just windows-dotnet"
+    @echo "  just windows-build"
     @echo "  just ios-release-prepare"
     @echo "  just ios-release-archive"
+    @echo "  just macos-app"
+    @echo "  just macos-dmg"
+    @echo "  just windows-installer"
+    @echo "  just windows-zip"
+    @echo "  just linux-release"
+    @echo "  just release"
+    @echo "  just release-publish"
     @echo
     @echo "Checks"
     @echo "  just doctor-ios"
@@ -43,6 +56,9 @@ run-macos:
 
 run-android:
     ./tools/run-android
+
+run-windows:
+    ./tools/run-windows
 
 ios-gen-swift:
     ./scripts/ios-build ios-gen-swift
@@ -70,6 +86,45 @@ macos-xcodeproj:
 
 macos-build:
     ./scripts/macos-build macos-build
+
+macos-app:
+    ./scripts/macos-build macos-app
+
+macos-dmg:
+    ./scripts/macos-build macos-dmg
+
+windows-doctor:
+    ./scripts/windows-build windows-doctor
+
+windows-sync:
+    ./scripts/windows-build windows-sync
+
+windows-rust:
+    ./scripts/windows-build windows-rust
+
+windows-gen-cs:
+    ./scripts/windows-build windows-gen-cs
+
+windows-dotnet:
+    ./scripts/windows-build windows-dotnet
+
+windows-build:
+    ./scripts/windows-build windows-build
+
+windows-installer:
+    ./scripts/windows-build windows-installer
+
+windows-zip:
+    ./scripts/windows-build windows-zip
+
+linux-release:
+    ./scripts/linux-release
+
+release:
+    ./scripts/release
+
+release-publish:
+    ./scripts/release --publish
 
 android-rust:
     ./scripts/android-build android-rust

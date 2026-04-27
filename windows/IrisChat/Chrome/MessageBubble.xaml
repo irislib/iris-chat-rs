@@ -1,0 +1,41 @@
+<UserControl x:Class="IrisChat.Chrome.MessageBubble"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Border x:Name="Bubble"
+            CornerRadius="14"
+            Padding="12,8"
+            Margin="0,3"
+            MaxWidth="540">
+        <StackPanel>
+            <TextBlock x:Name="AuthorText"
+                       Foreground="{StaticResource TextMuted}"
+                       FontSize="11"
+                       Margin="0,0,0,2"
+                       Visibility="Collapsed" />
+            <TextBlock x:Name="BodyText"
+                       Foreground="White"
+                       FontSize="14"
+                       TextWrapping="Wrap" />
+            <ItemsControl x:Name="AttachmentsList"
+                          Visibility="Collapsed"
+                          Margin="0,4,0,0" />
+            <Grid x:Name="MetaRow" Margin="0,4,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TimeText"
+                           Grid.Column="0"
+                           Foreground="#FFFFFFFF"
+                           Opacity="0.6"
+                           FontSize="10" />
+                <TextBlock x:Name="DeliveryText"
+                           Grid.Column="1"
+                           Foreground="#FFFFFFFF"
+                           Opacity="0.6"
+                           FontSize="10"
+                           Margin="6,0,0,0" />
+            </Grid>
+        </StackPanel>
+    </Border>
+</UserControl>

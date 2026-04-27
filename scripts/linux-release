@@ -1,0 +1,183 @@
+#!/usr/bin/env bash
+#
+# Linux x86_64 release builds for the iris-chat GTK4 shell.
+#
+# Builds inside the existing dev container (linux/Dockerfile) so the host
+# does not need GTK4/libadwaita dev headers. Produces:
+#   dist/linux/iris-chat-<tag>-linux-x64.tar.gz   (binary + .desktop + README)
+#   dist/linux/iris-chat-<tag>-linux-x64.deb      (Debian package, when cargo-deb succeeds)
+#
+# Pass --skip-docker-build to reuse an already-built image; pass --keep-container to leave the
+# build container around for inspection.
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/release_common.sh"
+
+load_release_env "$ROOT"
+resolve_shared_build_metadata "$ROOT"
+
+LINUX_DIR="$ROOT/linux"
+DIST_DIR="$ROOT/dist/linux"
+IMAGE="${IRIS_LINUX_BUILD_IMAGE:-iris-chat-linux-dev:latest}"
+DOCKER_PLATFORM="${IRIS_LINUX_DOCKER_PLATFORM:-linux/amd64}"
+SKIP_DOCKER_BUILD=0
+KEEP_CONTAINER=0
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/linux-release [--skip-docker-build] [--keep-container]
+
+Builds Linux x86_64 release artifacts inside a Docker container based on
+linux/Dockerfile, then stages them under dist/linux/.
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --skip-docker-build) SKIP_DOCKER_BUILD=1 ;;
+    --keep-container) KEEP_CONTAINER=1 ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "Missing required command: $1" >&2
+    exit 1
+  fi
+}
+
+require_cmd docker
+
+mkdir -p "$DIST_DIR"
+
+TAG="v${NDR_APP_VERSION_NAME}"
+LINUX_ARCH_LABEL="${IRIS_LINUX_ARCH_LABEL:-x64}"
+ARTIFACT_BASENAME="iris-chat-${TAG}-linux-${LINUX_ARCH_LABEL}"
+
+if [[ "$SKIP_DOCKER_BUILD" -ne 1 ]]; then
+  docker build \
+    --platform "$DOCKER_PLATFORM" \
+    -f "$LINUX_DIR/Dockerfile" \
+    -t "$IMAGE" \
+    "$ROOT/.."
+fi
+
+CONTAINER_NAME="iris-chat-linux-release-$$"
+cleanup() {
+  if [[ "$KEEP_CONTAINER" -ne 1 ]]; then
+    docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+# Stream a release-build script into the container and run it.
+docker run \
+  --platform "$DOCKER_PLATFORM" \
+  --name "$CONTAINER_NAME" \
+  --rm="$([[ "$KEEP_CONTAINER" -eq 1 ]] && printf false || printf true)" \
+  -v "$ROOT/..:/workspace:cached" \
+  -w /workspace/iris-chat-rs/linux \
+  -e ARTIFACT_BASENAME="$ARTIFACT_BASENAME" \
+  -e NDR_APP_VERSION_NAME="$NDR_APP_VERSION_NAME" \
+  -e NDR_APP_VERSION_CODE="$NDR_APP_VERSION_CODE" \
+  -e NDR_BUILD_GIT_SHA="$NDR_BUILD_GIT_SHA" \
+  -e NDR_BUILD_TIMESTAMP_UTC="$NDR_BUILD_TIMESTAMP_UTC" \
+  --entrypoint /bin/bash \
+  "$IMAGE" -lc '
+    set -Eeuo pipefail
+
+    cd /workspace/iris-chat-rs/linux
+
+    if ! dpkg -s libclang-dev >/dev/null 2>&1; then
+      apt-get update >/dev/null
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        libclang-dev clang >/dev/null
+    fi
+
+    cargo build --release
+
+    if ! command -v cargo-deb >/dev/null 2>&1; then
+      cargo install cargo-deb --locked
+    fi
+
+    OUT=/workspace/iris-chat-rs/dist/linux
+    mkdir -p "$OUT"
+
+    BIN_PATH=target/release/iris-chat
+    if [ ! -f "$BIN_PATH" ]; then
+      echo "Missing release binary at $BIN_PATH" >&2
+      exit 1
+    fi
+
+    STAGE=$(mktemp -d)
+    BUNDLE="$STAGE/iris-chat"
+    mkdir -p "$BUNDLE" "$BUNDLE/icons"
+    install -m 0755 "$BIN_PATH" "$BUNDLE/iris-chat"
+
+    for sz in 16 22 24 32 48 64 128 256 512; do
+      install -m 0644 "resources/iris-chat-${sz}.png" "$BUNDLE/icons/iris-chat-${sz}.png"
+    done
+
+    cat > "$BUNDLE/iris-chat.desktop" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Iris Chat
+GenericName=Encrypted Nostr Chat
+Comment=Iris Chat — encrypted Nostr messenger
+Exec=iris-chat
+Icon=iris-chat
+Terminal=false
+Categories=Network;InstantMessaging;
+DESKTOP
+
+    cat > "$BUNDLE/install.sh" <<INSTALL
+#!/bin/sh
+set -e
+PREFIX="\${1:-/usr/local}"
+install -Dm 0755 "\$(dirname "\$0")/iris-chat" "\$PREFIX/bin/iris-chat"
+install -Dm 0644 "\$(dirname "\$0")/iris-chat.desktop" "\$PREFIX/share/applications/iris-chat.desktop"
+for sz in 16 22 24 32 48 64 128 256 512; do
+  install -Dm 0644 "\$(dirname "\$0")/icons/iris-chat-\${sz}.png" \\
+    "\$PREFIX/share/icons/hicolor/\${sz}x\${sz}/apps/iris-chat.png"
+done
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f -t "\$PREFIX/share/icons/hicolor" >/dev/null 2>&1 || true
+fi
+echo "Installed iris-chat to \$PREFIX/bin/iris-chat"
+INSTALL
+    chmod +x "$BUNDLE/install.sh"
+
+    cat > "$BUNDLE/README.txt" <<README
+Iris Chat ${NDR_APP_VERSION_NAME} (Linux x86_64)
+============================================
+
+Quick install:
+  ./install.sh              # installs to /usr/local
+  sudo ./install.sh /usr    # system-wide
+
+Manual install:
+  cp iris-chat /usr/local/bin/
+
+Runtime dependencies (Debian/Ubuntu): libgtk-4-1, libadwaita-1-0,
+libsecret-1-0, libsoup-3.0-0, libv4l-0.
+README
+
+    tar -czf "$OUT/${ARTIFACT_BASENAME}.tar.gz" -C "$STAGE" iris-chat
+
+    if cargo deb --no-build --output \
+        "$OUT/${ARTIFACT_BASENAME}.deb" 2>/dev/null; then
+      echo "Built deb at $OUT/${ARTIFACT_BASENAME}.deb"
+    else
+      echo "[skip] cargo-deb failed (likely missing [package.metadata.deb]); only tarball was produced." >&2
+    fi
+
+    rm -rf "$STAGE"
+  '
+
+ls -la "$DIST_DIR" | grep -E "${ARTIFACT_BASENAME}\.(tar\.gz|deb)$" || true

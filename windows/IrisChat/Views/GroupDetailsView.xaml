@@ -1,0 +1,71 @@
+<UserControl x:Class="IrisChat.Views.GroupDetailsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:chrome="clr-namespace:IrisChat.Chrome">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="32" MaxWidth="640" HorizontalAlignment="Stretch">
+
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <chrome:Avatar x:Name="GroupAvatar"
+                                   Grid.Column="0"
+                                   Size="64" />
+                    <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                        <TextBox x:Name="GroupNameInput" />
+                        <TextBlock x:Name="GroupSubtitle"
+                                   Style="{StaticResource MutedText}"
+                                   Margin="0,6,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="OnPickPicture"
+                                Margin="0,0,8,0">
+                            <TextBlock Text="Picture" />
+                        </Button>
+                        <Button Style="{StaticResource PrimaryButton}"
+                                Click="OnSaveName"
+                                x:Name="SaveNameButton">
+                            <TextBlock Text="Save" />
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Members"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,8" />
+                    <ItemsControl x:Name="MembersList" />
+
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="AddMemberInput"
+                                 Grid.Column="0" />
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Grid.Column="1"
+                                Click="OnAddMember"
+                                Margin="8,0,0,0">
+                            <TextBlock Text="Add" />
+                        </Button>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

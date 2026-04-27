@@ -14,9 +14,14 @@ ios/*.xcodeproj/
 macos/.build/
 macos/Frameworks/
 macos/*.xcodeproj/
+windows/IrisChat/bin/
+windows/IrisChat/obj/
+windows/IrisChat/Bindings/
+windows/IrisChat/Frameworks/
 dist/
 release.env
 .env.zapstore.local
+.claude/
 .zapstore/
 *.iml
 .DS_Store

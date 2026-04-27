@@ -23,9 +23,9 @@ impl AppCore {
             let success = result.is_ok();
             let detail = match &result {
                 Ok(()) => format!("label={label} success=true relays={relay_count}"),
-                Err(error) => format!(
-                    "label={label} success=false relays={relay_count} error={error}"
-                ),
+                Err(error) => {
+                    format!("label={label} success=false relays={relay_count} error={error}")
+                }
             };
             if let Some((message_id, chat_id)) = completion {
                 let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {

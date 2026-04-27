@@ -1,0 +1,164 @@
+using System;
+using System.IO;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+
+namespace IrisChat.Chrome;
+
+public partial class Avatar : UserControl
+{
+    public static readonly DependencyProperty LabelProperty =
+        DependencyProperty.Register(nameof(Label), typeof(string), typeof(Avatar),
+            new PropertyMetadata(string.Empty, OnLabelChanged));
+
+    public static readonly DependencyProperty PictureUrlProperty =
+        DependencyProperty.Register(nameof(PictureUrl), typeof(string), typeof(Avatar),
+            new PropertyMetadata(null, OnPictureUrlChanged));
+
+    public static readonly DependencyProperty SizeProperty =
+        DependencyProperty.Register(nameof(Size), typeof(double), typeof(Avatar),
+            new PropertyMetadata(44.0, OnSizeChanged));
+
+    public string Label
+    {
+        get => (string)GetValue(LabelProperty);
+        set => SetValue(LabelProperty, value);
+    }
+
+    public string? PictureUrl
+    {
+        get => (string?)GetValue(PictureUrlProperty);
+        set => SetValue(PictureUrlProperty, value);
+    }
+
+    public double Size
+    {
+        get => (double)GetValue(SizeProperty);
+        set => SetValue(SizeProperty, value);
+    }
+
+    public Avatar()
+    {
+        InitializeComponent();
+        UpdateLabel();
+        UpdateSize();
+    }
+
+    private static void OnLabelChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
+        ((Avatar)d).UpdateLabel();
+
+    private static void OnSizeChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
+        ((Avatar)d).UpdateSize();
+
+    private static void OnPictureUrlChanged(DependencyObject d, DependencyPropertyChangedEventArgs e) =>
+        ((Avatar)d).UpdateImage();
+
+    private void UpdateSize()
+    {
+        Width = Size;
+        Height = Size;
+        BackgroundBorder.CornerRadius = new CornerRadius(Size / 2);
+        ImageHost.CornerRadius = new CornerRadius(Size / 2);
+        Initials.FontSize = Size * 0.36;
+    }
+
+    private void UpdateLabel()
+    {
+        var label = Label ?? string.Empty;
+        Initials.Text = ComputeInitials(label);
+        BackgroundBorder.Background = new SolidColorBrush(ColorFor(label));
+    }
+
+    private async void UpdateImage()
+    {
+        var url = PictureUrl?.Trim();
+        if (string.IsNullOrEmpty(url))
+        {
+            ImageHost.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        try
+        {
+            byte[]? data = null;
+
+            if (url.StartsWith("htree://", StringComparison.OrdinalIgnoreCase))
+            {
+                // Strip the htree:// prefix and any trailing path/filename, keep
+                // the nhash component (the leading host segment).
+                var noScheme = url.Substring("htree://".Length);
+                var nhash = noScheme.Split('/')[0];
+                if (Application.Current is App app && app.Manager != null)
+                {
+                    data = await app.Manager.ResolveProfilePictureAsync(nhash);
+                }
+            }
+            else if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+                     url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+            {
+                using var http = new System.Net.Http.HttpClient();
+                http.Timeout = TimeSpan.FromSeconds(15);
+                data = await http.GetByteArrayAsync(url);
+            }
+            else if (File.Exists(url))
+            {
+                data = await File.ReadAllBytesAsync(url);
+            }
+
+            if (data == null || data.Length == 0)
+            {
+                ImageHost.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            using var ms = new MemoryStream(data);
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.StreamSource = ms;
+            bmp.EndInit();
+            bmp.Freeze();
+
+            ImageBrush.ImageSource = bmp;
+            ImageHost.Visibility = Visibility.Visible;
+        }
+        catch
+        {
+            ImageHost.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private static string ComputeInitials(string label)
+    {
+        var trimmed = (label ?? string.Empty).Trim();
+        if (string.IsNullOrEmpty(trimmed)) return "?";
+        var parts = trimmed.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return char.ToUpperInvariant(trimmed[0]).ToString();
+        if (parts.Length == 1) return char.ToUpperInvariant(parts[0][0]).ToString();
+        return $"{char.ToUpperInvariant(parts[0][0])}{char.ToUpperInvariant(parts[^1][0])}";
+    }
+
+    private static Color ColorFor(string label)
+    {
+        unchecked
+        {
+            uint hash = 2166136261;
+            foreach (var c in label ?? string.Empty)
+            {
+                hash ^= c;
+                hash *= 16777619;
+            }
+            byte r = (byte)((hash >> 16) & 0xFF);
+            byte g = (byte)((hash >> 8) & 0xFF);
+            byte b = (byte)(hash & 0xFF);
+            // Brighten so colors stay vivid on the dark background.
+            r = (byte)(80 + r % 156);
+            g = (byte)(80 + g % 156);
+            b = (byte)(80 + b % 156);
+            return Color.FromRgb(r, g, b);
+        }
+    }
+}

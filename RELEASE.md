@@ -1,10 +1,20 @@
 # Release Guide
 
-This repo has repeatable release entrypoints for both platforms:
+This repo has repeatable release entrypoints for every platform:
 
+- All-in-one local release + hashtree publish: `./scripts/release` (`--publish` to push)
 - Android: `./scripts/android-release`
 - iOS: `./scripts/ios-release`
+- macOS: `./scripts/macos-build macos-dmg`
+- Windows (x86_64 NSIS installer): `./scripts/windows-build windows-installer`
+- Linux (x86_64 tarball + .deb via Docker): `./scripts/linux-release`
 - Shared release inputs: copy `release.env.example` to `release.env`
+
+`./scripts/release` builds whatever the current host can build, stages a
+hashtree release tree under `dist/release/<tag>/`, and with `--publish` runs
+`htree add` + `htree release publish releases/iris-chat <tag> <cid>`. Pass
+`--only macos,linux` or `--skip windows` to limit scope, and `--dry-run` to see
+the plan first.
 
 ## Official References
 

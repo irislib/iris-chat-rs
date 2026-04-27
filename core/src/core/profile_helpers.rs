@@ -19,9 +19,7 @@ pub(super) fn normalize_profile_field(value: Option<String>) -> Option<String> {
 
 pub(super) fn normalize_profile_url(value: Option<String>) -> Option<String> {
     let value = normalize_profile_field(value)?;
-    (value.starts_with("https://")
-        || value.starts_with("http://")
-        || value.starts_with("htree://"))
+    (value.starts_with("https://") || value.starts_with("http://") || value.starts_with("htree://"))
         .then_some(value)
 }
 

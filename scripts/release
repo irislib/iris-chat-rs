@@ -1,0 +1,370 @@
+#!/usr/bin/env bash
+#
+# iris-chat-rs local release orchestrator.
+#
+# Builds whatever this host can build (macOS DMG, Windows x86_64 NSIS installer
+# via Parallels, Android APK/AAB, Linux x86_64 deb/tarball via Docker, optional
+# iOS xcarchive) and stages a hashtree release tree under dist/release/<tag>/.
+# With --publish it runs `htree add` + `htree release publish releases/iris-chat`.
+#
+# This mirrors the spirit of nostr-vpn's scripts/local-release.mjs but is a bash
+# script for parity with the rest of scripts/ in this repo.
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/release_common.sh"
+
+load_release_env "$ROOT"
+resolve_shared_build_metadata "$ROOT"
+
+DIST_DIR="$ROOT/dist"
+STAGE_ROOT="$DIST_DIR/release"
+RELEASE_TREE_DEFAULT="releases/iris-chat-rs"
+
+PUBLISH=0
+DRY_RUN=0
+PUBLISH_ZAPSTORE=0
+RELEASE_TREE=""
+TAG_OVERRIDE=""
+ONLY_RAW=""
+SKIP_RAW=""
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/release [options]
+
+Build all locally-buildable platforms, stage a hashtree release directory under
+dist/release/<tag>/, and optionally publish it via htree.
+
+Options:
+  --publish                Publish the staged tree with `htree add` + `htree release publish`
+  --publish-zapstore       Also publish the signed Android APK to Zapstore
+  --tag <vX.Y.Z>           Override release tag (defaults to v$NDR_APP_VERSION_NAME)
+  --release-tree <name>    htree release tree name (default: releases/iris-chat)
+  --only <csv>             Only run named steps (macos,windows,android,linux,ios)
+  --skip <csv>             Skip named steps
+  --dry-run                Print the plan without running build commands
+  -h, --help               Show this help
+
+Environment:
+  NDR_RELEASE_TREE         Default for --release-tree
+  IRIS_RELEASE_ALLOW_DIRTY  Allow building from a dirty git tree
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --publish) PUBLISH=1 ;;
+    --publish-zapstore) PUBLISH_ZAPSTORE=1 ;;
+    --dry-run) DRY_RUN=1 ;;
+    --tag) TAG_OVERRIDE="$2"; shift ;;
+    --release-tree) RELEASE_TREE="$2"; shift ;;
+    --only) ONLY_RAW="$2"; shift ;;
+    --skip) SKIP_RAW="$2"; shift ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+normalize_tag() {
+  local v="$1"
+  if [[ -z "$v" ]]; then echo "Empty tag" >&2; exit 2; fi
+  if [[ "$v" == v* ]]; then echo "$v"; else echo "v$v"; fi
+}
+
+TAG="$(normalize_tag "${TAG_OVERRIDE:-$NDR_APP_VERSION_NAME}")"
+RELEASE_TREE="${RELEASE_TREE:-${NDR_RELEASE_TREE:-$RELEASE_TREE_DEFAULT}}"
+STAGE_DIR="$STAGE_ROOT/$TAG"
+
+ONLY_SET=""
+SKIP_SET=""
+csv_to_set() {
+  local csv="$1"
+  echo "$csv" | tr ',' '\n' | sed '/^$/d'
+}
+[[ -n "$ONLY_RAW" ]] && ONLY_SET="$(csv_to_set "$ONLY_RAW")"
+[[ -n "$SKIP_RAW" ]] && SKIP_SET="$(csv_to_set "$SKIP_RAW")"
+
+step_enabled() {
+  local step="$1"
+  if [[ -n "$ONLY_SET" ]]; then
+    grep -qx "$step" <<<"$ONLY_SET" || return 1
+  fi
+  if [[ -n "$SKIP_SET" ]]; then
+    grep -qx "$step" <<<"$SKIP_SET" && return 1
+  fi
+  return 0
+}
+
+BUILT_LINES=()
+SKIPPED_LINES=()
+ASSET_PATHS=()
+
+note_built() { BUILT_LINES+=("$1"); echo "[built] $1"; }
+note_skipped() { SKIPPED_LINES+=("$1"); echo "[skip] $1" >&2; }
+
+run_step() {
+  local name="$1"; shift
+  if ! step_enabled "$name"; then
+    note_skipped "$name skipped by --only/--skip"
+    return 0
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "[dry-run] would run step: $name $*"
+    return 0
+  fi
+  if "$@"; then
+    return 0
+  else
+    local ec=$?
+    note_skipped "$name build failed (exit $ec)"
+    return 0
+  fi
+}
+
+# ---------- macOS ----------
+build_macos() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    note_skipped "macos: host is not Darwin"
+    return 0
+  fi
+  NDR_RELEASE_TAG="$TAG" "$ROOT/scripts/macos-build" macos-dmg >/dev/null
+  local dmg
+  dmg="$(ls -1t "$ROOT/dist/macos/iris-chat-${TAG}-macos-arm64.dmg" 2>/dev/null | head -n 1)"
+  if [[ -z "${dmg:-}" || ! -f "$dmg" ]]; then
+    note_skipped "macos: dmg was not produced"
+    return 0
+  fi
+  ASSET_PATHS+=("$dmg")
+  note_built "macOS Apple Silicon DMG: $(basename "$dmg")"
+}
+
+# ---------- Windows ----------
+build_windows() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    note_skipped "windows: only wired for the macOS + Parallels workflow"
+    return 0
+  fi
+  if ! command -v prlctl >/dev/null 2>&1; then
+    note_skipped "windows: prlctl not found"
+    return 0
+  fi
+
+  NDR_WINDOWS_RUST_PROFILE=release \
+  NDR_WINDOWS_DOTNET_CONFIG=Release \
+    "$ROOT/scripts/windows-build" windows-build
+
+  local installer_basename="iris-chat-${TAG}-windows-x64-setup"
+  local zip_basename="iris-chat-${TAG}-windows-x64"
+
+  IRIS_WINDOWS_INSTALLER_BASENAME="$installer_basename" \
+  NDR_WINDOWS_DOTNET_CONFIG=Release \
+    "$ROOT/scripts/windows-build" windows-installer
+
+  IRIS_WINDOWS_ZIP_BASENAME="$zip_basename" \
+  NDR_WINDOWS_DOTNET_CONFIG=Release \
+    "$ROOT/scripts/windows-build" windows-zip
+
+  local installer="$ROOT/dist/windows/${installer_basename}.exe"
+  local zip="$ROOT/dist/windows/${zip_basename}.zip"
+  [[ -f "$installer" ]] && { ASSET_PATHS+=("$installer"); note_built "Windows x86_64 installer: $(basename "$installer")"; }
+  [[ -f "$zip"       ]] && { ASSET_PATHS+=("$zip");       note_built "Windows x86_64 portable zip: $(basename "$zip")"; }
+}
+
+# ---------- Android ----------
+build_android() {
+  if [[ -z "${NDR_RELEASE_KEYSTORE_PATH:-}" || -z "${NDR_RELEASE_KEY_ALIAS:-}" ]]; then
+    note_skipped "android: release signing not configured (NDR_RELEASE_KEYSTORE_PATH/NDR_RELEASE_KEY_ALIAS)"
+    return 0
+  fi
+
+  "$ROOT/scripts/android-release" release-bundle >/dev/null
+  "$ROOT/scripts/android-release" release-apk    >/dev/null
+
+  local sha="$NDR_BUILD_GIT_SHA"
+  local base="IrisChat-release-${NDR_APP_VERSION_NAME}+${NDR_APP_VERSION_CODE}-${sha}"
+  local apk="$ROOT/dist/android/${base}.apk"
+  local aab="$ROOT/dist/android/${base}.aab"
+
+  if [[ -f "$apk" ]]; then
+    local renamed_apk="$ROOT/dist/android/iris-chat-${TAG}-android-arm64.apk"
+    cp "$apk" "$renamed_apk"
+    ASSET_PATHS+=("$renamed_apk")
+    note_built "Android APK: $(basename "$renamed_apk")"
+  fi
+  if [[ -f "$aab" ]]; then
+    local renamed_aab="$ROOT/dist/android/iris-chat-${TAG}-android-arm64.aab"
+    cp "$aab" "$renamed_aab"
+    ASSET_PATHS+=("$renamed_aab")
+    note_built "Android AAB: $(basename "$renamed_aab")"
+  fi
+}
+
+# ---------- Linux ----------
+build_linux() {
+  if ! command -v docker >/dev/null 2>&1; then
+    note_skipped "linux: docker not available"
+    return 0
+  fi
+  "$ROOT/scripts/linux-release"
+  local tar
+  local deb
+  tar="$(ls -1t "$ROOT"/dist/linux/iris-chat-"${TAG}"-linux-*.tar.gz 2>/dev/null | head -n 1 || true)"
+  deb="$(ls -1t "$ROOT"/dist/linux/iris-chat-"${TAG}"-linux-*.deb 2>/dev/null | head -n 1 || true)"
+  [[ -n "$tar" && -f "$tar" ]] && { ASSET_PATHS+=("$tar"); note_built "Linux tarball: $(basename "$tar")"; }
+  [[ -n "$deb" && -f "$deb" ]] && { ASSET_PATHS+=("$deb"); note_built "Linux .deb: $(basename "$deb")"; }
+}
+
+# ---------- iOS (opt-in) ----------
+build_ios() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    note_skipped "ios: host is not Darwin"
+    return 0
+  fi
+  if [[ -z "${NDR_IOS_DEVELOPMENT_TEAM:-}" ]]; then
+    note_skipped "ios: NDR_IOS_DEVELOPMENT_TEAM not set; skipping archive"
+    return 0
+  fi
+  "$ROOT/scripts/ios-release" archive
+  local archive_basename
+  archive_basename="$(release_slug ios)"
+  local xcarchive="$ROOT/dist/ios/${archive_basename}.xcarchive"
+  if [[ -d "$xcarchive" ]]; then
+    local zipped="$ROOT/dist/ios/iris-chat-${TAG}-ios.xcarchive.zip"
+    rm -f "$zipped"
+    (cd "$(dirname "$xcarchive")" && zip -qr "$zipped" "$(basename "$xcarchive")")
+    ASSET_PATHS+=("$zipped")
+    note_built "iOS xcarchive: $(basename "$zipped")"
+  fi
+}
+
+# ---------- Run steps ----------
+echo "=== iris-chat release $TAG ==="
+echo "Release tree:    $RELEASE_TREE"
+echo "Stage dir:       $STAGE_DIR"
+echo "Version:         $NDR_APP_VERSION_NAME ($NDR_APP_VERSION_CODE)"
+echo "Git sha:         $NDR_BUILD_GIT_SHA"
+[[ "$DRY_RUN" -eq 1 ]] && echo "(dry-run; no commands executed)"
+
+run_step macos   build_macos
+run_step windows build_windows
+run_step android build_android
+run_step linux   build_linux
+run_step ios     build_ios
+
+if [[ "$DRY_RUN" -eq 1 ]]; then
+  echo "Dry run complete."
+  exit 0
+fi
+
+if [[ "${#ASSET_PATHS[@]}" -eq 0 ]]; then
+  echo "No assets were produced; nothing to stage." >&2
+  exit 1
+fi
+
+# ---------- Stage ----------
+rm -rf "$STAGE_DIR"
+mkdir -p "$STAGE_DIR/assets"
+for asset in "${ASSET_PATHS[@]}"; do
+  cp "$asset" "$STAGE_DIR/assets/"
+done
+
+CREATED_AT="$(date -u +%s)"
+COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$NDR_BUILD_GIT_SHA")"
+
+# Build minimal release.json
+{
+  printf '{\n'
+  printf '  "id": "%s",\n' "$TAG"
+  printf '  "title": "%s",\n' "$TAG"
+  printf '  "tag": "%s",\n' "$TAG"
+  printf '  "commit": "%s",\n' "$COMMIT"
+  printf '  "created_at": %s,\n' "$CREATED_AT"
+  printf '  "published_at": %s,\n' "$CREATED_AT"
+  printf '  "draft": false,\n'
+  case "$TAG" in
+    *-*) printf '  "prerelease": true,\n' ;;
+    *)   printf '  "prerelease": false,\n' ;;
+  esac
+  printf '  "notes_file": "notes.md",\n'
+  printf '  "assets": [\n'
+  first=1
+  for asset_path in "$STAGE_DIR"/assets/*; do
+    [[ -e "$asset_path" ]] || continue
+    name="$(basename "$asset_path")"
+    size="$(stat -f%z "$asset_path" 2>/dev/null || stat -c%s "$asset_path")"
+    if [[ $first -eq 1 ]]; then first=0; else printf ',\n'; fi
+    printf '    { "name": "%s", "path": "assets/%s", "size": %s }' "$name" "$name" "$size"
+  done
+  printf '\n  ]\n'
+  printf '}\n'
+} > "$STAGE_DIR/release.json"
+
+# notes.md
+{
+  echo "# Iris Chat $TAG"
+  echo
+  echo "Built from commit \`$COMMIT\`."
+  echo
+  echo "## Downloads"
+  echo
+  for asset_path in "$STAGE_DIR"/assets/*; do
+    [[ -e "$asset_path" ]] || continue
+    name="$(basename "$asset_path")"
+    echo "- \`$name\`"
+  done
+  if [[ "${#BUILT_LINES[@]}" -gt 0 ]]; then
+    echo
+    echo "## Build summary"
+    echo
+    for line in "${BUILT_LINES[@]}"; do
+      echo "- $line"
+    done
+  fi
+  if [[ "${#SKIPPED_LINES[@]}" -gt 0 ]]; then
+    echo
+    echo "## Skipped"
+    echo
+    for line in "${SKIPPED_LINES[@]}"; do
+      echo "- $line"
+    done
+  fi
+} > "$STAGE_DIR/notes.md"
+
+echo
+echo "Staged $TAG at: $STAGE_DIR"
+ls -la "$STAGE_DIR/assets"
+
+# ---------- Publish ----------
+if [[ "$PUBLISH" -eq 1 ]]; then
+  if ! command -v htree >/dev/null 2>&1; then
+    echo "htree not found; cannot publish." >&2
+    exit 1
+  fi
+  echo
+  echo "Publishing to hashtree..."
+  add_output="$(htree add "$STAGE_DIR")"
+  echo "$add_output"
+  cid="$(printf '%s\n' "$add_output" | awk '/^[[:space:]]*url:[[:space:]]/ { print $2; exit }')"
+  if [[ -z "${cid:-}" ]]; then
+    cid="$(printf '%s\n' "$add_output" | awk '/^[[:space:]]*cid:[[:space:]]/ { print $2; exit }')"
+  fi
+  if [[ -z "${cid:-}" ]]; then
+    echo "Could not parse CID from htree add output." >&2
+    exit 1
+  fi
+  htree release publish "$RELEASE_TREE" "$TAG" "$cid"
+  echo "Published $TAG to $RELEASE_TREE (cid: $cid)"
+fi
+
+if [[ "$PUBLISH_ZAPSTORE" -eq 1 ]]; then
+  echo
+  echo "Publishing Android APK to Zapstore..."
+  "$ROOT/scripts/publish-zapstore-android.sh" publish
+fi
+
+echo
+echo "Release $TAG complete."

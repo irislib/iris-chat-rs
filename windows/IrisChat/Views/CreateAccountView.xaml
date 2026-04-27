@@ -1,0 +1,25 @@
+<UserControl x:Class="IrisChat.Views.CreateAccountView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+        <StackPanel Margin="32" MaxWidth="520" HorizontalAlignment="Center">
+            <TextBlock Text="Create your account"
+                       Style="{StaticResource HeadingText}"
+                       Margin="0,0,0,12" />
+            <TextBlock Style="{StaticResource MutedText}"
+                       Text="Pick a display name. We'll generate the keys for you and you can update your profile later."
+                       TextWrapping="Wrap"
+                       Margin="0,0,0,16" />
+
+            <TextBlock Text="Name" Margin="0,0,0,4" />
+            <TextBox x:Name="NameInput" />
+
+            <Button x:Name="CreateButton"
+                    Style="{StaticResource PrimaryButton}"
+                    Click="OnCreate"
+                    Margin="0,16,0,0">
+                <TextBlock Text="Create account" />
+            </Button>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

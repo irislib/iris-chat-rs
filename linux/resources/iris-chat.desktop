@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Iris Chat
+GenericName=Encrypted Nostr Chat
+Comment=Iris Chat — encrypted Nostr messenger
+Exec=iris-chat
+Icon=iris-chat
+Terminal=false
+Categories=Network;InstantMessaging;

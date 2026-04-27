@@ -1,4 +1,40 @@
+use qrcode::{EcLevel, QrCode};
 use url::Url;
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct QrCodeMatrix {
+    /// Square module count (one side of the matrix).
+    pub size: u32,
+    /// "1" = dark module, "0" = light module. Length == size * size.
+    /// We use a string instead of Vec<bool> to keep the FFI surface cheap.
+    pub modules: String,
+}
+
+/// Render `text` to a QR-code module matrix. Returns a square matrix encoded
+/// as `1`/`0` characters in row-major order. Returns `None` for inputs that
+/// don't fit at the medium error-correction level.
+#[uniffi::export]
+pub fn encode_text_qr(text: String) -> Option<QrCodeMatrix> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let code = QrCode::with_error_correction_level(trimmed.as_bytes(), EcLevel::M).ok()?;
+    let width = code.width();
+    let cells = code.to_colors();
+    let mut modules = String::with_capacity(width * width);
+    for color in cells {
+        modules.push(if color == qrcode::Color::Dark {
+            '1'
+        } else {
+            '0'
+        });
+    }
+    Some(QrCodeMatrix {
+        size: width as u32,
+        modules,
+    })
+}
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct DeviceApprovalQrPayload {
