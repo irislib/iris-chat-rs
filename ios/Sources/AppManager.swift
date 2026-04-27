@@ -498,6 +498,9 @@ final class AppManager: ObservableObject {
 
     func logout() {
         // Logout ownership stays in Rust. The shell clears native secrets and local files only.
+#if os(iOS)
+        mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: secretStore.load()?.ownerNsec)
+#endif
         rust.dispatch(action: .logout)
         secretStore.clear()
         try? fileManager.removeItem(at: dataDir)

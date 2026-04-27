@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Subscribe to a local Nostr relay via WebSocket, wait for the next event
-matching a filter, and print the event JSON. Used by smoke scripts that
+Subscribe to a local Nostr relay via WebSocket, wait for matching events,
+and print their event JSON. Used by smoke scripts that
 need to capture the encrypted kind:1060 wrapper a peer publishes — the
 exact payload the notification server would forward to FCM/APNs.
 
@@ -111,7 +111,18 @@ def main() -> int:
     parser.add_argument("--author", help="filter events authored by <hex> (comma- or pipe-separated)")
     parser.add_argument("--since-secs", type=int, default=0, help="only consider events created_at >= now-since")
     parser.add_argument("--timeout-secs", type=float, default=60.0)
+    parser.add_argument("--count", type=int, default=1, help="number of matching events to capture")
+    parser.add_argument(
+        "--format",
+        choices=("single", "jsonl", "array"),
+        default="single",
+        help="output format; single requires --count=1",
+    )
     args = parser.parse_args()
+    if args.count < 1:
+        raise SystemExit("--count must be >= 1")
+    if args.format == "single" and args.count != 1:
+        raise SystemExit("--format single requires --count=1")
 
     sock = open_websocket(args.relay, timeout=10.0)
     sock.settimeout(args.timeout_secs)
@@ -133,6 +144,7 @@ def main() -> int:
     req = json.dumps(["REQ", sub_id, filter_])
     sock.sendall(encode_frame(req.encode()))
 
+    events = []
     deadline = time.time() + args.timeout_secs
     while time.time() < deadline:
         try:
@@ -153,12 +165,20 @@ def main() -> int:
             continue
         if decoded[0] == "EVENT" and len(decoded) >= 3:
             event = decoded[2]
-            print(json.dumps(event))
-            return 0
+            events.append(event)
+            if len(events) >= args.count:
+                if args.format == "jsonl":
+                    for captured in events:
+                        print(json.dumps(captured))
+                elif args.format == "array":
+                    print(json.dumps(events))
+                else:
+                    print(json.dumps(events[0]))
+                return 0
         if decoded[0] == "EOSE":
             # No matching event yet; keep listening for new ones.
             continue
-    print("timed out waiting for event", file=sys.stderr)
+    print(f"timed out waiting for {args.count} event(s); captured {len(events)}", file=sys.stderr)
     return 1
 
 

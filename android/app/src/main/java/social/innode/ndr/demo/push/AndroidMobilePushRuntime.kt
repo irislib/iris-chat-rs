@@ -69,6 +69,17 @@ class AndroidMobilePushRuntime(
         createSubscription(ownerSecret, token, authors, storageKey, serverOverride)
     }
 
+    suspend fun unregisterStoredSubscription(
+        state: AppState,
+        ownerNsec: String?,
+    ) {
+        val storageKeyName = mobilePushSubscriptionIdKey(PLATFORM_KEY)
+        val storageKey = stringPreferencesKey(storageKeyName)
+        val serverOverride = userServerOverride(state) ?: buildServerOverride()
+        disableStoredSubscription(ownerNsec?.trim()?.ifEmpty { null }, storageKey, serverOverride)
+        lastSyncSignature = null
+    }
+
     private suspend fun resolveExistingSubscriptionId(
         ownerNsec: String,
         pushToken: String,

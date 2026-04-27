@@ -84,6 +84,23 @@ final class MobilePushRuntime {
         }
     }
 
+    @MainActor
+    func unregisterStoredSubscription(state: AppState, ownerNsec: String?) {
+        let storageKey = mobilePushSubscriptionIdKey(platformKey: "ios")
+        let userServerOverride = state.preferences.mobilePushServerUrl.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let serverOverride = userServerOverride ?? mobilePushBuildServerOverride
+        let ownerSecret = ownerNsec?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        lastSyncSignature = nil
+        currentSyncTask?.cancel()
+        currentSyncTask = Task { [weak self] in
+            await self?.disableStoredSubscription(
+                ownerNsec: ownerSecret,
+                storageKey: storageKey,
+                serverOverride: serverOverride
+            )
+        }
+    }
+
     private func sync(
         enabled: Bool,
         ownerNsec: String?,

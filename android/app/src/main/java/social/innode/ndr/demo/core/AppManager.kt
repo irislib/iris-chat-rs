@@ -472,6 +472,12 @@ class AppManager(
         applicationScope.launch(ioDispatcher) {
             // Logout is owned by Rust. The shell clears native secrets and then swaps in a fresh core
             // instead of fabricating a shell-authored logged-out snapshot.
+            val stateBeforeLogout = mutableState.value
+            val persistedBundle = loadPersistedBundle()
+            mobilePushRuntime.unregisterStoredSubscription(
+                stateBeforeLogout,
+                persistedBundle?.ownerNsec,
+            )
             rust.dispatch(AppAction.Logout)
             clearPersistedSecret()
             secureSecretStore.clear()
@@ -500,6 +506,12 @@ class AppManager(
 
     fun resetForUiTestsBlocking() {
         runBlocking(ioDispatcher) {
+            val stateBeforeReset = mutableState.value
+            val persistedBundle = loadPersistedBundle()
+            mobilePushRuntime.unregisterStoredSubscription(
+                stateBeforeReset,
+                persistedBundle?.ownerNsec,
+            )
             clearPersistedSecret()
             secureSecretStore.clear()
             replaceRustCoreAfterReset()

@@ -10,6 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.google.firebase.messaging.FirebaseMessaging
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
@@ -79,6 +80,38 @@ class FirebaseChatNotificationE2eTest {
         )
     }
 
+    @Test
+    fun wait_for_firebase_chat_notifications() {
+        val expectedBodies = jsonStringArray(requiredArg("messages_json"))
+        assertTrue("Expected at least one notification body", expectedBodies.isNotEmpty())
+        val timeoutMs = arguments.getString("timeout_ms")?.toLongOrNull() ?: 120_000L
+        val snapshot =
+            waitForSnapshot("Firebase chat notifications", timeoutMs) {
+                val candidate = PushNotificationProbe.snapshot(context)
+                if (candidate.optString("error").isNotEmpty()) {
+                    throw AssertionError("Push notification resolution failed: ${candidate.optString("error")}")
+                }
+                if (candidate.optString("blocked_reason").isNotEmpty()) {
+                    throw AssertionError("Push notification was blocked: ${candidate.optString("blocked_reason")}")
+                }
+                val activeBodies = activeNotificationBodies()
+                if (expectedBodies.all { body -> activeBodies.contains(body) }) {
+                    JSONObject()
+                        .put("probe", candidate)
+                        .put("active_bodies", JSONArray(activeBodies))
+                } else {
+                    null
+                }
+            }
+
+        reportStatus(
+            "received" to "true",
+            "expected_bodies" to JSONArray(expectedBodies).toString(),
+            "active_bodies" to snapshot.optJSONArray("active_bodies").toString(),
+            "snapshot" to snapshot.toString(),
+        )
+    }
+
     private fun fcmToken(): String {
         val deadline = SystemClock.elapsedRealtime() + 90_000L
         var lastError: Exception? = null
@@ -113,6 +146,22 @@ class FirebaseChatNotificationE2eTest {
                 it.notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == expectedBody
             }
         assertNotNull("Expected active Android notification body `$expectedBody`", active)
+    }
+
+    private fun activeNotificationBodies(): List<String> {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        return manager.activeNotifications.mapNotNull { statusBarNotification ->
+            statusBarNotification.notification.extras
+                .getCharSequence(Notification.EXTRA_TEXT)
+                ?.toString()
+        }
+    }
+
+    private fun jsonStringArray(raw: String): List<String> {
+        val array = JSONArray(raw)
+        return (0 until array.length()).mapNotNull { index ->
+            array.optString(index).takeIf { it.isNotBlank() }
+        }
     }
 
     private fun requiredArg(name: String): String =
