@@ -2,12 +2,13 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use ndr_demo_core::{
-    AppAction, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, CurrentChatSnapshot,
-    MessageReactionSnapshot,
+    proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot,
+    CurrentChatSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot, PreferencesSnapshot,
 };
 
 use crate::app_manager::AppManager;
 use crate::screens::chat_list::{relative_time, unix_now};
+use crate::widgets::image_cache;
 
 pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -22,7 +23,7 @@ pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk:
     };
 
     container.append(&ttl_strip(chat, manager));
-    container.append(&messages_view(chat, manager));
+    container.append(&messages_view(chat, &state.preferences, manager));
     container.append(&composer(chat, state, manager));
 
     container.upcast()
@@ -133,7 +134,11 @@ fn ttl_strip(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widge
     row.upcast()
 }
 
-fn messages_view(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widget {
+fn messages_view(
+    chat: &CurrentChatSnapshot,
+    prefs: &PreferencesSnapshot,
+    manager: &Rc<AppManager>,
+) -> gtk::Widget {
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
     scrolled.set_vexpand(true);
@@ -191,6 +196,7 @@ fn messages_view(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::W
                 cluster_ends,
                 is_last,
                 now,
+                prefs,
                 manager,
             ));
 
@@ -217,6 +223,7 @@ fn render_message(
     cluster_end: bool,
     _is_last: bool,
     now: u64,
+    prefs: &PreferencesSnapshot,
     manager: &Rc<AppManager>,
 ) -> gtk::Widget {
     if matches!(message.kind, ChatMessageKind::System) {
@@ -250,20 +257,29 @@ fn render_message(
     bubble.set_margin_start(8);
     bubble.set_margin_end(8);
 
-    let body_text = if message.body.is_empty() && !message.attachments.is_empty() {
-        attachment_summary(&message.attachments)
-    } else {
-        message.body.clone()
-    };
-    let body = gtk::Label::new(Some(&body_text));
-    body.set_wrap(true);
-    body.set_xalign(0.0);
-    body.set_max_width_chars(40);
-    body.set_selectable(true);
-    bubble.append(&body);
+    let image_attachments: Vec<&MessageAttachmentSnapshot> =
+        message.attachments.iter().filter(|a| a.is_image).collect();
+    let other_attachments: Vec<&MessageAttachmentSnapshot> =
+        message.attachments.iter().filter(|a| !a.is_image).collect();
 
-    if !message.attachments.is_empty() && !message.body.is_empty() {
-        let attach_summary = gtk::Label::new(Some(&attachment_summary(&message.attachments)));
+    for attachment in &image_attachments {
+        bubble.append(&image_bubble(attachment, prefs));
+    }
+
+    if !message.body.is_empty() {
+        let body = gtk::Label::new(Some(&message.body));
+        body.set_wrap(true);
+        body.set_xalign(0.0);
+        body.set_max_width_chars(40);
+        body.set_selectable(true);
+        bubble.append(&body);
+    } else if image_attachments.is_empty() && other_attachments.is_empty() {
+        let body = gtk::Label::new(Some(""));
+        bubble.append(&body);
+    }
+
+    if !other_attachments.is_empty() {
+        let attach_summary = gtk::Label::new(Some(&attachment_summary(&other_attachments)));
         attach_summary.add_css_class("caption");
         attach_summary.add_css_class("dim-label");
         attach_summary.set_xalign(0.0);
@@ -389,12 +405,9 @@ fn delivery_glyph(state: &ndr_demo_core::DeliveryState) -> &'static str {
     }
 }
 
-fn attachment_summary(attachments: &[ndr_demo_core::MessageAttachmentSnapshot]) -> String {
+fn attachment_summary(attachments: &[&MessageAttachmentSnapshot]) -> String {
     if attachments.len() == 1 {
-        let a = &attachments[0];
-        if a.is_image {
-            return format!("📷 {}", a.filename);
-        }
+        let a = attachments[0];
         if a.is_video {
             return format!("🎞 {}", a.filename);
         }
@@ -404,6 +417,24 @@ fn attachment_summary(attachments: &[ndr_demo_core::MessageAttachmentSnapshot]) 
         return format!("📎 {}", a.filename);
     }
     format!("📎 {} attachments", attachments.len())
+}
+
+fn image_bubble(attachment: &MessageAttachmentSnapshot, prefs: &PreferencesSnapshot) -> gtk::Widget {
+    let picture = gtk::Picture::new();
+    picture.set_can_shrink(true);
+    picture.set_size_request(220, 220);
+    picture.set_content_fit(gtk::ContentFit::Cover);
+    picture.add_css_class("card");
+
+    let url = proxied_image_url(
+        attachment.htree_url.clone(),
+        prefs.clone(),
+        Some(440),
+        Some(440),
+        false,
+    );
+    image_cache::fetch_into_picture(&picture, &url);
+    picture.upcast()
 }
 
 fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {

@@ -31,6 +31,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fluxbox \
         dbus-x11 \
         xterm \
+        x11-utils \
+        xdotool \
+        imagemagick \
         fonts-noto-core \
         fonts-noto-color-emoji \
         adwaita-icon-theme \

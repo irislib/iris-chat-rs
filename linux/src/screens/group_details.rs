@@ -1,10 +1,13 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{AppAction, AppState, GroupDetailsSnapshot, GroupMemberSnapshot};
+use ndr_demo_core::{
+    proxied_image_url, AppAction, AppState, GroupDetailsSnapshot, GroupMemberSnapshot,
+};
 
 use crate::app_manager::AppManager;
 use crate::screens::screen_container;
+use crate::widgets::image_cache;
 
 pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
@@ -59,6 +62,11 @@ fn settings_card(
     let avatar_row = adw::ActionRow::new();
     avatar_row.set_activatable(false);
     let avatar = adw::Avatar::new(48, Some(&details.name), true);
+    if let Some(url) = details.picture_url.as_ref() {
+        let proxied =
+            proxied_image_url(url.clone(), state.preferences.clone(), Some(96), Some(96), true);
+        image_cache::fetch_into_avatar(&avatar, &proxied);
+    }
     avatar_row.add_prefix(&avatar);
     avatar_row.set_title(&details.name);
     group.add(&avatar_row);

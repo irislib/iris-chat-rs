@@ -13,6 +13,8 @@ services:
       - cargo-registry:/usr/local/cargo/registry
       - cargo-git:/usr/local/cargo/git
       - linux-target:/workspace/iris-chat-rs/linux/target
+      - iris-config:/root/.config
+      - iris-data:/root/.local/share
     working_dir: /workspace/iris-chat-rs/linux
     environment:
       DISPLAY: ":99"
@@ -24,3 +26,5 @@ volumes:
   cargo-registry:
   cargo-git:
   linux-target:
+  iris-config:
+  iris-data:

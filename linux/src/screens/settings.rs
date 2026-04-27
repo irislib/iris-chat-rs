@@ -5,13 +5,13 @@ use ndr_demo_core::{AppAction, AppState, PreferencesSnapshot, Screen};
 
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;
-use crate::widgets::qr;
+use crate::widgets::{image_cache, qr};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let page = adw::PreferencesPage::new();
 
     if let Some(account) = state.account.as_ref() {
-        page.add(&profile_group(account, manager));
+        page.add(&profile_group(account, &state.preferences, manager));
     }
 
     if ndr_demo_core::is_trusted_test_build() {
@@ -99,12 +99,23 @@ fn support_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
 
 fn profile_group(
     account: &ndr_demo_core::AccountSnapshot,
+    prefs: &PreferencesSnapshot,
     manager: &Rc<AppManager>,
 ) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder().title("Profile").build();
 
     let avatar_row = adw::ActionRow::new();
     let avatar = adw::Avatar::new(56, Some(&account.display_name), true);
+    if let Some(url) = account.picture_url.as_ref() {
+        let proxied = ndr_demo_core::proxied_image_url(
+            url.clone(),
+            prefs.clone(),
+            Some(112),
+            Some(112),
+            true,
+        );
+        image_cache::fetch_into_avatar(&avatar, &proxied);
+    }
     avatar_row.add_prefix(&avatar);
     avatar_row.set_title(&account.display_name);
     avatar_row.set_subtitle(&short_npub(&account.npub));

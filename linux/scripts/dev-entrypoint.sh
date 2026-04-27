@@ -9,6 +9,8 @@ if [ -z "${DISPLAY:-}" ]; then
 fi
 
 if ! pgrep -x Xvfb >/dev/null 2>&1; then
+    # Clean stale lock files from previous runs (container restart preserves /tmp).
+    rm -f /tmp/.X*-lock /tmp/.X11-unix/X* 2>/dev/null
     Xvfb "$DISPLAY" -screen 0 1280x800x24 -nolisten tcp +extension RANDR &
     # Give Xvfb a moment to come up.
     for _ in $(seq 1 50); do

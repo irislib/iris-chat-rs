@@ -2,10 +2,13 @@ use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
-use ndr_demo_core::{AppAction, AppState, ChatThreadSnapshot};
+use ndr_demo_core::{
+    proxied_image_url, AppAction, AppState, ChatThreadSnapshot, PreferencesSnapshot,
+};
 
 use crate::app_manager::AppManager;
 use crate::screens::screen_container;
+use crate::widgets::image_cache;
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     if state.chat_list.is_empty() {
@@ -26,20 +29,29 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
     let now = unix_now();
     for chat in &state.chat_list {
-        list.append(&row_for(chat, now, manager));
+        list.append(&row_for(chat, &state.preferences, now, manager));
     }
 
     scrolled.set_child(Some(&list));
     scrolled.upcast()
 }
 
-fn row_for(chat: &ChatThreadSnapshot, now: u64, manager: &Rc<AppManager>) -> adw::ActionRow {
+fn row_for(
+    chat: &ChatThreadSnapshot,
+    prefs: &PreferencesSnapshot,
+    now: u64,
+    manager: &Rc<AppManager>,
+) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(escape(&chat.display_name))
         .activatable(true)
         .build();
 
     let avatar = adw::Avatar::new(40, Some(&chat.display_name), true);
+    if let Some(url) = chat.picture_url.as_ref() {
+        let proxied = proxied_image_url(url.clone(), prefs.clone(), Some(80), Some(80), true);
+        image_cache::fetch_into_avatar(&avatar, &proxied);
+    }
     row.add_prefix(&avatar);
 
     let subtitle = if chat.is_typing {
