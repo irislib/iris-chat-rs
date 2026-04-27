@@ -128,6 +128,12 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
         "body": "New activity",
     })
     .to_string();
+    let apns_payload = serde_json::json!({
+        "event": message_event,
+        "title": "New message",
+        "body": "New activity",
+    })
+    .to_string();
 
     let resolution = decrypt_mobile_push_notification(
         data_dir.to_string_lossy().to_string(),
@@ -140,6 +146,17 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     );
     assert!(resolution.should_show);
     assert_eq!(resolution.body, message);
+    let apns_resolution = decrypt_mobile_push_notification(
+        data_dir.to_string_lossy().to_string(),
+        bob_keys.public_key().to_hex(),
+        bob_keys
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
+        apns_payload,
+    );
+    assert!(apns_resolution.should_show);
+    assert_eq!(apns_resolution.body, message);
 
     let after = bob_storage
         .get(&user_record_key)

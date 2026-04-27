@@ -82,13 +82,11 @@ pub(crate) fn decrypt_mobile_push_notification(
 
     let outer_event_json = payload_object
         .get("event")
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
+        .and_then(payload_event_json)
         .or_else(|| {
             payload_object
                 .get("inner_event_json")
-                .and_then(|value| value.as_str())
-                .map(str::to_string)
+                .and_then(payload_event_json)
         });
     let Some(outer_event_json) = outer_event_json else {
         return fallback();
@@ -662,6 +660,16 @@ fn normalized_payload(raw_payload_json: &str) -> BTreeMap<String, String> {
         }
     }
     payload
+}
+
+fn payload_event_json(value: &serde_json::Value) -> Option<String> {
+    if let Some(raw) = value.as_str() {
+        return Some(raw.to_string());
+    }
+    if value.is_object() {
+        return serde_json::to_string(value).ok();
+    }
+    None
 }
 
 fn resolved_title(payload: &BTreeMap<String, String>) -> String {
