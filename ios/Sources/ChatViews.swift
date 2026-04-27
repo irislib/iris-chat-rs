@@ -499,7 +499,7 @@ private struct ChatMessageRow: View {
                 HStack(alignment: .center, spacing: 6) {
                     if showActionDock && message.isOutgoing {
                         ChatMessageActionDock(
-                            onReact: onReact,
+                            onShowReactionPicker: { showReactionPicker = true },
                             onReply: onReply,
                             onCopyInfo: {
                                 PlatformClipboard.setString("Message \(message.id) · \(irisMessageClock(message.createdAtSecs))")
@@ -587,7 +587,7 @@ private struct ChatMessageRow: View {
 
                     if showActionDock && !message.isOutgoing {
                         ChatMessageActionDock(
-                            onReact: onReact,
+                            onShowReactionPicker: { showReactionPicker = true },
                             onReply: onReply,
                             onCopyInfo: {
                                 PlatformClipboard.setString("Message \(message.id) · \(irisMessageClock(message.createdAtSecs))")
@@ -717,31 +717,24 @@ private struct IrisDeliveryGlyph: View {
 
 private struct ChatMessageActionDock: View {
     @Environment(\.irisPalette) private var palette
-    let onReact: (String) -> Void
+    let onShowReactionPicker: () -> Void
     let onReply: () -> Void
     let onCopyInfo: () -> Void
     let onDelete: () -> Void
 
-    @State private var showEmojiPicker = false
-
     var body: some View {
         HStack(spacing: 2) {
             Button {
-                showEmojiPicker = true
+                // The picker is owned by the parent row so it survives the
+                // hover-state collapse that tears this dock down when the
+                // cursor leaves the message row.
+                onShowReactionPicker()
             } label: {
                 Image(systemName: "face.smiling")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 26, height: 24)
             }
             .buttonStyle(.plain)
-            .sheet(isPresented: $showEmojiPicker) {
-                IrisEmojiPicker { emoji in
-                    showEmojiPicker = false
-                    onReact(emoji)
-                }
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-            }
             dockButton("arrowshape.turn.up.left", action: onReply)
             Menu {
                 Button("Message info", action: onCopyInfo)
