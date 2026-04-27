@@ -78,7 +78,7 @@ impl UnixSeconds {
 
 use account::{known_app_keys_from_ndr, known_app_keys_to_ndr};
 use attachment_upload::{
-    display_filename, upload_file_to_hashtree, upload_profile_picture_to_blossom,
+    display_filename, upload_file_to_hashtree, upload_profile_picture_to_hashtree,
 };
 use attachments::*;
 use config::*;

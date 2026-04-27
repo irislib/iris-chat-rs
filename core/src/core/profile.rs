@@ -98,7 +98,7 @@ impl AppCore {
         self.state.busy.uploading_attachment = true;
         self.emit_state();
         self.runtime.spawn(async move {
-            let result = upload_profile_picture_to_blossom(&secret_hex, &path)
+            let result = upload_profile_picture_to_hashtree(&secret_hex, &path)
                 .await
                 .map_err(|error| error.to_string());
             let _ = sender.send(CoreMsg::Internal(Box::new(

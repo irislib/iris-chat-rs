@@ -404,7 +404,7 @@ struct IrisAvatar: View {
                 htreeData = nil
                 return
             }
-            htreeData = await manager.downloadHashtreeBytes(nhash: nhash)
+            htreeData = await manager.resolveHashtreePictureBytes(nhash: nhash)
         }
     }
 

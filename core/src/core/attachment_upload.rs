@@ -254,7 +254,7 @@ pub(super) async fn upload_file_to_hashtree(
     .map_err(|error| anyhow::anyhow!("nhash encode failed: {error}"))
 }
 
-pub(super) async fn upload_profile_picture_to_blossom(
+pub(super) async fn upload_profile_picture_to_hashtree(
     secret_hex: &str,
     path: &Path,
 ) -> anyhow::Result<String> {
@@ -268,11 +268,6 @@ pub(super) async fn upload_profile_picture_to_blossom(
     if !looks_like_image(path, &data) {
         anyhow::bail!("profile picture must be an image");
     }
-
-    // Push the picture into the hashtree network (same path as message attachments
-    // and group photos). The public blossom write servers (blossom.iris.to /
-    // upload.iris.to) either resolve unreliably or only accept encrypted blobs,
-    // so the cdn URLs they hand back tend to 404 immediately.
     let nhash = upload_file_to_hashtree(secret_hex, path).await?;
     Ok(format!("htree://{nhash}"))
 }

@@ -576,7 +576,7 @@ async fn profile_picture_hashtree_roundtrip() {
         .parent()
         .unwrap()
         .join("ios/UITests/Fixtures/cat.jpg");
-    let url = super::attachment_upload::upload_profile_picture_to_blossom(&secret_hex, &path)
+    let url = super::attachment_upload::upload_profile_picture_to_hashtree(&secret_hex, &path)
         .await
         .expect("upload");
     let nhash = url.strip_prefix("htree://").expect("htree:// prefix");

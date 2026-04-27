@@ -289,6 +289,39 @@ final class AppManager: ObservableObject {
         }
     }
 
+    /// Resolves an `htree://` profile picture (or any nhash) using the same
+    /// disk-backed cache that chat attachments use. Reads return cached bytes
+    /// immediately and avoid re-downloading the same blob next launch.
+    func resolveHashtreePictureBytes(nhash: String) async -> Data? {
+        let trimmed = nhash.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let cacheUrl = downloadedAttachmentDirectory()
+            .appendingPathComponent("picture-\(safeAttachmentFilename(trimmed))")
+        if fileManager.fileExists(atPath: cacheUrl.path) {
+            try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: cacheUrl.path)
+            if let data = try? Data(contentsOf: cacheUrl) {
+                return data
+            }
+        }
+        guard let data = await downloadHashtreeBytes(nhash: trimmed) else {
+            return nil
+        }
+        do {
+            try fileManager.createDirectory(
+                at: downloadedAttachmentDirectory(),
+                withIntermediateDirectories: true
+            )
+            if fileManager.fileExists(atPath: cacheUrl.path) {
+                try fileManager.removeItem(at: cacheUrl)
+            }
+            try data.write(to: cacheUrl, options: [.atomic])
+            try pruneDownloadedAttachmentCache(protecting: cacheUrl)
+        } catch {
+            // Cache is best-effort; fall through with the in-memory data.
+        }
+        return data
+    }
+
     func downloadHashtreeBytes(nhash: String) async -> Data? {
         return await Task.detached(priority: .userInitiated) { () -> Data? in
             let result = downloadHashtreeAttachment(
