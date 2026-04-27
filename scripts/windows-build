@@ -119,29 +119,17 @@ detect_shared_repo_path() {
 }
 
 # Encode a PowerShell script block as UTF-16LE base64 and run it inside the VM.
-# prlctl exec stalls indefinitely when the parent shell is non-interactive AND
-# its stdout is redirected to a file (e.g. when this script is launched from
-# Claude background bash, nohup, &, etc.) because the Parallels host channel
-# refuses to flush without a controlling tty. Wrap the call in script(1) so
-# prlctl always sees a pty, regardless of how the script was launched.
-# We prepend a heartbeat-style `Write-Host` so very-quiet payloads still flush
-# at least one line through the pipe immediately; some host-side pipe readers
-# wait for any output before deciding the process is alive.
+# Mirrors the approach used by ~/src/nostr-vpn (which works reliably from
+# arbitrary parent contexts): plain `-NoProfile` (no `-NonInteractive`) and no
+# stdin redirect. The combination of `-NonInteractive` + closed stdin appears
+# to cause prlctl's host channel to stall indefinitely on the powershell.exe
+# spawn when the EncodedCommand is large.
 ps_run() {
   local vm="$1"
   local script="$2"
-  local prelude='Write-Host "[ps_run] started"
-'
   local encoded
-  encoded="$(printf '%s%s' "$prelude" "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
-  if command -v script >/dev/null 2>&1; then
-    # macOS BSD-style script(1): script [-q] file utility [args ...]. Run a
-    # small bash wrapper so we can redirect prlctl's stdin from /dev/null
-    # without it being interpreted as a script(1) command file.
-    script -q /dev/null bash -c "exec prlctl exec '$vm' --current-user powershell.exe -NoProfile -NonInteractive -EncodedCommand '$encoded' </dev/null"
-  else
-    prlctl exec "$vm" --current-user powershell.exe -NoProfile -NonInteractive -EncodedCommand "$encoded" </dev/null
-  fi
+  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
+  prlctl exec "$vm" --current-user powershell.exe -NoProfile -EncodedCommand "$encoded"
 }
 
 # Same, but used when the caller wants to capture stdout. Identical body now;
