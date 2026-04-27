@@ -6,29 +6,32 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.MoreHoriz
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -51,6 +54,8 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
@@ -66,9 +71,12 @@ import social.innode.ndr.demo.rust.Screen
 import social.innode.ndr.demo.rust.proxiedImageUrl
 import social.innode.ndr.demo.ui.components.IrisAvatar
 import social.innode.ndr.demo.ui.components.IrisIcons
+import social.innode.ndr.demo.ui.components.IrisInlineAction
+import social.innode.ndr.demo.ui.components.IrisSectionCard
 import social.innode.ndr.demo.ui.components.IrisTopBar
 import social.innode.ndr.demo.ui.components.formatTimelineDay
 import social.innode.ndr.demo.ui.components.isSameTimelineDay
+import social.innode.ndr.demo.ui.components.rememberIrisClipboard
 import social.innode.ndr.demo.ui.theme.IrisTheme
 
 private val DisappearingMessageOptions =
@@ -103,8 +111,7 @@ fun ChatScreen(
     var imageViewerItem by remember(chatId) { mutableStateOf<DownloadedImageAttachment?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
-    var chatMenuOpen by remember(chatId) { mutableStateOf(false) }
-    var disappearingMenuOpen by remember(chatId) { mutableStateOf(false) }
+    var directChatInfoOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
     val backUnreadCount =
         remember(appState.chatList, chatId) {
@@ -264,85 +271,12 @@ fun ChatScreen(
                         null
                     },
                 onTitleClick =
-                    chat?.groupId?.let { groupId ->
-                        { appManager.pushScreen(Screen.GroupDetails(groupId)) }
+                    chat?.let { current ->
+                        current.groupId?.let { groupId ->
+                            { appManager.pushScreen(Screen.GroupDetails(groupId)) }
+                        } ?: { directChatInfoOpen = true }
                     },
-                actions = {
-                    val groupId = chat?.groupId
-                    if (chat != null) {
-                        Box {
-                            IconButton(
-                                onClick = { chatMenuOpen = true },
-                                modifier = Modifier.testTag("chatOverflowButton"),
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.MoreHoriz,
-                                    contentDescription = "Chat options",
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = chatMenuOpen,
-                                onDismissRequest = {
-                                    chatMenuOpen = false
-                                    disappearingMenuOpen = false
-                                },
-                            ) {
-                                if (disappearingMenuOpen) {
-                                    DropdownMenuItem(
-                                        text = { Text("Back") },
-                                        onClick = { disappearingMenuOpen = false },
-                                    )
-                                    DisappearingMessageOptions.forEach { (label, ttlSeconds) ->
-                                        DropdownMenuItem(
-                                            text = {
-                                                Text(
-                                                    if (chat.messageTtlSeconds == ttlSeconds) {
-                                                        "✓ $label"
-                                                    } else {
-                                                        label
-                                                    },
-                                                )
-                                            },
-                                            onClick = {
-                                                chatMenuOpen = false
-                                                disappearingMenuOpen = false
-                                                appManager.dispatch(
-                                                    AppAction.SetChatMessageTtl(chat.chatId, ttlSeconds),
-                                                )
-                                            },
-                                        )
-                                    }
-                                } else if (chat.kind == ChatKind.GROUP && groupId != null) {
-                                    DropdownMenuItem(
-                                        text = { Text("Group details") },
-                                        onClick = {
-                                            chatMenuOpen = false
-                                            appManager.pushScreen(Screen.GroupDetails(groupId))
-                                        },
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text("Disappearing messages") },
-                                        onClick = {
-                                            disappearingMenuOpen = true
-                                        },
-                                    )
-                                } else {
-                                    DropdownMenuItem(
-                                        text = { Text("Disappearing messages") },
-                                        onClick = { disappearingMenuOpen = true },
-                                    )
-                                }
-                            }
-                        }
-                    } else if (groupId != null) {
-                        IconButton(onClick = { appManager.pushScreen(Screen.GroupDetails(groupId)) }) {
-                            Icon(
-                                imageVector = IrisIcons.Devices,
-                                contentDescription = "Group details",
-                            )
-                        }
-                    }
-                },
+                actions = {},
             )
         },
     ) { padding ->
@@ -571,6 +505,152 @@ fun ChatScreen(
                     item = item,
                     onDismiss = { imageViewerItem = null },
                 )
+            }
+
+            if (directChatInfoOpen && chat != null) {
+                DirectChatInfoSheet(
+                    appManager = appManager,
+                    appState = appState,
+                    chatId = chatId,
+                    onDismiss = { directChatInfoOpen = false },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DirectChatInfoSheet(
+    appManager: AppManager,
+    appState: AppState,
+    chatId: String,
+    onDismiss: () -> Unit,
+) {
+    val chat = appState.currentChat?.takeIf { it.chatId == chatId } ?: return
+    val avatarBytes by rememberNhashImageData(appManager, chat.pictureUrl)
+    val proxiedAvatarUrl =
+        chat.pictureUrl
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?.let { url ->
+                proxiedImageUrl(
+                    originalSrc = url,
+                    preferences = appState.preferences,
+                    width = 192u,
+                    height = 192u,
+                    square = true,
+                )
+            }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .testTag("directChatInfoSheet"),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            Scaffold(
+                containerColor = MaterialTheme.colorScheme.background,
+                topBar = {
+                    IrisTopBar(
+                        title = chat.displayName,
+                        onBack = onDismiss,
+                    )
+                },
+            ) { padding ->
+                Column(
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                ) {
+                    IrisAvatar(
+                        label = chat.displayName,
+                        size = 96.dp,
+                        emphasize = true,
+                        imageUrl = proxiedAvatarUrl,
+                        imageData = avatarBytes,
+                    )
+                    Text(
+                        text = chat.displayName,
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    chat.subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = IrisTheme.palette.muted,
+                        )
+                    }
+                    val clipboard = rememberIrisClipboard()
+                    IrisInlineAction(
+                        text = "Copy user ID",
+                        onClick = { clipboard.setText("User ID", chatId) },
+                        modifier = Modifier.testTag("directChatCopyUserIdButton"),
+                    ) {
+                        Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                    }
+                    DisappearingMessagesCard(
+                        currentTtlSeconds = chat.messageTtlSeconds,
+                        onSelect = { ttlSeconds ->
+                            appManager.dispatch(AppAction.SetChatMessageTtl(chatId, ttlSeconds))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+internal fun DisappearingMessagesCard(
+    currentTtlSeconds: ULong?,
+    onSelect: (ULong?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    IrisSectionCard(modifier = modifier) {
+        Text(
+            text = "Disappearing messages",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = "Messages auto-delete after the chosen interval.",
+            style = MaterialTheme.typography.bodySmall,
+            color = IrisTheme.palette.muted,
+        )
+        Column {
+            DisappearingMessageOptions.forEach { (label, ttlSeconds) ->
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable { onSelect(ttlSeconds) }
+                            .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    if (currentTtlSeconds == ttlSeconds) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = "Selected",
+                            tint = IrisTheme.palette.accent,
+                        )
+                    }
+                }
             }
         }
     }

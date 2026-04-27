@@ -169,6 +169,17 @@ fun GroupDetailsScreen(
                 }
             }
 
+            run {
+                val groupChatId = "group:$groupId"
+                val groupChat = appState.currentChat?.takeIf { it.chatId == groupChatId }
+                DisappearingMessagesCard(
+                    currentTtlSeconds = groupChat?.messageTtlSeconds,
+                    onSelect = { ttlSeconds ->
+                        appManager.dispatch(AppAction.SetChatMessageTtl(groupChatId, ttlSeconds))
+                    },
+                )
+            }
+
             IrisSectionCard {
                 Text(
                     text = "Members",

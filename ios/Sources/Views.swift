@@ -795,6 +795,14 @@ private struct DirectChatInfoSheet: View {
                                 .padding(.horizontal, 24)
                         }
 
+                        Button {
+                            PlatformClipboard.setString(chatId)
+                        } label: {
+                            Label("Copy user ID", systemImage: "doc.on.doc")
+                        }
+                        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                        .accessibilityIdentifier("directChatCopyUserIdButton")
+
                         IrisSectionCard {
                             CardHeader(
                                 title: "Disappearing messages",

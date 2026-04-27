@@ -30,6 +30,7 @@ import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -299,10 +300,12 @@ internal fun AttachmentChip(
                 ?.takeUnless { data -> isAnimatedImage(data, attachment.filename) }
                 ?.let { data -> BitmapFactory.decodeByteArray(data, 0, data.size) }
         }
-        Column(
+        Box(
             modifier =
                 Modifier
+                    .size(width = 220.dp, height = 150.dp)
                     .clip(RoundedCornerShape(16.dp))
+                    .background(foreground.copy(alpha = 0.12f))
                     .clickable {
                         val data = localImageData
                         if (data != null) {
@@ -315,51 +318,34 @@ internal fun AttachmentChip(
                             }
                         }
                     },
-            verticalArrangement = Arrangement.spacedBy(7.dp),
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier =
-                    Modifier
-                        .size(width = 220.dp, height = 150.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(foreground.copy(alpha = 0.12f)),
-                contentAlignment = Alignment.Center,
-            ) {
-                if (bitmap != null) {
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = attachment.filename,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop,
-                    )
-                } else if (isAnimated && localImageData != null) {
-                    AnimatedImageDataView(
-                        data = localImageData!!,
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else if (imageLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        strokeWidth = 2.dp,
-                        color = foreground,
-                    )
-                } else {
-                    Icon(
-                        imageVector = if (imageLoadFailed) Icons.Rounded.Warning else IrisIcons.Image,
-                        contentDescription = null,
-                        tint = foreground.copy(alpha = 0.72f),
-                        modifier = Modifier.size(30.dp),
-                    )
-                }
+            if (bitmap != null) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = attachment.filename,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else if (isAnimated && localImageData != null) {
+                AnimatedImageDataView(
+                    data = localImageData!!,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else if (imageLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(22.dp),
+                    strokeWidth = 2.dp,
+                    color = foreground,
+                )
+            } else {
+                Icon(
+                    imageVector = if (imageLoadFailed) Icons.Rounded.Warning else IrisIcons.Image,
+                    contentDescription = null,
+                    tint = foreground.copy(alpha = 0.72f),
+                    modifier = Modifier.size(30.dp),
+                )
             }
-            Text(
-                text = attachment.filename,
-                modifier = Modifier.widthIn(max = 220.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = foreground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
         return
     }
@@ -542,6 +528,17 @@ internal fun ImageViewerDialog(
             } else {
                 CircularProgressIndicator(color = Color.White)
             }
+            val shareContext = LocalContext.current
+            IconButton(
+                onClick = { shareImageAttachment(shareContext, item) },
+                modifier = Modifier.align(Alignment.TopStart),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Share,
+                    contentDescription = "Share image",
+                    tint = Color.White,
+                )
+            }
             IconButton(
                 onClick = onDismiss,
                 modifier = Modifier.align(Alignment.TopEnd),
@@ -553,6 +550,33 @@ internal fun ImageViewerDialog(
                 )
             }
         }
+    }
+}
+
+private fun shareImageAttachment(
+    context: Context,
+    item: DownloadedImageAttachment,
+) {
+    runCatching {
+        val outputDir = File(context.cacheDir, "attachments/share").apply { mkdirs() }
+        val safeName = safeAttachmentCacheComponent(item.filename.ifBlank { "image" })
+        val outputFile = File(outputDir, "${UUID.randomUUID()}-$safeName")
+        outputFile.writeBytes(item.data)
+        val uri =
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                outputFile,
+            )
+        val intent =
+            Intent(Intent.ACTION_SEND).apply {
+                type = mimeTypeForFilename(item.filename)
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+        context.startActivity(Intent.createChooser(intent, item.filename))
+    }.onFailure { error ->
+        Log.w(ChatAttachmentsLogTag, "failed to share image", error)
     }
 }
 
