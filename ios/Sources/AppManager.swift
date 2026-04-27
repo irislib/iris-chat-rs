@@ -266,9 +266,13 @@ final class AppManager: ObservableObject {
 
 #if os(iOS)
     func shouldSuppressPushNotification(userInfo: [AnyHashable: Any]) -> Bool {
-        guard let resolution = resolvePushNotification(userInfo: userInfo),
-              resolution.shouldShow,
-              let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) else {
+        guard let resolution = resolvePushNotification(userInfo: userInfo) else {
+            return false
+        }
+        guard resolution.shouldShow else {
+            return true
+        }
+        guard let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) else {
             return false
         }
         return state.currentChat?.chatId.caseInsensitiveCompare(chatID) == .orderedSame
