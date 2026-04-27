@@ -9,7 +9,7 @@ pub(super) async fn publish_event_with_retry(
     let mut last_error = "no relays configured".to_string();
 
     for attempt in 0..5 {
-        connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
+        ensure_publish_connection(client, relay_urls).await;
         match publish_event_once(client, relay_urls, &event).await {
             Ok(()) => return Ok(()),
             Err(error) => last_error = error.to_string(),
@@ -23,56 +23,63 @@ pub(super) async fn publish_event_with_retry(
     Err(anyhow::anyhow!("{label}: {last_error}"))
 }
 
-pub(super) async fn publish_event_first_ack(
+pub(super) async fn publish_event_fire_and_forget(
     client: &Client,
     relay_urls: &[RelayUrl],
     event: &Event,
     label: &str,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<String>> {
     if relay_urls.is_empty() {
         return Err(anyhow::anyhow!("{label}: no relays configured"));
     }
 
-    connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
-
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<(), String>>(relay_urls.len().max(1));
-
-    for relay_url in relay_urls.iter().cloned() {
-        let client = client.clone();
-        let event = event.clone();
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            let result = match client.send_event_to([relay_url.clone()], &event).await {
-                Ok(output) if !output.success.is_empty() => Ok(()),
-                Ok(output) => Err(output
-                    .failed
-                    .values()
-                    .next()
-                    .cloned()
-                    .unwrap_or_else(|| "no relay accepted event".to_string())),
-                Err(error) => Err(error.to_string()),
-            };
-            let _ = tx.send(result).await;
-        });
-    }
-    drop(tx);
-
-    let mut first_error = None;
-    while let Some(result) = rx.recv().await {
-        match result {
-            Ok(()) => return Ok(()),
-            Err(error) => {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
+    client.connect().await;
+    let output = client
+        .send_msg_to(
+            relay_urls.to_vec(),
+            ClientMessage::Event(Cow::Borrowed(event)),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("{label}: {error}"))?;
+    if output.success.is_empty() {
+        let reasons = output.failed.values().cloned().collect::<Vec<_>>();
+        return Err(anyhow::anyhow!(
+            "{label}: {}",
+            if reasons.is_empty() {
+                "no relay accepted event for send".to_string()
+            } else {
+                reasons.join("; ")
             }
-        }
+        ));
     }
 
-    Err(anyhow::anyhow!(
-        "{label}: {}",
-        first_error.unwrap_or_else(|| "publish failed".to_string())
-    ))
+    let mut relays = output
+        .success
+        .into_iter()
+        .map(|relay| relay.to_string())
+        .collect::<Vec<_>>();
+    relays.sort();
+    Ok(relays)
+}
+
+async fn ensure_publish_connection(client: &Client, relay_urls: &[RelayUrl]) {
+    client.connect().await;
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+    loop {
+        let connected = client
+            .relays()
+            .await
+            .iter()
+            .filter(|(relay_url, relay)| {
+                relay_urls.iter().any(|configured| configured == *relay_url)
+                    && relay.status() == RelayStatus::Connected
+            })
+            .count();
+        if connected > 0 || tokio::time::Instant::now() >= deadline {
+            return;
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
 }
 
 pub(super) async fn publish_event_once(

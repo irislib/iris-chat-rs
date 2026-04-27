@@ -136,18 +136,7 @@ mod tests {
     use super::*;
 
     fn preferences() -> PreferencesSnapshot {
-        PreferencesSnapshot {
-            send_typing_indicators: true,
-            send_read_receipts: true,
-            desktop_notifications_enabled: true,
-            startup_at_login_enabled: false,
-            nostr_relay_urls: crate::core::configured_relays(),
-            image_proxy_enabled: true,
-            image_proxy_url: DEFAULT_IMAGE_PROXY_URL.to_string(),
-            image_proxy_key_hex: DEFAULT_IMAGE_PROXY_KEY_HEX.to_string(),
-            image_proxy_salt_hex: DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
-            mobile_push_server_url: String::new(),
-        }
+        PreferencesSnapshot::default()
     }
 
     #[test]

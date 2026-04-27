@@ -258,6 +258,12 @@ fn mobile_push_fallback_allows_chat_message_kind() {
 }
 
 #[test]
+fn typing_indicators_default_to_opt_in() {
+    assert!(!PersistedPreferences::default().send_typing_indicators);
+    assert!(!AppState::empty().preferences.send_typing_indicators);
+}
+
+#[test]
 fn app_keys_device_projection_is_deterministic() {
     let owner = Keys::generate().public_key();
     let device_a = Keys::generate().public_key();

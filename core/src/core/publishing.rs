@@ -19,10 +19,18 @@ impl AppCore {
         let tx = self.core_sender.clone();
         let relay_count = relay_urls.len();
         self.runtime.spawn(async move {
-            let result = publish_event_first_ack(&client, &relay_urls, &event, label).await;
-            let success = result.is_ok();
+            let result = publish_event_fire_and_forget(&client, &relay_urls, &event, label).await;
+            let success = result
+                .as_ref()
+                .map(|relays| !relays.is_empty())
+                .unwrap_or(false);
             let detail = match &result {
-                Ok(()) => format!("label={label} success=true relays={relay_count}"),
+                Ok(relays) => {
+                    format!(
+                        "label={label} success=true relays={relay_count} queued_relays={}",
+                        relays.join(",")
+                    )
+                }
                 Err(error) => {
                     format!("label={label} success=false relays={relay_count} error={error}")
                 }

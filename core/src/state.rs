@@ -60,6 +60,23 @@ pub struct PreferencesSnapshot {
     pub mobile_push_server_url: String,
 }
 
+impl Default for PreferencesSnapshot {
+    fn default() -> Self {
+        Self {
+            send_typing_indicators: false,
+            send_read_receipts: true,
+            desktop_notifications_enabled: true,
+            startup_at_login_enabled: false,
+            nostr_relay_urls: crate::core::configured_relays(),
+            image_proxy_enabled: true,
+            image_proxy_url: crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string(),
+            image_proxy_key_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string(),
+            image_proxy_salt_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
+            mobile_push_server_url: String::new(),
+        }
+    }
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct OutgoingAttachment {
     pub file_path: String,
@@ -319,18 +336,7 @@ impl AppState {
             public_invite: None,
             network_status: None,
             mobile_push: MobilePushSyncSnapshot::default(),
-            preferences: PreferencesSnapshot {
-                send_typing_indicators: true,
-                send_read_receipts: true,
-                desktop_notifications_enabled: true,
-                startup_at_login_enabled: false,
-                nostr_relay_urls: crate::core::configured_relays(),
-                image_proxy_enabled: true,
-                image_proxy_url: crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string(),
-                image_proxy_key_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string(),
-                image_proxy_salt_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
-                mobile_push_server_url: String::new(),
-            },
+            preferences: PreferencesSnapshot::default(),
             toast: None,
         }
     }

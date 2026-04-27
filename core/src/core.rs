@@ -23,10 +23,11 @@ use nostr_double_ratchet::{
     MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
 use nostr_sdk::prelude::{
-    Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
-    RelayStatus, RelayUrl, SubscriptionId, Timestamp, ToBech32,
+    Client, ClientMessage, Event, Filter, Keys, Kind, PublicKey, RelayNotification,
+    RelayPoolNotification, RelayStatus, RelayUrl, SubscriptionId, Timestamp, ToBech32,
 };
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;

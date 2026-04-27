@@ -151,14 +151,6 @@ pub(crate) fn decrypt_mobile_push_notification(
         .get("kind")
         .and_then(|value| value.as_u64())
         .unwrap_or(MOBILE_PUSH_CHAT_MESSAGE_KIND);
-    if !should_show_mobile_push_kind(inner_kind) {
-        return MobilePushNotificationResolution {
-            should_show: false,
-            title: String::new(),
-            body: String::new(),
-            payload_json: "{}".to_string(),
-        };
-    }
 
     let inner_content = inner_value
         .get("content")
@@ -180,20 +172,7 @@ pub(crate) fn decrypt_mobile_push_notification(
         .as_ref()
         .and_then(|id| lookup_group_name(&data_dir, id));
 
-    let body = if inner_kind == MOBILE_PUSH_REACTION_KIND {
-        let emoji = inner_content.trim();
-        if emoji.is_empty() {
-            "Reacted".to_string()
-        } else if emoji.to_lowercase().starts_with("reacted") {
-            emoji.to_string()
-        } else {
-            format!("Reacted {emoji}")
-        }
-    } else if !inner_content.trim().is_empty() {
-        inner_content.trim().to_string()
-    } else {
-        "New message".to_string()
-    };
+    let body = decrypted_mobile_push_body(inner_kind, &inner_content);
 
     // Title shape:
     //   1-1 chat:    "<sender_name>"
@@ -720,6 +699,43 @@ fn event_content(value: Option<&String>) -> Option<String> {
     let decoded = serde_json::from_str::<serde_json::Value>(value?).ok()?;
     let content = decoded.get("content")?.as_str()?.to_string();
     normalized_value(Some(&content))
+}
+
+fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {
+    let content = content.trim();
+    match kind {
+        MOBILE_PUSH_CHAT_MESSAGE_KIND => {
+            if content.is_empty() {
+                "New message".to_string()
+            } else {
+                content.to_string()
+            }
+        }
+        MOBILE_PUSH_REACTION_KIND => reaction_push_body(content),
+        kind if kind == TYPING_KIND as u64 => "is typing".to_string(),
+        kind if kind == RECEIPT_KIND as u64 => "Seen".to_string(),
+        kind if kind == GROUP_METADATA_KIND as u64 => "Updated group".to_string(),
+        kind if kind == CHAT_SETTINGS_KIND as u64 => "Updated chat".to_string(),
+        kind if kind == APP_KEYS_EVENT_KIND as u64 => "Updated devices".to_string(),
+        _ => {
+            if content.is_empty() {
+                "New activity".to_string()
+            } else {
+                "Updated chat".to_string()
+            }
+        }
+    }
+}
+
+fn reaction_push_body(content: &str) -> String {
+    let emoji = content.trim();
+    if emoji.is_empty() {
+        "Reacted".to_string()
+    } else if emoji.to_lowercase().starts_with("reacted") {
+        emoji.to_string()
+    } else {
+        format!("Reacted {emoji}")
+    }
 }
 
 fn should_show_mobile_push_kind(kind: u64) -> bool {

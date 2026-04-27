@@ -228,7 +228,7 @@ pub(super) struct PersistedState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PersistedPreferences {
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub(super) send_typing_indicators: bool,
     #[serde(default = "default_true")]
     pub(super) send_read_receipts: bool,
@@ -252,17 +252,18 @@ pub(super) struct PersistedPreferences {
 
 impl Default for PersistedPreferences {
     fn default() -> Self {
+        let defaults = PreferencesSnapshot::default();
         Self {
-            send_typing_indicators: true,
-            send_read_receipts: true,
-            desktop_notifications_enabled: true,
-            startup_at_login_enabled: false,
-            nostr_relay_urls: default_nostr_relay_urls(),
-            image_proxy_enabled: true,
-            image_proxy_url: default_image_proxy_url(),
-            image_proxy_key_hex: default_image_proxy_key_hex(),
-            image_proxy_salt_hex: default_image_proxy_salt_hex(),
-            mobile_push_server_url: String::new(),
+            send_typing_indicators: defaults.send_typing_indicators,
+            send_read_receipts: defaults.send_read_receipts,
+            desktop_notifications_enabled: defaults.desktop_notifications_enabled,
+            startup_at_login_enabled: defaults.startup_at_login_enabled,
+            nostr_relay_urls: defaults.nostr_relay_urls,
+            image_proxy_enabled: defaults.image_proxy_enabled,
+            image_proxy_url: defaults.image_proxy_url,
+            image_proxy_key_hex: defaults.image_proxy_key_hex,
+            image_proxy_salt_hex: defaults.image_proxy_salt_hex,
+            mobile_push_server_url: defaults.mobile_push_server_url,
         }
     }
 }
