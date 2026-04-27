@@ -661,7 +661,7 @@ private struct IrisDeliveryGlyph: View {
         case .sent:
             Image(systemName: "checkmark")
         case .received, .seen:
-            HStack(spacing: -4) {
+            HStack(spacing: -8) {
                 Image(systemName: "checkmark")
                 Image(systemName: "checkmark")
             }
@@ -672,8 +672,6 @@ private struct IrisDeliveryGlyph: View {
 
     private var tint: Color {
         switch delivery {
-        case .received:
-            return palette.accentAlt
         case .seen:
             return Color(.sRGB, red: 0.055, green: 0.647, blue: 0.914, opacity: 1)
         case .failed:
