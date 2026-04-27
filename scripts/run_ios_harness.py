@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--service", help="Optional explicit keychain service name")
     parser.add_argument("--data-root", default="/tmp/ndr-ios-harness", help="Stable filesystem root for harness data")
     parser.add_argument("--reset", action="store_true", help="Clear harness state before starting")
+    parser.add_argument("--use-app-storage", action="store_true", help="Run against the installed app's normal App Group storage/keychain service")
     parser.add_argument("--rebuild", action="store_true", help="Force build-for-testing before running")
     return parser.parse_args()
 
@@ -151,6 +152,8 @@ def build_env(args: argparse.Namespace) -> dict[str, str]:
         env_vars["NDR_IOS_HARNESS_SERVICE"] = args.service
     if args.reset:
         env_vars["NDR_IOS_HARNESS_RESET"] = "1"
+    if args.use_app_storage:
+        env_vars["NDR_IOS_HARNESS_USE_APP_STORAGE"] = "1"
 
     for item in args.arg:
         if "=" not in item:

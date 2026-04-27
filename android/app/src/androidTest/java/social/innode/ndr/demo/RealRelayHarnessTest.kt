@@ -698,6 +698,24 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun send_typing_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        appManager().dispatch(AppAction.SendTyping(chat.chatId))
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "sent_typing" to "true",
+        )
+    }
+
+    @Test
     fun expect_send_rejected_from_args() {
         ensureLoggedIn()
         val peerInput = optionalArg("peer_input").orEmpty()

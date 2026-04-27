@@ -1,4 +1,5 @@
 import Foundation
+import UserNotifications
 import XCTest
 @testable import IrisChat
 
@@ -78,6 +79,24 @@ final class InteropHarnessTests: XCTestCase {
         case "report_mobile_push_server_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             try await reportMobilePushServerSnapshot(manager: manager)
+        case "clear_delivered_notifications":
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+            status("cleared", "true")
+        case "assert_no_visible_delivered_notifications":
+            let timeout = TimeInterval(Double(env["NDR_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 15)
+            let delivered = try await waitForNoVisibleDeliveredNotifications(timeout: timeout)
+            status("visible_notification_count", String(delivered.count))
+            status("delivered_notifications", summarizeDeliveredNotifications(delivered))
+        case "wait_for_visible_delivered_notification":
+            let expectedBody = env["NDR_IOS_HARNESS_EXPECTED_BODY"] ?? ""
+            let timeout = TimeInterval(Double(env["NDR_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 30)
+            let notification = try await waitForVisibleDeliveredNotification(
+                expectedBody: expectedBody,
+                timeout: timeout
+            )
+            status("notification_title", notification.request.content.title)
+            status("notification_body", notification.request.content.body)
+            status("notification_id", notification.request.identifier)
         case "wait_for_peer_roster_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env))
@@ -409,6 +428,73 @@ final class InteropHarnessTests: XCTestCase {
             try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
         }
         throw HarnessError.timeout(label)
+    }
+
+    private func waitForNoVisibleDeliveredNotifications(timeout: TimeInterval) async throws -> [UNNotification] {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastDelivered: [UNNotification] = []
+        while Date() < deadline {
+            let delivered = await deliveredNotifications()
+            lastDelivered = delivered
+            let visible = delivered.filter { notification in
+                let content = notification.request.content
+                return !content.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    !content.subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    !content.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            if !visible.isEmpty {
+                throw HarnessError.unexpected("visible delivered notifications: \(summarizeDeliveredNotifications(visible))")
+            }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+        return lastDelivered
+    }
+
+    private func waitForVisibleDeliveredNotification(
+        expectedBody: String,
+        timeout: TimeInterval
+    ) async throws -> UNNotification {
+        let deadline = Date().addingTimeInterval(timeout)
+        var lastDelivered: [UNNotification] = []
+        while Date() < deadline {
+            let delivered = await deliveredNotifications()
+            lastDelivered = delivered
+            let visible = delivered.filter { notification in
+                let content = notification.request.content
+                return !content.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    !content.subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+                    !content.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            if let expected = visible.first(where: { notification in
+                expectedBody.isEmpty || notification.request.content.body == expectedBody
+            }) {
+                return expected
+            }
+            try await Task.sleep(nanoseconds: 500_000_000)
+        }
+        throw HarnessError.unexpected("no visible delivered notification matching body `\(expectedBody)`; delivered=\(summarizeDeliveredNotifications(lastDelivered))")
+    }
+
+    private func deliveredNotifications() async -> [UNNotification] {
+        await withCheckedContinuation { continuation in
+            UNUserNotificationCenter.current().getDeliveredNotifications { notifications in
+                continuation.resume(returning: notifications)
+            }
+        }
+    }
+
+    private func summarizeDeliveredNotifications(_ notifications: [UNNotification]) -> String {
+        notifications
+            .map { notification in
+                let content = notification.request.content
+                return [
+                    "id=\(notification.request.identifier)",
+                    "title=\(content.title)",
+                    "subtitle=\(content.subtitle)",
+                    "body=\(content.body)",
+                ].joined(separator: ";")
+            }
+            .joined(separator: " | ")
     }
 
     private func requiredEnv(_ key: String, env: [String: String], fallback: String? = nil) throws -> String {
