@@ -378,10 +378,17 @@ pub(crate) fn resolve_mobile_push_notification(
         .get("inner_kind")
         .and_then(|value| value.trim().parse::<u64>().ok())
         .or_else(|| event_kind(payload.get("inner_event_json")))
-        .or_else(|| event_kind(payload.get("inner_event")))
-        .or_else(|| event_kind(payload.get("event")));
+        .or_else(|| event_kind(payload.get("inner_event")));
 
     if inner_kind.is_some_and(should_suppress_mobile_push_kind) {
+        return MobilePushNotificationResolution {
+            should_show: false,
+            title: String::new(),
+            body: String::new(),
+            payload_json: "{}".to_string(),
+        };
+    }
+    if inner_kind.is_none() && event_kind(payload.get("event")) == Some(MOBILE_PUSH_DM_EVENT_KIND) {
         return MobilePushNotificationResolution {
             should_show: false,
             title: String::new(),

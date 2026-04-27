@@ -189,6 +189,25 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
 }
 
 #[test]
+fn mobile_push_fallback_suppresses_opaque_encrypted_events() {
+    let encrypted_outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
+        .sign_with_keys(&Keys::generate())
+        .expect("outer event");
+    let payload = serde_json::json!({
+        "event": encrypted_outer_event,
+        "title": "DM by Someone",
+        "body": "New message",
+    })
+    .to_string();
+
+    let resolution = resolve_mobile_push_notification(payload);
+
+    assert!(!resolution.should_show);
+    assert!(resolution.title.is_empty());
+    assert!(resolution.body.is_empty());
+}
+
+#[test]
 fn app_keys_device_projection_is_deterministic() {
     let owner = Keys::generate().public_key();
     let device_a = Keys::generate().public_key();
