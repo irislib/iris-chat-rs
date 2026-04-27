@@ -330,7 +330,7 @@ impl AppCore {
             self.preferences.startup_at_login_enabled =
                 persisted.preferences.startup_at_login_enabled;
             self.preferences.nostr_relay_urls =
-                migrate_default_nostr_relay_urls(&persisted.preferences.nostr_relay_urls);
+                normalize_nostr_relay_urls(&persisted.preferences.nostr_relay_urls);
             self.preferences.image_proxy_enabled = persisted.preferences.image_proxy_enabled;
             self.preferences.image_proxy_url = persisted.preferences.image_proxy_url.clone();
             self.preferences.image_proxy_key_hex =

@@ -7,11 +7,6 @@ pub(super) const FALLBACK_DEFAULT_RELAYS: &[&str] = &[
     "wss://relay.snort.social",
     "wss://temp.iris.to",
 ];
-const LEGACY_DEFAULT_RELAYS: &[&str] = &[
-    "wss://relay.damus.io",
-    "wss://nos.lol",
-    "wss://relay.primal.net",
-];
 pub(super) const APP_VERSION: &str = env!("NDR_APP_VERSION");
 pub(super) const BUILD_CHANNEL: &str = env!("NDR_BUILD_CHANNEL");
 pub(super) const BUILD_GIT_SHA: &str = env!("NDR_BUILD_GIT_SHA");
@@ -117,19 +112,6 @@ pub(super) fn normalize_nostr_relay_urls(relays: &[String]) -> Vec<String> {
     }
 }
 
-pub(super) fn migrate_default_nostr_relay_urls(relays: &[String]) -> Vec<String> {
-    let normalized = normalize_nostr_relay_urls(relays);
-    let legacy = LEGACY_DEFAULT_RELAYS
-        .iter()
-        .map(|relay| normalize_nostr_relay_url(relay).unwrap_or_else(|_| (*relay).to_string()))
-        .collect::<Vec<_>>();
-    if normalized == legacy {
-        configured_relays()
-    } else {
-        normalized
-    }
-}
-
 pub(super) fn compiled_default_relays() -> Vec<String> {
     let compiled = COMPILED_DEFAULT_RELAYS_CSV
         .split(',')
@@ -198,26 +180,5 @@ mod tests {
                 "wss://temp.iris.to",
             ]
         );
-    }
-
-    #[test]
-    fn legacy_default_relays_migrate_to_current_defaults() {
-        let legacy = vec![
-            "wss://relay.damus.io".to_string(),
-            "wss://nos.lol".to_string(),
-            "wss://relay.primal.net".to_string(),
-        ];
-
-        assert_eq!(
-            migrate_default_nostr_relay_urls(&legacy),
-            configured_relays()
-        );
-    }
-
-    #[test]
-    fn customized_relays_are_not_replaced_by_default_migration() {
-        let custom = vec!["wss://example.invalid".to_string()];
-
-        assert_eq!(migrate_default_nostr_relay_urls(&custom), custom);
     }
 }

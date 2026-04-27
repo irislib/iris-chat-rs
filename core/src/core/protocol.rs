@@ -65,6 +65,19 @@ impl AppCore {
         owners
     }
 
+    pub(super) fn protocol_invite_author_hexes(&self) -> HashSet<String> {
+        let mut authors = self.protocol_owner_hexes();
+        for app_keys in self.app_keys.values() {
+            for device in &app_keys.devices {
+                authors.insert(device.identity_pubkey_hex.clone());
+            }
+        }
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            authors.insert(logged_in.device_keys.public_key().to_hex());
+        }
+        authors
+    }
+
     pub(super) fn schedule_tracked_peer_catch_up(&self, after: Duration) {
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
@@ -167,6 +180,11 @@ impl AppCore {
             .into_iter()
             .filter_map(|hex| PublicKey::parse(&hex).ok())
             .collect::<Vec<_>>();
+        let invite_authors = self
+            .protocol_invite_author_hexes()
+            .into_iter()
+            .filter_map(|hex| PublicKey::parse(&hex).ok())
+            .collect::<Vec<_>>();
         let message_authors = self
             .direct_message_subscriptions
             .tracked_authors()
@@ -178,7 +196,7 @@ impl AppCore {
                     .unwrap_or_default(),
             )
             .collect::<Vec<_>>();
-        let filters = recent_protocol_filters(owners, message_authors, now);
+        let filters = recent_protocol_filters(owners, invite_authors, message_authors, now);
         if filters.is_empty() {
             return;
         }

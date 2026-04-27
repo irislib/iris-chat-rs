@@ -16,10 +16,12 @@ pub(super) fn summarize_protocol_plan(plan: Option<&ProtocolSubscriptionPlan>) -
 
 pub(super) fn recent_protocol_filters(
     owners: impl IntoIterator<Item = PublicKey>,
+    invite_authors: impl IntoIterator<Item = PublicKey>,
     message_authors: impl IntoIterator<Item = PublicKey>,
     now: UnixSeconds,
 ) -> Vec<Filter> {
     let owners = dedupe_pubkeys(owners);
+    let invite_authors = dedupe_pubkeys(invite_authors);
     let message_authors = dedupe_pubkeys(message_authors);
     let mut filters = Vec::new();
 
@@ -30,10 +32,17 @@ pub(super) fn recent_protocol_filters(
                 .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
                 .authors(owners.clone()),
         );
+    }
+
+    if !invite_authors.is_empty() {
         filters.push(
             Filter::new()
                 .kind(Kind::from(INVITE_EVENT_KIND as u16))
-                .authors(owners)
+                .authors(invite_authors)
+                .custom_tag(
+                    nostr::SingleLetterTag::lowercase(nostr::Alphabet::L),
+                    "double-ratchet/invites",
+                )
                 .since(Timestamp::from(
                     now.get()
                         .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),

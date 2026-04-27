@@ -42,10 +42,11 @@ impl AppCore {
 
 /// Decrypt the encrypted Nostr event the notification server forwarded
 /// (key `event`), look up the sender's display name from
-/// `profiles.json`, look up the group title (when the rumor carries a
-/// `["l", group_id]` tag) from `groups.json`, and return a notification
-/// resolution whose `title` and `body` are the decrypted plaintext —
-/// not the generic "New activity" placeholder the server sent.
+/// `profiles.json` or the direct chat thread, look up the group title
+/// (when the rumor carries a `["l", group_id]` tag) from `groups.json`,
+/// and return a notification resolution whose `title` and `body` are
+/// the decrypted plaintext — not the generic "New activity" placeholder
+/// the server sent.
 ///
 /// Designed to run in the FCM service / iOS Notification Service
 /// Extension where there's no live `AppCore`. We spin up a one-shot
@@ -178,7 +179,8 @@ pub(crate) fn decrypt_mobile_push_notification(
         [name, value, ..] if name == "l" && !value.is_empty() => Some(value.clone()),
         _ => None,
     });
-    let sender_name = lookup_sender_display_name(&data_dir, &sender_owner);
+    let sender_name = lookup_sender_display_name(&data_dir, &sender_owner)
+        .or_else(|| lookup_direct_thread_sender_name(&data_dir, &sender_owner));
     let group_title = group_id
         .as_ref()
         .and_then(|id| lookup_group_name(&data_dir, id));
@@ -319,6 +321,33 @@ fn lookup_sender_display_name(data_dir: &str, sender: &nostr::PublicKey) -> Opti
         .filter(|value| !value.is_empty())
         .map(str::to_string);
     name
+}
+
+fn lookup_direct_thread_sender_name(data_dir: &str, sender: &nostr::PublicKey) -> Option<String> {
+    let thread_path = PathBuf::from(data_dir)
+        .join("core")
+        .join("threads")
+        .join(format!("{}.json", sender.to_hex()));
+    let bytes = std::fs::read(thread_path).ok()?;
+    let thread: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let messages = thread.get("messages")?.as_array()?;
+    messages.iter().rev().find_map(|message| {
+        let object = message.as_object()?;
+        let is_outgoing = object
+            .get("is_outgoing")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false);
+        if is_outgoing {
+            return None;
+        }
+        object
+            .get("author")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .filter(|value| !is_generic_sender_title(value))
+            .map(str::to_string)
+    })
 }
 
 fn lookup_group_name(data_dir: &str, group_id: &str) -> Option<String> {

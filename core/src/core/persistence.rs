@@ -15,17 +15,10 @@ use std::hash::{Hash, Hasher};
 //       chat_ttls.json     chat_message_ttl_seconds map
 //       threads/<id>.json  one file per chat thread
 //
-// Persisting on every mutation used to rewrite a single 74 KB JSON
-// blob. Splitting into per-slice files (and *especially* per-chat
-// thread files) means a relay event for one chat only rewrites that
-// chat's ~5 KB file, and a preference toggle only rewrites the few
-// hundred bytes of `preferences.json`. Each writer runs on
+// Persisting on every mutation is split into per-slice files (and
+// especially per-chat thread files), so a relay event for one chat only
+// rewrites that chat's small file. Each writer runs on
 // `runtime.spawn_blocking`, off the core message-handling thread.
-//
-// Backwards compatibility: if the legacy `ndr_demo_core_state.json`
-// exists at startup we load it via the existing path, then on the
-// next persist tick we write the split layout and delete the legacy
-// file. Loaders prefer the split layout when both are present.
 
 const CORE_DIR: &str = "core";
 const META_FILE: &str = "meta.json";
@@ -36,7 +29,6 @@ const APP_KEYS_FILE: &str = "app_keys.json";
 const GROUPS_FILE: &str = "groups.json";
 const CHAT_TTLS_FILE: &str = "chat_ttls.json";
 const THREADS_DIR: &str = "threads";
-const LEGACY_FILE: &str = "ndr_demo_core_state.json";
 
 #[derive(Default)]
 pub(super) struct PersistenceCache {
@@ -75,10 +67,6 @@ struct PersistedSeenEvents {
 }
 
 impl AppCore {
-    pub(super) fn persistence_path(&self) -> PathBuf {
-        self.data_dir.join(LEGACY_FILE)
-    }
-
     pub(super) fn ndr_storage_dir(&self, owner: PublicKey, device: PublicKey) -> PathBuf {
         self.data_dir
             .join("ndr_runtime")
@@ -132,28 +120,9 @@ impl AppCore {
     }
 
     pub(super) fn load_persisted(&self) -> anyhow::Result<Option<PersistedState>> {
-        // Prefer the new split layout. Fall back to the legacy single
-        // file when only that exists — the next persist call will
-        // rewrite to the split layout and delete the legacy file.
-        let meta_path = self.meta_path();
-        if meta_path.exists() {
-            return self.load_split_persisted();
-        }
-        let legacy_path = self.persistence_path();
-        if !legacy_path.exists() {
+        if !self.meta_path().exists() {
             return Ok(None);
         }
-        let bytes = fs::read(legacy_path)?;
-        let value: serde_json::Value = serde_json::from_slice(&bytes)?;
-        if value.get("version").and_then(serde_json::Value::as_u64)
-            != Some(PERSISTED_STATE_VERSION as u64)
-        {
-            return Ok(None);
-        }
-        Ok(Some(serde_json::from_value(value)?))
-    }
-
-    fn load_split_persisted(&self) -> anyhow::Result<Option<PersistedState>> {
         let meta_bytes = fs::read(self.meta_path())?;
         let meta: PersistedMeta = serde_json::from_slice(&meta_bytes)?;
         if meta.version != PERSISTED_STATE_VERSION {
@@ -338,15 +307,6 @@ impl AppCore {
             deletes.push(self.thread_path(chat_id));
         }
 
-        // ---- legacy file removal ------------------------------------------
-        // Once we've confirmed the split layout has been bootstrapped at
-        // least once, the monolithic file is dead weight.
-        let legacy_path = self.persistence_path();
-        let drop_legacy = legacy_path.exists();
-        if drop_legacy {
-            deletes.push(legacy_path);
-        }
-
         if writes.is_empty() && deletes.is_empty() {
             self.persist_debug_snapshot_best_effort();
             return;
@@ -371,11 +331,7 @@ impl AppCore {
 
     pub(super) fn clear_persistence_best_effort(&mut self) {
         let core_dir = self.core_dir();
-        let legacy_path = self.persistence_path();
         let debug_path = self.debug_snapshot_path();
-        if legacy_path.exists() {
-            let _ = fs::remove_file(legacy_path);
-        }
         if debug_path.exists() {
             let _ = fs::remove_file(debug_path);
         }

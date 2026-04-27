@@ -16,10 +16,10 @@ hashtree-blossom = "=0.2.8"
 hashtree-config = "=0.2.8"
 hashtree-core = "=0.2.8"
 hmac = "0.12"
-nostr = { version = "0.44", default-features = false, features = ["std", "nip44"] }
+nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
-nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
-nostr-double-ratchet = { version = "0.0.101", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
+nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
+nostr-double-ratchet = { version = "0.0.102", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }

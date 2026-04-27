@@ -25,7 +25,6 @@ private enum HarnessError: Error, CustomStringConvertible {
 @MainActor
 final class InteropHarnessTests: XCTestCase {
     private let debugSnapshotFilename = "ndr_demo_runtime_debug.json"
-    private let persistedStateFilename = "ndr_demo_core_state.json"
 
     func testHarnessAction() async throws {
         let env = ProcessInfo.processInfo.environment
@@ -74,30 +73,36 @@ final class InteropHarnessTests: XCTestCase {
         case "wait_for_peer_roster_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env))
-            let persisted = try await waitFor(label: "peer roster \(peerOwnerHex)", timeout: 180) {
-                self.readJsonObject(at: dataDir.appendingPathComponent(self.persistedStateFilename))
-                    .flatMap { self.persistedHasPeerRoster($0, peerOwnerHex: peerOwnerHex) ? $0 : nil }
+            _ = try await waitFor(label: "peer roster \(peerOwnerHex)", timeout: 180) {
+                if self.splitPersistenceHasPeerRoster(dataDir: dataDir, peerOwnerHex: peerOwnerHex) {
+                    return true
+                }
+                return nil
             }
             status("peer_owner_hex", peerOwnerHex)
-            status("users", summarizePersistedUsers(arrayValue(dictValue(persisted["session_manager"])?["users"])))
+            status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
         case "wait_for_known_peer_session_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env))
-            let persisted = try await waitFor(label: "known peer session \(peerOwnerHex)", timeout: 180) {
-                self.readJsonObject(at: dataDir.appendingPathComponent(self.persistedStateFilename))
-                    .flatMap { self.persistedHasPeerSession($0, peerOwnerHex: peerOwnerHex) ? $0 : nil }
+            _ = try await waitFor(label: "known peer session \(peerOwnerHex)", timeout: 180) {
+                if self.splitPersistenceHasPeerSession(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex) {
+                    return true
+                }
+                return nil
             }
             status("peer_owner_hex", peerOwnerHex)
-            status("users", summarizePersistedUsers(arrayValue(dictValue(persisted["session_manager"])?["users"])))
+            status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
         case "wait_for_peer_transport_ready_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env))
-            let persisted = try await waitFor(label: "peer transport ready \(peerOwnerHex)", timeout: 180) {
-                self.readJsonObject(at: dataDir.appendingPathComponent(self.persistedStateFilename))
-                    .flatMap { self.persistedHasPeerTransportReady($0, peerOwnerHex: peerOwnerHex) ? $0 : nil }
+            _ = try await waitFor(label: "peer transport ready \(peerOwnerHex)", timeout: 180) {
+                if self.splitPersistenceHasPeerSession(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex) {
+                    return true
+                }
+                return nil
             }
             status("peer_owner_hex", peerOwnerHex)
-            status("users", summarizePersistedUsers(arrayValue(dictValue(persisted["session_manager"])?["users"])))
+            status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
         case "create_chat_from_args":
             let rawPeer = try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env)
             let chatID = try await ensureChatOpen(manager: manager, dataDir: dataDir, chatID: nil, peerInput: rawPeer)
@@ -123,15 +128,15 @@ final class InteropHarnessTests: XCTestCase {
                    let messageEntry = current.messages.first(where: { $0.isOutgoing && $0.body == message && $0.delivery != .queued && $0.delivery != .pending }) {
                     return String(describing: messageEntry.delivery)
                 }
-                guard let persisted = self.readJsonObject(at: dataDir.appendingPathComponent(self.persistedStateFilename)) else {
-                    return nil
-                }
-                return self.persistedMessageDelivery(
-                    persisted: persisted,
+                if let delivery = self.splitPersistenceMessageDelivery(
+                    dataDir: dataDir,
                     chatID: chatID,
                     message: message,
                     direction: "outgoing"
-                )
+                ) {
+                    return delivery
+                }
+                return nil
             }
 
             if finalizedDelivery.caseInsensitiveCompare("failed") == .orderedSame {
@@ -170,16 +175,16 @@ final class InteropHarnessTests: XCTestCase {
                     manager.dispatch(.openChat(chatId: thread.chatId))
                     return thread.chatId
                 }
-                guard let persisted = self.readJsonObject(at: dataDir.appendingPathComponent(self.persistedStateFilename)) else {
-                    return nil
-                }
-                return self.persistedThreadWithMessage(
-                    persisted: persisted,
+                if let chatID = self.splitPersistenceThreadWithMessage(
+                    dataDir: dataDir,
                     chatID: resolvedChatID,
                     expectedMessage: message,
                     direction: direction,
                     peerInput: peerInput
-                )
+                ) {
+                    return chatID
+                }
+                return nil
             }
 
             status("chat_id", matchedChatID)
@@ -286,9 +291,8 @@ final class InteropHarnessTests: XCTestCase {
             return try await waitForChatVisibility(manager: manager, dataDir: dataDir, chatID: existing.chatId, timeout: 90)
         }
 
-        let persistedBefore = readJsonObject(at: dataDir.appendingPathComponent(persistedStateFilename))
-        let previousThreadCount = arrayValue(persistedBefore?["threads"]).count
-        let previousActiveChatID = stringValue(persistedBefore?["active_chat_id"])
+        let previousThreadCount = splitPersistenceThreadFiles(dataDir: dataDir).count
+        let previousActiveChatID = stringValue(readJsonObject(at: dataDir.appendingPathComponent("core/meta.json"))?["active_chat_id"])
         manager.dispatch(.createChat(peerInput: rawPeer))
 
         return try await waitForCreatedChat(
@@ -314,14 +318,8 @@ final class InteropHarnessTests: XCTestCase {
             if let thread = manager.state.chatList.first(where: { self.sameIdentifier($0.chatId, chatID) }) {
                 return thread.chatId
             }
-            guard let persisted = self.readJsonObject(at: dataDir.appendingPathComponent(self.persistedStateFilename)) else {
-                return nil
-            }
-            let activeChatID = self.stringValue(persisted["active_chat_id"])
-            let hasThread = self.arrayValue(persisted["threads"]).contains { entry in
-                guard let thread = self.dictValue(entry) else { return false }
-                return self.sameIdentifier(self.stringValue(thread["chat_id"]), chatID)
-            }
+            let activeChatID = self.stringValue(self.readJsonObject(at: dataDir.appendingPathComponent("core/meta.json"))?["active_chat_id"])
+            let hasThread = self.readSplitThread(dataDir: dataDir, chatID: chatID) != nil
             if self.sameIdentifier(activeChatID, chatID) || hasThread {
                 return chatID
             }
@@ -337,7 +335,6 @@ final class InteropHarnessTests: XCTestCase {
         previousThreadCount: Int,
         timeout: TimeInterval
     ) async throws -> String {
-        let persistedPath = dataDir.appendingPathComponent(persistedStateFilename)
         let debugPath = dataDir.appendingPathComponent(debugSnapshotFilename)
         let deadline = Date().addingTimeInterval(timeout)
         var lastObservation = "no observation"
@@ -358,10 +355,10 @@ final class InteropHarnessTests: XCTestCase {
                 return thread.chatId
             }
 
-            let persisted = readJsonObject(at: persistedPath)
+            let meta = readJsonObject(at: dataDir.appendingPathComponent("core/meta.json"))
             let debug = readJsonObject(at: debugPath)
-            let persistedActiveChatID = stringValue(persisted?["active_chat_id"])
-            let persistedThreadCount = arrayValue(persisted?["threads"]).count
+            let persistedActiveChatID = stringValue(meta?["active_chat_id"])
+            let persistedThreadCount = splitPersistenceThreadFiles(dataDir: dataDir).count
             let debugActiveChatID = stringValue(debug?["active_chat_id"])
             let currentChatList = joinValues(arrayValue(debug?["current_chat_list"]))
 
@@ -373,16 +370,6 @@ final class InteropHarnessTests: XCTestCase {
                 "debug.active=\(debugActiveChatID)",
                 "debug.current_chat_list=\(currentChatList)",
             ].joined(separator: " ")
-
-            if let thread = arrayValue(persisted?["threads"]).compactMap(dictValue).first(where: { thread in
-                sameIdentifier(stringValue(thread["chat_id"]), persistedActiveChatID)
-            }) {
-                let chatID = stringValue(thread["chat_id"])
-                if !chatID.isEmpty &&
-                    (!sameIdentifier(chatID, previousActiveChatID) || persistedThreadCount > previousThreadCount) {
-                    return chatID
-                }
-            }
 
             if !persistedActiveChatID.isEmpty &&
                 (!sameIdentifier(persistedActiveChatID, previousActiveChatID) || persistedThreadCount > previousThreadCount) {
@@ -487,15 +474,34 @@ final class InteropHarnessTests: XCTestCase {
             sameIdentifier(peerLabel ?? "", normalizedPeer)
     }
 
-    private func persistedThreadWithMessage(
-        persisted: JsonObject,
+    private func splitPersistenceThreadFiles(dataDir: URL) -> [URL] {
+        let threadsDir = dataDir.appendingPathComponent("core/threads", isDirectory: true)
+        return (try? FileManager.default.contentsOfDirectory(
+            at: threadsDir,
+            includingPropertiesForKeys: nil
+        ))?.filter { $0.pathExtension == "json" } ?? []
+    }
+
+    private func readSplitThread(dataDir: URL, chatID: String) -> JsonObject? {
+        for url in splitPersistenceThreadFiles(dataDir: dataDir) {
+            guard let thread = readJsonObject(at: url),
+                  sameIdentifier(stringValue(thread["chat_id"]), chatID) else {
+                continue
+            }
+            return thread
+        }
+        return nil
+    }
+
+    private func splitPersistenceThreadWithMessage(
+        dataDir: URL,
         chatID: String?,
         expectedMessage: String,
         direction: String,
         peerInput: String?
     ) -> String? {
-        for entry in arrayValue(persisted["threads"]) {
-            guard let thread = dictValue(entry) else { continue }
+        for url in splitPersistenceThreadFiles(dataDir: dataDir) {
+            guard let thread = readJsonObject(at: url) else { continue }
             let threadChatID = stringValue(thread["chat_id"])
             if !chatMatchesExpectedChat(chatId: threadChatID, peerInput: peerInput, expectedChatID: chatID) {
                 continue
@@ -513,68 +519,85 @@ final class InteropHarnessTests: XCTestCase {
         return nil
     }
 
-    private func persistedMessageDelivery(
-        persisted: JsonObject,
+    private func splitPersistenceMessageDelivery(
+        dataDir: URL,
         chatID: String,
         message: String,
         direction: String
     ) -> String? {
-        for entry in arrayValue(persisted["threads"]) {
-            guard let thread = dictValue(entry) else { continue }
-            guard sameIdentifier(stringValue(thread["chat_id"]), chatID) else { continue }
-            for messageEntry in arrayValue(thread["messages"]) {
-                guard let persistedMessage = dictValue(messageEntry) else { continue }
-                guard stringValue(persistedMessage["body"]) == message else { continue }
-                guard directionMatches(isOutgoing: boolValue(persistedMessage["is_outgoing"]), direction: direction) else {
-                    continue
-                }
-                let delivery = stringValue(persistedMessage["delivery"])
-                if !delivery.isEmpty, delivery.caseInsensitiveCompare("Pending") != .orderedSame {
-                    return delivery
-                }
+        guard let thread = readSplitThread(dataDir: dataDir, chatID: chatID) else {
+            return nil
+        }
+        for messageEntry in arrayValue(thread["messages"]) {
+            guard let persistedMessage = dictValue(messageEntry) else { continue }
+            guard stringValue(persistedMessage["body"]) == message else { continue }
+            guard directionMatches(isOutgoing: boolValue(persistedMessage["is_outgoing"]), direction: direction) else {
+                continue
+            }
+            let delivery = stringValue(persistedMessage["delivery"])
+            if !delivery.isEmpty, delivery.caseInsensitiveCompare("Pending") != .orderedSame {
+                return delivery
             }
         }
         return nil
     }
 
-    private func persistedHasPeerRoster(_ persisted: JsonObject, peerOwnerHex: String) -> Bool {
-        arrayValue(dictValue(persisted["session_manager"])?["users"]).contains { entry in
-            guard let user = dictValue(entry) else { return false }
-            return sameIdentifier(stringValue(user["owner_pubkey"]), peerOwnerHex) && dictValue(user["roster"]) != nil
+    private func splitPersistenceHasPeerRoster(dataDir: URL, peerOwnerHex: String) -> Bool {
+        let appKeys = readJsonArray(at: dataDir.appendingPathComponent("core/app_keys.json"))
+        return arrayValue(appKeys).contains { entry in
+            guard let known = dictValue(entry) else { return false }
+            return sameIdentifier(stringValue(known["owner_pubkey_hex"]), peerOwnerHex) &&
+                !arrayValue(known["devices"]).isEmpty
         }
     }
 
-    private func persistedHasPeerSession(_ persisted: JsonObject, peerOwnerHex: String) -> Bool {
-        arrayValue(dictValue(persisted["session_manager"])?["users"]).contains { entry in
-            guard let user = dictValue(entry), sameIdentifier(stringValue(user["owner_pubkey"]), peerOwnerHex) else {
-                return false
-            }
-            return arrayValue(user["devices"]).contains { deviceEntry in
-                guard let device = dictValue(deviceEntry) else { return false }
-                return dictValue(device["active_session"]) != nil || !arrayValue(device["inactive_sessions"]).isEmpty
+    private func summarizeSplitPersistedPeer(dataDir: URL, manager: AppManager, peerOwnerHex: String) -> String {
+        guard let account = manager.state.account else { return "" }
+        let userPath = dataDir
+            .appendingPathComponent("ndr_runtime")
+            .appendingPathComponent(account.publicKeyHex)
+            .appendingPathComponent(account.devicePublicKeyHex)
+            .appendingPathComponent("user_\(peerOwnerHex).json")
+        let user = readJsonObject(at: userPath)
+        let appKeys = readJsonArray(at: dataDir.appendingPathComponent("core/app_keys.json"))
+        let rosterDevices = arrayValue(appKeys).compactMap(dictValue).first(where: {
+            sameIdentifier(stringValue($0["owner_pubkey_hex"]), peerOwnerHex)
+        }).map { arrayValue($0["devices"]).count } ?? 0
+        let devices = arrayValue(user?["devices"])
+        let activeSessions = devices.reduce(into: 0) { count, entry in
+            guard let device = dictValue(entry) else { return }
+            if dictValue(device["active_session"]) != nil {
+                count += 1
             }
         }
+        let inactiveSessions = devices.reduce(into: 0) { count, entry in
+            guard let device = dictValue(entry) else { return }
+            count += arrayValue(device["inactive_sessions"]).count
+        }
+        return [
+            peerOwnerHex,
+            "roster=\(rosterDevices > 0)",
+            "rosterDevices=\(rosterDevices)",
+            "devices=\(devices.count)",
+            "active=\(activeSessions)",
+            "inactive=\(inactiveSessions)",
+        ].joined(separator: ",")
     }
 
-    private func persistedHasPeerTransportReady(_ persisted: JsonObject, peerOwnerHex: String) -> Bool {
-        arrayValue(dictValue(persisted["session_manager"])?["users"]).contains { entry in
-            guard let user = dictValue(entry), sameIdentifier(stringValue(user["owner_pubkey"]), peerOwnerHex) else {
-                return false
-            }
-            let rosterDevices = arrayValue(dictValue(user["roster"])?["devices"])
-            let devices = arrayValue(user["devices"])
-            guard !rosterDevices.isEmpty else {
-                return false
-            }
-            return rosterDevices.allSatisfy { rosterEntry in
-                guard let rosterDevice = dictValue(rosterEntry) else { return false }
-                let rosterDeviceHex = stringValue(rosterDevice["device_pubkey"])
-                return devices.contains { deviceEntry in
-                    guard let device = dictValue(deviceEntry) else { return false }
-                    return sameIdentifier(stringValue(device["device_pubkey"]), rosterDeviceHex) &&
-                        dictValue(device["public_invite"]) != nil
-                }
-            }
+    private func splitPersistenceHasPeerSession(dataDir: URL, manager: AppManager, peerOwnerHex: String) -> Bool {
+        guard let account = manager.state.account else { return false }
+        let userPath = dataDir
+            .appendingPathComponent("ndr_runtime")
+            .appendingPathComponent(account.publicKeyHex)
+            .appendingPathComponent(account.devicePublicKeyHex)
+            .appendingPathComponent("user_\(peerOwnerHex).json")
+        guard let user = readJsonObject(at: userPath) else {
+            return false
+        }
+        return arrayValue(user["devices"]).contains { entry in
+            guard let device = dictValue(entry) else { return false }
+            return dictValue(device["active_session"]) != nil ||
+                !arrayValue(device["inactive_sessions"]).isEmpty
         }
     }
 
@@ -617,21 +640,21 @@ final class InteropHarnessTests: XCTestCase {
     }
 
     private func reportPersistedProtocolSnapshot(dataDir: URL) {
-        let persisted = readJsonObject(at: dataDir.appendingPathComponent(persistedStateFilename))
-        let sessionManager = dictValue(persisted?["session_manager"])
-        let groupManager = dictValue(persisted?["group_manager"])
+        let meta = readJsonObject(at: dataDir.appendingPathComponent("core/meta.json"))
+        let appKeys = readJsonArray(at: dataDir.appendingPathComponent("core/app_keys.json"))
+        let groups = readJsonArray(at: dataDir.appendingPathComponent("core/groups.json"))
+        let seenEvents = readJsonObject(at: dataDir.appendingPathComponent("core/seen_events.json"))
+        let threads = splitPersistenceThreadFiles(dataDir: dataDir).compactMap { readJsonObject(at: $0) }
 
         status("data_dir", dataDir.path)
-        status("persisted_file_present", persisted == nil ? "false" : "true")
-        status("version", stringValue(persisted?["version"]))
-        status("active_chat_id", stringValue(persisted?["active_chat_id"]))
-        status("authorization_state", stringValue(persisted?["authorization_state"]))
-        status("users", summarizePersistedUsers(arrayValue(sessionManager?["users"])))
-        status("groups", summarizePersistedGroups(arrayValue(groupManager?["groups"])))
-        status("pending_outbound", summarizePersistedPendingOutbound(arrayValue(persisted?["pending_outbound"])))
-        status("pending_group_controls", summarizePersistedPendingGroupControls(arrayValue(persisted?["pending_group_controls"])))
-        status("seen_event_ids_count", String(arrayValue(persisted?["seen_event_ids"]).count))
-        status("threads", summarizePersistedThreads(arrayValue(persisted?["threads"])))
+        status("persisted_file_present", meta == nil ? "false" : "true")
+        status("version", stringValue(meta?["version"]))
+        status("active_chat_id", stringValue(meta?["active_chat_id"]))
+        status("authorization_state", stringValue(meta?["authorization_state"]))
+        status("app_keys", summarizePersistedAppKeys(appKeys))
+        status("groups", summarizePersistedGroups(groups))
+        status("seen_event_ids_count", String(arrayValue(seenEvents?["seen_event_ids"]).count))
+        status("threads", summarizePersistedThreads(threads))
     }
 
     private func summarizeCurrentChat(_ chat: CurrentChatSnapshot?) -> String {
@@ -763,6 +786,15 @@ final class InteropHarnessTests: XCTestCase {
         }
     }
 
+    private func summarizePersistedAppKeys(_ entries: JsonArray) -> String {
+        joinObjects(entries) { entry in
+            [
+                stringValue(entry["owner_pubkey_hex"]),
+                "devices=\(arrayValue(entry["devices"]).count)",
+            ].joined(separator: ",")
+        }
+    }
+
     private func summarizePersistedPendingOutbound(_ entries: JsonArray) -> String {
         joinObjects(entries) { entry in
             [
@@ -803,6 +835,14 @@ final class InteropHarnessTests: XCTestCase {
             return nil
         }
         return object
+    }
+
+    private func readJsonArray(at url: URL) -> JsonArray {
+        guard let data = try? Data(contentsOf: url),
+              let array = try? JSONSerialization.jsonObject(with: data) as? JsonArray else {
+            return []
+        }
+        return array
     }
 
     private func dictValue(_ value: Any?) -> JsonObject? {

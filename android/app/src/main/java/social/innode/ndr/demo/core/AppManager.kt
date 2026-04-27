@@ -117,12 +117,11 @@ class AppManager(
     private val mutableState = MutableStateFlow(rust.state())
 
     /**
-     * Legacy whole-state flow. Kept for callers that genuinely need the
-     * consolidated snapshot (notification side effects, ad-hoc reads).
-     * **Composable screens should subscribe to one of the slice flows
-     * below instead** — `state.collectAsStateWithLifecycle()` recomposes
-     * on every relay event, even those that don't change anything the
-     * screen renders.
+     * Whole-state flow for callers that genuinely need the consolidated
+     * snapshot (notification side effects, ad-hoc reads). **Composable
+     * screens should subscribe to one of the slice flows below instead**
+     * because `state.collectAsStateWithLifecycle()` recomposes on every
+     * relay event, even those that don't change anything the screen renders.
      */
     val state: StateFlow<AppState> = mutableState.asStateFlow()
 

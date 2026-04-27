@@ -46,6 +46,7 @@ class FirebaseChatNotificationE2eTest {
     @Test
     fun wait_for_firebase_chat_notification() {
         val expectedBody = requiredArg("message")
+        val expectedTitle = optionalArg("expected_title")
         val timeoutMs = arguments.getString("timeout_ms")?.toLongOrNull() ?: 120_000L
         val snapshot =
             waitForSnapshot("Firebase chat notification", timeoutMs) {
@@ -66,10 +67,14 @@ class FirebaseChatNotificationE2eTest {
                 if (active?.optString("text") != expectedBody) {
                     return@waitForSnapshot null
                 }
+                if (expectedTitle != null && active.optString("title") != expectedTitle) {
+                    return@waitForSnapshot null
+                }
                 candidate
             }
 
         assertEquals(expectedBody, snapshot.optString("body"))
+        expectedTitle?.let { assertEquals(it, snapshot.optString("title")) }
         assertActiveNotificationBody(expectedBody)
         reportStatus(
             "received" to "true",
@@ -83,6 +88,7 @@ class FirebaseChatNotificationE2eTest {
     @Test
     fun wait_for_firebase_chat_notifications() {
         val expectedBodies = jsonStringArray(requiredArg("messages_json"))
+        val expectedTitle = optionalArg("expected_title")
         assertTrue("Expected at least one notification body", expectedBodies.isNotEmpty())
         val timeoutMs = arguments.getString("timeout_ms")?.toLongOrNull() ?: 120_000L
         val snapshot =
@@ -94,11 +100,23 @@ class FirebaseChatNotificationE2eTest {
                 if (candidate.optString("blocked_reason").isNotEmpty()) {
                     throw AssertionError("Push notification was blocked: ${candidate.optString("blocked_reason")}")
                 }
-                val activeBodies = activeNotificationBodies()
-                if (expectedBodies.all { body -> activeBodies.contains(body) }) {
+                val active = activeNotificationSnapshots()
+                val activeBodies = active.map { it.body }
+                val matchedBodies =
+                    expectedBodies.all { body ->
+                        active.any { notification ->
+                            notification.body == body &&
+                                (expectedTitle == null || notification.title == expectedTitle)
+                        }
+                    }
+                if (matchedBodies) {
                     JSONObject()
                         .put("probe", candidate)
                         .put("active_bodies", JSONArray(activeBodies))
+                        .put(
+                            "active_titles",
+                            JSONArray(active.filter { expectedBodies.contains(it.body) }.map { it.title }),
+                        )
                 } else {
                     null
                 }
@@ -106,8 +124,10 @@ class FirebaseChatNotificationE2eTest {
 
         reportStatus(
             "received" to "true",
+            "expected_title" to expectedTitle.orEmpty(),
             "expected_bodies" to JSONArray(expectedBodies).toString(),
             "active_bodies" to snapshot.optJSONArray("active_bodies")?.toString().orEmpty(),
+            "active_titles" to snapshot.optJSONArray("active_titles")?.toString().orEmpty(),
             "snapshot" to snapshot.toString(),
         )
     }
@@ -148,12 +168,15 @@ class FirebaseChatNotificationE2eTest {
         assertNotNull("Expected active Android notification body `$expectedBody`", active)
     }
 
-    private fun activeNotificationBodies(): List<String> {
+    private fun activeNotificationSnapshots(): List<NotificationSnapshot> {
         val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         return manager.activeNotifications.mapNotNull { statusBarNotification ->
-            statusBarNotification.notification.extras
-                .getCharSequence(Notification.EXTRA_TEXT)
-                ?.toString()
+            val extras = statusBarNotification.notification.extras
+            val body = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() ?: return@mapNotNull null
+            NotificationSnapshot(
+                title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty(),
+                body = body,
+            )
         }
     }
 
@@ -167,6 +190,8 @@ class FirebaseChatNotificationE2eTest {
     private fun requiredArg(name: String): String =
         arguments.getString(name)?.takeIf { it.isNotBlank() }
             ?: throw AssertionError("Missing instrumentation argument `$name`")
+
+    private fun optionalArg(name: String): String? = arguments.getString(name)?.takeIf { it.isNotBlank() }
 
     private fun waitForSnapshot(
         label: String,
@@ -188,4 +213,9 @@ class FirebaseChatNotificationE2eTest {
         fields.forEach { (key, value) -> bundle.putString(key, value) }
         instrumentation.sendStatus(0, bundle)
     }
+
+    private data class NotificationSnapshot(
+        val title: String,
+        val body: String,
+    )
 }
