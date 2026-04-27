@@ -112,7 +112,7 @@ final class LiveRustAppClient: RustAppClient {
     }
 }
 
-private enum AppPaths {
+enum AppPaths {
     static let appGroupIdentifier = "group.to.iris.chat"
 
     static func appVersion(bundle: Bundle = .main) -> String {
@@ -263,6 +263,41 @@ final class AppManager: ObservableObject {
             }
         }
     }
+
+#if os(iOS)
+    func shouldSuppressPushNotification(userInfo: [AnyHashable: Any]) -> Bool {
+        guard let resolution = resolvePushNotification(userInfo: userInfo),
+              resolution.shouldShow,
+              let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) else {
+            return false
+        }
+        return state.currentChat?.chatId.caseInsensitiveCompare(chatID) == .orderedSame
+    }
+
+    func handlePushNotificationTap(userInfo: [AnyHashable: Any]) {
+        guard let resolution = resolvePushNotification(userInfo: userInfo),
+              let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
+              !chatID.isEmpty else {
+            return
+        }
+        rust.dispatch(action: .openChat(chatId: chatID))
+    }
+
+    private func resolvePushNotification(userInfo: [AnyHashable: Any]) -> MobilePushNotificationResolution? {
+        guard let payloadJson = serializedPushPayload(userInfo: userInfo) else {
+            return nil
+        }
+        if let bundle = secretStore.load() {
+            return decryptMobilePushNotificationPayload(
+                dataDir: dataDir.path,
+                ownerPubkeyHex: bundle.ownerPubkeyHex,
+                deviceNsec: bundle.deviceNsec,
+                rawPayloadJson: payloadJson
+            )
+        }
+        return resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
+    }
+#endif
 
     func setStartupAtLoginEnabled(_ enabled: Bool) {
         do {
@@ -761,6 +796,46 @@ private func chatLinkFragmentComponents(_ url: URL) -> [String] {
         .map(String.init)
         .filter { !$0.isEmpty }
 }
+
+#if os(iOS)
+private func serializedPushPayload(userInfo: [AnyHashable: Any]) -> String? {
+    var dict: [String: Any] = [:]
+    for (key, value) in userInfo {
+        guard let key = key as? String else {
+            continue
+        }
+        dict[key] = value
+    }
+    guard JSONSerialization.isValidJSONObject(dict),
+          let data = try? JSONSerialization.data(withJSONObject: dict),
+          let json = String(data: data, encoding: .utf8) else {
+        return nil
+    }
+    return json
+}
+
+private func chatID(fromPushPayloadJson payloadJson: String) -> String? {
+    guard let data = payloadJson.data(using: .utf8),
+          let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        return nil
+    }
+    if let groupID = normalizedPushString(object["group_id"]) {
+        return groupID
+    }
+    if let sender = normalizedPushString(object["sender_pubkey"]) {
+        return sender
+    }
+    return nil
+}
+
+private func normalizedPushString(_ value: Any?) -> String? {
+    guard let string = value as? String else {
+        return nil
+    }
+    let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
+}
+#endif
 
 final class UpdateBridge: NSObject, AppReconciler, @unchecked Sendable {
     weak var owner: AppManager?

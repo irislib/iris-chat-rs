@@ -22,6 +22,20 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "myProfileQrCode").waitForExistence(timeout: 5))
     }
 
+    func testLaunchExistingAccountAndAcceptNotificationPermission() {
+        let app = XCUIApplication()
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allowButton = springboard.buttons["Allow"]
+        if allowButton.waitForExistence(timeout: 5) {
+            allowButton.tap()
+        }
+
+        XCTAssertTrue(element(app, "navigationTopBar").waitForExistence(timeout: 20))
+    }
+
     func testCreateChatAndSendMessageLocally() {
         let app = launchCleanApp()
 

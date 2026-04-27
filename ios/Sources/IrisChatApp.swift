@@ -10,6 +10,9 @@ struct IrisChatApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(manager: manager)
+                .onAppear {
+                    appDelegate.manager = manager
+                }
                 .onOpenURL { url in
                     manager.handleChatLink(url)
                 }

@@ -4,6 +4,8 @@ import UIKit
 import UserNotifications
 
 final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
+    weak var manager: AppManager?
+
     func application(
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
@@ -25,6 +27,25 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
     ) {
         MobilePushTokenCenter.shared.setApnsToken(nil)
     }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification
+    ) async -> UNNotificationPresentationOptions {
+        guard let manager else {
+            return [.banner, .sound, .list]
+        }
+        return manager.shouldSuppressPushNotification(userInfo: notification.request.content.userInfo)
+            ? []
+            : [.banner, .sound, .list]
+    }
+
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse
+    ) async {
+        manager?.handlePushNotificationTap(userInfo: response.notification.request.content.userInfo)
+    }
 }
 
 @MainActor
@@ -32,13 +53,41 @@ final class MobilePushTokenCenter {
     static let shared = MobilePushTokenCenter()
 
     private var apnsToken: String?
+    private var waiters: [CheckedContinuation<String?, Never>] = []
 
     func setApnsToken(_ token: String?) {
-        apnsToken = token?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let normalized = token?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        apnsToken = normalized
+        guard let normalized else {
+            return
+        }
+        let pending = waiters
+        waiters.removeAll()
+        pending.forEach { $0.resume(returning: normalized) }
     }
 
     func currentApnsToken() -> String? {
         apnsToken
+    }
+
+    func waitForApnsToken(timeoutNanoseconds: UInt64) async -> String? {
+        if let apnsToken {
+            return apnsToken
+        }
+        return await withTaskGroup(of: String?.self) { group in
+            group.addTask { @MainActor in
+                await withCheckedContinuation { continuation in
+                    self.waiters.append(continuation)
+                }
+            }
+            group.addTask {
+                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+                return nil
+            }
+            let result = await group.next() ?? nil
+            group.cancelAll()
+            return result
+        }
     }
 }
 
@@ -165,13 +214,12 @@ final class MobilePushRuntime {
         await MainActor.run {
             UIApplication.shared.registerForRemoteNotifications()
         }
-        for attempt in 0..<5 {
-            if let token = await MainActor.run(body: { MobilePushTokenCenter.shared.currentApnsToken() }) {
-                return token
-            }
-            try? await Task.sleep(nanoseconds: UInt64(250_000_000 * UInt64(attempt + 1)))
+        if let token = await MainActor.run(body: {
+            MobilePushTokenCenter.shared.currentApnsToken()
+        }) {
+            return token
         }
-        return nil
+        return await MobilePushTokenCenter.shared.waitForApnsToken(timeoutNanoseconds: 15_000_000_000)
     }
 
     private func resolveExistingSubscriptionId(

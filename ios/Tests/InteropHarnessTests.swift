@@ -33,10 +33,12 @@ final class InteropHarnessTests: XCTestCase {
         }
         let action = try requiredEnv("NDR_IOS_HARNESS_ACTION", env: env)
         let runID = env["NDR_IOS_HARNESS_RUN_ID"] ?? UUID().uuidString
-        let service = env["NDR_IOS_HARNESS_SERVICE"] ?? "social.innode.irischat.harness.\(runID)"
+        let useAppStorage = env["NDR_IOS_HARNESS_USE_APP_STORAGE"] == "1"
+        let service = env["NDR_IOS_HARNESS_SERVICE"] ?? (useAppStorage ? "to.iris.chat" : "social.innode.irischat.harness.\(runID)")
         let account = "stored-account-bundle"
-        let rootDir = harnessRootDir(env: env)
-        let dataDir = rootDir.appendingPathComponent(runID, isDirectory: true)
+        let dataDir = useAppStorage
+            ? AppPaths.dataDir(fileManager: .default, environment: [:])
+            : harnessRootDir(env: env).appendingPathComponent(runID, isDirectory: true)
         let reset = env["NDR_IOS_HARNESS_RESET"] == "1"
 
         let secretStore = KeychainSecretStore(service: service, account: account)
@@ -70,6 +72,12 @@ final class InteropHarnessTests: XCTestCase {
         case "report_persisted_protocol_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             reportPersistedProtocolSnapshot(dataDir: dataDir)
+        case "report_mobile_push_snapshot":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            reportMobilePushSnapshot(manager: manager)
+        case "report_mobile_push_server_snapshot":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            try await reportMobilePushServerSnapshot(manager: manager)
         case "wait_for_peer_roster_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env))
@@ -422,10 +430,29 @@ final class InteropHarnessTests: XCTestCase {
 
     private func harnessRootDir(env: [String: String]) -> URL {
         if let explicit = env["NDR_IOS_HARNESS_DATA_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !explicit.isEmpty {
+           !explicit.isEmpty,
+           isWritableHarnessRoot(explicit) {
             return URL(fileURLWithPath: explicit, isDirectory: true)
         }
+        let sandboxRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ndr-ios-harness", isDirectory: true)
+        if isWritableHarnessRoot(sandboxRoot.path) {
+            return sandboxRoot
+        }
         return URL(fileURLWithPath: "/tmp/ndr-ios-harness", isDirectory: true)
+    }
+
+    private func isWritableHarnessRoot(_ path: String) -> Bool {
+        let url = URL(fileURLWithPath: path, isDirectory: true)
+        let probe = url.appendingPathComponent(".write-probe-\(UUID().uuidString)")
+        do {
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            try Data().write(to: probe)
+            try? FileManager.default.removeItem(at: probe)
+            return true
+        } catch {
+            return false
+        }
     }
 
     private func resolvePeerOwnerHex(manager: AppManager, peerInput: String) -> String {
@@ -657,6 +684,51 @@ final class InteropHarnessTests: XCTestCase {
         status("threads", summarizePersistedThreads(threads))
     }
 
+    private func reportMobilePushSnapshot(manager: AppManager) {
+        let snapshot = manager.state.mobilePush
+        status("owner_pubkey_hex", snapshot.ownerPubkeyHex ?? "")
+        status("message_author_pubkeys", snapshot.messageAuthorPubkeys.joined(separator: ","))
+        status("sessions", snapshot.sessions.map { session in
+            [
+                session.recipientPubkeyHex,
+                session.displayName,
+                session.trackedSenderPubkeys.joined(separator: "+"),
+                "receiving=\(session.hasReceivingCapability)",
+            ].joined(separator: ",")
+        }.joined(separator: "|"))
+    }
+
+    private func reportMobilePushServerSnapshot(manager: AppManager) async throws {
+        guard let ownerNsec = manager.exportOwnerNsec() else {
+            throw HarnessError.unexpected("owner nsec unavailable")
+        }
+        let request = buildMobilePushListSubscriptionsRequest(
+            ownerNsec: ownerNsec,
+            platformKey: "ios",
+            isRelease: false,
+            serverUrlOverride: nil
+        )
+        guard let request else {
+            throw HarnessError.unexpected("could not build mobile push list request")
+        }
+        guard let url = URL(string: request.url) else {
+            throw HarnessError.unexpected("invalid mobile push url")
+        }
+        var urlRequest = URLRequest(url: url)
+        urlRequest.httpMethod = request.method
+        urlRequest.setValue("application/json", forHTTPHeaderField: "accept")
+        urlRequest.setValue(request.authorizationHeader, forHTTPHeaderField: "authorization")
+        let (data, response) = try await URLSession.shared.data(for: urlRequest)
+        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        status("status_code", String(statusCode))
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            status("raw", String(data: data, encoding: .utf8) ?? "")
+            return
+        }
+        status("subscription_count", String(object.count))
+        status("subscriptions", summarizeMobilePushServerSubscriptions(object))
+    }
+
     private func summarizeCurrentChat(_ chat: CurrentChatSnapshot?) -> String {
         guard let chat else { return "" }
         return [
@@ -679,6 +751,24 @@ final class InteropHarnessTests: XCTestCase {
                 String(thread.unreadCount),
             ].joined(separator: ",")
         }.joined(separator: "|")
+    }
+
+    private func summarizeMobilePushServerSubscriptions(_ subscriptions: JsonObject) -> String {
+        subscriptions.map { id, value in
+            let subscription = dictValue(value)
+            let filter = dictValue(subscription?["filter"])
+            let authors = arrayValue(filter?["authors"])
+            let fcmTokens = arrayValue(subscription?["fcm_tokens"])
+            let apnsTokens = arrayValue(subscription?["apns_tokens"])
+            return [
+                id,
+                "authors=\(authors.count)",
+                "fcm=\(fcmTokens.count)",
+                "apns=\(apnsTokens.count)",
+            ].joined(separator: ",")
+        }
+        .sorted()
+        .joined(separator: "|")
     }
 
     private func summarizeRuntimeKnownUsers(_ users: JsonArray) -> String {
