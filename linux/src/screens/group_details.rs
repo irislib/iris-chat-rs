@@ -1,8 +1,10 @@
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use iris_chat_core::{
-    proxied_image_url, AppAction, AppState, GroupDetailsSnapshot, GroupMemberSnapshot,
+    proxied_image_url, AppAction, AppState, ChatKind, ChatThreadSnapshot, GroupDetailsSnapshot,
+    GroupMemberSnapshot,
 };
 
 use crate::app_manager::AppManager;
@@ -36,7 +38,7 @@ pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk
     inner.append(&settings_card(group_id, details, state, manager));
     inner.append(&members_card(group_id, details, state, manager));
     if details.can_manage {
-        inner.append(&add_members_card(group_id, state, manager));
+        inner.append(&add_members_card(group_id, details, state, manager));
     }
 
     scrolled.set_child(Some(&inner));
@@ -244,14 +246,15 @@ fn member_row(
 
 fn add_members_card(
     group_id: &str,
+    details: &GroupDetailsSnapshot,
     state: &AppState,
     manager: &Rc<AppManager>,
 ) -> gtk::Widget {
-    let group = adw::PreferencesGroup::builder()
-        .title("Add member")
-        .build();
+    let group = adw::PreferencesGroup::builder().title("Add member").build();
 
-    let entry = adw::EntryRow::builder().title("Member npub").build();
+    let entry = adw::EntryRow::builder()
+        .title("Search or paste user ID")
+        .build();
     let busy = state.busy.updating_group;
     let add = gtk::Button::with_label(if busy { "Adding…" } else { "Add" });
     add.add_css_class("suggested-action");
@@ -290,5 +293,77 @@ fn add_members_card(
     });
 
     group.add(&entry);
+
+    let local_owner_hex = state
+        .account
+        .as_ref()
+        .map(|a| a.public_key_hex.clone())
+        .unwrap_or_default();
+    let existing_member_hexes: HashSet<String> = details
+        .members
+        .iter()
+        .map(|m| m.owner_pubkey_hex.clone())
+        .collect();
+    let candidates: Vec<ChatThreadSnapshot> = state
+        .chat_list
+        .iter()
+        .filter(|chat| matches!(chat.kind, ChatKind::Direct))
+        .filter(|chat| chat.chat_id != local_owner_hex)
+        .filter(|chat| !existing_member_hexes.contains(&chat.chat_id))
+        .cloned()
+        .collect();
+
+    if !candidates.is_empty() {
+        let mut row_widgets: Vec<adw::ActionRow> = Vec::with_capacity(candidates.len());
+        for chat in &candidates {
+            let title = if chat.display_name.trim().is_empty() {
+                chat.chat_id.clone()
+            } else {
+                chat.display_name.clone()
+            };
+            let row = adw::ActionRow::builder()
+                .title(title)
+                .activatable(!busy)
+                .build();
+            if let Some(sub) = chat.subtitle.as_ref().filter(|s| !s.is_empty()) {
+                row.set_subtitle(sub);
+            }
+            let avatar = adw::Avatar::new(32, Some(&chat.display_name), true);
+            row.add_prefix(&avatar);
+            let plus = gtk::Image::from_icon_name("list-add-symbolic");
+            plus.add_css_class("dim-label");
+            row.add_suffix(&plus);
+
+            let manager_for_row = manager.clone();
+            let group_id_for_row = group_id.to_string();
+            let chat_id_for_row = chat.chat_id.clone();
+            row.connect_activated(move |_| {
+                manager_for_row.dispatch(AppAction::AddGroupMembers {
+                    group_id: group_id_for_row.clone(),
+                    member_inputs: vec![chat_id_for_row.clone()],
+                });
+            });
+            group.add(&row);
+            row_widgets.push(row);
+        }
+
+        let candidates_for_filter = candidates.clone();
+        entry.connect_changed(move |entry| {
+            let query = entry.text().to_lowercase();
+            let trimmed = query.trim();
+            for (chat, row) in candidates_for_filter.iter().zip(row_widgets.iter()) {
+                let matches = trimmed.is_empty()
+                    || chat.display_name.to_lowercase().contains(trimmed)
+                    || chat.chat_id.to_lowercase().contains(trimmed)
+                    || chat
+                        .subtitle
+                        .as_ref()
+                        .map(|s| s.to_lowercase().contains(trimmed))
+                        .unwrap_or(false);
+                row.set_visible(matches);
+            }
+        });
+    }
+
     group.upcast()
 }
