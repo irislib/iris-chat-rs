@@ -3,5 +3,5 @@ fn main() -> anyhow::Result<()> {
         .nth(1)
         .or_else(|| std::env::var("NDR_LOCAL_RELAY_BIND").ok())
         .unwrap_or_else(|| "0.0.0.0:4848".to_string());
-    ndr_demo_core::local_relay::run_forever(&bind_addr)
+    iris_chat_core::local_relay::run_forever(&bind_addr)
 }

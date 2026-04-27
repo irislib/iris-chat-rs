@@ -247,7 +247,7 @@ Two rules matter here:
 
 Current shell implementations:
 
-- Android: `android/app/src/main/java/social/innode/ndr/demo/core/AppManager.kt`
+- Android: `android/app/src/main/java/to/iris/chat/core/AppManager.kt`
 - iOS: `ios/Sources/AppManager.swift`
 
 ## Verification Gates
@@ -255,11 +255,11 @@ Current shell implementations:
 The architecture now has explicit boundary tests:
 
 - Android shell contract suite:
-  - `android/app/src/androidTest/java/social/innode/ndr/demo/core/AppManagerContractTest.kt`
+  - `android/app/src/androidTest/java/to/iris/chat/core/AppManagerContractTest.kt`
 - iOS shell contract and unit suite:
   - `ios/Tests/IrisChatTests.swift`
 - Android local UI smoke:
-  - `android/app/src/androidTest/java/social/innode/ndr/demo/PikaLikeUiTest.kt`
+  - `android/app/src/androidTest/java/to/iris/chat/PikaLikeUiTest.kt`
 - iOS local UI smoke:
   - `ios/UITests/IrisChatUITests.swift`
 

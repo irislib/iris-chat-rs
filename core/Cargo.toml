@@ -1,9 +1,10 @@
 [package]
-name = "ndr-demo-core"
+name = "iris-chat-core"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
+name = "iris_chat_core"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]

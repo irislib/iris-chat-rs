@@ -325,7 +325,7 @@ if (-not \$bindgen) {
 
 \$target = ${target_quoted}
 \$profile = ${profile_quoted}
-\$libPath = Join-Path \$coreDir ("target\\" + \$target + "\\" + \$profile + "\\ndr_demo_core.dll")
+\$libPath = Join-Path \$coreDir ("target\\" + \$target + "\\" + \$profile + "\\iris_chat_core.dll")
 if (-not (Test-Path \$libPath)) {
   throw "Missing \$libPath; did windows-rust succeed?"
 }
@@ -343,7 +343,7 @@ Get-ChildItem \$outDir | ForEach-Object { Write-Output ("  " + \$_.Name) }
 
 \$dllDest = Join-Path \$repoRoot 'windows\\IrisChat\\Frameworks'
 New-Item -ItemType Directory -Force -Path \$dllDest | Out-Null
-Copy-Item \$libPath (Join-Path \$dllDest 'ndr_demo_core.dll') -Force
+Copy-Item \$libPath (Join-Path \$dllDest 'iris_chat_core.dll') -Force
 Write-Output ("Copied DLL to {0}" -f \$dllDest)
 PS
 )"

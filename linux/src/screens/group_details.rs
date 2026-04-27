@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{
+use iris_chat_core::{
     proxied_image_url, AppAction, AppState, GroupDetailsSnapshot, GroupMemberSnapshot,
 };
 

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{AppAction, AppState};
+use iris_chat_core::{AppAction, AppState};
 
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;

@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{AppState, Screen};
+use iris_chat_core::{AppState, Screen};
 
 use crate::app_manager::AppManager;
 
@@ -94,7 +94,7 @@ pub(crate) fn entry(placeholder: &str) -> gtk::Entry {
 
 pub(crate) fn dispatch_on_click<F>(button: &gtk::Button, manager: &Rc<AppManager>, action: F)
 where
-    F: Fn() -> ndr_demo_core::AppAction + 'static,
+    F: Fn() -> iris_chat_core::AppAction + 'static,
 {
     let manager = manager.clone();
     button.connect_clicked(move |_| {

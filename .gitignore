@@ -25,3 +25,4 @@ release.env
 .zapstore/
 *.iml
 .DS_Store
+*.profraw

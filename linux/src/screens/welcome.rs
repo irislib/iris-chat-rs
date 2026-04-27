@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{AppAction, Screen};
+use iris_chat_core::{AppAction, Screen};
 
 use crate::app_manager::AppManager;
 use crate::screens::{dispatch_on_click, pill_button, primary_button, screen_container};
@@ -21,7 +21,7 @@ pub fn render(manager: &Rc<AppManager>) -> gtk::Widget {
     tagline.set_margin_bottom(12);
     container.append(&tagline);
 
-    if ndr_demo_core::is_trusted_test_build() {
+    if iris_chat_core::is_trusted_test_build() {
         let banner = gtk::Label::new(Some("Trusted test build"));
         banner.add_css_class("caption");
         banner.add_css_class("warning");

@@ -5,8 +5,8 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="${ROOT_DIR}/android"
 ANDROID_TEST_AVD="${NDR_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
-CONTRACT_CLASSES="social.innode.ndr.demo.core.AppManagerContractTest"
-SMOKE_CLASSES="social.innode.ndr.demo.PikaLikeUiTest,social.innode.ndr.demo.account.AndroidKeystoreSecretStoreTest"
+CONTRACT_CLASSES="to.iris.chat.core.AppManagerContractTest"
+SMOKE_CLASSES="to.iris.chat.PikaLikeUiTest,to.iris.chat.account.AndroidKeystoreSecretStoreTest"
 
 resolve_serial() {
   if [[ -n "${NDR_ANDROID_SERIAL:-}" ]]; then

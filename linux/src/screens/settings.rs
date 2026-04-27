@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{AppAction, AppState, PreferencesSnapshot, Screen};
+use iris_chat_core::{AppAction, AppState, PreferencesSnapshot, Screen};
 
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;
@@ -14,7 +14,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         page.add(&profile_group(account, &state.preferences, manager));
     }
 
-    if ndr_demo_core::is_trusted_test_build() {
+    if iris_chat_core::is_trusted_test_build() {
         page.add(&trusted_build_group());
     }
 
@@ -118,7 +118,7 @@ fn support_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
 }
 
 fn profile_group(
-    account: &ndr_demo_core::AccountSnapshot,
+    account: &iris_chat_core::AccountSnapshot,
     prefs: &PreferencesSnapshot,
     manager: &Rc<AppManager>,
 ) -> adw::PreferencesGroup {
@@ -127,7 +127,7 @@ fn profile_group(
     let avatar_row = adw::ActionRow::new();
     let avatar = adw::Avatar::new(56, Some(&account.display_name), true);
     if let Some(url) = account.picture_url.as_ref() {
-        let proxied = ndr_demo_core::proxied_image_url(
+        let proxied = iris_chat_core::proxied_image_url(
             url.clone(),
             prefs.clone(),
             Some(112),

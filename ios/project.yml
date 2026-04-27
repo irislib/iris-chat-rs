@@ -40,7 +40,7 @@ targets:
         Release:
           APS_ENVIRONMENT: production
     dependencies:
-      - framework: Frameworks/NdrDemoCore.xcframework
+      - framework: Frameworks/IrisChatCore.xcframework
         embed: false
       - target: NotificationService
 
@@ -62,7 +62,7 @@ targets:
         INFOPLIST_FILE: NotificationService/Info.plist
         SKIP_INSTALL: YES
     dependencies:
-      - framework: Frameworks/NdrDemoCore.xcframework
+      - framework: Frameworks/IrisChatCore.xcframework
         embed: false
 
   IrisChatTests:

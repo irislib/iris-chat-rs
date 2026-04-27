@@ -4,7 +4,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
-use ndr_demo_core::{
+use iris_chat_core::{
     proxied_image_url, AccountSnapshot, AppAction, AppState, AppUpdate, ChatThreadSnapshot,
     CurrentChatSnapshot, Screen,
 };

@@ -2,7 +2,7 @@ use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
-use ndr_demo_core::{
+use iris_chat_core::{
     proxied_image_url, AppAction, AppState, ChatThreadSnapshot, PreferencesSnapshot,
 };
 

@@ -19,8 +19,8 @@ fi
 ADB="${SDK_DIR}/platform-tools/adb"
 EMULATOR="${SDK_DIR}/emulator/emulator"
 HARNESS="${ROOT_DIR}/scripts/run_harness.py"
-RUNNER="social.innode.irischat.test/androidx.test.runner.AndroidJUnitRunner"
-PACKAGE_NAME="social.innode.irischat"
+RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
+PACKAGE_NAME="to.iris.chat"
 DEFAULT_AVDS=("Pixel_9a" "Medium_Phone_API_36.1" "Pixel_Fold")
 
 if [[ ! -x "${ADB}" ]]; then
@@ -129,42 +129,42 @@ for serial in "${SERIAL_A}" "${SERIAL_B}" "${SERIAL_C}"; do
 done
 
 echo "Creating owner X primary on ${SERIAL_A}"
-ACCOUNT_A="$(run_instrumentation "${SERIAL_A}" "social.innode.ndr.demo.RealRelayHarnessTest#create_account_and_report_identity")"
+ACCOUNT_A="$(run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity")"
 OWNER_X_NPUB="$(printf '%s\n' "${ACCOUNT_A}" | extract_status "npub")"
 OWNER_X_HEX="$(printf '%s\n' "${ACCOUNT_A}" | extract_status "public_key_hex")"
 
 echo "Starting linked device on ${SERIAL_B}"
-LINKED_B="$(run_instrumentation "${SERIAL_B}" "social.innode.ndr.demo.RealRelayHarnessTest#start_linked_device_and_report_identity" -e owner_input "${OWNER_X_NPUB}")"
+LINKED_B="$(run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#start_linked_device_and_report_identity" -e owner_input "${OWNER_X_NPUB}")"
 DEVICE_B_NPUB="$(printf '%s\n' "${LINKED_B}" | extract_status "device_npub")"
 DEVICE_B_HEX="$(printf '%s\n' "${LINKED_B}" | extract_status "device_public_key_hex")"
 
 echo "Authorizing linked device on ${SERIAL_A}"
-run_instrumentation "${SERIAL_A}" "social.innode.ndr.demo.RealRelayHarnessTest#add_authorized_device_from_args" -e device_input "${DEVICE_B_NPUB}" >/dev/null
-run_instrumentation "${SERIAL_B}" "social.innode.ndr.demo.RealRelayHarnessTest#wait_for_authorization_state_from_args" -e authorization_state AUTHORIZED >/dev/null
+run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#add_authorized_device_from_args" -e device_input "${DEVICE_B_NPUB}" >/dev/null
+run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_authorization_state_from_args" -e authorization_state AUTHORIZED >/dev/null
 
 echo "Creating owner Y peer on ${SERIAL_C}"
-ACCOUNT_C="$(run_instrumentation "${SERIAL_C}" "social.innode.ndr.demo.RealRelayHarnessTest#create_account_and_report_identity")"
+ACCOUNT_C="$(run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity")"
 OWNER_Y_NPUB="$(printf '%s\n' "${ACCOUNT_C}" | extract_status "npub")"
 OWNER_Y_HEX="$(printf '%s\n' "${ACCOUNT_C}" | extract_status "public_key_hex")"
 
 echo "A sends m1 to C"
-run_instrumentation "${SERIAL_A}" "social.innode.ndr.demo.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m1" >/dev/null
-run_instrumentation "${SERIAL_C}" "social.innode.ndr.demo.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m1" -e direction incoming >/dev/null
-run_instrumentation "${SERIAL_B}" "social.innode.ndr.demo.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m1" -e direction outgoing >/dev/null
+run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m1" >/dev/null
+run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m1" -e direction incoming >/dev/null
+run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m1" -e direction outgoing >/dev/null
 
 echo "C replies with m2"
-run_instrumentation "${SERIAL_C}" "social.innode.ndr.demo.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_X_NPUB}" -e message "m2" >/dev/null
-run_instrumentation "${SERIAL_A}" "social.innode.ndr.demo.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
-run_instrumentation "${SERIAL_B}" "social.innode.ndr.demo.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
+run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_X_NPUB}" -e message "m2" >/dev/null
+run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
+run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
 
 echo "B sends m3 to C"
-run_instrumentation "${SERIAL_B}" "social.innode.ndr.demo.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m3" >/dev/null
-run_instrumentation "${SERIAL_C}" "social.innode.ndr.demo.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m3" -e direction incoming >/dev/null
-run_instrumentation "${SERIAL_A}" "social.innode.ndr.demo.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m3" -e direction outgoing >/dev/null
+run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m3" >/dev/null
+run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m3" -e direction incoming >/dev/null
+run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m3" -e direction outgoing >/dev/null
 
 echo "Revoking B from the roster"
-run_instrumentation "${SERIAL_A}" "social.innode.ndr.demo.RealRelayHarnessTest#remove_authorized_device_from_args" -e device_input "${DEVICE_B_HEX}" >/dev/null
-run_instrumentation "${SERIAL_B}" "social.innode.ndr.demo.RealRelayHarnessTest#wait_for_revoked_state" >/dev/null
+run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#remove_authorized_device_from_args" -e device_input "${DEVICE_B_HEX}" >/dev/null
+run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_revoked_state" >/dev/null
 
 echo "Three-device relay matrix passed"
 echo "A=${SERIAL_A} B=${SERIAL_B} C=${SERIAL_C}"

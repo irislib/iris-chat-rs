@@ -7,7 +7,7 @@ computer and in your own password manager.
 ## App Identity
 
 - App name: `Iris Chat`
-- Android application ID: `social.innode.irischat`
+- Android application ID: `to.iris.chat`
 - Repository: `https://github.com/lauri000/iris-chat-rs`
 - Zapstore channel: `main`
 - Listing summary: `Alpha release of Iris Chat, a secure Nostr messenger built on Nostr Double Ratchet.`
@@ -68,7 +68,7 @@ Keychain secure notes, or another encrypted vault you trust:
 - The full contents of `.env.zapstore.local`.
 - The Zapstore publisher `npub`.
 - The Zapstore publisher `nsec`, unless you intentionally keep it only in a hardware signer or browser signer backup.
-- A note that this key is for `Iris Chat / social.innode.irischat / Zapstore`.
+- A note that this key is for `Iris Chat / to.iris.chat / Zapstore`.
 
 Do not store the only copy of the Android keystore on one laptop. Losing it
 means future APK updates signed with the same key may become impossible.
@@ -84,7 +84,7 @@ Iris Chat Zapstore Release
 Suggested fields:
 
 ```text
-Android app ID: social.innode.irischat
+Android app ID: to.iris.chat
 GitHub repo: https://github.com/lauri000/iris-chat-rs
 Keystore file: attach iris-chat-release.jks
 Keystore alias: iris-chat-upload
@@ -266,7 +266,7 @@ AAPT="$(find "$SDK_DIR/build-tools" -name aapt -type f | sort | tail -n 1)"
 Expected package:
 
 ```text
-social.innode.irischat
+to.iris.chat
 ```
 
 Show the Android signing certificate fingerprint:

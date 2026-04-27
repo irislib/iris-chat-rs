@@ -149,7 +149,7 @@ iOS release environment:
 
 Current defaults:
 
-- bundle ID: `social.innode.irischat`
+- bundle ID: `to.iris.chat`
 - signing style: `automatic`
 - export method: `app-store-connect`
 

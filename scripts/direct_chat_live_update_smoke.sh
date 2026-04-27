@@ -39,7 +39,7 @@ fi
 ADB="${SDK_DIR}/platform-tools/adb"
 HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
-TEST_CLASS="social.innode.ndr.demo.RealRelayHarnessTest"
+TEST_CLASS="to.iris.chat.RealRelayHarnessTest"
 TIMESTAMP="$(date +%s)"
 MESSAGE="${MESSAGE:-live-update-${TIMESTAMP}}"
 

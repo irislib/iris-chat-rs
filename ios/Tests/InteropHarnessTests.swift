@@ -25,7 +25,7 @@ private enum HarnessError: Error, CustomStringConvertible {
 
 @MainActor
 final class InteropHarnessTests: XCTestCase {
-    private let debugSnapshotFilename = "ndr_demo_runtime_debug.json"
+    private let debugSnapshotFilename = "iris_chat_runtime_debug.json"
 
     func testHarnessAction() async throws {
         let env = ProcessInfo.processInfo.environment
@@ -35,7 +35,7 @@ final class InteropHarnessTests: XCTestCase {
         let action = try requiredEnv("NDR_IOS_HARNESS_ACTION", env: env)
         let runID = env["NDR_IOS_HARNESS_RUN_ID"] ?? UUID().uuidString
         let useAppStorage = env["NDR_IOS_HARNESS_USE_APP_STORAGE"] == "1"
-        let service = env["NDR_IOS_HARNESS_SERVICE"] ?? (useAppStorage ? "to.iris.chat" : "social.innode.irischat.harness.\(runID)")
+        let service = env["NDR_IOS_HARNESS_SERVICE"] ?? (useAppStorage ? "to.iris.chat" : "to.iris.chat.harness.\(runID)")
         let account = "stored-account-bundle"
         let dataDir = useAppStorage
             ? AppPaths.dataDir(fileManager: .default, environment: [:])

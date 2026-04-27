@@ -18,7 +18,7 @@ public sealed class WindowsCredentialStore
 
     private readonly string _targetName;
 
-    public WindowsCredentialStore(string targetName = "social.innode.irischat/stored-account-bundle")
+    public WindowsCredentialStore(string targetName = "to.iris.chat/stored-account-bundle")
     {
         _targetName = targetName;
     }

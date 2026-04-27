@@ -21,8 +21,8 @@ if [[ ! -x "${ADB}" ]]; then
   exit 1
 fi
 
-PACKAGE_NAME="social.innode.irischat"
-MAIN_ACTIVITY="social.innode.ndr.demo.MainActivity"
+PACKAGE_NAME="to.iris.chat"
+MAIN_ACTIVITY="to.iris.chat.MainActivity"
 APK_PATH="${ROOT_DIR}/android/app/build/outputs/apk/debug/app-debug.apk"
 DEFAULT_DEVICES=("emulator-5554" "emulator-5556")
 

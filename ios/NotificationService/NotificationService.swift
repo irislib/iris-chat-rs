@@ -43,12 +43,13 @@ final class NotificationService: UNNotificationServiceExtension {
             resolution = resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
         }
 
-        if !resolution.shouldShow {
-            bestAttempt.title = ""
-            bestAttempt.subtitle = ""
-            bestAttempt.body = ""
-            bestAttempt.sound = nil
-            bestAttempt.badge = nil
+        let hasPreview = !resolution.title.isEmpty || !resolution.body.isEmpty
+        if !resolution.shouldShow && !hasPreview {
+            // No preview at all (foreground saw the wrapper as a
+            // non-message rumor we can't render). iOS can't suppress
+            // without the filtering entitlement, so the original
+            // server payload — usually "New activity" — is the
+            // best we can offer.
             contentHandler(bestAttempt)
             return
         }
@@ -57,6 +58,15 @@ final class NotificationService: UNNotificationServiceExtension {
         }
         if !resolution.body.isEmpty {
             bestAttempt.body = resolution.body
+        }
+        if !resolution.shouldShow {
+            // Non-message kinds (typing, reactions, settings) on
+            // platforms that can really suppress would never reach
+            // here. iOS can't, so we still surface the kind-specific
+            // text Rust rendered ("is typing", "Reacted 👍") rather
+            // than the generic placeholder.
+            bestAttempt.sound = nil
+            bestAttempt.badge = nil
         }
         contentHandler(bestAttempt)
     }

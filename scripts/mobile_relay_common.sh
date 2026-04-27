@@ -74,7 +74,7 @@ wait_for_local_relay_healthy() {
 }
 
 start_local_rust_relay() {
-  local log_file="${1:-/tmp/ndr-demo-local-relay.log}"
+  local log_file="${1:-/tmp/iris-chat-local-relay.log}"
   local bind_addr="0.0.0.0:$(local_relay_port)"
   local pid
 

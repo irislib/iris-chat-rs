@@ -9,7 +9,7 @@ BOOT_MODE="${NDR_ANDROID_BOOT_MODE:-headless}"
 LOCAL_PROPERTIES="$ROOT/android/local.properties"
 SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 APP_PACKAGE="${NDR_ANDROID_APP_PACKAGE:-to.iris.chat.debug}"
-MAIN_ACTIVITY="${NDR_ANDROID_MAIN_ACTIVITY:-social.innode.ndr.demo.MainActivity}"
+MAIN_ACTIVITY="${NDR_ANDROID_MAIN_ACTIVITY:-to.iris.chat.MainActivity}"
 
 if [[ -z "${SDK_DIR}" && -f "${LOCAL_PROPERTIES}" ]]; then
   SDK_DIR="$(

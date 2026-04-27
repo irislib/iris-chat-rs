@@ -23,7 +23,7 @@ pub(super) const RELAY_CONNECT_TIMEOUT_SECS: u64 = 5;
 pub(super) const RESUBSCRIBE_CATCH_UP_DELAY_SECS: u64 = 5;
 pub(super) const GROUP_CHAT_PREFIX: &str = "group:";
 pub(super) const CHAT_INVITE_ROOT_URL: &str = "https://chat.iris.to/";
-pub(super) const DEBUG_SNAPSHOT_FILENAME: &str = "ndr_demo_runtime_debug.json";
+pub(super) const DEBUG_SNAPSHOT_FILENAME: &str = "iris_chat_runtime_debug.json";
 pub(super) const MAX_DEBUG_LOG_ENTRIES: usize = 128;
 pub(super) const PERSISTED_STATE_VERSION: u32 = 12;
 

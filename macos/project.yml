@@ -1,13 +1,13 @@
 name: IrisChatMac
 options:
-  bundleIdPrefix: social.innode.irischat
+  bundleIdPrefix: to.iris.chat
   deploymentTarget:
     macOS: "14.0"
   createIntermediateGroups: true
 
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: social.innode.irischat.macos
+    PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.macos
     MARKETING_VERSION: 0.1.0
     CURRENT_PROJECT_VERSION: 1
     VERSIONING_SYSTEM: apple-generic
@@ -35,7 +35,7 @@ targets:
         INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Iris Chat
     dependencies:
-      - framework: Frameworks/NdrDemoCore.xcframework
+      - framework: Frameworks/IrisChatCore.xcframework
         embed: false
 
   IrisChatMacUITests:

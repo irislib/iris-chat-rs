@@ -307,7 +307,7 @@ final class IrisChatTests: XCTestCase {
     }
 
     func testKeychainSecretStoreRoundTrip() {
-        let service = "social.innode.irischat.tests.\(UUID().uuidString)"
+        let service = "to.iris.chat.tests.\(UUID().uuidString)"
         let account = "stored-account-bundle"
         let store = KeychainSecretStore(service: service, account: account)
         let expected = StoredAccountBundle(

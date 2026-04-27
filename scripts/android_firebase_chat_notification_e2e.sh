@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="${ROOT_DIR}/android"
 PACKAGE_NAME="${ANDROID_PACKAGE_NAME:-to.iris.chat.debug}"
 TEST_PACKAGE_NAME="${ANDROID_TEST_PACKAGE_NAME:-to.iris.chat.test}"
-TEST_CLASS="social.innode.ndr.demo.push.FirebaseChatNotificationE2eTest"
+TEST_CLASS="to.iris.chat.push.FirebaseChatNotificationE2eTest"
 SERIAL="${1:-${ANDROID_SERIAL:-}}"
 MESSAGE="${FCM_E2E_MESSAGE:-firebase-chat-e2e-$(date +%s)}"
 

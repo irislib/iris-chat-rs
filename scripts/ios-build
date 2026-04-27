@@ -28,12 +28,12 @@ host_dynamic_lib() {
     Linux) ext="so" ;;
     *) ext="dylib" ;;
   esac
-  printf '%s/%s/libndr_demo_core.%s\n' "$(target_root)" "$PROFILE" "$ext"
+  printf '%s/%s/libiris_chat_core.%s\n' "$(target_root)" "$PROFILE" "$ext"
 }
 
 target_static_lib() {
   local target="$1"
-  printf '%s/%s/%s/libndr_demo_core.a\n' "$(target_root)" "$target" "$PROFILE"
+  printf '%s/%s/%s/libiris_chat_core.a\n' "$(target_root)" "$target" "$PROFILE"
 }
 
 build_host() {
@@ -144,7 +144,7 @@ run_ios_rust() {
 
 run_ios_xcframework() {
   local headers_dir="$IOS_BUILD_DIR/headers"
-  local output="$IOS_FRAMEWORKS_DIR/NdrDemoCore.xcframework"
+  local output="$IOS_FRAMEWORKS_DIR/IrisChatCore.xcframework"
   local header_path
   local modulemap_path
   local target

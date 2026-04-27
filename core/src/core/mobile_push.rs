@@ -170,19 +170,6 @@ pub(crate) fn decrypt_mobile_push_notification(
         .get("kind")
         .and_then(|value| value.as_u64())
         .unwrap_or(MOBILE_PUSH_CHAT_MESSAGE_KIND);
-    if !should_show_mobile_push_kind(inner_kind) {
-        // Typing rumors, read receipts, group/settings control events,
-        // and reactions are noise as standalone notifications. The
-        // foreground app already updates its in-memory state when it
-        // sees the same wrapper event, so the user gets the right UX
-        // by tapping into the chat.
-        return MobilePushNotificationResolution {
-            should_show: false,
-            title: String::new(),
-            body: String::new(),
-            payload_json: "{}".to_string(),
-        };
-    }
 
     let inner_content = inner_value
         .get("content")
@@ -250,8 +237,14 @@ pub(crate) fn decrypt_mobile_push_notification(
         resolved_payload.insert("group_id".to_string(), serde_json::Value::String(group_id));
     }
 
+    // Render kind-specific text for every kind we can decrypt, but
+    // flag non-message kinds as "should not show" so platforms with
+    // real suppression (Android FCM service) drop them. iOS NSE
+    // can't suppress without the filtering entitlement, so its
+    // Swift handler renders the body anyway when it's non-empty —
+    // a "Reacted 👍" notification beats a blank one.
     MobilePushNotificationResolution {
-        should_show: true,
+        should_show: should_show_mobile_push_kind(inner_kind),
         title,
         body,
         payload_json: serde_json::to_string(&serde_json::Value::Object(resolved_payload))

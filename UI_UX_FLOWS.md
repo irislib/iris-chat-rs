@@ -29,7 +29,7 @@ Primary implementation references:
 - `core/src/state.rs`
 - `core/src/actions.rs`
 - `ios/Sources/Views.swift`
-- `android/app/src/main/java/social/innode/ndr/demo/ui/navigation/NdrApp.kt`
+- `android/app/src/main/java/to/iris/chat/ui/navigation/NdrApp.kt`
 
 ## Product Model
 

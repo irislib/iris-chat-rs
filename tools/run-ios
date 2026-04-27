@@ -5,7 +5,7 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIMULATOR_NAME="${NDR_IOS_SIMULATOR_NAME:-Iris Chat iPhone}"
 DESTINATION="${NDR_IOS_SIM_DESTINATION:-platform=iOS Simulator,name=${SIMULATOR_NAME}}"
-BUNDLE_ID="${NDR_IOS_BUNDLE_ID:-social.innode.irischat}"
+BUNDLE_ID="${NDR_IOS_BUNDLE_ID:-to.iris.chat}"
 IOS_PROJECT="$ROOT/ios/IrisChat.xcodeproj"
 IOS_SCHEME="IrisChat"
 

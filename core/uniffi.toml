@@ -1,9 +1,9 @@
 [bindings.kotlin]
-package_name = "social.innode.ndr.demo.rust"
-cdylib_name = "ndr_demo_core"
+package_name = "to.iris.chat.rust"
+cdylib_name = "iris_chat_core"
 
 [bindings.swift]
-module_name = "NdrDemoCore"
+module_name = "IrisChatCore"
 
 [bindings.csharp]
 namespace = "IrisChat.Bindings"

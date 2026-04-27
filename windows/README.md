@@ -14,7 +14,7 @@ shells: thin native UI, Rust owns app state and protocol logic.
 - `IrisChat/Views/` — XAML surface: Welcome, ChatList, Chat.
 - `IrisChat/Bindings/` — generated C# from `uniffi-bindgen-cs`. Gitignored;
   rebuilt every `windows-gen-cs`.
-- `IrisChat/Frameworks/` — Rust `ndr_demo_core.dll` dropped here after Rust
+- `IrisChat/Frameworks/` — Rust `iris_chat_core.dll` dropped here after Rust
   build, copied into the publish folder by MSBuild. Gitignored.
 
 ## Build target

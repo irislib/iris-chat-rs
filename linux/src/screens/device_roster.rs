@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{AppAction, AppState, DeviceEntrySnapshot, DeviceRosterSnapshot};
+use iris_chat_core::{AppAction, AppState, DeviceEntrySnapshot, DeviceRosterSnapshot};
 
 use crate::app_manager::AppManager;
 

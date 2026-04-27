@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use ndr_demo_core::{AppAction, AppReconciler, AppState, AppUpdate, FfiApp};
+use iris_chat_core::{AppAction, AppReconciler, AppState, AppUpdate, FfiApp};
 
 use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
 

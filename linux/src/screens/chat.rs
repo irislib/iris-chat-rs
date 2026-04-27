@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{
+use iris_chat_core::{
     proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot,
     CurrentChatSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot, PreferencesSnapshot,
 };
@@ -500,8 +500,8 @@ fn day_label_secs(secs: u64) -> String {
     }
 }
 
-fn delivery_glyph(state: &ndr_demo_core::DeliveryState) -> &'static str {
-    use ndr_demo_core::DeliveryState::*;
+fn delivery_glyph(state: &iris_chat_core::DeliveryState) -> &'static str {
+    use iris_chat_core::DeliveryState::*;
     match state {
         Queued => "⋯",
         Pending => "⋯",

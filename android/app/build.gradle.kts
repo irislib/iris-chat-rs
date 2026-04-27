@@ -113,14 +113,14 @@ val hasReleaseSigning =
 val hostLibraryFile =
     rustAppDir.resolve(
         when {
-            System.getProperty("os.name").startsWith("Mac", ignoreCase = true) -> "target/debug/libndr_demo_core.dylib"
-            System.getProperty("os.name").startsWith("Windows", ignoreCase = true) -> "target/debug/ndr_demo_core.dll"
-            else -> "target/debug/libndr_demo_core.so"
+            System.getProperty("os.name").startsWith("Mac", ignoreCase = true) -> "target/debug/libiris_chat_core.dylib"
+            System.getProperty("os.name").startsWith("Windows", ignoreCase = true) -> "target/debug/iris_chat_core.dll"
+            else -> "target/debug/libiris_chat_core.so"
         },
     )
 
 android {
-    namespace = "social.innode.ndr.demo"
+    namespace = "to.iris.chat"
     compileSdk = 36
     ndkVersion = ndkVersionValue
 
