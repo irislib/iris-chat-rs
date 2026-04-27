@@ -44,6 +44,9 @@ impl AppCore {
             direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
             debug_log: VecDeque::new(),
             debug_event_counters: DebugEventCounters::default(),
+            batch_depth: 0,
+            batch_dirty_state: false,
+            batch_dirty_persist: false,
         }
     }
 
@@ -223,9 +226,18 @@ impl AppCore {
                 ));
             }
             InternalEvent::FetchCatchUpEvents(events) => {
+                // Coalesce: a catch-up burst of N events used to cause N
+                // rebuild_state + emit_state cycles, each pushing a fresh
+                // FullState to the UI. On Android debug builds that meant
+                // 16-19 recompositions in a row whenever the relay flushed
+                // a backlog and the screen could be unresponsive for
+                // seconds. Process all events inside one batch so the UI
+                // sees a single update at the end.
+                self.enter_batch();
                 for event in events {
                     self.handle_relay_event(event);
                 }
+                self.exit_batch();
             }
             InternalEvent::DebugLog { category, detail } => {
                 self.push_debug_log(&category, detail);

@@ -2,6 +2,14 @@ use super::*;
 
 impl AppCore {
     pub(super) fn rebuild_state(&mut self) {
+        if self.batch_depth > 0 {
+            self.batch_dirty_state = true;
+            return;
+        }
+        self.rebuild_state_inner();
+    }
+
+    fn rebuild_state_inner(&mut self) {
         self.state.account = self.build_account_snapshot();
         self.state.device_roster = self.build_device_roster_snapshot();
         self.state.network_status = Some(self.build_network_status_snapshot());
@@ -382,6 +390,14 @@ impl AppCore {
     }
 
     pub(super) fn emit_state(&mut self) {
+        if self.batch_depth > 0 {
+            self.batch_dirty_state = true;
+            return;
+        }
+        self.emit_state_inner();
+    }
+
+    fn emit_state_inner(&mut self) {
         self.state.rev = self.state.rev.saturating_add(1);
         let snapshot = self.state.clone();
         match self.shared_state.write() {
@@ -389,5 +405,32 @@ impl AppCore {
             Err(poison) => *poison.into_inner() = snapshot.clone(),
         }
         let _ = self.update_tx.send(AppUpdate::FullState(snapshot));
+    }
+
+    /// Enter a batch scope. While `batch_depth > 0`, calls to
+    /// `rebuild_state` / `emit_state` / `persist_best_effort` are deferred
+    /// and coalesced into a single rebuild + persist + emit at the
+    /// outermost `exit_batch()`.
+    pub(super) fn enter_batch(&mut self) {
+        self.batch_depth = self.batch_depth.saturating_add(1);
+    }
+
+    pub(super) fn exit_batch(&mut self) {
+        if self.batch_depth == 0 {
+            return;
+        }
+        self.batch_depth -= 1;
+        if self.batch_depth > 0 {
+            return;
+        }
+        let need_persist = std::mem::take(&mut self.batch_dirty_persist);
+        let need_state = std::mem::take(&mut self.batch_dirty_state);
+        if need_persist {
+            self.persist_best_effort_inner();
+        }
+        if need_state {
+            self.rebuild_state_inner();
+            self.emit_state_inner();
+        }
     }
 }

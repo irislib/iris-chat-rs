@@ -124,4 +124,11 @@ pub struct AppCore {
     direct_message_subscriptions: DirectMessageSubscriptionTracker,
     debug_log: VecDeque<DebugLogEntry>,
     debug_event_counters: DebugEventCounters,
+    /// Reentrancy guard: while > 0, `rebuild_state` / `emit_state` /
+    /// `persist_best_effort` only set the matching dirty flag. The outermost
+    /// `exit_batch()` call performs a single rebuild + persist + emit so a
+    /// catch-up burst of N events triggers one UI re-render instead of N.
+    batch_depth: u32,
+    batch_dirty_state: bool,
+    batch_dirty_persist: bool,
 }

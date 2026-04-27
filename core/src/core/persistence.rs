@@ -31,7 +31,15 @@ impl AppCore {
         Ok(Some(serde_json::from_value(value)?))
     }
 
-    pub(super) fn persist_best_effort(&self) {
+    pub(super) fn persist_best_effort(&mut self) {
+        if self.batch_depth > 0 {
+            self.batch_dirty_persist = true;
+            return;
+        }
+        self.persist_best_effort_inner();
+    }
+
+    pub(super) fn persist_best_effort_inner(&self) {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
