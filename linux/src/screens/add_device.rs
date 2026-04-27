@@ -4,7 +4,7 @@ use adw::prelude::*;
 use ndr_demo_core::{AppAction, AppState};
 
 use crate::app_manager::AppManager;
-use crate::screens::{entry, primary_button, screen_container};
+use crate::screens::{entry, primary_button, scan_qr_button, screen_container};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
@@ -24,6 +24,12 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
     let owner = entry("Owner npub");
     container.append(&owner);
+
+    let owner_for_scan = owner.clone();
+    let scan = scan_qr_button("Scan QR from image", move |text| {
+        owner_for_scan.set_text(&text);
+    });
+    container.append(&scan);
 
     let busy = state.busy.linking_device;
     let submit = primary_button(if busy { "Linking…" } else { "Link this device" });

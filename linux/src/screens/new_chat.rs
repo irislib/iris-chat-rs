@@ -5,7 +5,7 @@ use ndr_demo_core::{AppAction, AppState, Screen};
 
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;
-use crate::screens::{entry, pill_button, primary_button, screen_container};
+use crate::screens::{entry, pill_button, primary_button, scan_qr_button, screen_container};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
@@ -35,6 +35,12 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         });
     });
     container.append(&paste);
+
+    let peer_for_scan = peer.clone();
+    let scan = scan_qr_button("Scan QR from image", move |text| {
+        peer_for_scan.set_text(&text);
+    });
+    container.append(&scan);
 
     let busy = state.busy.creating_chat || state.busy.accepting_invite;
     let submit = primary_button(if busy { "Opening…" } else { "Open chat" });

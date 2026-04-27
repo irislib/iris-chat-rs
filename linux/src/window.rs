@@ -222,7 +222,13 @@ fn apply_state(
     header.title.set_label(&title_text);
 
     let widget = screens::render(&screen, state, manager);
-    slot.append(&widget);
+    let clamp = adw::Clamp::builder()
+        .maximum_size(600)
+        .tightening_threshold(560)
+        .build();
+    clamp.set_child(Some(&widget));
+    clamp.set_vexpand(true);
+    slot.append(&clamp);
 }
 
 fn notify_new_messages(

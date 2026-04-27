@@ -101,3 +101,16 @@ where
         manager.dispatch(action());
     });
 }
+
+pub(crate) fn scan_qr_button<F: Fn(String) + 'static>(label: &str, on_result: F) -> gtk::Button {
+    let btn = pill_button(label);
+    let on_result = Rc::new(on_result);
+    btn.connect_clicked(move |b| {
+        let parent = b.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+        let on_result = on_result.clone();
+        crate::platform::qr_scan::pick_and_decode(parent.as_ref(), move |text| {
+            (on_result)(text);
+        });
+    });
+    btn
+}
