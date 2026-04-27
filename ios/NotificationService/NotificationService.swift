@@ -44,8 +44,12 @@ final class NotificationService: UNNotificationServiceExtension {
         }
 
         if !resolution.shouldShow {
-            // Suppress: deliver an empty / silent notification.
-            contentHandler(UNMutableNotificationContent())
+            bestAttempt.title = ""
+            bestAttempt.subtitle = ""
+            bestAttempt.body = ""
+            bestAttempt.sound = nil
+            bestAttempt.badge = nil
+            contentHandler(bestAttempt)
             return
         }
         if !resolution.title.isEmpty {
