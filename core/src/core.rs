@@ -142,4 +142,8 @@ pub struct AppCore {
     /// user-visible (a full `AppState` JNI marshal + Compose recomposition
     /// is ~400-1000 ms on Android debug).
     last_emitted_state: Option<AppState>,
+    /// Hashes of the last bytes we wrote to each persisted slice, so
+    /// `persist_best_effort` can skip files whose content hasn't changed.
+    /// See `core/persistence.rs`.
+    persistence_cache: persistence::PersistenceCache,
 }
