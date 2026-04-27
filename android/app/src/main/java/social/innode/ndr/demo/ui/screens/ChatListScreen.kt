@@ -63,6 +63,7 @@ fun ChatListScreen(
                 title = "Chats",
                 leading = {
                     if (account != null) {
+                        val accountAvatarBytes by rememberNhashImageData(appManager, account.pictureUrl)
                         Box(
                             modifier =
                                 Modifier
@@ -75,15 +76,18 @@ fun ChatListScreen(
                                 emphasize = true,
                                 size = 44.dp,
                                 imageUrl =
-                                    account.pictureUrl?.let { url ->
-                                        proxiedImageUrl(
-                                            originalSrc = url,
-                                            preferences = appState.preferences,
-                                            width = 88u,
-                                            height = 88u,
-                                            square = true,
-                                        )
-                                    },
+                                    account.pictureUrl
+                                        ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+                                        ?.let { url ->
+                                            proxiedImageUrl(
+                                                originalSrc = url,
+                                                preferences = appState.preferences,
+                                                width = 88u,
+                                                height = 88u,
+                                                square = true,
+                                            )
+                                        },
+                                imageData = accountAvatarBytes,
                             )
                         }
                     }
@@ -183,7 +187,7 @@ internal fun rememberNhashImageData(
     pictureUrl: String?,
 ) = produceState<ByteArray?>(initialValue = null, pictureUrl) {
     val nhash = parseNhashUri(pictureUrl)
-    value = if (nhash == null) null else appManager.downloadHashtreeBytes(nhash)
+    value = if (nhash == null) null else appManager.resolveHashtreePictureBytes(nhash)
 }
 
 internal fun parseNhashUri(value: String?): String? {

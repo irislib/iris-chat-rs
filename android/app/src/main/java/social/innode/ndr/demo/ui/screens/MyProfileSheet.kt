@@ -130,9 +130,14 @@ fun MyProfileSheet(
     var editingRelayUrl by remember { mutableStateOf<String?>(null) }
     var editingRelayDraft by remember { mutableStateOf("") }
     val trimmedPictureUrl = pictureUrl?.trim().orEmpty()
+    val isHttpPictureUrl =
+        trimmedPictureUrl.startsWith("http://") || trimmedPictureUrl.startsWith("https://")
+    val isHashtreePictureUrl =
+        trimmedPictureUrl.startsWith("htree://") || trimmedPictureUrl.startsWith("nhash://")
     val relayUrls = networkStatus?.relayUrls ?: preferences.nostrRelayUrls
+    val avatarBytes by rememberNhashImageData(appManager, pictureUrl)
     val proxiedAvatarUrl =
-        trimmedPictureUrl.ifEmpty { null }?.let { url ->
+        trimmedPictureUrl.takeIf { isHttpPictureUrl }?.let { url ->
             proxiedImageUrl(
                 originalSrc = url,
                 preferences = preferences,
@@ -142,7 +147,7 @@ fun MyProfileSheet(
             )
         }
     val proxiedProfilePictureUrl =
-        trimmedPictureUrl.ifEmpty { null }?.let { url ->
+        trimmedPictureUrl.takeIf { isHttpPictureUrl }?.let { url ->
             proxiedImageUrl(
                 originalSrc = url,
                 preferences = preferences,
@@ -182,10 +187,11 @@ fun MyProfileSheet(
                         size = 54.dp,
                         emphasize = true,
                         imageUrl = proxiedAvatarUrl,
+                        imageData = avatarBytes,
                         modifier =
                             Modifier
                                 .then(
-                                    if (trimmedPictureUrl.isNotEmpty()) {
+                                    if (isHttpPictureUrl || (isHashtreePictureUrl && avatarBytes != null)) {
                                         Modifier
                                             .clickable { showProfilePicture = true }
                                             .testTag("myProfilePictureButton")
@@ -724,7 +730,8 @@ fun MyProfileSheet(
 
     if (showProfilePicture && trimmedPictureUrl.isNotEmpty()) {
         ProfilePictureDialog(
-            imageUrl = proxiedProfilePictureUrl ?: trimmedPictureUrl,
+            imageUrl = if (isHttpPictureUrl) proxiedProfilePictureUrl ?: trimmedPictureUrl else null,
+            imageData = if (isHashtreePictureUrl) avatarBytes else null,
             onDismiss = { showProfilePicture = false },
         )
     }
@@ -831,20 +838,30 @@ private fun relayStatusColor(
 
 @Composable
 private fun ProfilePictureDialog(
-    imageUrl: String,
+    imageUrl: String?,
+    imageData: ByteArray?,
     onDismiss: () -> Unit,
 ) {
-    val bitmap =
-        produceState<android.graphics.Bitmap?>(initialValue = null, imageUrl) {
-            value =
+    val dataBitmap =
+        remember(imageData) {
+            imageData?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+        }
+    val urlBitmap by produceState<android.graphics.Bitmap?>(initialValue = null, imageUrl) {
+        val url = imageUrl
+        value =
+            if (url == null) {
+                null
+            } else {
                 withContext(Dispatchers.IO) {
                     runCatching {
-                        URL(imageUrl).openStream().use { stream ->
+                        URL(url).openStream().use { stream ->
                             BitmapFactory.decodeStream(stream)
                         }
                     }.getOrNull()
                 }
-        }
+            }
+    }
+    val resolvedBitmap = dataBitmap ?: urlBitmap
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -858,7 +875,7 @@ private fun ProfilePictureDialog(
                     .testTag("myProfilePictureViewer"),
             contentAlignment = Alignment.Center,
         ) {
-            bitmap.value?.let { loadedBitmap ->
+            resolvedBitmap?.let { loadedBitmap ->
                 Image(
                     bitmap = loadedBitmap.asImageBitmap(),
                     contentDescription = "Profile picture",

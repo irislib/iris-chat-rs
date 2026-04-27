@@ -373,6 +373,38 @@ class AppManager(
                 ?.let { encoded -> Base64.decode(encoded, Base64.NO_WRAP) }
         }
 
+    /**
+     * Resolves an `htree://` profile picture (or any nhash) using the same
+     * disk-backed cache that chat attachments use. Subsequent renders read
+     * straight off disk instead of re-fetching from the hashtree network.
+     */
+    suspend fun resolveHashtreePictureBytes(nhash: String): ByteArray? =
+        withContext(ioDispatcher) {
+            val trimmed = nhash.trim()
+            if (trimmed.isEmpty()) {
+                return@withContext null
+            }
+            val cacheFile = pictureCacheFile(trimmed)
+            if (cacheFile.isFile) {
+                cacheFile.setLastModified(System.currentTimeMillis())
+                runCatching { cacheFile.readBytes() }.getOrNull()?.let { return@withContext it }
+            }
+            val result = downloadHashtreeAttachment(nhash = trimmed)
+            val data =
+                result.dataBase64
+                    ?.takeIf(String::isNotBlank)
+                    ?.let { encoded -> Base64.decode(encoded, Base64.NO_WRAP) }
+            if (data != null) {
+                runCatching {
+                    cacheFile.writeBytes(data)
+                    pruneDownloadedAttachmentCache(protectedFile = cacheFile)
+                }.onFailure { error ->
+                    Log.w(TAG, "failed to cache profile picture", error)
+                }
+            }
+            data
+        }
+
     fun logout() {
         applicationScope.launch(ioDispatcher) {
             // Logout is owned by Rust. The shell clears native secrets and then swaps in a fresh core
@@ -580,6 +612,9 @@ class AppManager(
     private fun downloadedAttachmentFile(attachment: MessageAttachmentSnapshot): File =
         File(downloadedAttachmentDirectory(), attachmentCacheName(attachment.nhash, attachment.filename))
 
+    private fun pictureCacheFile(nhash: String): File =
+        File(downloadedAttachmentDirectory(), "picture-${safeAttachmentCacheComponent(nhash)}")
+
     private fun cachedDownloadedAttachment(attachment: MessageAttachmentSnapshot): ByteArray? {
         val file = downloadedAttachmentFile(attachment)
         if (!file.isFile) {
@@ -670,7 +705,7 @@ class AppManager(
             filename: String,
         ): String = "${safeAttachmentCacheComponent(nhash)}-${safeAttachmentCacheComponent(filename)}"
 
-        private fun safeAttachmentCacheComponent(value: String): String =
+        fun safeAttachmentCacheComponent(value: String): String =
             value
                 .split('/', '\\', ':')
                 .joinToString("-")
