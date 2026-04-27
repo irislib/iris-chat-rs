@@ -666,7 +666,7 @@ private struct IrisDeliveryGlyph: View {
         case .sent:
             Image(systemName: "checkmark")
         case .received, .seen:
-            HStack(spacing: -6) {
+            HStack(spacing: -7) {
                 Image(systemName: "checkmark")
                 Image(systemName: "checkmark")
             }
@@ -963,35 +963,29 @@ private struct ChatAttachmentView: View {
                     }
                 }
             } label: {
-                VStack(alignment: .leading, spacing: 7) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
+                ZStack {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
+                        .frame(width: 220, height: 150)
+                    if let localImage {
+                        Image(platformImage: localImage)
+                            .resizable()
+                            .scaledToFill()
                             .frame(width: 220, height: 150)
-                        if let localImage {
-                            Image(platformImage: localImage)
-                                .resizable()
-                                .scaledToFill()
-                                .frame(width: 220, height: 150)
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                        } else if let localImageData, isAnimatedImage(data: localImageData, filename: attachment.filename) {
-                            IrisAnimatedImageDataView(data: localImageData)
-                                .frame(width: 220, height: 150)
-                                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                .allowsHitTesting(false)
-                        } else if isLoadingImage {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else {
-                            Image(systemName: failedImageLoad ? "exclamationmark.triangle.fill" : "photo.fill")
-                                .font(.system(size: 28, weight: .semibold))
-                                .opacity(0.72)
-                        }
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                    } else if let localImageData, isAnimatedImage(data: localImageData, filename: attachment.filename) {
+                        IrisAnimatedImageDataView(data: localImageData)
+                            .frame(width: 220, height: 150)
+                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                            .allowsHitTesting(false)
+                    } else if isLoadingImage {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: failedImageLoad ? "exclamationmark.triangle.fill" : "photo.fill")
+                            .font(.system(size: 28, weight: .semibold))
+                            .opacity(0.72)
                     }
-                    Text(attachment.filename)
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .lineLimit(1)
-                        .frame(maxWidth: 220, alignment: .leading)
                 }
             }
             .buttonStyle(.plain)
@@ -1095,9 +1089,10 @@ private struct ImageViewerItem: Identifiable, Equatable {
 private struct IrisImageViewer: View {
     let item: ImageViewerItem
     let onClose: () -> Void
+    @State private var sharedFileURL: URL?
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        ZStack(alignment: .top) {
             Color.black.opacity(0.92)
                 .ignoresSafeArea()
                 .onTapGesture(perform: onClose)
@@ -1117,18 +1112,48 @@ private struct IrisImageViewer: View {
                     .tint(.white)
             }
 
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(18)
+            HStack {
+                if let sharedFileURL {
+                    ShareLink(item: sharedFileURL) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 24, weight: .semibold))
+                            .foregroundStyle(.white.opacity(0.9))
+                            .padding(18)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Share image")
+                }
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 30, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.9))
+                        .padding(18)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close image")
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close image")
         }
         .irisOnExitCommand(onClose)
         .irisOnEscapeKey(onClose)
         .zIndex(10)
+        .task(id: item.id) {
+            sharedFileURL = writeTempImage(data: item.data, filename: item.filename)
+        }
+    }
+}
+
+private func writeTempImage(data: Data, filename: String) -> URL? {
+    let safeName = filename.isEmpty ? "image" : filename
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathComponent(safeName)
+    do {
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: url, options: .atomic)
+        return url
+    } catch {
+        return nil
     }
 }
 

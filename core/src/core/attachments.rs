@@ -33,8 +33,26 @@ pub(super) fn message_preview(message: &ChatMessageSnapshot) -> String {
     }
     match message.attachments.as_slice() {
         [] => String::new(),
-        [attachment] => format!("Attachment: {}", attachment.filename),
-        attachments => format!("{} attachments", attachments.len()),
+        [attachment] => attachment_preview_label(attachment).to_string(),
+        attachments => {
+            if attachments.iter().all(|a| a.is_image) {
+                format!("{} photos", attachments.len())
+            } else {
+                format!("{} attachments", attachments.len())
+            }
+        }
+    }
+}
+
+fn attachment_preview_label(attachment: &MessageAttachmentSnapshot) -> &'static str {
+    if attachment.is_image {
+        "Photo"
+    } else if attachment.is_video {
+        "Video"
+    } else if attachment.is_audio {
+        "Audio"
+    } else {
+        "Attachment"
     }
 }
 
