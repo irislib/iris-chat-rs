@@ -22,6 +22,8 @@ pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk:
         return container.upcast();
     };
 
+    mark_visible_seen(chat, manager);
+
     container.append(&ttl_strip(chat, manager));
     container.append(&messages_view(chat, &state.preferences, manager));
     container.append(&composer(chat, state, manager));
@@ -214,6 +216,22 @@ fn messages_view(
     });
 
     scrolled.upcast()
+}
+
+fn mark_visible_seen(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) {
+    let unseen: Vec<String> = chat
+        .messages
+        .iter()
+        .filter(|m| !m.is_outgoing && matches!(m.kind, ChatMessageKind::User))
+        .map(|m| m.id.clone())
+        .collect();
+    if unseen.is_empty() {
+        return;
+    }
+    manager.dispatch(AppAction::MarkMessagesSeen {
+        chat_id: chat.chat_id.clone(),
+        message_ids: unseen,
+    });
 }
 
 fn render_message(
@@ -570,6 +588,22 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     entry.set_hexpand(true);
     entry.set_height_request(40);
     row.append(&entry);
+
+    {
+        let manager_for_typing = manager.clone();
+        let chat_id_for_typing = chat.chat_id.clone();
+        entry.connect_changed(move |e| {
+            if e.text().is_empty() {
+                manager_for_typing.dispatch(AppAction::StopTyping {
+                    chat_id: chat_id_for_typing.clone(),
+                });
+            } else {
+                manager_for_typing.dispatch(AppAction::SendTyping {
+                    chat_id: chat_id_for_typing.clone(),
+                });
+            }
+        });
+    }
 
     let busy = state.busy.sending_message;
     let send = gtk::Button::from_icon_name("document-send-symbolic");

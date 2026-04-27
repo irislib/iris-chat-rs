@@ -69,6 +69,40 @@ fn settings_card(
     }
     avatar_row.add_prefix(&avatar);
     avatar_row.set_title(&details.name);
+
+    if details.can_manage {
+        let change = gtk::Button::with_label("Change photo");
+        change.add_css_class("flat");
+        change.set_valign(gtk::Align::Center);
+        change.set_sensitive(!state.busy.uploading_attachment);
+        let manager_for_change = manager.clone();
+        let group_id_owned = group_id.to_string();
+        change.connect_clicked(move |btn| {
+            let parent = btn
+                .root()
+                .and_then(|r| r.downcast::<gtk::Window>().ok());
+            let dialog = gtk::FileDialog::builder()
+                .title("Choose group photo")
+                .build();
+            let manager = manager_for_change.clone();
+            let group_id = group_id_owned.clone();
+            dialog.open(parent.as_ref(), gtk::gio::Cancellable::NONE, move |result| {
+                let Ok(file) = result else { return };
+                let Some(path) = file.path() else { return };
+                let filename = file
+                    .basename()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "image".to_string());
+                manager.dispatch(AppAction::UpdateGroupPicture {
+                    group_id: group_id.clone(),
+                    file_path: path.to_string_lossy().to_string(),
+                    filename,
+                });
+            });
+        });
+        avatar_row.add_suffix(&change);
+    }
+
     group.add(&avatar_row);
 
     let name_row = adw::EntryRow::builder().title("Name").build();

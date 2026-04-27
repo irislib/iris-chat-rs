@@ -154,6 +154,13 @@ pub fn build_ui(app: &adw::Application) {
         }
     });
 
+    let manager_for_focus = manager.clone();
+    window.connect_is_active_notify(move |w| {
+        if w.is_active() {
+            manager_for_focus.dispatch(AppAction::AppForegrounded);
+        }
+    });
+
     window.present();
 }
 
