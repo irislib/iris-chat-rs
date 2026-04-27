@@ -149,6 +149,10 @@ impl AppCore {
         self.seen_event_order.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
+        self.setup_user_done.clear();
+        self.cached_mobile_push = MobilePushSyncSnapshot::default();
+        self.mobile_push_dirty = true;
+        self.last_emitted_state = None;
         self.next_message_id = 1;
         self.state = AppState::empty();
         self.state.rev = previous_rev;

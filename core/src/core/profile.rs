@@ -149,6 +149,8 @@ impl AppCore {
 
         self.owner_profiles.insert(owner_hex.clone(), record);
         self.push_debug_log("relay.metadata", format!("owner={owner_hex}"));
+        // Mobile-push snapshot embeds the display label per session.
+        self.mark_mobile_push_dirty();
         true
     }
 

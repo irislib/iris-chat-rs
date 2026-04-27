@@ -267,13 +267,19 @@ impl AppCore {
         // chat tap was a 14 × 337 ms = 4.7 s hit on Android debug. Skip
         // owners we've already initialised — once an owner is set up it
         // stays set up for the lifetime of the AppCore.
+        let mut any_new_setup = false;
         for owner in &owners {
             if !self.setup_user_done.insert(owner.to_hex()) {
                 continue;
             }
+            any_new_setup = true;
             if let Some(logged_in) = self.logged_in.as_ref() {
                 let _ = logged_in.ndr_runtime.setup_user(*owner);
             }
+        }
+        if any_new_setup {
+            // New tracked owner appears in mobile-push session set.
+            self.mark_mobile_push_dirty();
         }
         self.process_runtime_events();
 

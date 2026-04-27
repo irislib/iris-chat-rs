@@ -77,6 +77,9 @@ impl AppCore {
             result.inviter_device_pubkey.to_hex(),
             unix_now().get(),
         );
+        // Accepting an invite installs a new session — invalidate the
+        // cached mobile-push snapshot so the new recipient appears.
+        self.mark_mobile_push_dirty();
         self.process_runtime_events();
         Ok(chat_id)
     }

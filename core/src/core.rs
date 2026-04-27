@@ -3,7 +3,7 @@ use crate::state::{
     AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, ChatThreadSnapshot,
     CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, DeviceEntrySnapshot,
     DeviceRosterSnapshot, GroupDetailsSnapshot, GroupMemberSnapshot, MessageAttachmentSnapshot,
-    MessageReactionSnapshot, MessageReactor, MobilePushNotificationResolution, MobilePushSessionSnapshot,
+    MessageReactionSnapshot, MessageReactor, MobilePushNotificationResolution,
     MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
     OutgoingAttachment, PreferencesSnapshot, PublicInviteSnapshot, Router, Screen,
     TypingIndicatorSnapshot,
@@ -17,7 +17,7 @@ use nostr_double_ratchet::{
     update_group_data, validate_metadata_creation, validate_metadata_update, AppKeys,
     CreateGroupOptions, DeviceEntry, DirectMessageSubscriptionTracker, FanoutGroupMetadataOptions,
     FileStorageAdapter, GroupData, GroupDecryptedEvent, GroupSendEvent, GroupUpdate, Invite,
-    MetadataValidation, NdrRuntime, SendOptions, SessionManagerEvent, SessionState, StorageAdapter,
+    MetadataValidation, NdrRuntime, SendOptions, SessionManagerEvent, StorageAdapter,
     APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_METADATA_KIND,
     GROUP_SENDER_KEY_DISTRIBUTION_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
     MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
@@ -146,4 +146,12 @@ pub struct AppCore {
     /// `persist_best_effort` can skip files whose content hasn't changed.
     /// See `core/persistence.rs`.
     persistence_cache: persistence::PersistenceCache,
+    /// Cached `MobilePushSyncSnapshot`. Computing it walks every NDR
+    /// session state and runs `serde_json::to_string` on each — that
+    /// was ~440 ms per `rebuild_state`, dominating tap-to-render. The
+    /// inputs change rarely (only when we accept an invite, pair a new
+    /// device, or rotate the ratchet), so we cache the snapshot and
+    /// only recompute when `mobile_push_dirty` is set.
+    cached_mobile_push: MobilePushSyncSnapshot,
+    mobile_push_dirty: bool,
 }

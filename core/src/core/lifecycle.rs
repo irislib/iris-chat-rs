@@ -50,6 +50,9 @@ impl AppCore {
             setup_user_done: HashSet::new(),
             last_emitted_state: None,
             persistence_cache: persistence::PersistenceCache::default(),
+            cached_mobile_push: MobilePushSyncSnapshot::default(),
+            // First rebuild populates the cache.
+            mobile_push_dirty: true,
         }
     }
 

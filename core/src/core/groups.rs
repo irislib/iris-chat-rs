@@ -463,6 +463,9 @@ impl AppCore {
     }
 
     pub(super) fn apply_group_decrypted_event(&mut self, event: GroupDecryptedEvent) {
+        // Group session-key advancement counts as session-state churn
+        // for the mobile-push snapshot.
+        self.mark_mobile_push_dirty();
         let sender_owner = event.sender_owner_pubkey.unwrap_or(event.inner.pubkey);
         let kind = event.inner.kind.as_u16() as u32;
         let created_at_secs = event.inner.created_at.as_u64();

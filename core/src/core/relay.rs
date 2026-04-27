@@ -156,6 +156,9 @@ impl AppCore {
                     event_id,
                 } => {
                     self.apply_decrypted_runtime_message(sender, sender_device, content, event_id);
+                    // Decrypting a DM advances the double-ratchet state,
+                    // so the cached mobile-push snapshot needs a refresh.
+                    self.mark_mobile_push_dirty();
                 }
             }
         }
@@ -233,6 +236,9 @@ impl AppCore {
         });
     }
 
+    /// Process an app-keys event (kind 30078) — adds/removes devices
+    /// for an owner. The mobile-push snapshot indexes by tracked owner
+    /// + device, so any change there invalidates the cache.
     fn apply_app_keys_event(&mut self, event: &Event) {
         let app_keys = self
             .logged_in
@@ -257,6 +263,7 @@ impl AppCore {
                 event.created_at.as_u64(),
             );
         }
+        self.mark_mobile_push_dirty();
         if self.refresh_local_authorization_state() {
             self.rebuild_state();
             self.persist_best_effort();

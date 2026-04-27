@@ -18,69 +18,24 @@ impl AppCore {
             return MobilePushSyncSnapshot::default();
         };
 
+        // Only `owner_pubkey_hex` and `message_author_pubkeys` are
+        // consumed (by AndroidMobilePushRuntime / MobilePushRuntime to
+        // build the subscription request body). The historical
+        // `sessions: Vec<MobilePushSessionSnapshot>` field walked every
+        // ratchet state and ran `serde_json::to_string` on each — ~440 ms
+        // per call on Android debug, dominating the per-emit
+        // `rebuild_state` cost — and nothing on the shell side ever
+        // read it. Leave the vec empty; the schema stays stable.
         let mut message_author_pubkeys = HashSet::new();
         message_author_pubkeys.extend(self.known_message_author_hexes());
         let message_author_pubkeys = sorted_hexes(message_author_pubkeys);
 
-        let mut sessions = Vec::new();
-        let mut seen_state_json = HashSet::new();
-        for owner_hex in sorted_hexes(self.tracked_peer_owner_hexes()) {
-            let Ok(owner) = PublicKey::parse(&owner_hex) else {
-                continue;
-            };
-            let display_name = self.owner_display_label(&owner_hex);
-            for session in logged_in
-                .ndr_runtime
-                .session_manager()
-                .get_message_push_session_states(owner)
-            {
-                push_mobile_push_session_snapshot(
-                    &mut sessions,
-                    &mut seen_state_json,
-                    &owner_hex,
-                    display_name.clone(),
-                    session.state,
-                    session.tracked_sender_pubkeys,
-                    session.has_receiving_capability,
-                );
-            }
-        }
-
         MobilePushSyncSnapshot {
             owner_pubkey_hex: Some(logged_in.owner_pubkey.to_string()),
             message_author_pubkeys,
-            sessions,
+            sessions: Vec::new(),
         }
     }
-}
-
-fn push_mobile_push_session_snapshot(
-    sessions: &mut Vec<MobilePushSessionSnapshot>,
-    seen_state_json: &mut HashSet<String>,
-    owner_hex: &str,
-    display_name: String,
-    session: SessionState,
-    tracked_sender_pubkeys: Vec<PublicKey>,
-    has_receiving_capability: bool,
-) {
-    let Ok(state_json) = serde_json::to_string(&session) else {
-        return;
-    };
-    if state_json.trim().is_empty() || !seen_state_json.insert(state_json.clone()) {
-        return;
-    }
-    sessions.push(MobilePushSessionSnapshot {
-        recipient_pubkey_hex: owner_hex.to_string(),
-        display_name,
-        state_json,
-        tracked_sender_pubkeys: sorted_hexes(
-            tracked_sender_pubkeys
-                .into_iter()
-                .map(|pubkey| pubkey.to_hex())
-                .collect(),
-        ),
-        has_receiving_capability,
-    });
 }
 
 pub(crate) fn resolve_mobile_push_notification(

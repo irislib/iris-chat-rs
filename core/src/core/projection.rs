@@ -32,7 +32,17 @@ impl AppCore {
         self.state.device_roster = self.build_device_roster_snapshot();
         self.state.network_status = Some(self.build_network_status_snapshot());
         self.state.public_invite = self.build_public_invite_snapshot();
-        self.state.mobile_push = self.build_mobile_push_sync_snapshot();
+        // Mobile push: cached behind a dirty flag. Used to walk every
+        // NDR session state and `serde_json::to_string` each one,
+        // ~440 ms per call on Android debug. The serialised `sessions`
+        // vec was never actually consumed by any shell, so we drop it
+        // entirely now; the rebuild itself is also a no-op when the
+        // tracked-author set hasn't changed.
+        if self.mobile_push_dirty {
+            self.cached_mobile_push = self.build_mobile_push_sync_snapshot();
+            self.mobile_push_dirty = false;
+        }
+        self.state.mobile_push = self.cached_mobile_push.clone();
         self.state.preferences = self.preferences.clone();
 
         let default_screen = match self
@@ -148,7 +158,7 @@ impl AppCore {
             screen_stack: self.screen_stack.clone(),
         };
         crate::perflog!(
-            "rebuild_state elapsed_ms={} threads={} cur_chat_msgs={}",
+            "rebuild_state ms={} threads={} cur_msgs={}",
             crate::perflog::now_ms().saturating_sub(t0),
             self.threads.len(),
             self.state.current_chat.as_ref().map(|c| c.messages.len()).unwrap_or(0)
@@ -455,6 +465,15 @@ impl AppCore {
             self.state.chat_list.len(),
             self.state.current_chat.as_ref().map(|c| c.messages.len()).unwrap_or(0)
         );
+    }
+
+    /// Invalidate the cached mobile push snapshot. Call after any
+    /// mutation that could change `tracked_peer_owner_hexes`,
+    /// `owner_display_label` for a tracked owner, or any NDR session
+    /// state. The next `rebuild_state` will recompute the snapshot
+    /// (~440 ms) once; subsequent rebuilds reuse the cache for free.
+    pub(super) fn mark_mobile_push_dirty(&mut self) {
+        self.mobile_push_dirty = true;
     }
 
     /// Enter a batch scope. While `batch_depth > 0`, calls to
