@@ -145,11 +145,11 @@ fn messages_view(
     scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
     scrolled.set_vexpand(true);
 
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    list.set_margin_top(12);
-    list.set_margin_bottom(12);
-    list.set_margin_start(12);
-    list.set_margin_end(12);
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    list.set_margin_top(8);
+    list.set_margin_bottom(8);
+    list.set_margin_start(10);
+    list.set_margin_end(10);
 
     if chat.messages.is_empty() {
         let empty = gtk::Label::new(Some("No messages yet"));
@@ -257,23 +257,30 @@ fn render_message(
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     row.set_hexpand(true);
+    row.set_margin_top(if cluster_start { 8 } else { 2 });
+    row.set_margin_bottom(if cluster_end { 4 } else { 0 });
 
     let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
     column.set_hexpand(false);
 
     if matches!(chat.kind, ChatKind::Group) && !message.is_outgoing && cluster_start {
         let author = gtk::Label::new(Some(&message.author));
-        author.add_css_class("caption");
-        author.add_css_class("dim-label");
+        author.add_css_class("chat-author");
         author.set_halign(gtk::Align::Start);
-        author.set_margin_start(8);
         column.append(&author);
     }
 
-    let bubble = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    bubble.add_css_class("card");
-    bubble.set_margin_start(8);
-    bubble.set_margin_end(8);
+    let bubble = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    bubble.add_css_class(if message.is_outgoing {
+        "bubble-out"
+    } else {
+        "bubble-in"
+    });
+    bubble.set_halign(if message.is_outgoing {
+        gtk::Align::End
+    } else {
+        gtk::Align::Start
+    });
 
     let image_attachments: Vec<&MessageAttachmentSnapshot> =
         message.attachments.iter().filter(|a| a.is_image).collect();
@@ -287,45 +294,32 @@ fn render_message(
     if !message.body.is_empty() {
         let body = gtk::Label::new(Some(&message.body));
         body.set_wrap(true);
+        body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
         body.set_xalign(0.0);
         body.set_max_width_chars(40);
         body.set_selectable(true);
-        bubble.append(&body);
-    } else if image_attachments.is_empty() && other_attachments.is_empty() {
-        let body = gtk::Label::new(Some(""));
         bubble.append(&body);
     }
 
     if !other_attachments.is_empty() {
         let attach_summary = gtk::Label::new(Some(&attachment_summary(&other_attachments)));
-        attach_summary.add_css_class("caption");
-        attach_summary.add_css_class("dim-label");
+        attach_summary.add_css_class("bubble-meta");
         attach_summary.set_xalign(0.0);
         bubble.append(&attach_summary);
     }
 
     if cluster_end {
         let footer = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        footer.add_css_class("bubble-meta");
         let time = gtk::Label::new(Some(&relative_time(message.created_at_secs, now)));
-        time.add_css_class("caption");
-        time.add_css_class("dim-label");
         footer.append(&time);
         if message.is_outgoing {
             let glyph = gtk::Label::new(Some(delivery_glyph(&message.delivery)));
-            glyph.add_css_class("caption");
-            glyph.add_css_class("dim-label");
             footer.append(&glyph);
         }
-        footer.set_halign(if message.is_outgoing {
-            gtk::Align::End
-        } else {
-            gtk::Align::Start
-        });
+        footer.set_halign(gtk::Align::End);
+        footer.set_margin_top(2);
         bubble.append(&footer);
-    }
-
-    if message.is_outgoing {
-        bubble.add_css_class("accent");
     }
 
     let popover = build_message_popover(message, manager);
@@ -474,11 +468,10 @@ fn reactions_row(
 
 fn day_chip(label: &str) -> gtk::Widget {
     let chip = gtk::Label::new(Some(label));
-    chip.add_css_class("caption");
-    chip.add_css_class("dim-label");
+    chip.add_css_class("chat-day");
     chip.set_halign(gtk::Align::Center);
     chip.set_margin_top(12);
-    chip.set_margin_bottom(4);
+    chip.set_margin_bottom(6);
     chip.upcast()
 }
 
