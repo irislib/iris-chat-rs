@@ -777,6 +777,124 @@ class RealRelayHarnessTest {
     }
 
     /**
+     * Set the local owner's `name` (kind:0 metadata) so peers can
+     * resolve the sender's display name in their notification title.
+     */
+    @Test
+    fun update_profile_metadata_from_args() {
+        ensureLoggedIn()
+        val displayName = requiredArg("display_name")
+        appManager().updateProfileMetadata(name = displayName, pictureUrl = null)
+        val updated =
+            waitForState("profile metadata applied", timeoutMs = 60_000) {
+                appManager()
+                    .state
+                    .value
+                    .account
+                    ?.takeIf { account -> account.displayName == displayName }
+            }
+        reportStatus(
+            "display_name" to updated.displayName,
+            "public_key_hex" to updated.publicKeyHex,
+        )
+    }
+
+    /**
+     * Wait until the local owner's `core/profiles.json` carries an
+     * entry for `peer_pubkey_hex` whose name matches `display_name`.
+     * Used by the notification-decrypt smoke to confirm that Bob has
+     * received and persisted Alice's kind:0 before we feed her
+     * encrypted DM through the decryption path.
+     */
+    @Test
+    fun wait_for_peer_profile_name_from_args() {
+        ensureLoggedIn()
+        val peerPubkeyHex = requiredArg("peer_pubkey_hex").lowercase()
+        val expected = requiredArg("display_name")
+        val timeoutMs = optionalArg("timeout_ms")?.toLong() ?: 60_000
+
+        val resolved =
+            waitForState("peer profile $peerPubkeyHex == $expected", timeoutMs = timeoutMs) {
+                val profiles = readJsonObject("core/profiles.json") ?: return@waitForState null
+                val entry = profiles.optJSONObject(peerPubkeyHex) ?: return@waitForState null
+                val candidate = entry.optString("display_name").takeIf { it.isNotEmpty() }
+                    ?: entry.optString("name").takeIf { it.isNotEmpty() }
+                candidate?.takeIf { it == expected }
+            }
+
+        reportStatus(
+            "peer_pubkey_hex" to peerPubkeyHex,
+            "display_name" to resolved,
+        )
+    }
+
+    /**
+     * Verifies that the FCM/APNs notification-decryption path turns an
+     * encrypted Nostr event into a notification with the sender's
+     * display name as title and the plaintext message as body — what
+     * `IrisFirebaseMessagingService` shows the user.
+     *
+     * Driven from a smoke script that has already established a real
+     * DR session between this device and a peer, then waited for the
+     * peer's outgoing kind:1060 wrapper to land in this device's
+     * persisted `seen_event_ids` (so we know the relay actually
+     * delivered it). The script reads the event JSON out of the
+     * persisted state and passes it back as `outer_event_json` here.
+     *
+     * Expected args:
+     *   - outer_event_json: serialized Nostr event the notification
+     *     server would forward in `payload['event']`
+     *   - expected_body: plaintext the rumor carries
+     *   - expected_title: sender's display name (or "<sender> in <group>")
+     */
+    @Test
+    fun decrypt_notification_payload_from_args() {
+        ensureLoggedIn()
+        val outerEventJson = requiredArg("outer_event_json")
+        val expectedBody = requiredArg("expected_body")
+        val expectedTitle = requiredArg("expected_title")
+
+        val payload = JSONObject().apply {
+            put("event", outerEventJson)
+            put("sender_name", "Iris Chat")
+            put("title", "New message")
+            put("body", "New activity")
+        }.toString()
+
+        val resolution =
+            kotlinx.coroutines.runBlocking {
+                appManager().decryptOrResolveNotificationPayload(payload)
+            }
+
+        if (!resolution.shouldShow) {
+            fail(
+                "Decrypted notification was suppressed (should_show=false). " +
+                    "Resolution payload=${resolution.payloadJson}",
+            )
+        }
+        if (resolution.body != expectedBody) {
+            fail(
+                "Notification body did not match decrypted plaintext. " +
+                    "expected=`$expectedBody` got=`${resolution.body}` " +
+                    "title=`${resolution.title}` payload=${resolution.payloadJson}",
+            )
+        }
+        if (resolution.title != expectedTitle) {
+            fail(
+                "Notification title did not match expected sender label. " +
+                    "expected=`$expectedTitle` got=`${resolution.title}` " +
+                    "body=`${resolution.body}` payload=${resolution.payloadJson}",
+            )
+        }
+
+        reportStatus(
+            "title" to resolution.title,
+            "body" to resolution.body,
+            "payload" to resolution.payloadJson,
+        )
+    }
+
+/**
      * Strict variant of [wait_for_message_from_args]. The other helper falls
      * back to opening the matching chat from the chat list when the message
      * doesn't surface in `state.currentChat` — that hides exactly the

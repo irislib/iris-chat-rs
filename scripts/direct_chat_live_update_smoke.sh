@@ -54,7 +54,13 @@ connected_serials() {
   "${ADB}" devices | awk 'NR>1 && $2 == "device" { print $1 }'
 }
 
-mapfile -t SERIALS < <(connected_serials)
+# Avoid `mapfile` so this still runs under macOS's stock bash 3.2.
+SERIALS=()
+while IFS= read -r line; do
+  if [[ -n "${line}" ]]; then
+    SERIALS+=("${line}")
+  fi
+done < <(connected_serials)
 
 SERIAL_A="${DEVICE_A_SERIAL:-${SERIALS[0]:-}}"
 SERIAL_B="${DEVICE_B_SERIAL:-${SERIALS[1]:-}}"
@@ -102,31 +108,48 @@ require_value() {
   fi
 }
 
+echo "Wiping app state on both devices for a clean run"
+SDK="${ADB%/platform-tools/adb}"
+"${ADB}" -s "${SERIAL_A}" shell pm clear to.iris.chat.debug >/dev/null || true
+"${ADB}" -s "${SERIAL_B}" shell pm clear to.iris.chat.debug >/dev/null || true
+
 echo "Provisioning identities on A and B"
 A_OUT="$(run_test "${SERIAL_A}" create_account_and_report_identity)"
 B_OUT="$(run_test "${SERIAL_B}" create_account_and_report_identity)"
 A_NPUB="$(printf '%s\n' "${A_OUT}" | extract_status npub)"
+A_HEX="$(printf '%s\n' "${A_OUT}" | extract_status public_key_hex)"
 B_NPUB="$(printf '%s\n' "${B_OUT}" | extract_status npub)"
+B_HEX="$(printf '%s\n' "${B_OUT}" | extract_status public_key_hex)"
 require_value A_NPUB "${A_NPUB}"
 require_value B_NPUB "${B_NPUB}"
 
-echo "Establishing bi-directional DR session via a seed exchange"
-run_test "${SERIAL_A}" create_chat_from_args peer_input "${B_NPUB}" >/dev/null
-run_test "${SERIAL_B}" create_chat_from_args peer_input "${A_NPUB}" >/dev/null
-run_test "${SERIAL_A}" wait_for_peer_transport_ready_from_args peer_input "${B_NPUB}" >/dev/null
-run_test "${SERIAL_B}" wait_for_peer_transport_ready_from_args peer_input "${A_NPUB}" >/dev/null
-
+# Mirror linked_device_relay_matrix.sh's approach: skip explicit
+# create_chat / wait_for_peer_transport_ready phases and let
+# send_message do session bootstrap inline. The seed exchange below
+# leaves A's screen on the chat with B, which is what the strict
+# rerender check below depends on.
+echo "Seeding session: A→B then B→A"
 run_test "${SERIAL_A}" send_message_from_args \
   peer_input "${B_NPUB}" \
   message "seed-from-A-${TIMESTAMP}" >/dev/null
 run_test "${SERIAL_B}" wait_for_message_from_args \
-  peer_input "${A_NPUB}" \
+  chat_id "${A_HEX}" \
   message "seed-from-A-${TIMESTAMP}" \
   direction incoming >/dev/null
+run_test "${SERIAL_B}" send_message_from_args \
+  peer_input "${A_NPUB}" \
+  message "seed-from-B-${TIMESTAMP}" >/dev/null
+run_test "${SERIAL_A}" wait_for_message_from_args \
+  chat_id "${B_HEX}" \
+  message "seed-from-B-${TIMESTAMP}" \
+  direction incoming >/dev/null
 
-# A is currently sitting on the chat with B. We do NOT call OpenChat
-# again on A from here on — that's the whole point.
-echo "B sends a fresh message; A must surface it in the open chat"
+# After the previous wait, A's harness invocation pinned the screen on
+# the chat with B (it called openChat as part of its chatList fallback
+# — exactly the workaround we want to *exclude* for the live-update
+# assertion). We don't fight that here; the strict variant below opens
+# the chat once via ensureChatOpen and then forbids further OpenChats.
+echo "B sends a fresh message; A must surface it in the open chat without re-navigation"
 run_test "${SERIAL_B}" send_message_from_args \
   peer_input "${A_NPUB}" \
   message "${MESSAGE}" >/dev/null

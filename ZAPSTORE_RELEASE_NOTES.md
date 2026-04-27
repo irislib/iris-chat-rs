@@ -1,7 +1,8 @@
-# Iris Chat 2.6.28
+# Iris Chat 2.6.29
 
-Push notifications fix.
+Push notifications now show the decrypted message + sender name.
 
-- Mobile push subscription now reflects the live double-ratchet author set on every state rebuild instead of staying frozen between login and a few `mark_dirty` callsites. Starting a new chat, accepting an invite, or rotating a session immediately tells the notification server which authors to push from. Previously Android often missed notifications until the app was reopened.
-- Settings now has a Notifications section with an enable toggle, a custom server URL field (default `notifications.iris.to`), and a link to `github.com/mmalmi/nostr-notification-server`. Same UI on Android and iOS.
-- Android FCM e2e test now `force-stop`s the app before pushing the message, so it actually verifies that a closed-app push wakes Iris and surfaces the notification.
+- Android `IrisFirebaseMessagingService` and the new iOS Notification Service Extension run the encrypted Nostr event from `payload['event']` through the persisted double-ratchet state and render the system notification with the sender's display name (or "<sender> in <group>") as the title and the plaintext message as the body — instead of the generic "New activity" placeholder. Falls back to the original payload when keys aren't available.
+- iOS bundle id moves to `to.iris.chat` (matching iris-chat-flutter), Apple dev team `J8PPJKD7TA`. Shared App Group `group.to.iris.chat` and shared Keychain Access Group `to.iris.chat` so the NSE can read the same persisted state the foreground app writes; legacy `Application Support/iris-chat` migrates to the App Group container on first launch.
+- New Android e2e in `RealRelayHarnessTest`: `decrypt_notification_payload_from_args` (feeds a captured kind:1060 wrapper through `AppManager.decryptOrResolveNotificationPayload` and asserts title + body), plus `update_profile_metadata_from_args` and `wait_for_peer_profile_name_from_args` for setting + observing a peer's display name across devices. Driven by `scripts/notification_decrypt_e2e.sh` against any two adb devices already online (no AVD auto-spawn) using the local relay.
+- `direct_chat_live_update_smoke.sh` no longer requires a specific AVD pair; it picks up whatever two devices are online and overrides via `DEVICE_A_SERIAL` / `DEVICE_B_SERIAL`. Also mirrors the matrix harness pattern of using `pm clear` + inline session bootstrap rather than explicit `wait_for_peer_transport_ready`.
