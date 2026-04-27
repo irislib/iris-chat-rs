@@ -183,6 +183,11 @@ impl AppCore {
         let added_authors = self
             .direct_message_subscriptions
             .register_subscription(&subid, &filter_json);
+        if !added_authors.is_empty() {
+            self.mark_mobile_push_dirty();
+            self.rebuild_state();
+            self.emit_state();
+        }
         for author in added_authors {
             self.fetch_recent_messages_for_author(author, unix_now(), CATCH_UP_LOOKBACK_SECS);
         }
@@ -190,7 +195,10 @@ impl AppCore {
         self.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
         self.push_debug_log(
             "runtime.subscribe",
-            format!("subid={subid} changed={changed}"),
+            format!(
+                "subid={subid} changed={changed} direct_authors={}",
+                self.direct_message_subscriptions.tracked_authors().len()
+            ),
         );
     }
 
@@ -198,8 +206,14 @@ impl AppCore {
         self.protocol_subscription_runtime
             .active_subscriptions
             .remove(&subid);
+        let previous_authors = self.direct_message_subscriptions.tracked_authors();
         self.direct_message_subscriptions
             .unregister_subscription(&subid);
+        if self.direct_message_subscriptions.tracked_authors() != previous_authors {
+            self.mark_mobile_push_dirty();
+            self.rebuild_state();
+            self.emit_state();
+        }
         let Some(client) = self
             .logged_in
             .as_ref()

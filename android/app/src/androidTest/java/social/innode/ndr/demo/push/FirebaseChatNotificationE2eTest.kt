@@ -107,7 +107,7 @@ class FirebaseChatNotificationE2eTest {
         reportStatus(
             "received" to "true",
             "expected_bodies" to JSONArray(expectedBodies).toString(),
-            "active_bodies" to snapshot.optJSONArray("active_bodies").toString(),
+            "active_bodies" to snapshot.optJSONArray("active_bodies")?.toString().orEmpty(),
             "snapshot" to snapshot.toString(),
         )
     }

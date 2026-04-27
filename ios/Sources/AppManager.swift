@@ -28,7 +28,7 @@ final class KeychainSecretStore: AccountSecretStore {
     init(
         service: String = "to.iris.chat",
         account: String = "stored-account-bundle",
-        accessGroup: String? = "to.iris.chat"
+        accessGroup: String? = nil
     ) {
         self.service = service
         self.account = account
@@ -42,9 +42,9 @@ final class KeychainSecretStore: AccountSecretStore {
             kSecAttrAccount: account,
         ]
         if let accessGroup, !accessGroup.isEmpty {
-            // The Notification Service Extension reads the same item via
-            // its `keychain-access-groups` entitlement. The app prefix is
-            // applied by the OS, so the bare group name is what we use.
+            // Most callers should omit this and let iOS use the first
+            // keychain-access-groups entitlement. The app and notification
+            // service extension share that default group.
             query[kSecAttrAccessGroup] = accessGroup
         }
         return query

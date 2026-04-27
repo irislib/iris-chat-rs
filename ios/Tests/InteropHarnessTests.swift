@@ -442,14 +442,17 @@ final class InteropHarnessTests: XCTestCase {
     }
 
     private func resolvePeerOwnerHex(manager: AppManager, peerInput: String) -> String {
+        let normalizedPeer = normalizePeerInput(input: peerInput)
+        let peerHex = peerInputToHex(input: peerInput)
         if let existing = manager.state.chatList.first(where: {
-            sameIdentifier($0.chatId, normalizePeerInput(input: peerInput)) ||
+            (!peerHex.isEmpty && sameIdentifier($0.chatId, peerHex)) ||
+            sameIdentifier($0.chatId, normalizedPeer) ||
             sameIdentifier($0.subtitle ?? "", peerInput) ||
-            sameIdentifier($0.subtitle ?? "", normalizePeerInput(input: peerInput))
+            sameIdentifier($0.subtitle ?? "", normalizedPeer)
         }) {
             return existing.chatId
         }
-        return normalizePeerInput(input: peerInput)
+        return peerHex.isEmpty ? normalizedPeer : peerHex
     }
 
     private func directionMatches(isOutgoing: Bool, direction: String) -> Bool {
@@ -470,12 +473,16 @@ final class InteropHarnessTests: XCTestCase {
         guard let peerInput, !peerInput.isEmpty else {
             return true
         }
-        return sameIdentifier(chatId, normalizePeerInput(input: peerInput))
+        let peerHex = peerInputToHex(input: peerInput)
+        return (!peerHex.isEmpty && sameIdentifier(chatId, peerHex)) ||
+            sameIdentifier(chatId, normalizePeerInput(input: peerInput))
     }
 
     private func chatMatchesPeerReference(chatId: String, peerLabel: String?, peerInput: String) -> Bool {
         let normalizedPeer = normalizePeerInput(input: peerInput)
-        return sameIdentifier(chatId, normalizedPeer) ||
+        let peerHex = peerInputToHex(input: peerInput)
+        return (!peerHex.isEmpty && sameIdentifier(chatId, peerHex)) ||
+            sameIdentifier(chatId, normalizedPeer) ||
             sameIdentifier(peerLabel ?? "", peerInput) ||
             sameIdentifier(peerLabel ?? "", normalizedPeer)
     }

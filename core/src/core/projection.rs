@@ -162,7 +162,11 @@ impl AppCore {
             "rebuild_state ms={} threads={} cur_msgs={}",
             crate::perflog::now_ms().saturating_sub(t0),
             self.threads.len(),
-            self.state.current_chat.as_ref().map(|c| c.messages.len()).unwrap_or(0)
+            self.state
+                .current_chat
+                .as_ref()
+                .map(|c| c.messages.len())
+                .unwrap_or(0)
         );
     }
 
@@ -468,11 +472,10 @@ impl AppCore {
         );
     }
 
-    /// Invalidate the cached mobile push snapshot. Call after any
-    /// mutation that could change `tracked_peer_owner_hexes`,
-    /// `owner_display_label` for a tracked owner, or any NDR session
-    /// state. The next `rebuild_state` will recompute the snapshot
-    /// (~440 ms) once; subsequent rebuilds reuse the cache for free.
+    /// Mark mobile push state as affected by the current mutation.
+    /// Rebuilds recompute the lightweight author snapshot immediately,
+    /// but callers still use this as the semantic marker for changes
+    /// that can alter the push subscription body.
     pub(super) fn mark_mobile_push_dirty(&mut self) {
         self.mobile_push_dirty = true;
     }
