@@ -29,12 +29,19 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         url.add_css_class("dim-label");
         url.add_css_class("caption");
         url.set_wrap(true);
-        url.set_max_width_chars(40);
+        url.set_wrap_mode(gtk::pango::WrapMode::Char);
+        url.set_max_width_chars(36);
+        url.set_width_chars(36);
+        url.set_lines(3);
+        url.set_ellipsize(gtk::pango::EllipsizeMode::End);
         url.set_selectable(true);
         url.set_xalign(0.5);
+        url.set_halign(gtk::Align::Center);
         container.append(&url);
 
         let copy = primary_button("Copy");
+        copy.set_halign(gtk::Align::Center);
+        copy.set_width_request(220);
         let invite_url = invite.url.clone();
         copy.connect_clicked(move |_| clipboard::copy(&invite_url));
         container.append(&copy);
@@ -51,6 +58,8 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         "New invite"
     });
     refresh.set_sensitive(!state.busy.creating_invite);
+    refresh.set_halign(gtk::Align::Center);
+    refresh.set_width_request(220);
     {
         let manager = manager.clone();
         refresh.connect_clicked(move |_| {

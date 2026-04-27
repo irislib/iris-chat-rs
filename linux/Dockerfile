@@ -26,6 +26,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libsecret-1-dev \
         libglib2.0-dev \
         libsoup-3.0-dev \
+        libclang-dev \
+        libv4l-dev \
         xvfb \
         x11vnc \
         fluxbox \

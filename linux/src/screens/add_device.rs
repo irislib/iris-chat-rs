@@ -26,7 +26,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&owner);
 
     let owner_for_scan = owner.clone();
-    let scan = scan_qr_button("Scan QR from image", move |text| {
+    let scan = scan_qr_button("Scan QR", move |text| {
         owner_for_scan.set_text(&text);
     });
     container.append(&scan);

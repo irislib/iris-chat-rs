@@ -37,7 +37,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&paste);
 
     let peer_for_scan = peer.clone();
-    let scan = scan_qr_button("Scan QR from image", move |text| {
+    let scan = scan_qr_button("Scan QR", move |text| {
         peer_for_scan.set_text(&text);
     });
     container.append(&scan);
