@@ -1,0 +1,12 @@
+**/target
+**/build
+**/.gradle
+**/Pods
+**/DerivedData
+**/.git
+android/app/build
+android/.gradle
+ios/.build
+macos/.build
+core/target
+linux/target

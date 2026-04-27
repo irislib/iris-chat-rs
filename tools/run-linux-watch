@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Auto-rebuild + restart the GTK shell on every file change. Uses polling
+# because Docker Desktop's macOS bind mount drops inotify events.
+# The window stays visible at vnc://localhost:5901 (password: iris).
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT/linux"
+
+if ! command -v docker >/dev/null 2>&1; then
+    echo "docker is required" >&2
+    exit 1
+fi
+
+docker compose up -d --build
+
+# `cargo watch` polls the source tree, kills the previous run on each change,
+# and `cargo run` brings the app back up. -B keeps a single rebuild pending if
+# multiple files change at once.
+exec docker compose exec iris-chat-linux \
+    /usr/local/bin/dev-entrypoint cargo watch \
+        --poll \
+        -w src \
+        -w Cargo.toml \
+        -w ../core/src \
+        -w ../core/Cargo.toml \
+        -B 1 \
+        -x 'run'

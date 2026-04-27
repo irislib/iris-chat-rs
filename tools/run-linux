@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Build (if needed) and start the Linux dev container, then `cargo run` the
+# GTK shell inside it. Connect from the host via vnc://localhost:5900.
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$REPO_ROOT/linux"
+
+if ! command -v docker >/dev/null 2>&1; then
+    echo "docker is required" >&2
+    exit 1
+fi
+
+CMD=("cargo" "run")
+if [ "$#" -gt 0 ]; then
+    CMD=("$@")
+fi
+
+docker compose up -d --build
+exec docker compose exec -T iris-chat-linux /usr/local/bin/dev-entrypoint "${CMD[@]}"

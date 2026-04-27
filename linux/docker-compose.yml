@@ -1,0 +1,26 @@
+services:
+  iris-chat-linux:
+    build:
+      context: ..
+      dockerfile: linux/Dockerfile
+    image: iris-chat-linux-dev:latest
+    container_name: iris-chat-linux-dev
+    ports:
+      - "5901:5900"
+    volumes:
+      - ..:/workspace/iris-chat-rs:cached
+      - ../../nostr-double-ratchet:/workspace/nostr-double-ratchet:cached
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - linux-target:/workspace/iris-chat-rs/linux/target
+    working_dir: /workspace/iris-chat-rs/linux
+    environment:
+      DISPLAY: ":99"
+      GDK_BACKEND: "x11"
+    stdin_open: true
+    tty: true
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  linux-target:
