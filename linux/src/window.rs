@@ -62,6 +62,37 @@ pub fn build_ui(app: &adw::Application) {
     }
     header.pack_start(&settings_button);
 
+    let chat_info_button = gtk::Button::from_icon_name("dialog-information-symbolic");
+    chat_info_button.set_tooltip_text(Some("Chat info"));
+    chat_info_button.set_visible(false);
+    {
+        let manager = manager.clone();
+        chat_info_button.connect_clicked(move |btn| {
+            let state = manager.current_state();
+            let Some(chat) = state.current_chat.as_ref() else {
+                return;
+            };
+            if let Some(group_id) = chat.group_id.as_ref() {
+                manager.dispatch(AppAction::PushScreen {
+                    screen: Screen::GroupDetails {
+                        group_id: group_id.clone(),
+                    },
+                });
+            } else {
+                let parent = btn
+                    .root()
+                    .and_then(|r| r.downcast::<gtk::Window>().ok());
+                crate::screens::chat::present_chat_info(
+                    parent.as_ref(),
+                    &chat.display_name,
+                    &chat.chat_id,
+                    chat.subtitle.as_deref(),
+                );
+            }
+        });
+    }
+    header.pack_end(&chat_info_button);
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
 
@@ -80,6 +111,7 @@ pub fn build_ui(app: &adw::Application) {
         back: back_button.clone(),
         new_chat: new_chat_button.clone(),
         settings: settings_button.clone(),
+        chat_info: chat_info_button.clone(),
         title: title_label.clone(),
     };
     apply_state(&content_slot, &header_widgets, &manager, &current.borrow());
@@ -141,6 +173,7 @@ struct HeaderWidgets {
     back: gtk::Button,
     new_chat: gtk::Button,
     settings: gtk::Button,
+    chat_info: gtk::Button,
     title: gtk::Label,
 }
 
@@ -162,10 +195,29 @@ fn apply_state(
     header
         .settings
         .set_visible(matches!(screen, Screen::ChatList));
-    header.title.set_label(screens::title(&screen));
+    header
+        .chat_info
+        .set_visible(matches!(screen, Screen::Chat { .. }));
+
+    let title_text = chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());
+    header.title.set_label(&title_text);
 
     let widget = screens::render(&screen, state, manager);
     slot.append(&widget);
+}
+
+fn chat_title(screen: &Screen, state: &AppState) -> Option<String> {
+    if matches!(screen, Screen::Chat { .. }) {
+        if let Some(chat) = state.current_chat.as_ref() {
+            return Some(chat.display_name.clone());
+        }
+    }
+    if let Screen::GroupDetails { .. } = screen {
+        if let Some(details) = state.group_details.as_ref() {
+            return Some(details.name.clone());
+        }
+    }
+    None
 }
 
 fn current_screen(state: &AppState) -> Screen {

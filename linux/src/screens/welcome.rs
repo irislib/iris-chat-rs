@@ -21,6 +21,14 @@ pub fn render(manager: &Rc<AppManager>) -> gtk::Widget {
     tagline.set_margin_bottom(12);
     container.append(&tagline);
 
+    if ndr_demo_core::is_trusted_test_build() {
+        let banner = gtk::Label::new(Some("Trusted test build"));
+        banner.add_css_class("caption");
+        banner.add_css_class("warning");
+        banner.set_margin_bottom(8);
+        container.append(&banner);
+    }
+
     let create = primary_button("Create account");
     dispatch_on_click(&create, manager, || AppAction::PushScreen {
         screen: Screen::CreateAccount,

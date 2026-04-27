@@ -14,13 +14,65 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         page.add(&profile_group(account, manager));
     }
 
+    if ndr_demo_core::is_trusted_test_build() {
+        page.add(&trusted_build_group());
+    }
+
     page.add(&messaging_group(&state.preferences, manager));
+    page.add(&media_group(&state.preferences, manager));
     page.add(&relays_group(&state.preferences, manager));
     page.add(&security_group(manager));
     page.add(&about_group(state));
     page.add(&support_group(manager));
 
     page.upcast()
+}
+
+fn trusted_build_group() -> adw::PreferencesGroup {
+    adw::PreferencesGroup::builder()
+        .title("Trusted test build")
+        .description("This build uses a controlled relay set. Intended for trusted testing only.")
+        .build()
+}
+
+fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title("Media").build();
+
+    let enabled = adw::SwitchRow::builder().title("Image proxy").build();
+    enabled.set_active(prefs.image_proxy_enabled);
+    {
+        let manager = manager.clone();
+        enabled.connect_active_notify(move |row| {
+            manager.dispatch(AppAction::SetImageProxyEnabled {
+                enabled: row.is_active(),
+            });
+        });
+    }
+    group.add(&enabled);
+
+    let url = adw::EntryRow::builder().title("Proxy URL").build();
+    url.set_text(&prefs.image_proxy_url);
+    let manager_for_apply = manager.clone();
+    url.connect_apply(move |row| {
+        manager_for_apply.dispatch(AppAction::SetImageProxyUrl {
+            url: row.text().to_string(),
+        });
+    });
+    group.add(&url);
+
+    let reset = adw::ActionRow::builder()
+        .title("Reset image proxy settings")
+        .activatable(true)
+        .build();
+    {
+        let manager = manager.clone();
+        reset.connect_activated(move |_| {
+            manager.dispatch(AppAction::ResetImageProxySettings);
+        });
+    }
+    group.add(&reset);
+
+    group
 }
 
 fn support_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {

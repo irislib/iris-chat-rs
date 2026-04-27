@@ -7,7 +7,7 @@ use crate::app_manager::AppManager;
 
 mod add_device;
 mod awaiting_device_approval;
-mod chat;
+pub mod chat;
 mod chat_list;
 mod create_account;
 mod create_invite;

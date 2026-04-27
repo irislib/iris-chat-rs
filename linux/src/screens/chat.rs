@@ -21,10 +21,116 @@ pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk:
         return container.upcast();
     };
 
+    container.append(&ttl_strip(chat, manager));
     container.append(&messages_view(chat, manager));
     container.append(&composer(chat, state, manager));
 
     container.upcast()
+}
+
+pub fn present_chat_info(
+    parent: Option<&gtk::Window>,
+    display_name: &str,
+    chat_id: &str,
+    subtitle: Option<&str>,
+) {
+    let dialog = adw::Dialog::builder()
+        .title(display_name)
+        .content_width(360)
+        .build();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.set_margin_top(20);
+    content.set_margin_bottom(20);
+    content.set_margin_start(20);
+    content.set_margin_end(20);
+
+    let header = gtk::Label::new(Some(display_name));
+    header.add_css_class("title-2");
+    content.append(&header);
+
+    if let Some(subtitle) = subtitle {
+        let sub = gtk::Label::new(Some(subtitle));
+        sub.add_css_class("dim-label");
+        sub.set_wrap(true);
+        sub.set_max_width_chars(40);
+        content.append(&sub);
+    }
+
+    let id_label = gtk::Label::new(Some(chat_id));
+    id_label.add_css_class("monospace");
+    id_label.add_css_class("caption");
+    id_label.add_css_class("dim-label");
+    id_label.set_wrap(true);
+    id_label.set_max_width_chars(40);
+    id_label.set_selectable(true);
+    content.append(&id_label);
+
+    let copy = gtk::Button::with_label("Copy ID");
+    copy.add_css_class("pill");
+    let chat_id_owned = chat_id.to_string();
+    copy.connect_clicked(move |_| crate::platform::clipboard::copy(&chat_id_owned));
+    content.append(&copy);
+
+    dialog.set_child(Some(&content));
+    dialog.present(parent);
+}
+
+fn ttl_strip(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widget {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    row.set_margin_start(12);
+    row.set_margin_end(12);
+    row.set_margin_top(6);
+    row.set_halign(gtk::Align::End);
+
+    let label = match chat.message_ttl_seconds {
+        None | Some(0) => "No expiry".to_string(),
+        Some(s) if s < 3600 => format!("Expires {}m", s / 60),
+        Some(s) if s < 86_400 => format!("Expires {}h", s / 3600),
+        Some(s) if s < 86_400 * 7 => format!("Expires {}d", s / 86_400),
+        Some(s) => format!("Expires {}w", s / (86_400 * 7)),
+    };
+
+    let menu_button = gtk::MenuButton::new();
+    menu_button.set_label(&label);
+    menu_button.add_css_class("flat");
+    menu_button.add_css_class("caption");
+
+    let popover = gtk::Popover::new();
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    list.set_margin_top(6);
+    list.set_margin_bottom(6);
+    list.set_margin_start(6);
+    list.set_margin_end(6);
+
+    let options: &[(&str, Option<u64>)] = &[
+        ("No expiry", None),
+        ("1 hour", Some(3600)),
+        ("6 hours", Some(6 * 3600)),
+        ("1 day", Some(86_400)),
+        ("1 week", Some(7 * 86_400)),
+    ];
+    for (option_label, ttl) in options {
+        let item = gtk::Button::with_label(option_label);
+        item.add_css_class("flat");
+        item.set_halign(gtk::Align::Fill);
+        let manager = manager.clone();
+        let chat_id = chat.chat_id.clone();
+        let ttl_value = *ttl;
+        let popover_for_close = popover.clone();
+        item.connect_clicked(move |_| {
+            manager.dispatch(AppAction::SetChatMessageTtl {
+                chat_id: chat_id.clone(),
+                ttl_seconds: ttl_value,
+            });
+            popover_for_close.popdown();
+        });
+        list.append(&item);
+    }
+    popover.set_child(Some(&list));
+    menu_button.set_popover(Some(&popover));
+
+    row.append(&menu_button);
+    row.upcast()
 }
 
 fn messages_view(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widget {
