@@ -46,6 +46,8 @@ const CUSTOM_CSS: &str = r#"
 "#;
 
 fn main() -> glib::ExitCode {
+    bootstrap_session_bus();
+
     let app = adw::Application::builder()
         .application_id(APP_ID)
         .build();
@@ -53,6 +55,25 @@ fn main() -> glib::ExitCode {
     app.connect_startup(|_| install_css());
     app.connect_activate(window::build_ui);
     app.run()
+}
+
+// GApplication keys its single-instance behaviour off the session bus.
+// Real Linux desktops always have one; in stripped-down environments
+// (the dev container, sandboxes) shells often auto-launch a fresh bus
+// each time, so two app launches each become their own primary. If we
+// don't see a bus but the dev container has stood one up at the known
+// path, point the process at it before GApplication registers.
+fn bootstrap_session_bus() {
+    if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_some() {
+        return;
+    }
+    let socket = "/tmp/iris-dbus.sock";
+    if std::path::Path::new(socket).exists() {
+        std::env::set_var(
+            "DBUS_SESSION_BUS_ADDRESS",
+            format!("unix:path={}", socket),
+        );
+    }
 }
 
 fn install_css() {

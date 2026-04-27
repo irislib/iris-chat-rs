@@ -36,10 +36,21 @@ if ! pgrep -x x11vnc >/dev/null 2>&1; then
 fi
 
 # A session bus is required for GApplication's single-instance behaviour.
-if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
-    eval "$(dbus-launch --sh-syntax)"
-    export DBUS_SESSION_BUS_ADDRESS DBUS_SESSION_BUS_PID
+# Pin it to a fixed path so every `docker exec` shell sees the same bus
+# instead of auto-launching its own.
+DBUS_SOCK=/tmp/iris-dbus.sock
+DBUS_ADDR="unix:path=$DBUS_SOCK"
+if ! pgrep -f "dbus-daemon.*$DBUS_SOCK" >/dev/null 2>&1; then
+    rm -f "$DBUS_SOCK"
+    dbus-daemon --session --fork --address="$DBUS_ADDR" --nopidfile --nosyslog
 fi
+export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
+
+# Make the address visible to interactive shells started via `docker exec`.
+cat >/etc/profile.d/iris-dbus.sh <<EOF
+export DBUS_SESSION_BUS_ADDRESS="$DBUS_ADDR"
+EOF
+chmod 0644 /etc/profile.d/iris-dbus.sh
 
 if [ "$#" -eq 0 ]; then
     exec bash
