@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use ndr_demo_core::{AppAction, AppState};
+use ndr_demo_core::{AppAction, AppState, Screen};
 
 use crate::app_manager::AppManager;
-use crate::screens::{entry, primary_button, screen_container};
+use crate::platform::clipboard;
+use crate::screens::{entry, pill_button, primary_button, screen_container};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
@@ -22,6 +23,18 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
     let peer = entry("npub or invite link");
     container.append(&peer);
+
+    let paste = pill_button("Paste");
+    let peer_for_paste = peer.clone();
+    paste.connect_clicked(move |_| {
+        let entry = peer_for_paste.clone();
+        clipboard::paste(move |value| {
+            if !value.is_empty() {
+                entry.set_text(&value);
+            }
+        });
+    });
+    container.append(&paste);
 
     let busy = state.busy.creating_chat || state.busy.accepting_invite;
     let submit = primary_button(if busy { "Opening…" } else { "Open chat" });
@@ -50,6 +63,70 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     });
 
     container.append(&submit);
+
+    let separator = gtk::Separator::new(gtk::Orientation::Horizontal);
+    separator.set_margin_top(16);
+    separator.set_margin_bottom(8);
+    container.append(&separator);
+
+    let other_actions = adw::PreferencesGroup::new();
+
+    let new_group = adw::ActionRow::builder()
+        .title("New group")
+        .subtitle("Create a multi-person chat")
+        .activatable(true)
+        .build();
+    let chevron1 = gtk::Image::from_icon_name("go-next-symbolic");
+    chevron1.add_css_class("dim-label");
+    new_group.add_suffix(&chevron1);
+    {
+        let manager = manager.clone();
+        new_group.connect_activated(move |_| {
+            manager.dispatch(AppAction::PushScreen {
+                screen: Screen::NewGroup,
+            });
+        });
+    }
+    other_actions.add(&new_group);
+
+    let create_invite = adw::ActionRow::builder()
+        .title("Share an invite link")
+        .subtitle("Anyone with the link can chat with you")
+        .activatable(true)
+        .build();
+    let chevron2 = gtk::Image::from_icon_name("go-next-symbolic");
+    chevron2.add_css_class("dim-label");
+    create_invite.add_suffix(&chevron2);
+    {
+        let manager = manager.clone();
+        create_invite.connect_activated(move |_| {
+            manager.dispatch(AppAction::PushScreen {
+                screen: Screen::CreateInvite,
+            });
+        });
+    }
+    other_actions.add(&create_invite);
+
+    let join_invite = adw::ActionRow::builder()
+        .title("Join with invite link")
+        .subtitle("Use a link someone shared with you")
+        .activatable(true)
+        .build();
+    let chevron3 = gtk::Image::from_icon_name("go-next-symbolic");
+    chevron3.add_css_class("dim-label");
+    join_invite.add_suffix(&chevron3);
+    {
+        let manager = manager.clone();
+        join_invite.connect_activated(move |_| {
+            manager.dispatch(AppAction::PushScreen {
+                screen: Screen::JoinInvite,
+            });
+        });
+    }
+    other_actions.add(&join_invite);
+
+    container.append(&other_actions);
+
     container.upcast()
 }
 

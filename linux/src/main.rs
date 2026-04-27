@@ -1,6 +1,8 @@
 mod app_manager;
+mod platform;
 mod screens;
 mod secure_storage;
+mod widgets;
 mod window;
 
 use adw::prelude::*;

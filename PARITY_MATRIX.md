@@ -13,20 +13,20 @@ Legend:
 | Create owner account | Done | Done | Done | Done | Done |
 | Restore from owner `nsec` | Done | Done | Done | Done | Partial |
 | Start linked device from owner QR/paste | Done | Done | Done | Partial | Partial |
-| Approve pending linked device | Done | Done | Done | Planned | Partial |
-| Remove authorized device | Done | Done | Done | Planned | Partial |
-| Device revoked screen | Done | Done | Done | Planned | Partial |
-| Chat list routing | Done | Done | Done | Partial | Done |
-| Create direct chat | Done | Done | Done | Planned | Done |
-| Send direct message | Done | Done | Done | Planned | Done |
-| Create group | Done | Done | Done | Planned | Done |
-| Rename group | Done | Done | Done | Planned | Partial |
-| Add group members | Done | Done | Done | Planned | Partial |
-| Remove group members | Done | Done | Done | Planned | Partial |
-| Group details screen | Done | Done | Done | Planned | Done |
-| Profile sheet | Done | Done | Done | Planned | Done |
-| Owner QR display | Done | Done | Done | Planned | Done |
-| Support bundle export/copy | Done | Done | Done | Planned | Partial |
+| Approve pending linked device | Done | Done | Done | Done | Partial |
+| Remove authorized device | Done | Done | Done | Done | Partial |
+| Device revoked screen | Done | Done | Done | Done | Partial |
+| Chat list routing | Done | Done | Done | Done | Done |
+| Create direct chat | Done | Done | Done | Done | Done |
+| Send direct message | Done | Done | Done | Done | Done |
+| Create group | Done | Done | Done | Done | Done |
+| Rename group | Done | Done | Done | Done | Partial |
+| Add group members | Done | Done | Done | Done | Partial |
+| Remove group members | Done | Done | Done | Done | Partial |
+| Group details screen | Done | Done | Done | Done | Done |
+| Profile sheet | Done | Done | Done | Partial | Done |
+| Owner QR display | Done | Done | Done | Done | Done |
+| Support bundle export/copy | Done | Done | Done | Done | Partial |
 | Shared device-approval QR codec | Done | Done | Done | n/a | Done |
 | Android run tooling from repo root | n/a | Done | n/a | n/a | Done |
 | iOS run tooling from repo root | n/a | n/a | Done | n/a | Done |

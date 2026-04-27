@@ -6,11 +6,19 @@ use ndr_demo_core::{AppState, Screen};
 use crate::app_manager::AppManager;
 
 mod add_device;
+mod awaiting_device_approval;
 mod chat;
 mod chat_list;
 mod create_account;
+mod create_invite;
+mod device_revoked;
+mod device_roster;
+mod group_details;
+mod join_invite;
 mod new_chat;
+mod new_group;
 mod restore_account;
+mod settings;
 mod welcome;
 
 pub fn render(screen: &Screen, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
@@ -21,8 +29,15 @@ pub fn render(screen: &Screen, state: &AppState, manager: &Rc<AppManager>) -> gt
         Screen::AddDevice => add_device::render(state, manager),
         Screen::ChatList => chat_list::render(state, manager),
         Screen::NewChat => new_chat::render(state, manager),
+        Screen::NewGroup => new_group::render(state, manager),
+        Screen::CreateInvite => create_invite::render(state, manager),
+        Screen::JoinInvite => join_invite::render(state, manager),
         Screen::Chat { chat_id } => chat::render(chat_id, state, manager),
-        other => placeholder(other),
+        Screen::GroupDetails { group_id } => group_details::render(group_id, state, manager),
+        Screen::DeviceRoster => device_roster::render(state, manager),
+        Screen::AwaitingDeviceApproval => awaiting_device_approval::render(state, manager),
+        Screen::DeviceRevoked => device_revoked::render(state, manager),
+        Screen::Settings => settings::render(state, manager),
     }
 }
 
@@ -44,15 +59,6 @@ pub fn title(screen: &Screen) -> &'static str {
         Screen::AwaitingDeviceApproval => "Awaiting approval",
         Screen::DeviceRevoked => "Device revoked",
     }
-}
-
-fn placeholder(screen: &Screen) -> gtk::Widget {
-    let label = gtk::Label::new(Some(&format!("{}\n(not implemented yet)", title(screen))));
-    label.set_vexpand(true);
-    label.set_valign(gtk::Align::Center);
-    label.set_halign(gtk::Align::Center);
-    label.add_css_class("dim-label");
-    label.upcast()
 }
 
 pub(crate) fn screen_container() -> gtk::Box {

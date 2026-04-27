@@ -29,7 +29,9 @@ pub fn build_ui(app: &adw::Application) {
     {
         let manager = manager.clone();
         back_button.connect_clicked(move |_| {
-            manager.dispatch(AppAction::UpdateScreenStack { stack: Vec::new() });
+            let mut stack = manager.current_state().router.screen_stack;
+            stack.pop();
+            manager.dispatch(AppAction::UpdateScreenStack { stack });
         });
     }
     header.pack_start(&back_button);
@@ -47,30 +49,47 @@ pub fn build_ui(app: &adw::Application) {
     }
     header.pack_end(&new_chat_button);
 
+    let settings_button = gtk::Button::from_icon_name("preferences-system-symbolic");
+    settings_button.set_tooltip_text(Some("Settings"));
+    settings_button.set_visible(false);
+    {
+        let manager = manager.clone();
+        settings_button.connect_clicked(move |_| {
+            manager.dispatch(AppAction::PushScreen {
+                screen: Screen::Settings,
+            });
+        });
+    }
+    header.pack_start(&settings_button);
+
     let toolbar = adw::ToolbarView::new();
     toolbar.add_top_bar(&header);
 
     let content_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
     content_slot.set_vexpand(true);
-    toolbar.set_content(Some(&content_slot));
+
+    let toast_overlay = adw::ToastOverlay::new();
+    toast_overlay.set_child(Some(&content_slot));
+    toolbar.set_content(Some(&toast_overlay));
 
     window.set_content(Some(&toolbar));
 
-    let current = Rc::new(RefCell::new(manager.initial_state()));
-    apply_state(
-        &content_slot,
-        &back_button,
-        &new_chat_button,
-        &title_label,
-        &manager,
-        &current.borrow(),
-    );
+    let current = Rc::new(RefCell::new(manager.current_state()));
+    let last_toast: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
+    let header_widgets = HeaderWidgets {
+        back: back_button.clone(),
+        new_chat: new_chat_button.clone(),
+        settings: settings_button.clone(),
+        title: title_label.clone(),
+    };
+    apply_state(&content_slot, &header_widgets, &manager, &current.borrow());
+    show_toast_if_changed(&toast_overlay, &last_toast, &current.borrow().toast);
 
     let update_rx = manager.update_rx();
     let content_for_updates = content_slot.clone();
-    let back_for_updates = back_button.clone();
-    let new_chat_for_updates = new_chat_button.clone();
-    let title_for_updates = title_label.clone();
+    let header_for_updates = header_widgets.clone();
+    let toast_for_updates = toast_overlay.clone();
+    let last_toast_for_updates = last_toast.clone();
     let manager_for_updates = manager.clone();
     let current_for_updates = current.clone();
     glib::MainContext::default().spawn_local(async move {
@@ -81,12 +100,11 @@ pub fn build_ui(app: &adw::Application) {
                     *slot = state;
                     apply_state(
                         &content_for_updates,
-                        &back_for_updates,
-                        &new_chat_for_updates,
-                        &title_for_updates,
+                        &header_for_updates,
                         &manager_for_updates,
                         &slot,
                     );
+                    show_toast_if_changed(&toast_for_updates, &last_toast_for_updates, &slot.toast);
                 }
             }
         }
@@ -95,11 +113,40 @@ pub fn build_ui(app: &adw::Application) {
     window.present();
 }
 
+fn show_toast_if_changed(
+    overlay: &adw::ToastOverlay,
+    last_toast: &Rc<RefCell<Option<String>>>,
+    current: &Option<String>,
+) {
+    let same = match (last_toast.borrow().as_ref(), current.as_ref()) {
+        (Some(a), Some(b)) => a == b,
+        (None, None) => true,
+        _ => false,
+    };
+    if same {
+        return;
+    }
+    *last_toast.borrow_mut() = current.clone();
+    if let Some(text) = current {
+        if !text.is_empty() {
+            let toast = adw::Toast::new(text);
+            toast.set_timeout(3);
+            overlay.add_toast(toast);
+        }
+    }
+}
+
+#[derive(Clone)]
+struct HeaderWidgets {
+    back: gtk::Button,
+    new_chat: gtk::Button,
+    settings: gtk::Button,
+    title: gtk::Label,
+}
+
 fn apply_state(
     slot: &gtk::Box,
-    back: &gtk::Button,
-    new_chat: &gtk::Button,
-    title: &gtk::Label,
+    header: &HeaderWidgets,
     manager: &Rc<AppManager>,
     state: &AppState,
 ) {
@@ -108,9 +155,14 @@ fn apply_state(
     }
 
     let screen = current_screen(state);
-    back.set_visible(!state.router.screen_stack.is_empty());
-    new_chat.set_visible(matches!(screen, Screen::ChatList));
-    title.set_label(screens::title(&screen));
+    header.back.set_visible(!state.router.screen_stack.is_empty());
+    header
+        .new_chat
+        .set_visible(matches!(screen, Screen::ChatList));
+    header
+        .settings
+        .set_visible(matches!(screen, Screen::ChatList));
+    header.title.set_label(screens::title(&screen));
 
     let widget = screens::render(&screen, state, manager);
     slot.append(&widget);

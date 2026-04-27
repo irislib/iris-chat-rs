@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
 use ndr_demo_core::{AppAction, AppState, ChatThreadSnapshot};
@@ -8,7 +9,7 @@ use crate::screens::screen_container;
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     if state.chat_list.is_empty() {
-        return empty_state().upcast();
+        return empty_state();
     }
 
     let scrolled = gtk::ScrolledWindow::new();
@@ -23,19 +24,23 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     list.set_margin_start(12);
     list.set_margin_end(12);
 
+    let now = unix_now();
     for chat in &state.chat_list {
-        list.append(&row_for(chat, manager));
+        list.append(&row_for(chat, now, manager));
     }
 
     scrolled.set_child(Some(&list));
     scrolled.upcast()
 }
 
-fn row_for(chat: &ChatThreadSnapshot, manager: &Rc<AppManager>) -> adw::ActionRow {
+fn row_for(chat: &ChatThreadSnapshot, now: u64, manager: &Rc<AppManager>) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(escape(&chat.display_name))
         .activatable(true)
         .build();
+
+    let avatar = adw::Avatar::new(40, Some(&chat.display_name), true);
+    row.add_prefix(&avatar);
 
     let subtitle = if chat.is_typing {
         "Typing…".to_string()
@@ -47,16 +52,27 @@ fn row_for(chat: &ChatThreadSnapshot, manager: &Rc<AppManager>) -> adw::ActionRo
     };
     row.set_subtitle(&escape(&subtitle));
 
+    let suffix = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    suffix.set_valign(gtk::Align::Center);
+    suffix.set_halign(gtk::Align::End);
+
+    if let Some(secs) = chat.last_message_at_secs {
+        let label = gtk::Label::new(Some(&relative_time(secs, now)));
+        label.add_css_class("caption");
+        label.add_css_class("dim-label");
+        label.set_halign(gtk::Align::End);
+        suffix.append(&label);
+    }
+
     if chat.unread_count > 0 {
         let badge = gtk::Label::new(Some(&format!("{}", chat.unread_count)));
         badge.add_css_class("caption");
         badge.add_css_class("accent");
-        row.add_suffix(&badge);
+        badge.set_halign(gtk::Align::End);
+        suffix.append(&badge);
     }
 
-    let chevron = gtk::Image::from_icon_name("go-next-symbolic");
-    chevron.add_css_class("dim-label");
-    row.add_suffix(&chevron);
+    row.add_suffix(&suffix);
 
     let manager = manager.clone();
     let chat_id = chat.chat_id.clone();
@@ -88,4 +104,37 @@ fn empty_state() -> gtk::Widget {
 
 fn escape(s: &str) -> String {
     glib::markup_escape_text(s).to_string()
+}
+
+pub(crate) fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+pub(crate) fn relative_time(secs: u64, now: u64) -> String {
+    if secs == 0 || secs > now {
+        return String::new();
+    }
+    let diff = now - secs;
+    if diff < 60 {
+        return "now".to_string();
+    }
+    if diff < 3600 {
+        return format!("{}m", diff / 60);
+    }
+    if diff < 86_400 {
+        return format!("{}h", diff / 3600);
+    }
+    if diff < 86_400 * 7 {
+        return format!("{}d", diff / 86_400);
+    }
+    if diff < 86_400 * 30 {
+        return format!("{}w", diff / (86_400 * 7));
+    }
+    if diff < 86_400 * 365 {
+        return format!("{}mo", diff / (86_400 * 30));
+    }
+    format!("{}y", diff / (86_400 * 365))
 }

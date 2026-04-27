@@ -70,7 +70,7 @@ impl AppManager {
         }
     }
 
-    pub fn initial_state(&self) -> AppState {
+    pub fn current_state(&self) -> AppState {
         self.ffi.state()
     }
 
@@ -80,6 +80,10 @@ impl AppManager {
 
     pub fn dispatch(&self, action: AppAction) {
         self.ffi.dispatch(action);
+    }
+
+    pub fn export_support_bundle_json(&self) -> String {
+        self.ffi.export_support_bundle_json()
     }
 
     #[allow(dead_code)]
