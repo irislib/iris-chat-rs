@@ -62,6 +62,17 @@ fun GroupDetailsScreen(
     var memberInput by remember(groupId) { mutableStateOf("") }
     var showScanner by remember { mutableStateOf(false) }
     val normalizedInput = normalizePeerInput(memberInput)
+    val localOwnerHex = appState.account?.publicKeyHex
+    val existingMemberHexes =
+        details?.members?.map { it.ownerPubkeyHex }?.toSet().orEmpty()
+    val knownUsers =
+        appState.chatList
+            .filter { chat ->
+                chat.kind == to.iris.chat.rust.ChatKind.DIRECT &&
+                    chat.chatId != localOwnerHex &&
+                    chat.chatId !in existingMemberHexes
+            }
+            .filterByQuery(memberInput)
     val pictureData by rememberNhashImageData(appManager, details?.pictureUrl)
     val pictureUrl =
         details
@@ -307,11 +318,11 @@ fun GroupDetailsScreen(
                                 .testTag("groupDetailsAddMemberInput"),
                         placeholder = {
                             Text(
-                                text = "User ID or nostr:...",
+                                text = "Search or paste user ID",
                                 color = IrisTheme.palette.muted,
                             )
                         },
-                        minLines = 2,
+                        singleLine = true,
                         colors =
                             TextFieldDefaults.colors(
                                 focusedContainerColor = IrisTheme.palette.panelAlt,
@@ -364,6 +375,60 @@ fun GroupDetailsScreen(
                             )
                         },
                     )
+                }
+
+                if (knownUsers.isNotEmpty()) {
+                    IrisSectionCard {
+                        Text(
+                            text = if (memberInput.isBlank()) "Known users" else "Search results",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        knownUsers.forEach { chat ->
+                            val title =
+                                chat.displayName.trim().ifEmpty {
+                                    chat.subtitle.orEmpty().ifEmpty { chat.chatId }
+                                }
+                            val subtitle =
+                                chat.subtitle?.takeIf { it.isNotBlank() && it != title }
+                            Row(
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            appManager.addGroupMembers(groupId, listOf(chat.chatId))
+                                            memberInput = ""
+                                        }
+                                        .padding(vertical = 8.dp)
+                                        .testTag("groupDetailsKnownUser-${chat.chatId.take(12)}"),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                IrisAvatar(label = title, size = 38.dp)
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                                ) {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                    )
+                                    if (subtitle != null) {
+                                        Text(
+                                            text = subtitle,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = IrisTheme.palette.muted,
+                                        )
+                                    }
+                                }
+                                Icon(
+                                    imageVector = IrisIcons.NewGroup,
+                                    contentDescription = null,
+                                    tint = IrisTheme.palette.accent,
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -59,6 +59,7 @@ fun NewGroupScreen(
     val normalizedInput = normalizePeerInput(memberInput)
     val existingDirectChats =
         appState.chatList.filter { it.kind == ChatKind.DIRECT && it.chatId != localOwner }
+    val filteredKnownChats = existingDirectChats.filterByQuery(memberInput)
     val canCreate = name.isNotBlank() && !appState.busy.creatingGroup
 
     fun addOwner(ownerInput: String) {
@@ -131,11 +132,11 @@ fun NewGroupScreen(
                             .testTag("newGroupMemberInput"),
                     placeholder = {
                         Text(
-                            text = "User ID or nostr:...",
+                            text = "Search or paste user ID",
                             color = IrisTheme.palette.muted,
                         )
                     },
-                    minLines = 2,
+                    singleLine = true,
                     colors =
                         TextFieldDefaults.colors(
                             focusedContainerColor = IrisTheme.palette.panelAlt,
@@ -208,13 +209,13 @@ fun NewGroupScreen(
                 }
             }
 
-            if (existingDirectChats.isNotEmpty()) {
+            if (filteredKnownChats.isNotEmpty()) {
                 IrisSectionCard {
                     Text(
-                        text = "Existing chats",
+                        text = if (memberInput.isBlank()) "Known users" else "Search results",
                         style = MaterialTheme.typography.titleMedium,
                     )
-                    existingDirectChats.forEach { chat ->
+                    filteredKnownChats.forEach { chat ->
                         val selected = chat.chatId in selectedOwners
                         val presentation = ownerPresentation(
                             owner = chat.chatId,
@@ -234,6 +235,7 @@ fun NewGroupScreen(
                                     } else {
                                         selectedOwners + chat.chatId
                                     }
+                                memberInput = ""
                             },
                         )
                     }
