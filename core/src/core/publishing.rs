@@ -17,11 +17,21 @@ impl AppCore {
         };
 
         let tx = self.core_sender.clone();
+        let relay_count = relay_urls.len();
         self.runtime.spawn(async move {
-            let success = publish_event_first_ack(&client, &relay_urls, &event, label)
-                .await
-                .is_ok();
+            let result = publish_event_first_ack(&client, &relay_urls, &event, label).await;
+            let success = result.is_ok();
+            let detail = match &result {
+                Ok(()) => format!("label={label} success=true relays={relay_count}"),
+                Err(error) => format!(
+                    "label={label} success=false relays={relay_count} error={error}"
+                ),
+            };
             if let Some((message_id, chat_id)) = completion {
+                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                    category: "publish.runtime".to_string(),
+                    detail: detail.clone(),
+                })));
                 let _ = tx.send(CoreMsg::Internal(Box::new(
                     InternalEvent::PublishFinished {
                         message_id,
@@ -32,7 +42,7 @@ impl AppCore {
             } else {
                 let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
                     category: "publish.runtime".to_string(),
-                    detail: format!("label={label} success={success}"),
+                    detail,
                 })));
             }
         });

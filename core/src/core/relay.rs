@@ -179,17 +179,39 @@ impl AppCore {
             );
             return;
         };
-        let Some(client) = self
+        let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
-            .map(|logged_in| logged_in.client.clone())
+            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
         else {
             return;
         };
+        let tx = self.core_sender.clone();
+        let logged_subid = subid.clone();
         self.runtime.spawn(async move {
-            let _ = client
-                .subscribe_with_id(SubscriptionId::new(subid), vec![filter], None)
+            // Make sure we're actually connected before sending REQ; otherwise
+            // the subscription is queued internally and any backfill from the
+            // relay never reaches us.
+            client
+                .connect_with_timeout(Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
                 .await;
+            let detail = match client
+                .subscribe_with_id(SubscriptionId::new(subid), vec![filter], None)
+                .await
+            {
+                Ok(_) => format!(
+                    "subid={logged_subid} relays={} status=ok",
+                    relay_urls.len()
+                ),
+                Err(error) => format!(
+                    "subid={logged_subid} relays={} status=err error={error}",
+                    relay_urls.len()
+                ),
+            };
+            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                category: "runtime.subscribe".to_string(),
+                detail,
+            })));
         });
     }
 
