@@ -755,6 +755,157 @@ fn newer_chat_message_clears_stale_typing_indicator() {
 }
 
 #[test]
+fn first_received_message_clears_typing_indicator_in_chat_list() {
+    // Repro for the "chat row stuck on Typing after the very first
+    // peer message" complaint: the chat starts with no messages,
+    // peer types, peer sends, the chat list row must drop the
+    // typing badge as soon as the message lands. Goes through the
+    // production path (`apply_runtime_text_message`), which is what
+    // the relay event handler calls.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("typing-first-msg", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let sender_hex = sender.public_key().to_hex();
+
+    core.set_typing_indicator(chat_id.clone(), sender_hex.clone(), 100);
+    core.rebuild_state();
+    let row_before = core
+        .state
+        .chat_list
+        .iter()
+        .find(|row| row.chat_id == chat_id);
+    if let Some(row) = row_before {
+        assert!(
+            row.is_typing,
+            "precondition: typing badge visible before the first message"
+        );
+    }
+
+    core.apply_runtime_text_message(
+        sender.public_key(),
+        Some(chat_id.clone()),
+        "hi".to_string(),
+        101,
+        None,
+        Some("msg-1".to_string()),
+        None,
+    );
+    core.rebuild_state();
+
+    let row = core
+        .state
+        .chat_list
+        .iter()
+        .find(|row| row.chat_id == chat_id)
+        .expect("chat row");
+    assert!(
+        !row.is_typing,
+        "chat list must drop the typing badge once the peer's first message lands"
+    );
+    assert!(!core
+        .typing_indicators
+        .values()
+        .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex));
+}
+
+#[test]
+fn first_received_message_clears_typing_indicator_in_open_chat() {
+    // Same case as the chat-list version, but with the chat actively
+    // open. The in-chat typing badge reads from
+    // `current_chat.typing_indicators`, which goes through the same
+    // projection filter — must drop the indicator after the message.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("typing-first-msg-open", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let sender_hex = sender.public_key().to_hex();
+
+    // Open the chat: set active + create the (empty) thread record so
+    // `current_chat` actually projects.
+    core.active_chat_id = Some(chat_id.clone());
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 0,
+            updated_at_secs: 0,
+            messages: Vec::new(),
+        },
+    );
+    core.set_typing_indicator(chat_id.clone(), sender_hex.clone(), 100);
+    core.rebuild_state();
+    let current = core
+        .state
+        .current_chat
+        .as_ref()
+        .expect("current chat present");
+    assert!(
+        !current.typing_indicators.is_empty(),
+        "precondition: indicator visible in open chat"
+    );
+
+    core.apply_runtime_text_message(
+        sender.public_key(),
+        Some(chat_id.clone()),
+        "hi".to_string(),
+        101,
+        None,
+        Some("msg-1".to_string()),
+        None,
+    );
+    core.rebuild_state();
+
+    let current = core
+        .state
+        .current_chat
+        .as_ref()
+        .expect("current chat present");
+    assert!(
+        current.typing_indicators.is_empty(),
+        "open chat must drop the typing badge after the first message"
+    );
+}
+
+#[test]
+fn first_received_message_at_same_second_clears_typing_indicator() {
+    // Same bug, edge case: typing event and the chat message share
+    // a one-second wire-clock tick. Production path again.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("typing-same-second", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let sender_hex = sender.public_key().to_hex();
+
+    core.set_typing_indicator(chat_id.clone(), sender_hex.clone(), 100);
+    core.apply_runtime_text_message(
+        sender.public_key(),
+        Some(chat_id.clone()),
+        "hi".to_string(),
+        100,
+        None,
+        Some("msg-1".to_string()),
+        None,
+    );
+    core.rebuild_state();
+
+    let row = core
+        .state
+        .chat_list
+        .iter()
+        .find(|row| row.chat_id == chat_id)
+        .expect("chat row");
+    assert!(!row.is_typing);
+    assert!(!core
+        .typing_indicators
+        .values()
+        .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex));
+}
+
+#[test]
 fn web_runtime_control_rumors_do_not_create_chat_messages() {
     let owner = Keys::generate();
     let device = Keys::generate();
