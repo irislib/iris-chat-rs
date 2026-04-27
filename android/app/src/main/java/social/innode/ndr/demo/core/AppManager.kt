@@ -16,10 +16,14 @@ import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
@@ -32,7 +36,17 @@ import social.innode.ndr.demo.account.SecureSecretStore
 import social.innode.ndr.demo.account.StoredAccountBundle
 import social.innode.ndr.demo.rust.AppAction
 import social.innode.ndr.demo.rust.AppReconciler
+import social.innode.ndr.demo.rust.AccountSnapshot
 import social.innode.ndr.demo.rust.AppState
+import social.innode.ndr.demo.rust.BusyState
+import social.innode.ndr.demo.rust.ChatThreadSnapshot
+import social.innode.ndr.demo.rust.CurrentChatSnapshot
+import social.innode.ndr.demo.rust.DeviceRosterSnapshot
+import social.innode.ndr.demo.rust.GroupDetailsSnapshot
+import social.innode.ndr.demo.rust.NetworkStatusSnapshot
+import social.innode.ndr.demo.rust.PreferencesSnapshot
+import social.innode.ndr.demo.rust.PublicInviteSnapshot
+import social.innode.ndr.demo.rust.Router
 import social.innode.ndr.demo.rust.AppUpdate
 import social.innode.ndr.demo.rust.FfiApp
 import social.innode.ndr.demo.rust.MessageAttachmentSnapshot
@@ -101,7 +115,56 @@ class AppManager(
     private var restoreCheckComplete = false
 
     private val mutableState = MutableStateFlow(rust.state())
+
+    /**
+     * Legacy whole-state flow. Kept for callers that genuinely need the
+     * consolidated snapshot (notification side effects, ad-hoc reads).
+     * **Composable screens should subscribe to one of the slice flows
+     * below instead** — `state.collectAsStateWithLifecycle()` recomposes
+     * on every relay event, even those that don't change anything the
+     * screen renders.
+     */
     val state: StateFlow<AppState> = mutableState.asStateFlow()
+
+    // Per-slice flows. Each derives from `mutableState` via
+    // `map { ... }.distinctUntilChanged()` so a Compose subscriber only
+    // recomposes when its specific slice actually changed. This is what
+    // turns a backlog of relay events from a multi-second UI freeze into
+    // imperceptible updates: ChatScreen no longer recomposes when only
+    // chat_list changes, ChatListScreen doesn't recompose when only
+    // current_chat changes, etc.
+    val router: StateFlow<Router> = slice("router") { it.router }
+    val account: StateFlow<AccountSnapshot?> = slice("account") { it.account }
+    val deviceRoster: StateFlow<DeviceRosterSnapshot?> =
+        slice("deviceRoster") { it.deviceRoster }
+    val busy: StateFlow<BusyState> = slice("busy") { it.busy }
+    val chatList: StateFlow<List<ChatThreadSnapshot>> =
+        slice("chatList") { it.chatList }
+    val currentChat: StateFlow<CurrentChatSnapshot?> =
+        slice("currentChat") { it.currentChat }
+    val groupDetails: StateFlow<GroupDetailsSnapshot?> =
+        slice("groupDetails") { it.groupDetails }
+    val publicInvite: StateFlow<PublicInviteSnapshot?> =
+        slice("publicInvite") { it.publicInvite }
+    val networkStatus: StateFlow<NetworkStatusSnapshot?> =
+        slice("networkStatus") { it.networkStatus }
+    val preferences: StateFlow<PreferencesSnapshot> =
+        slice("preferences") { it.preferences }
+    val toast: StateFlow<String?> = slice("toast") { it.toast }
+
+    @Suppress("unused") // tag is helpful for tracing during perf work
+    private fun <T> slice(
+        @Suppress("UNUSED_PARAMETER") tag: String,
+        select: (AppState) -> T,
+    ): StateFlow<T> =
+        mutableState
+            .map(select)
+            .distinctUntilChanged()
+            .stateIn(
+                scope = applicationScope,
+                started = SharingStarted.Eagerly,
+                initialValue = select(mutableState.value),
+            )
 
     private val mutableBootstrapState =
         MutableStateFlow<AccountBootstrapState>(AccountBootstrapState.Loading)

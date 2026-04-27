@@ -154,9 +154,12 @@ fun NdrApp(container: AppContainer) {
                     }
 
                     is Screen.Chat -> {
+                        // ChatScreen takes only `(appManager, chatId)` and
+                        // collects its own state slices internally. Passing
+                        // `appState` here would invalidate ChatScreen's
+                        // memoization on every relay event.
                         ChatScreen(
                             appManager = appManager,
-                            appState = appState,
                             chatId = screen.chatId,
                         )
                     }

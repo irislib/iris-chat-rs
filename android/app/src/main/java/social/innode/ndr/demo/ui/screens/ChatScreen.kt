@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
@@ -62,7 +63,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import social.innode.ndr.demo.core.AppManager
 import social.innode.ndr.demo.rust.AppAction
-import social.innode.ndr.demo.rust.AppState
 import social.innode.ndr.demo.rust.ChatKind
 import social.innode.ndr.demo.rust.ChatMessageSnapshot
 import social.innode.ndr.demo.rust.DeliveryState
@@ -94,12 +94,22 @@ private val DisappearingMessageOptions =
 @Composable
 fun ChatScreen(
     appManager: AppManager,
-    appState: AppState,
     chatId: String,
 ) {
+    // Subscribe to per-slice flows so this screen only recomposes when
+    // *its* state slice changed. Tapping into the consolidated
+    // `appManager.state` would force a full recompose every time a
+    // relay event landed in another chat, which on Android debug took
+    // 1-2 s of UI thread time per relay event.
+    val currentChat by appManager.currentChat.collectAsStateWithLifecycle()
+    val preferences by appManager.preferences.collectAsStateWithLifecycle()
+    val busy by appManager.busy.collectAsStateWithLifecycle()
+    val router by appManager.router.collectAsStateWithLifecycle()
+    val chatListSnapshots by appManager.chatList.collectAsStateWithLifecycle()
+
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
-    val chat = appState.currentChat?.takeIf { it.chatId == chatId }
+    val chat = currentChat?.takeIf { it.chatId == chatId }
     var draft by remember(chatId) { mutableStateOf("") }
     var selectedAttachments by remember(chatId) { mutableStateOf<List<PickedAttachment>>(emptyList()) }
     val listState = rememberLazyListState()
@@ -114,12 +124,13 @@ fun ChatScreen(
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
     var directChatInfoOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
-    val backUnreadCount =
-        remember(appState.chatList, chatId) {
-            appState.chatList
+    val backUnreadCount by remember(chatId) {
+        derivedStateOf {
+            chatListSnapshots
                 .filter { it.chatId != chatId }
                 .fold(0uL) { total, thread -> total + thread.unreadCount }
         }
+    }
     val attachmentPicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
             if (uris.isEmpty()) {
@@ -240,7 +251,7 @@ fun ChatScreen(
                     },
                 onBack = {
                     appManager.dispatch(
-                        AppAction.UpdateScreenStack(appState.router.screenStack.dropLast(1)),
+                        AppAction.UpdateScreenStack(router.screenStack.dropLast(1)),
                     )
                 },
                 backBadgeCount = backUnreadCount,
@@ -259,7 +270,7 @@ fun ChatScreen(
                                         ?.let { url ->
                                             proxiedImageUrl(
                                                 originalSrc = url,
-                                                preferences = appState.preferences,
+                                                preferences = preferences,
                                                 width = 72u,
                                                 height = 72u,
                                                 square = true,
@@ -413,8 +424,8 @@ fun ChatScreen(
                 ComposerBar(
                     draft = draft,
                     selectedAttachments = selectedAttachments,
-                    isSending = appState.busy.sendingMessage,
-                    isUploading = appState.busy.uploadingAttachment,
+                    isSending = busy.sendingMessage,
+                    isUploading = busy.uploadingAttachment,
                     modifier = Modifier.onGloballyPositioned { coordinates ->
                         composerBounds = coordinates.boundsInParent()
                     },
@@ -511,7 +522,6 @@ fun ChatScreen(
             if (directChatInfoOpen && chat != null) {
                 DirectChatInfoSheet(
                     appManager = appManager,
-                    appState = appState,
                     chatId = chatId,
                     onDismiss = { directChatInfoOpen = false },
                 )
@@ -523,11 +533,12 @@ fun ChatScreen(
 @Composable
 private fun DirectChatInfoSheet(
     appManager: AppManager,
-    appState: AppState,
     chatId: String,
     onDismiss: () -> Unit,
 ) {
-    val chat = appState.currentChat?.takeIf { it.chatId == chatId } ?: return
+    val currentChat by appManager.currentChat.collectAsStateWithLifecycle()
+    val preferences by appManager.preferences.collectAsStateWithLifecycle()
+    val chat = currentChat?.takeIf { it.chatId == chatId } ?: return
     val avatarBytes by rememberNhashImageData(appManager, chat.pictureUrl)
     val proxiedAvatarUrl =
         chat.pictureUrl
@@ -535,7 +546,7 @@ private fun DirectChatInfoSheet(
             ?.let { url ->
                 proxiedImageUrl(
                     originalSrc = url,
-                    preferences = appState.preferences,
+                    preferences = preferences,
                     width = 192u,
                     height = 192u,
                     square = true,
