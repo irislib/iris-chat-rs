@@ -734,16 +734,13 @@ private struct ChatMessageActionDock: View {
                     .frame(width: 26, height: 24)
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $showEmojiPicker, arrowEdge: .top) {
-                let picker = IrisEmojiPicker { emoji in
+            .sheet(isPresented: $showEmojiPicker) {
+                IrisEmojiPicker { emoji in
                     showEmojiPicker = false
                     onReact(emoji)
                 }
-                if #available(iOS 16.4, macOS 13.3, *) {
-                    picker.presentationCompactAdaptation(.popover)
-                } else {
-                    picker
-                }
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
             }
             dockButton("arrowshape.turn.up.left", action: onReply)
             Menu {
