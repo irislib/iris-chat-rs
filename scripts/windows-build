@@ -527,16 +527,17 @@ Copy-Item \$nsiSrc \$nsiCopy -Force
 if (Test-Path \$outPath) { Remove-Item \$outPath -Force }
 
 \$iconPath = Join-Path $guest_repo 'windows\\IrisChat\\Resources\\IrisChat.ico'
-\$iconArg = if (Test-Path \$iconPath) { '/DIRIS_ICON_PATH=' + \$iconPath } else { \$null }
+\$nsiArgs = @(
+  ('/DIRIS_VERSION=' + ${version_quoted}),
+  ('/DIRIS_BUILD_NUM=' + ${build_num_quoted}),
+  ('/DIRIS_PUBLISH_DIR=' + \$publishDir),
+  ('/DIRIS_OUTPUT=' + \$outPath),
+  '/DIRIS_EXE_NAME=IrisChat.exe'
+)
+if (Test-Path \$iconPath) { \$nsiArgs += ('/DIRIS_ICON_PATH=' + \$iconPath) }
+\$nsiArgs += \$nsiCopy
 
-& \$makensis.Path `
-  ('/DIRIS_VERSION=' + ${version_quoted}) `
-  ('/DIRIS_BUILD_NUM=' + ${build_num_quoted}) `
-  ('/DIRIS_PUBLISH_DIR=' + \$publishDir) `
-  ('/DIRIS_OUTPUT=' + \$outPath) `
-  '/DIRIS_EXE_NAME=IrisChat.exe' `
-  \$iconArg `
-  \$nsiCopy
+& \$makensis.Path @nsiArgs
 if (\$LASTEXITCODE -ne 0) { throw ("makensis failed (exit {0})" -f \$LASTEXITCODE) }
 
 Remove-Item \$workDir -Recurse -Force
