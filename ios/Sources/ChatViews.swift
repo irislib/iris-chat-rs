@@ -647,10 +647,15 @@ private struct IrisDeliveryGlyph: View {
     let delivery: DeliveryState
 
     var body: some View {
-        glyph
-            .font(.system(size: 11, weight: .bold))
-            .foregroundStyle(tint)
-            .accessibilityLabel(irisDeliveryLabel(delivery))
+        Group {
+            if let tint {
+                glyph.foregroundStyle(tint)
+            } else {
+                glyph
+            }
+        }
+        .font(.system(size: 9, weight: .bold))
+        .accessibilityLabel(irisDeliveryLabel(delivery))
     }
 
     @ViewBuilder
@@ -661,7 +666,7 @@ private struct IrisDeliveryGlyph: View {
         case .sent:
             Image(systemName: "checkmark")
         case .received, .seen:
-            HStack(spacing: -8) {
+            HStack(spacing: -6) {
                 Image(systemName: "checkmark")
                 Image(systemName: "checkmark")
             }
@@ -670,14 +675,14 @@ private struct IrisDeliveryGlyph: View {
         }
     }
 
-    private var tint: Color {
+    private var tint: Color? {
         switch delivery {
         case .seen:
             return Color(.sRGB, red: 0.055, green: 0.647, blue: 0.914, opacity: 1)
         case .failed:
             return .red
         default:
-            return palette.muted
+            return nil
         }
     }
 }
