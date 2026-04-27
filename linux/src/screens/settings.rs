@@ -138,7 +138,6 @@ fn profile_group(
     }
     avatar_row.add_prefix(&avatar);
     avatar_row.set_title(&account.display_name);
-    avatar_row.set_subtitle(&short_npub(&account.npub));
 
     let change_pic = gtk::Button::with_label("Change photo");
     change_pic.add_css_class("flat");
@@ -243,34 +242,28 @@ fn profile_group(
 fn present_qr_dialog(parent: Option<&gtk::Window>, name: &str, npub: &str) {
     let dialog = adw::Dialog::builder()
         .title(name)
-        .content_width(360)
+        .content_width(320)
         .build();
 
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    content.set_margin_top(20);
-    content.set_margin_bottom(20);
-    content.set_margin_start(20);
-    content.set_margin_end(20);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    content.set_margin_top(24);
+    content.set_margin_bottom(24);
+    content.set_margin_start(24);
+    content.set_margin_end(24);
+    content.set_halign(gtk::Align::Center);
 
     let header = gtk::Label::new(Some(name));
     header.add_css_class("title-2");
+    header.set_halign(gtk::Align::Center);
     content.append(&header);
 
     content.append(&qr::build(npub, 240));
 
-    let label = gtk::Label::new(Some(npub));
-    label.add_css_class("monospace");
-    label.add_css_class("caption");
-    label.add_css_class("dim-label");
-    label.set_wrap(true);
-    label.set_max_width_chars(40);
-    label.set_selectable(true);
-    label.set_xalign(0.5);
-    content.append(&label);
-
     let copy = gtk::Button::with_label("Copy");
     copy.add_css_class("pill");
     copy.add_css_class("suggested-action");
+    copy.set_halign(gtk::Align::Center);
+    copy.set_width_request(200);
     let npub_owned = npub.to_string();
     copy.connect_clicked(move |_| clipboard::copy(&npub_owned));
     content.append(&copy);
@@ -431,11 +424,4 @@ fn about_group(state: &AppState) -> adw::PreferencesGroup {
     }
 
     group
-}
-
-fn short_npub(npub: &str) -> String {
-    if npub.len() <= 16 {
-        return npub.to_string();
-    }
-    format!("{}…{}", &npub[..10], &npub[npub.len() - 6..])
 }

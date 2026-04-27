@@ -6,12 +6,18 @@ use ndr_demo_core::{
 };
 
 use crate::app_manager::AppManager;
-use crate::screens::screen_container;
 use crate::widgets::image_cache;
 
 pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
-    let container = screen_container();
-    container.set_vexpand(true);
+    let scrolled = gtk::ScrolledWindow::new();
+    scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
+    scrolled.set_vexpand(true);
+
+    let inner = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    inner.set_margin_top(20);
+    inner.set_margin_bottom(20);
+    inner.set_margin_start(16);
+    inner.set_margin_end(16);
 
     let Some(details) = state
         .group_details
@@ -22,19 +28,10 @@ pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk
         label.add_css_class("dim-label");
         label.set_vexpand(true);
         label.set_valign(gtk::Align::Center);
-        container.append(&label);
-        return container.upcast();
+        inner.append(&label);
+        scrolled.set_child(Some(&inner));
+        return scrolled.upcast();
     };
-
-    let scrolled = gtk::ScrolledWindow::new();
-    scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
-    scrolled.set_vexpand(true);
-
-    let inner = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    inner.set_margin_top(12);
-    inner.set_margin_bottom(12);
-    inner.set_margin_start(12);
-    inner.set_margin_end(12);
 
     inner.append(&settings_card(group_id, details, state, manager));
     inner.append(&members_card(group_id, details, state, manager));
@@ -43,9 +40,7 @@ pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk
     }
 
     scrolled.set_child(Some(&inner));
-    container.append(&scrolled);
-
-    container.upcast()
+    scrolled.upcast()
 }
 
 fn settings_card(
@@ -177,14 +172,11 @@ fn member_row(
     manager: &Rc<AppManager>,
 ) -> adw::ActionRow {
     let title = if member.display_name.is_empty() {
-        member.npub.clone()
+        "Member".to_string()
     } else {
         member.display_name.clone()
     };
-    let row = adw::ActionRow::builder()
-        .title(title)
-        .subtitle(&member.npub)
-        .build();
+    let row = adw::ActionRow::builder().title(title).build();
     let avatar = adw::Avatar::new(36, Some(&member.display_name), true);
     row.add_prefix(&avatar);
 

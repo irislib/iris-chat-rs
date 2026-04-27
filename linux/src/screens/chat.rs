@@ -10,6 +10,13 @@ use crate::app_manager::AppManager;
 use crate::screens::chat_list::{relative_time, unix_now};
 use crate::widgets::image_cache;
 
+pub struct ChatInfoSnapshot {
+    pub display_name: String,
+    pub subtitle: Option<String>,
+    pub picture_url: Option<String>,
+    pub preferences: PreferencesSnapshot,
+}
+
 pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = gtk::Box::new(gtk::Orientation::Vertical, 0);
     container.set_vexpand(true);
@@ -31,48 +38,50 @@ pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk:
     container.upcast()
 }
 
-pub fn present_chat_info(
-    parent: Option<&gtk::Window>,
-    display_name: &str,
-    chat_id: &str,
-    subtitle: Option<&str>,
-) {
+pub fn present_chat_info(parent: Option<&gtk::Window>, info: ChatInfoSnapshot) {
     let dialog = adw::Dialog::builder()
-        .title(display_name)
-        .content_width(360)
+        .title(&info.display_name)
+        .content_width(320)
         .build();
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    content.set_margin_top(20);
-    content.set_margin_bottom(20);
-    content.set_margin_start(20);
-    content.set_margin_end(20);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    content.set_margin_top(28);
+    content.set_margin_bottom(28);
+    content.set_margin_start(24);
+    content.set_margin_end(24);
+    content.set_halign(gtk::Align::Center);
 
-    let header = gtk::Label::new(Some(display_name));
+    let avatar = adw::Avatar::new(96, Some(&info.display_name), true);
+    if let Some(url) = info.picture_url.as_deref() {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let proxied = proxied_image_url(
+                url.to_string(),
+                info.preferences.clone(),
+                Some(192),
+                Some(192),
+                true,
+            );
+            image_cache::fetch_into_avatar(&avatar, &proxied);
+        }
+    }
+    avatar.set_halign(gtk::Align::Center);
+    content.append(&avatar);
+
+    let header = gtk::Label::new(Some(&info.display_name));
     header.add_css_class("title-2");
+    header.set_halign(gtk::Align::Center);
+    header.set_wrap(true);
+    header.set_justify(gtk::Justification::Center);
     content.append(&header);
 
-    if let Some(subtitle) = subtitle {
+    if let Some(subtitle) = info.subtitle.as_deref().filter(|s| !s.is_empty()) {
         let sub = gtk::Label::new(Some(subtitle));
         sub.add_css_class("dim-label");
         sub.set_wrap(true);
-        sub.set_max_width_chars(40);
+        sub.set_max_width_chars(28);
+        sub.set_justify(gtk::Justification::Center);
+        sub.set_halign(gtk::Align::Center);
         content.append(&sub);
     }
-
-    let id_label = gtk::Label::new(Some(chat_id));
-    id_label.add_css_class("monospace");
-    id_label.add_css_class("caption");
-    id_label.add_css_class("dim-label");
-    id_label.set_wrap(true);
-    id_label.set_max_width_chars(40);
-    id_label.set_selectable(true);
-    content.append(&id_label);
-
-    let copy = gtk::Button::with_label("Copy ID");
-    copy.add_css_class("pill");
-    let chat_id_owned = chat_id.to_string();
-    copy.connect_clicked(move |_| crate::platform::clipboard::copy(&chat_id_owned));
-    content.append(&copy);
 
     dialog.set_child(Some(&content));
     dialog.present(parent);

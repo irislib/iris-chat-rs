@@ -97,9 +97,12 @@ pub fn build_ui(app: &adw::Application) {
                     .and_then(|r| r.downcast::<gtk::Window>().ok());
                 crate::screens::chat::present_chat_info(
                     parent.as_ref(),
-                    &chat.display_name,
-                    &chat.chat_id,
-                    chat.subtitle.as_deref(),
+                    crate::screens::chat::ChatInfoSnapshot {
+                        display_name: chat.display_name.clone(),
+                        subtitle: chat.subtitle.clone(),
+                        picture_url: chat.picture_url.clone(),
+                        preferences: state.preferences.clone(),
+                    },
                 );
             }
         });
@@ -328,8 +331,6 @@ fn attach_chat_title_click(
     let manager = manager.clone();
     let chat_id = chat.chat_id.clone();
     let group_id = chat.group_id.clone();
-    let display_name = chat.display_name.clone();
-    let subtitle = chat.subtitle.clone();
     gesture.connect_released(move |gesture, _, _, _| {
         let widget = gesture
             .widget()
@@ -339,14 +340,21 @@ fn attach_chat_title_click(
             manager.dispatch(AppAction::PushScreen {
                 screen: Screen::GroupDetails { group_id },
             });
-        } else {
-            crate::screens::chat::present_chat_info(
-                widget.as_ref(),
-                &display_name,
-                &chat_id,
-                subtitle.as_deref(),
-            );
+            return;
         }
+        let state = manager.current_state();
+        let Some(chat) = state.current_chat.as_ref().filter(|c| c.chat_id == chat_id) else {
+            return;
+        };
+        crate::screens::chat::present_chat_info(
+            widget.as_ref(),
+            crate::screens::chat::ChatInfoSnapshot {
+                display_name: chat.display_name.clone(),
+                subtitle: chat.subtitle.clone(),
+                picture_url: chat.picture_url.clone(),
+                preferences: state.preferences.clone(),
+            },
+        );
     });
     slot.add_controller(gesture);
 }

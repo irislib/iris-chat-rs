@@ -4,30 +4,27 @@ use adw::prelude::*;
 use ndr_demo_core::{AppAction, AppState, DeviceEntrySnapshot, DeviceRosterSnapshot};
 
 use crate::app_manager::AppManager;
-use crate::screens::screen_container;
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
-    let container = screen_container();
-    container.set_vexpand(true);
+    let scrolled = gtk::ScrolledWindow::new();
+    scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
+    scrolled.set_vexpand(true);
+
+    let inner = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    inner.set_margin_top(20);
+    inner.set_margin_bottom(20);
+    inner.set_margin_start(16);
+    inner.set_margin_end(16);
 
     let Some(roster) = state.device_roster.as_ref() else {
         let empty = gtk::Label::new(Some("No roster available."));
         empty.add_css_class("dim-label");
         empty.set_vexpand(true);
         empty.set_valign(gtk::Align::Center);
-        container.append(&empty);
-        return container.upcast();
+        inner.append(&empty);
+        scrolled.set_child(Some(&inner));
+        return scrolled.upcast();
     };
-
-    let scrolled = gtk::ScrolledWindow::new();
-    scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
-    scrolled.set_vexpand(true);
-
-    let inner = gtk::Box::new(gtk::Orientation::Vertical, 12);
-    inner.set_margin_top(12);
-    inner.set_margin_bottom(12);
-    inner.set_margin_start(12);
-    inner.set_margin_end(12);
 
     inner.append(&owner_card(roster));
     if roster.can_manage_devices {
@@ -36,24 +33,13 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     inner.append(&devices_card(state, roster, manager));
 
     scrolled.set_child(Some(&inner));
-    container.append(&scrolled);
-
-    container.upcast()
+    scrolled.upcast()
 }
 
-fn owner_card(roster: &DeviceRosterSnapshot) -> gtk::Widget {
+fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder().title("Owner devices").build();
 
-    let owner = adw::ActionRow::builder()
-        .title("Owner npub")
-        .subtitle(&roster.owner_npub)
-        .build();
-    group.add(&owner);
-
-    let device = adw::ActionRow::builder()
-        .title("This device")
-        .subtitle(&roster.current_device_npub)
-        .build();
+    let device = adw::ActionRow::builder().title("This device").build();
     group.add(&device);
 
     group.upcast()
@@ -138,10 +124,7 @@ fn device_row(
     } else {
         "Linked device".to_string()
     };
-    let row = adw::ActionRow::builder()
-        .title(title)
-        .subtitle(&device.device_npub)
-        .build();
+    let row = adw::ActionRow::builder().title(title).build();
 
     let status = gtk::Label::new(Some(if device.is_authorized {
         "Authorized"
