@@ -575,16 +575,13 @@ private struct ChatMessageRow: View {
                         }
                         Button("Delete locally", role: .destructive, action: onDelete)
                     }
-                    .popover(isPresented: $showReactionPicker, arrowEdge: .top) {
-                        let picker = IrisEmojiPicker { emoji in
+                    .sheet(isPresented: $showReactionPicker) {
+                        IrisEmojiPicker { emoji in
                             showReactionPicker = false
                             onReact(emoji)
                         }
-                        if #available(iOS 16.4, macOS 13.3, *) {
-                            picker.presentationCompactAdaptation(.popover)
-                        } else {
-                            picker
-                        }
+                        .presentationDetents([.medium, .large])
+                        .presentationDragIndicator(.visible)
                     }
                     .accessibilityIdentifier("chatMessage-\(message.id)")
 
@@ -813,7 +810,7 @@ private struct IrisEmojiPicker: View {
         }
     }
 
-    private let columns = Array(repeating: GridItem(.fixed(36), spacing: 4), count: 7)
+    private let columns = [GridItem(.adaptive(minimum: 40), spacing: 4)]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -867,7 +864,7 @@ private struct IrisEmojiPicker: View {
                 .padding(.bottom, 10)
             }
         }
-        .frame(width: 300, height: 360)
+        .frame(minWidth: 280, idealWidth: 320, minHeight: 320, idealHeight: 420)
         .background(palette.background)
     }
 }
