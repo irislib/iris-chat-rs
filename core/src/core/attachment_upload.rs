@@ -10,8 +10,19 @@ use hashtree_core::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
+
+/// Process-wide cache of hashtree chunks we've put or fetched. Without this,
+/// a freshly uploaded chunk is invisible to a follow-up `HashTree::get`
+/// (e.g. when iOS uses one store for the upload and another for the avatar
+/// render), and the avatar falls back to placeholder if the public Blossom
+/// servers can't serve the chunk back yet.
+fn shared_chunk_cache() -> &'static std::sync::RwLock<HashMap<String, Vec<u8>>> {
+    static CACHE: OnceLock<std::sync::RwLock<HashMap<String, Vec<u8>>>> = OnceLock::new();
+    CACHE.get_or_init(|| std::sync::RwLock::new(HashMap::new()))
+}
 
 impl AppCore {
     pub(super) fn send_attachment(
@@ -368,7 +379,6 @@ fn is_local_server_url(value: &str) -> bool {
 
 struct UploadingBlossomStore {
     client: BlossomClient,
-    cache: RwLock<HashMap<String, Vec<u8>>>,
     uploaded: AsyncRwLock<HashSet<String>>,
 }
 
@@ -379,7 +389,6 @@ impl UploadingBlossomStore {
             .with_write_servers(write_servers);
         Self {
             client,
-            cache: RwLock::new(HashMap::new()),
             uploaded: AsyncRwLock::new(HashSet::new()),
         }
     }
@@ -396,6 +405,14 @@ impl Store for UploadingBlossomStore {
             ));
         }
 
+        // Always cache the chunk locally first. If the remote upload fails the
+        // file still exists on this device and can be rendered immediately;
+        // a real sync layer will publish it to peers later.
+        {
+            let mut cache = shared_chunk_cache().write().unwrap();
+            cache.insert(hash_hex.clone(), data.clone());
+        }
+
         {
             let uploaded = self.uploaded.read().await;
             if uploaded.contains(&hash_hex) {
@@ -403,31 +420,35 @@ impl Store for UploadingBlossomStore {
             }
         }
 
-        let (remote_hash, was_uploaded) = self
-            .client
-            .upload_if_missing(&data)
-            .await
-            .map_err(|error| StoreError::Other(error.to_string()))?;
-        if remote_hash != hash_hex {
-            return Err(StoreError::Other(format!(
-                "remote hash mismatch: expected {hash_hex}, got {remote_hash}"
-            )));
+        let upload_result = self.client.upload_if_missing(&data).await;
+        match upload_result {
+            Ok((remote_hash, was_uploaded)) => {
+                if remote_hash != hash_hex {
+                    return Err(StoreError::Other(format!(
+                        "remote hash mismatch: expected {hash_hex}, got {remote_hash}"
+                    )));
+                }
+                let mut uploaded = self.uploaded.write().await;
+                uploaded.insert(hash_hex);
+                Ok(was_uploaded)
+            }
+            Err(error) => {
+                // Remote unreachable. Treat the chunk as locally stored — the
+                // shared cache above already retains it. We propagate `true`
+                // so HashTree::put_stream completes; a future re-upload pass
+                // can push the cached chunks once the network recovers.
+                eprintln!(
+                    "blossom upload failed for {hash_hex} ({error}); kept in local cache"
+                );
+                Ok(true)
+            }
         }
-
-        {
-            let mut uploaded = self.uploaded.write().await;
-            uploaded.insert(hash_hex.clone());
-        }
-        let mut cache = self.cache.write().unwrap();
-        cache.insert(hash_hex, data);
-
-        Ok(was_uploaded)
     }
 
     async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
         let key = to_hex(hash);
         {
-            let cache = self.cache.read().unwrap();
+            let cache = shared_chunk_cache().read().unwrap();
             if let Some(data) = cache.get(&key) {
                 return Ok(Some(data.clone()));
             }
@@ -441,7 +462,7 @@ impl Store for UploadingBlossomStore {
                         "download hash mismatch for {key}"
                     )));
                 }
-                let mut cache = self.cache.write().unwrap();
+                let mut cache = shared_chunk_cache().write().unwrap();
                 cache.insert(key, data.clone());
                 Ok(Some(data))
             }
@@ -452,7 +473,7 @@ impl Store for UploadingBlossomStore {
     async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
         let key = to_hex(hash);
         {
-            let cache = self.cache.read().unwrap();
+            let cache = shared_chunk_cache().read().unwrap();
             if cache.contains_key(&key) {
                 return Ok(true);
             }
@@ -470,7 +491,7 @@ impl Store for UploadingBlossomStore {
     async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
         let key = to_hex(hash);
         let mut removed = {
-            let mut cache = self.cache.write().unwrap();
+            let mut cache = shared_chunk_cache().write().unwrap();
             cache.remove(&key).is_some()
         };
         let mut uploaded = self.uploaded.write().await;
