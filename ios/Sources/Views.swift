@@ -888,6 +888,20 @@ private func sameOwner(_ owner: String, hex: String?, npub: String?) -> Bool {
     return candidates.contains(rawOwner) || candidates.contains(normalizedOwner)
 }
 
+extension Array where Element == ChatThreadSnapshot {
+    func filteredByQuery(_ query: String) -> [ChatThreadSnapshot] {
+        let raw = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { return self }
+        let lower = raw.lowercased()
+        let normalized = normalizePeerInput(input: raw).lowercased()
+        return filter { chat in
+            chat.displayName.lowercased().contains(lower)
+                || chat.chatId.lowercased().contains(normalized)
+                || (chat.subtitle?.lowercased().contains(lower) ?? false)
+        }
+    }
+}
+
 private func fallbackProfileNameForIdentity(_ identity: String) -> String {
     let adjectives = [
         "Amber", "Bright", "Calm", "Clear", "Golden", "Lunar",
@@ -1637,6 +1651,10 @@ struct NewGroupScreen: View {
         }
     }
 
+    private var filteredKnownChats: [ChatThreadSnapshot] {
+        existingDirectChats.filteredByQuery(memberInput)
+    }
+
     private var canCreate: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
         !manager.state.busy.creatingGroup
@@ -1679,7 +1697,7 @@ struct NewGroupScreen: View {
                 IrisSectionCard {
                     CardHeader(title: "Add members")
 
-                    TextField("User ID or nostr:…", text: $memberInput)
+                    TextField("Search or paste user ID", text: $memberInput)
                         .irisIdentifierInputModifiers()
                         .textFieldStyle(.plain)
                         .irisInputField()
@@ -1706,17 +1724,18 @@ struct NewGroupScreen: View {
                 }
             }
 
-            if !existingDirectChats.isEmpty {
+            if !filteredKnownChats.isEmpty {
                 IrisSectionCard {
-                    CardHeader(title: "Existing chats")
+                    CardHeader(title: memberInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results")
 
-                    ForEach(Array(existingDirectChats.enumerated()), id: \.element.chatId) { index, chat in
+                    ForEach(Array(filteredKnownChats.enumerated()), id: \.element.chatId) { index, chat in
                         Button {
                             if selectedOwners.contains(chat.chatId) {
                                 selectedOwners.remove(chat.chatId)
                             } else {
                                 selectedOwners.insert(chat.chatId)
                             }
+                            memberInput = ""
                         } label: {
                             HStack(spacing: 12) {
                                 IrisAvatar(label: chat.displayName, size: 38, emphasize: selectedOwners.contains(chat.chatId))
@@ -1738,7 +1757,7 @@ struct NewGroupScreen: View {
                         }
                         .buttonStyle(.plain)
 
-                        if index < existingDirectChats.count - 1 {
+                        if index < filteredKnownChats.count - 1 {
                             Divider().overlay(palette.border)
                         }
                     }
@@ -1957,10 +1976,10 @@ struct GroupDetailsScreen: View {
                     IrisSectionCard {
                         CardHeader(
                             title: "Add members",
-                            subtitle: "Approve a new member by scan or paste."
+                            subtitle: "Search known users or paste / scan a user ID."
                         )
 
-                        TextField("Member user ID or nostr:…", text: $memberInput)
+                        TextField("Search or paste user ID", text: $memberInput)
                             .irisIdentifierInputModifiers()
                             .textFieldStyle(.plain)
                             .irisInputField()
@@ -1982,6 +2001,47 @@ struct GroupDetailsScreen: View {
                             .accessibilityIdentifier("groupDetailsAddMembersButton")
                         }
                     }
+
+                    let candidateChats = knownUsersForAdding(details: details)
+                    if !candidateChats.isEmpty {
+                        IrisSectionCard {
+                            CardHeader(
+                                title: memberInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results"
+                            )
+
+                            ForEach(Array(candidateChats.enumerated()), id: \.element.chatId) { index, chat in
+                                Button {
+                                    manager.dispatch(.addGroupMembers(groupId: groupId, memberInputs: [chat.chatId]))
+                                    memberInput = ""
+                                } label: {
+                                    HStack(spacing: 12) {
+                                        IrisAvatar(label: chat.displayName, size: 38)
+                                        VStack(alignment: .leading, spacing: 4) {
+                                            Text(chat.displayName)
+                                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                                .foregroundStyle(palette.textPrimary)
+                                            if let subtitle = secondaryDisplayName(chat.subtitle, primary: chat.displayName) {
+                                                Text(subtitle)
+                                                    .font(.system(.footnote, design: .rounded))
+                                                    .foregroundStyle(palette.muted)
+                                            }
+                                        }
+                                        Spacer()
+                                        Image(systemName: "plus.circle")
+                                            .foregroundStyle(palette.accent)
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityIdentifier("groupDetailsKnownUser-\(String(chat.chatId.prefix(12)))")
+                                .disabled(manager.state.busy.updatingGroup)
+
+                                if index < candidateChats.count - 1 {
+                                    Divider().overlay(palette.border)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2000,6 +2060,18 @@ struct GroupDetailsScreen: View {
                 manager.updateGroupPicture(groupId: groupId, fileURL: url)
             }
         }
+    }
+
+    private func knownUsersForAdding(details: GroupDetailsSnapshot) -> [ChatThreadSnapshot] {
+        let localOwnerHex = manager.state.account?.publicKeyHex
+        let memberHexes = Set(details.members.map { $0.ownerPubkeyHex })
+        return manager.state.chatList
+            .filter { chat in
+                chat.kind == .direct
+                    && chat.chatId != localOwnerHex
+                    && !memberHexes.contains(chat.chatId)
+            }
+            .filteredByQuery(memberInput)
     }
 
     private func memberAdminButton(_ member: GroupMemberSnapshot) -> some View {
