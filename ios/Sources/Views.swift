@@ -795,7 +795,7 @@ private struct DirectChatInfoSheet: View {
                                 .padding(.horizontal, 24)
                         }
 
-                        IrisCopyButton(label: "Copy user ID", value: chatId)
+                        IrisCopyButton(label: "Copy user ID", value: peerInputToNpub(input: chatId))
                             .accessibilityIdentifier("directChatCopyUserIdButton")
 
                         IrisSectionCard {

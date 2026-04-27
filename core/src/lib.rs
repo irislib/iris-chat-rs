@@ -184,6 +184,18 @@ pub fn is_valid_peer_input(input: String) -> bool {
     crate::core::parse_peer_input(&input).is_ok()
 }
 
+/// Convert any pubkey-shaped input (hex, npub, nprofile, …) to its npub form.
+/// Returns the original string when it can't be parsed as a public key.
+#[uniffi::export]
+pub fn peer_input_to_npub(input: String) -> String {
+    use nostr::nips::nip19::ToBech32;
+    let normalized = crate::core::normalize_peer_input_for_display(&input);
+    match nostr::PublicKey::parse(&normalized) {
+        Ok(pubkey) => pubkey.to_bech32().unwrap_or(normalized),
+        Err(_) => normalized,
+    }
+}
+
 #[uniffi::export]
 pub fn build_summary() -> String {
     crate::core::build_summary()

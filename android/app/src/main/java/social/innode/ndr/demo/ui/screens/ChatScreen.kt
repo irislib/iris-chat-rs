@@ -68,6 +68,7 @@ import social.innode.ndr.demo.rust.ChatMessageSnapshot
 import social.innode.ndr.demo.rust.DeliveryState
 import social.innode.ndr.demo.rust.OutgoingAttachment
 import social.innode.ndr.demo.rust.Screen
+import social.innode.ndr.demo.rust.peerInputToNpub
 import social.innode.ndr.demo.rust.proxiedImageUrl
 import social.innode.ndr.demo.ui.components.IrisAvatar
 import social.innode.ndr.demo.ui.components.IrisIcons
@@ -593,7 +594,7 @@ private fun DirectChatInfoSheet(
                     val clipboard = rememberIrisClipboard()
                     IrisInlineAction(
                         text = "Copy user ID",
-                        onClick = { clipboard.setText("User ID", chatId) },
+                        onClick = { clipboard.setText("User ID", peerInputToNpub(chatId)) },
                         modifier = Modifier.testTag("directChatCopyUserIdButton"),
                     ) {
                         Icon(imageVector = IrisIcons.Copy, contentDescription = null)
