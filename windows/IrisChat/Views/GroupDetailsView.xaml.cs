@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using IrisChat.Bindings;
 
@@ -42,6 +45,118 @@ public partial class GroupDetailsView : UserControl
         {
             MembersList.Items.Add(BuildMember(details, m));
         }
+
+        RebuildKnownUsers();
+    }
+
+    private void OnAddMemberTextChanged(object sender, TextChangedEventArgs e) => RebuildKnownUsers();
+
+    private void RebuildKnownUsers()
+    {
+        var details = App.CurrentManager.GroupDetails;
+        if (details == null || !details.canManage)
+        {
+            KnownUsersList.Items.Clear();
+            KnownUsersHeader.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var localOwnerHex = App.CurrentManager.Account?.publicKeyHex ?? string.Empty;
+        var memberHexes = new HashSet<string>(details.members.Select(m => m.ownerPubkeyHex));
+        var query = (AddMemberInput.Text ?? string.Empty).Trim().ToLowerInvariant();
+
+        var candidates = App.CurrentManager.ChatList
+            .Where(c => c.kind == ChatKind.Direct
+                && c.chatId != localOwnerHex
+                && !memberHexes.Contains(c.chatId))
+            .Where(c => query.Length == 0
+                || (c.displayName ?? string.Empty).ToLowerInvariant().Contains(query)
+                || (c.chatId ?? string.Empty).ToLowerInvariant().Contains(query)
+                || (c.subtitle ?? string.Empty).ToLowerInvariant().Contains(query))
+            .ToList();
+
+        KnownUsersList.Items.Clear();
+        foreach (var chat in candidates)
+        {
+            KnownUsersList.Items.Add(BuildKnownUserRow(details.groupId, chat));
+        }
+        KnownUsersHeader.Text = query.Length == 0 ? "Known users" : "Search results";
+        KnownUsersHeader.Visibility = candidates.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private FrameworkElement BuildKnownUserRow(string groupId, ChatThreadSnapshot chat)
+    {
+        var grid = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var avatar = new IrisChat.Chrome.Avatar
+        {
+            Label = chat.displayName ?? string.Empty,
+            Size = 32,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(avatar, 0);
+
+        var info = new StackPanel
+        {
+            Margin = new Thickness(10, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        info.Children.Add(new TextBlock
+        {
+            Text = string.IsNullOrWhiteSpace(chat.displayName) ? Shorten(chat.chatId) : chat.displayName,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["TextPrimary"],
+        });
+        if (!string.IsNullOrWhiteSpace(chat.subtitle))
+        {
+            info.Children.Add(new TextBlock
+            {
+                Text = chat.subtitle,
+                FontSize = 12,
+                Foreground = (Brush)Application.Current.Resources["TextMuted"],
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            });
+        }
+        Grid.SetColumn(info, 1);
+
+        var addBtn = new Button
+        {
+            Style = (Style)FindResource("CompactSecondaryButton"),
+            Content = new TextBlock { Text = "Add" },
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        addBtn.Click += (_, _) => OnKnownUserAdd(groupId, chat.chatId);
+        Grid.SetColumn(addBtn, 2);
+
+        grid.Children.Add(avatar);
+        grid.Children.Add(info);
+        grid.Children.Add(addBtn);
+
+        var border = new Border
+        {
+            Background = Brushes.Transparent,
+            Padding = new Thickness(6),
+            Cursor = Cursors.Hand,
+            Child = grid,
+        };
+        border.MouseLeftButtonUp += (_, _) => OnKnownUserAdd(groupId, chat.chatId);
+        return border;
+    }
+
+    private void OnKnownUserAdd(string groupId, string ownerHex)
+    {
+        if (string.IsNullOrEmpty(ownerHex)) return;
+        App.CurrentManager.AddGroupMembers(groupId, new[] { ownerHex });
+        AddMemberInput.Clear();
+    }
+
+    private static string Shorten(string value)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= 18) return value ?? string.Empty;
+        return $"{value[..10]}…{value[^6..]}";
     }
 
     private FrameworkElement BuildMember(GroupDetailsSnapshot details, GroupMemberSnapshot m)

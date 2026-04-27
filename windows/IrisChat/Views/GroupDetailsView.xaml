@@ -55,7 +55,8 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBox x:Name="AddMemberInput"
-                                 Grid.Column="0" />
+                                 Grid.Column="0"
+                                 TextChanged="OnAddMemberTextChanged" />
                         <Button Style="{StaticResource SecondaryButton}"
                                 Grid.Column="1"
                                 Click="OnAddMember"
@@ -63,6 +64,15 @@
                             <TextBlock Text="Add" />
                         </Button>
                     </Grid>
+                    <TextBlock Style="{StaticResource MutedText}"
+                               Text="Search known users or paste a user ID."
+                               Margin="0,4,0,8" />
+                    <TextBlock x:Name="KnownUsersHeader"
+                               Text="Known users"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,4,0,4"
+                               Visibility="Collapsed" />
+                    <ItemsControl x:Name="KnownUsersList" />
                 </StackPanel>
             </Border>
 

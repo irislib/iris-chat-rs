@@ -10,15 +10,35 @@
             <TextBlock Text="Group name" Margin="0,0,0,4" />
             <TextBox x:Name="NameInput" />
 
-            <TextBlock Text="Members" Margin="0,16,0,4" />
+            <TextBlock Text="Add members" Margin="0,16,0,4" />
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="MemberSearchInput"
+                         Grid.Column="0"
+                         TextChanged="OnSearchTextChanged" />
+                <Button x:Name="AddMemberButton"
+                        Style="{StaticResource SecondaryButton}"
+                        Grid.Column="1"
+                        Click="OnAddMemberClick"
+                        Margin="8,0,0,0">
+                    <TextBlock Text="Add" />
+                </Button>
+            </Grid>
             <TextBlock Style="{StaticResource MutedText}"
-                       Text="Add npubs (one per line)."
-                       Margin="0,0,0,8" />
-            <TextBox x:Name="MembersInput"
-                     Height="120"
-                     AcceptsReturn="True"
-                     TextWrapping="Wrap"
-                     VerticalScrollBarVisibility="Auto" />
+                       Text="Search known users or paste a user ID."
+                       Margin="0,4,0,8" />
+
+            <ItemsControl x:Name="SelectedMembersList" Margin="0,0,0,8" />
+
+            <TextBlock x:Name="KnownUsersHeader"
+                       Text="Known users"
+                       Style="{StaticResource SectionTitleText}"
+                       Margin="0,8,0,4"
+                       Visibility="Collapsed" />
+            <ItemsControl x:Name="KnownUsersList" />
 
             <Button x:Name="CreateButton"
                     Style="{StaticResource PrimaryButton}"
