@@ -12,15 +12,15 @@ resolve_shared_build_metadata "$ROOT"
 IOS_PROJECT="$ROOT/ios/IrisChat.xcodeproj"
 IOS_SCHEME="IrisChat"
 IOS_DIST_DIR="$ROOT/dist/ios"
-IOS_EXPORT_METHOD="${NDR_IOS_EXPORT_METHOD:-app-store-connect}"
-IOS_SIGNING_STYLE="${NDR_IOS_SIGNING_STYLE:-automatic}"
-IOS_BUNDLE_ID="${NDR_IOS_BUNDLE_ID:-to.iris.chat}"
-IOS_DEVELOPMENT_TEAM="${NDR_IOS_DEVELOPMENT_TEAM:-J8PPJKD7TA}"
-IOS_INTERNAL_ONLY="${NDR_IOS_INTERNAL_ONLY:-false}"
-IOS_ARCHIVE_BASENAME="${NDR_IOS_ARCHIVE_BASENAME:-$(release_slug ios)}"
-IOS_ARCHIVE_PATH="${NDR_IOS_ARCHIVE_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}.xcarchive}"
-IOS_EXPORT_PATH="${NDR_IOS_EXPORT_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}}"
-IOS_UPLOAD_LOG_PATH="${NDR_IOS_UPLOAD_LOG_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}-upload}"
+IOS_EXPORT_METHOD="${IRIS_IOS_EXPORT_METHOD:-app-store-connect}"
+IOS_SIGNING_STYLE="${IRIS_IOS_SIGNING_STYLE:-automatic}"
+IOS_BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-to.iris.chat}"
+IOS_DEVELOPMENT_TEAM="${IRIS_IOS_DEVELOPMENT_TEAM:-J8PPJKD7TA}"
+IOS_INTERNAL_ONLY="${IRIS_IOS_INTERNAL_ONLY:-false}"
+IOS_ARCHIVE_BASENAME="${IRIS_IOS_ARCHIVE_BASENAME:-$(release_slug ios)}"
+IOS_ARCHIVE_PATH="${IRIS_IOS_ARCHIVE_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}.xcarchive}"
+IOS_EXPORT_PATH="${IRIS_IOS_EXPORT_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}}"
+IOS_UPLOAD_LOG_PATH="${IRIS_IOS_UPLOAD_LOG_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}-upload}"
 
 AUTH_ARGS=()
 
@@ -41,7 +41,7 @@ normalize_signing_style() {
       IOS_CODE_SIGN_STYLE="Manual"
       ;;
     *)
-      echo "Unsupported NDR_IOS_SIGNING_STYLE: $IOS_SIGNING_STYLE" >&2
+      echo "Unsupported IRIS_IOS_SIGNING_STYLE: $IOS_SIGNING_STYLE" >&2
       exit 2
       ;;
   esac
@@ -49,24 +49,24 @@ normalize_signing_style() {
 
 configure_auth_args() {
   AUTH_ARGS=()
-  if [[ -n "${NDR_ASC_AUTH_KEY_PATH:-}" || -n "${NDR_ASC_AUTH_KEY_ID:-}" || -n "${NDR_ASC_AUTH_KEY_ISSUER_ID:-}" ]]; then
-    require_var NDR_ASC_AUTH_KEY_PATH
-    require_var NDR_ASC_AUTH_KEY_ID
-    require_var NDR_ASC_AUTH_KEY_ISSUER_ID
+  if [[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" || -n "${IRIS_ASC_AUTH_KEY_ID:-}" || -n "${IRIS_ASC_AUTH_KEY_ISSUER_ID:-}" ]]; then
+    require_var IRIS_ASC_AUTH_KEY_PATH
+    require_var IRIS_ASC_AUTH_KEY_ID
+    require_var IRIS_ASC_AUTH_KEY_ISSUER_ID
     AUTH_ARGS+=(
-      -authenticationKeyPath "$NDR_ASC_AUTH_KEY_PATH"
-      -authenticationKeyID "$NDR_ASC_AUTH_KEY_ID"
-      -authenticationKeyIssuerID "$NDR_ASC_AUTH_KEY_ISSUER_ID"
+      -authenticationKeyPath "$IRIS_ASC_AUTH_KEY_PATH"
+      -authenticationKeyID "$IRIS_ASC_AUTH_KEY_ID"
+      -authenticationKeyIssuerID "$IRIS_ASC_AUTH_KEY_ISSUER_ID"
     )
   fi
-  if bool_is_true "${NDR_IOS_ALLOW_PROVISIONING_UPDATES:-false}"; then
+  if bool_is_true "${IRIS_IOS_ALLOW_PROVISIONING_UPDATES:-false}"; then
     AUTH_ARGS+=(-allowProvisioningUpdates)
   fi
 }
 
 require_automatic_signing() {
   if [[ "$IOS_SIGNING_STYLE" != "automatic" ]]; then
-    echo "ios-release currently automates only automatic signing. Set NDR_IOS_SIGNING_STYLE=automatic." >&2
+    echo "ios-release currently automates only automatic signing. Set IRIS_IOS_SIGNING_STYLE=automatic." >&2
     exit 1
   fi
 }
@@ -82,19 +82,19 @@ ios.export.method=$IOS_EXPORT_METHOD
 ios.internal.only=$IOS_INTERNAL_ONLY
 ios.archive.path=$IOS_ARCHIVE_PATH
 ios.export.path=$IOS_EXPORT_PATH
-app.version.name=$NDR_APP_VERSION_NAME
-app.version.code=$NDR_APP_VERSION_CODE
-build.git.sha=$NDR_BUILD_GIT_SHA
-build.timestamp.utc=$NDR_BUILD_TIMESTAMP_UTC
-asc.auth.key.configured=$([[ -n "${NDR_ASC_AUTH_KEY_PATH:-}" && -n "${NDR_ASC_AUTH_KEY_ID:-}" && -n "${NDR_ASC_AUTH_KEY_ISSUER_ID:-}" ]] && printf true || printf false)
+app.version.name=$IRIS_APP_VERSION_NAME
+app.version.code=$IRIS_APP_VERSION_CODE
+build.git.sha=$IRIS_BUILD_GIT_SHA
+build.timestamp.utc=$IRIS_BUILD_TIMESTAMP_UTC
+asc.auth.key.configured=$([[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" && -n "${IRIS_ASC_AUTH_KEY_ID:-}" && -n "${IRIS_ASC_AUTH_KEY_ISSUER_ID:-}" ]] && printf true || printf false)
 EOF
 }
 
 prepare_release_inputs() {
-  export NDR_IOS_RUST_PROFILE=release
-  export NDR_APP_VERSION="$NDR_APP_VERSION_NAME"
-  export NDR_BUILD_GIT_SHA
-  export NDR_BUILD_TIMESTAMP_UTC
+  export IRIS_IOS_RUST_PROFILE=release
+  export IRIS_APP_VERSION="$IRIS_APP_VERSION_NAME"
+  export IRIS_BUILD_GIT_SHA
+  export IRIS_BUILD_TIMESTAMP_UTC
 
   "$ROOT/scripts/ios-build" ios-xcframework
   "$ROOT/scripts/ios-build" ios-xcodeproj
@@ -117,8 +117,8 @@ archive_app() {
     -archivePath "$IOS_ARCHIVE_PATH" \
     "${AUTH_ARGS[@]}" \
     PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" \
-    MARKETING_VERSION="$NDR_APP_VERSION_NAME" \
-    CURRENT_PROJECT_VERSION="$NDR_APP_VERSION_CODE" \
+    MARKETING_VERSION="$IRIS_APP_VERSION_NAME" \
+    CURRENT_PROJECT_VERSION="$IRIS_APP_VERSION_CODE" \
     DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
     CODE_SIGN_STYLE="$IOS_CODE_SIGN_STYLE" \
     archive
@@ -126,10 +126,10 @@ archive_app() {
   write_manifest "$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}.env" \
     archive_path "$IOS_ARCHIVE_PATH" \
     bundle_id "$IOS_BUNDLE_ID" \
-    app_version_name "$NDR_APP_VERSION_NAME" \
-    app_version_code "$NDR_APP_VERSION_CODE" \
-    build_git_sha "$NDR_BUILD_GIT_SHA" \
-    build_timestamp_utc "$NDR_BUILD_TIMESTAMP_UTC"
+    app_version_name "$IRIS_APP_VERSION_NAME" \
+    app_version_code "$IRIS_APP_VERSION_CODE" \
+    build_git_sha "$IRIS_BUILD_GIT_SHA" \
+    build_timestamp_utc "$IRIS_BUILD_TIMESTAMP_UTC"
 }
 
 write_export_options() {
@@ -203,10 +203,10 @@ export_archive() {
     ipa_path "$ipa_path" \
     archive_path "$IOS_ARCHIVE_PATH" \
     bundle_id "$IOS_BUNDLE_ID" \
-    app_version_name "$NDR_APP_VERSION_NAME" \
-    app_version_code "$NDR_APP_VERSION_CODE" \
-    build_git_sha "$NDR_BUILD_GIT_SHA" \
-    build_timestamp_utc "$NDR_BUILD_TIMESTAMP_UTC"
+    app_version_name "$IRIS_APP_VERSION_NAME" \
+    app_version_code "$IRIS_APP_VERSION_CODE" \
+    build_git_sha "$IRIS_BUILD_GIT_SHA" \
+    build_timestamp_utc "$IRIS_BUILD_TIMESTAMP_UTC"
 
   printf '%s\n' "$ipa_path"
 }

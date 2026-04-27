@@ -16,14 +16,14 @@ if [[ -f "$ZAPSTORE_ENV_FILE" ]]; then
   set +a
 fi
 
-NDR_RELEASE_KEYSTORE_PATH="${NDR_RELEASE_KEYSTORE_PATH:-${ANDROID_KEYSTORE_PATH:-}}"
-NDR_RELEASE_KEYSTORE_PASSWORD="${NDR_RELEASE_KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
-NDR_RELEASE_KEY_ALIAS="${NDR_RELEASE_KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
-NDR_RELEASE_KEY_PASSWORD="${NDR_RELEASE_KEY_PASSWORD:-${ANDROID_KEY_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}}"
-export NDR_RELEASE_KEYSTORE_PATH
-export NDR_RELEASE_KEYSTORE_PASSWORD
-export NDR_RELEASE_KEY_ALIAS
-export NDR_RELEASE_KEY_PASSWORD
+IRIS_RELEASE_KEYSTORE_PATH="${IRIS_RELEASE_KEYSTORE_PATH:-${ANDROID_KEYSTORE_PATH:-}}"
+IRIS_RELEASE_KEYSTORE_PASSWORD="${IRIS_RELEASE_KEYSTORE_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}"
+IRIS_RELEASE_KEY_ALIAS="${IRIS_RELEASE_KEY_ALIAS:-${ANDROID_KEY_ALIAS:-}}"
+IRIS_RELEASE_KEY_PASSWORD="${IRIS_RELEASE_KEY_PASSWORD:-${ANDROID_KEY_PASSWORD:-${ANDROID_KEYSTORE_PASSWORD:-}}}"
+export IRIS_RELEASE_KEYSTORE_PATH
+export IRIS_RELEASE_KEYSTORE_PASSWORD
+export IRIS_RELEASE_KEY_ALIAS
+export IRIS_RELEASE_KEY_PASSWORD
 
 resolve_shared_build_metadata "$ROOT"
 
@@ -72,12 +72,12 @@ ensure_config() {
 }
 
 ensure_release_signing() {
-  require_var NDR_RELEASE_KEYSTORE_PATH
-  require_var NDR_RELEASE_KEYSTORE_PASSWORD
-  require_var NDR_RELEASE_KEY_ALIAS
-  require_var NDR_RELEASE_KEY_PASSWORD
-  if [[ ! -f "$NDR_RELEASE_KEYSTORE_PATH" ]]; then
-    echo "Release keystore not found: $NDR_RELEASE_KEYSTORE_PATH" >&2
+  require_var IRIS_RELEASE_KEYSTORE_PATH
+  require_var IRIS_RELEASE_KEYSTORE_PASSWORD
+  require_var IRIS_RELEASE_KEY_ALIAS
+  require_var IRIS_RELEASE_KEY_PASSWORD
+  if [[ ! -f "$IRIS_RELEASE_KEYSTORE_PATH" ]]; then
+    echo "Release keystore not found: $IRIS_RELEASE_KEYSTORE_PATH" >&2
     exit 1
   fi
 }
@@ -100,16 +100,16 @@ export_pkcs12() {
 
   keytool -importkeystore \
     -noprompt \
-    -srckeystore "$NDR_RELEASE_KEYSTORE_PATH" \
+    -srckeystore "$IRIS_RELEASE_KEYSTORE_PATH" \
     -srcstoretype JKS \
-    -srcstorepass "$NDR_RELEASE_KEYSTORE_PASSWORD" \
-    -srcalias "$NDR_RELEASE_KEY_ALIAS" \
-    -srckeypass "$NDR_RELEASE_KEY_PASSWORD" \
+    -srcstorepass "$IRIS_RELEASE_KEYSTORE_PASSWORD" \
+    -srcalias "$IRIS_RELEASE_KEY_ALIAS" \
+    -srckeypass "$IRIS_RELEASE_KEY_PASSWORD" \
     -destkeystore "$TEMP_P12_PATH" \
     -deststoretype PKCS12 \
-    -deststorepass "$NDR_RELEASE_KEYSTORE_PASSWORD" \
-    -destkeypass "$NDR_RELEASE_KEYSTORE_PASSWORD" \
-    -destalias "$NDR_RELEASE_KEY_ALIAS" >/dev/null
+    -deststorepass "$IRIS_RELEASE_KEYSTORE_PASSWORD" \
+    -destkeypass "$IRIS_RELEASE_KEYSTORE_PASSWORD" \
+    -destalias "$IRIS_RELEASE_KEY_ALIAS" >/dev/null
 }
 
 print_config() {
@@ -118,10 +118,10 @@ zapstore.config=$ZAPSTORE_CONFIG
 zapstore.channel=$ZAPSTORE_CHANNEL
 zapstore.sign_with=$SIGN_WITH
 zapstore.identity.relays=$ZAPSTORE_IDENTITY_RELAYS
-release.keystore.path=${NDR_RELEASE_KEYSTORE_PATH:-}
+release.keystore.path=${IRIS_RELEASE_KEYSTORE_PATH:-}
 release.apk.path=$APK_PATH
-release.version.name=$NDR_APP_VERSION_NAME
-release.version.code=$NDR_APP_VERSION_CODE
+release.version.name=$IRIS_APP_VERSION_NAME
+release.version.code=$IRIS_APP_VERSION_CODE
 EOF
 }
 
@@ -154,9 +154,9 @@ doctor() {
   fi
 
   keytool -list \
-    -keystore "$NDR_RELEASE_KEYSTORE_PATH" \
-    -storepass "$NDR_RELEASE_KEYSTORE_PASSWORD" \
-    -alias "$NDR_RELEASE_KEY_ALIAS" >/dev/null
+    -keystore "$IRIS_RELEASE_KEYSTORE_PATH" \
+    -storepass "$IRIS_RELEASE_KEYSTORE_PASSWORD" \
+    -alias "$IRIS_RELEASE_KEY_ALIAS" >/dev/null
 
   cat <<EOF
 zapstore.config=ok
@@ -164,7 +164,7 @@ zapstore.local.env=ok
 zapstore.signing.method=$(signing_method_label)
 android.release.env=ok
 android.keystore=ok
-android.key.alias=$NDR_RELEASE_KEY_ALIAS
+android.key.alias=$IRIS_RELEASE_KEY_ALIAS
 android.app.id=to.iris.chat
 EOF
 }
@@ -183,7 +183,7 @@ link_identity() {
   require_cmd nak
   export_pkcs12
   TEMP_IDENTITY_EVENT_PATH="$TEMP_DIR/identity-event.json"
-  KEYSTORE_PASSWORD="$NDR_RELEASE_KEYSTORE_PASSWORD" \
+  KEYSTORE_PASSWORD="$IRIS_RELEASE_KEYSTORE_PASSWORD" \
     SIGN_WITH="$SIGN_WITH" \
     zsp identity --link-key "$TEMP_P12_PATH" --relays "$ZAPSTORE_IDENTITY_RELAYS" --offline > "$TEMP_IDENTITY_EVENT_PATH"
   nak event "$ZAPSTORE_IDENTITY_RELAYS" < "$TEMP_IDENTITY_EVENT_PATH"

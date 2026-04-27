@@ -56,7 +56,7 @@ require_cmd docker
 
 mkdir -p "$DIST_DIR"
 
-TAG="v${NDR_APP_VERSION_NAME}"
+TAG="v${IRIS_APP_VERSION_NAME}"
 LINUX_ARCH_LABEL="${IRIS_LINUX_ARCH_LABEL:-x64}"
 ARTIFACT_BASENAME="iris-chat-${TAG}-linux-${LINUX_ARCH_LABEL}"
 
@@ -84,10 +84,10 @@ docker run \
   -v "$ROOT/..:/workspace:cached" \
   -w /workspace/iris-chat-rs/linux \
   -e ARTIFACT_BASENAME="$ARTIFACT_BASENAME" \
-  -e NDR_APP_VERSION_NAME="$NDR_APP_VERSION_NAME" \
-  -e NDR_APP_VERSION_CODE="$NDR_APP_VERSION_CODE" \
-  -e NDR_BUILD_GIT_SHA="$NDR_BUILD_GIT_SHA" \
-  -e NDR_BUILD_TIMESTAMP_UTC="$NDR_BUILD_TIMESTAMP_UTC" \
+  -e IRIS_APP_VERSION_NAME="$IRIS_APP_VERSION_NAME" \
+  -e IRIS_APP_VERSION_CODE="$IRIS_APP_VERSION_CODE" \
+  -e IRIS_BUILD_GIT_SHA="$IRIS_BUILD_GIT_SHA" \
+  -e IRIS_BUILD_TIMESTAMP_UTC="$IRIS_BUILD_TIMESTAMP_UTC" \
   --entrypoint /bin/bash \
   "$IMAGE" -lc '
     set -Eeuo pipefail
@@ -154,7 +154,7 @@ INSTALL
     chmod +x "$BUNDLE/install.sh"
 
     cat > "$BUNDLE/README.txt" <<README
-Iris Chat ${NDR_APP_VERSION_NAME} (Linux x86_64)
+Iris Chat ${IRIS_APP_VERSION_NAME} (Linux x86_64)
 ============================================
 
 Quick install:

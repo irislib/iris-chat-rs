@@ -56,17 +56,17 @@ fun gitValue(vararg args: String): String? =
         }.standardOutput.asText.get().trim()
     }.getOrNull()?.takeIf { it.isNotBlank() }
 
-val appVersionCode = configIntValue("app.versionCode", "NDR_APP_VERSION_CODE") ?: 1
-val appVersionName = configValue("app.versionName", "NDR_APP_VERSION_NAME") ?: "0.1.0"
+val appVersionCode = configIntValue("app.versionCode", "IRIS_APP_VERSION_CODE") ?: 1
+val appVersionName = configValue("app.versionName", "IRIS_APP_VERSION_NAME") ?: "0.1.0"
 val debugApplicationIdSuffix =
-    configValueAllowEmpty("debug.applicationIdSuffix", "NDR_DEBUG_APPLICATION_ID_SUFFIX") ?: ".debug"
-val buildGitSha = configValue("build.gitSha", "NDR_BUILD_GIT_SHA") ?: gitValue("rev-parse", "--short=12", "HEAD") ?: "unknown"
+    configValueAllowEmpty("debug.applicationIdSuffix", "IRIS_DEBUG_APPLICATION_ID_SUFFIX") ?: ".debug"
+val buildGitSha = configValue("build.gitSha", "IRIS_BUILD_GIT_SHA") ?: gitValue("rev-parse", "--short=12", "HEAD") ?: "unknown"
 val buildTimestampUtc =
-    configValue("build.timestampUtc", "NDR_BUILD_TIMESTAMP_UTC")
+    configValue("build.timestampUtc", "IRIS_BUILD_TIMESTAMP_UTC")
         ?: System.getenv("SOURCE_DATE_EPOCH")?.toLongOrNull()?.let { Instant.ofEpochSecond(it).toString() }
         ?: gitValue("log", "-1", "--format=%ct", "HEAD")?.toLongOrNull()?.let { Instant.ofEpochSecond(it).toString() }
         ?: Instant.now().toString()
-val mobilePushServerUrl = configValue("mobilePush.serverUrl", "NDR_MOBILE_PUSH_SERVER_URL") ?: ""
+val mobilePushServerUrl = configValue("mobilePush.serverUrl", "IRIS_MOBILE_PUSH_SERVER_URL") ?: ""
 
 data class BuildRelayConfig(
     val relaySetId: String,
@@ -76,30 +76,30 @@ data class BuildRelayConfig(
 
 val debugRelayConfig =
     BuildRelayConfig(
-        relaySetId = configValue("debug.relaySetId", "NDR_DEBUG_RELAY_SET_ID") ?: "public-dev",
-        relaysCsv = configValue("debug.relays", "NDR_DEBUG_RELAYS") ?: publicRelayFallbackCsv,
+        relaySetId = configValue("debug.relaySetId", "IRIS_DEBUG_RELAY_SET_ID") ?: "public-dev",
+        relaysCsv = configValue("debug.relays", "IRIS_DEBUG_RELAYS") ?: publicRelayFallbackCsv,
         trustedTestBuild = false,
     )
 val betaRelayConfig =
     BuildRelayConfig(
-        relaySetId = configValue("beta.relaySetId", "NDR_BETA_RELAY_SET_ID") ?: "beta-fallback",
-        relaysCsv = configValue("beta.relays", "NDR_BETA_RELAYS") ?: publicRelayFallbackCsv,
+        relaySetId = configValue("beta.relaySetId", "IRIS_BETA_RELAY_SET_ID") ?: "beta-fallback",
+        relaysCsv = configValue("beta.relays", "IRIS_BETA_RELAYS") ?: publicRelayFallbackCsv,
         trustedTestBuild = true,
     )
 val releaseRelayConfig =
     BuildRelayConfig(
-        relaySetId = configValue("release.relaySetId", "NDR_RELEASE_RELAY_SET_ID") ?: "public-release",
-        relaysCsv = configValue("release.relays", "NDR_RELEASE_RELAYS") ?: publicRelayFallbackCsv,
+        relaySetId = configValue("release.relaySetId", "IRIS_RELEASE_RELAY_SET_ID") ?: "public-release",
+        relaysCsv = configValue("release.relays", "IRIS_RELEASE_RELAYS") ?: publicRelayFallbackCsv,
         trustedTestBuild = false,
     )
-val betaSigningStoreFile = configValue("beta.storeFile", "NDR_BETA_KEYSTORE_PATH")
-val betaSigningStorePassword = configValue("beta.storePassword", "NDR_BETA_KEYSTORE_PASSWORD")
-val betaSigningKeyAlias = configValue("beta.keyAlias", "NDR_BETA_KEY_ALIAS")
-val betaSigningKeyPassword = configValue("beta.keyPassword", "NDR_BETA_KEY_PASSWORD")
-val releaseSigningStoreFile = configValue("release.storeFile", "NDR_RELEASE_KEYSTORE_PATH")
-val releaseSigningStorePassword = configValue("release.storePassword", "NDR_RELEASE_KEYSTORE_PASSWORD")
-val releaseSigningKeyAlias = configValue("release.keyAlias", "NDR_RELEASE_KEY_ALIAS")
-val releaseSigningKeyPassword = configValue("release.keyPassword", "NDR_RELEASE_KEY_PASSWORD")
+val betaSigningStoreFile = configValue("beta.storeFile", "IRIS_BETA_KEYSTORE_PATH")
+val betaSigningStorePassword = configValue("beta.storePassword", "IRIS_BETA_KEYSTORE_PASSWORD")
+val betaSigningKeyAlias = configValue("beta.keyAlias", "IRIS_BETA_KEY_ALIAS")
+val betaSigningKeyPassword = configValue("beta.keyPassword", "IRIS_BETA_KEY_PASSWORD")
+val releaseSigningStoreFile = configValue("release.storeFile", "IRIS_RELEASE_KEYSTORE_PATH")
+val releaseSigningStorePassword = configValue("release.storePassword", "IRIS_RELEASE_KEYSTORE_PASSWORD")
+val releaseSigningKeyAlias = configValue("release.keyAlias", "IRIS_RELEASE_KEY_ALIAS")
+val releaseSigningKeyPassword = configValue("release.keyPassword", "IRIS_RELEASE_KEY_PASSWORD")
 val hasDedicatedBetaSigning =
     !betaSigningStoreFile.isNullOrBlank() &&
         !betaSigningStorePassword.isNullOrBlank() &&
@@ -241,13 +241,13 @@ val buildRustHostDebug by tasks.registering(Exec::class) {
     group = "rust"
     description = "Build the host Rust library for UniFFI binding generation."
     workingDir = rustAppDir
-    environment("NDR_APP_VERSION", appVersionName)
-    environment("NDR_BUILD_CHANNEL", "debug")
-    environment("NDR_BUILD_GIT_SHA", buildGitSha)
-    environment("NDR_BUILD_TIMESTAMP_UTC", buildTimestampUtc)
-    environment("NDR_DEFAULT_RELAYS", debugRelayConfig.relaysCsv)
-    environment("NDR_RELAY_SET_ID", debugRelayConfig.relaySetId)
-    environment("NDR_TRUSTED_TEST_BUILD", debugRelayConfig.trustedTestBuild.toString())
+    environment("IRIS_APP_VERSION", appVersionName)
+    environment("IRIS_BUILD_CHANNEL", "debug")
+    environment("IRIS_BUILD_GIT_SHA", buildGitSha)
+    environment("IRIS_BUILD_TIMESTAMP_UTC", buildTimestampUtc)
+    environment("IRIS_DEFAULT_RELAYS", debugRelayConfig.relaysCsv)
+    environment("IRIS_RELAY_SET_ID", debugRelayConfig.relaySetId)
+    environment("IRIS_TRUSTED_TEST_BUILD", debugRelayConfig.trustedTestBuild.toString())
     commandLine(
         cargoBinary.absolutePath,
         "build",
@@ -318,13 +318,13 @@ fun registerRustAndroidTask(
         environment("ANDROID_SDK_ROOT", androidSdkDir)
         environment("ANDROID_NDK_HOME", androidNdkDir.absolutePath)
         environment("NDK_HOME", androidNdkDir.absolutePath)
-        environment("NDR_APP_VERSION", appVersionName)
-        environment("NDR_BUILD_CHANNEL", buildChannel)
-        environment("NDR_BUILD_GIT_SHA", buildGitSha)
-        environment("NDR_BUILD_TIMESTAMP_UTC", buildTimestampUtc)
-        environment("NDR_DEFAULT_RELAYS", relayConfig.relaysCsv)
-        environment("NDR_RELAY_SET_ID", relayConfig.relaySetId)
-        environment("NDR_TRUSTED_TEST_BUILD", relayConfig.trustedTestBuild.toString())
+        environment("IRIS_APP_VERSION", appVersionName)
+        environment("IRIS_BUILD_CHANNEL", buildChannel)
+        environment("IRIS_BUILD_GIT_SHA", buildGitSha)
+        environment("IRIS_BUILD_TIMESTAMP_UTC", buildTimestampUtc)
+        environment("IRIS_DEFAULT_RELAYS", relayConfig.relaysCsv)
+        environment("IRIS_RELAY_SET_ID", relayConfig.relaySetId)
+        environment("IRIS_TRUSTED_TEST_BUILD", relayConfig.trustedTestBuild.toString())
         val command =
             mutableListOf(
                 cargoBinary.absolutePath,

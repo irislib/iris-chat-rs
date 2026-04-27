@@ -124,14 +124,14 @@ enum AppPaths {
 
     static func keychainService(environment: [String: String]) -> String {
         let base = "to.iris.chat"
-        guard let runId = environment["NDR_UI_TEST_RUN_ID"], !runId.isEmpty else {
+        guard let runId = environment["IRIS_UI_TEST_RUN_ID"], !runId.isEmpty else {
             return base
         }
         return "\(base).\(runId)"
     }
 
     static func dataDir(fileManager: FileManager, environment: [String: String]) -> URL {
-        let suffix = environment["NDR_UI_TEST_RUN_ID"].flatMap { $0.isEmpty ? nil : $0 } ?? "iris-chat"
+        let suffix = environment["IRIS_UI_TEST_RUN_ID"].flatMap { $0.isEmpty ? nil : $0 } ?? "iris-chat"
         // Prefer the App Group container so the Notification Service
         // Extension reads the *same* persisted ratchet state. Older
         // installs lived in the per-app `applicationSupportDirectory`,
@@ -203,7 +203,7 @@ final class AppManager: ObservableObject {
         let resolvedDataDir = dataDir ?? AppPaths.dataDir(fileManager: fileManager, environment: environment)
         let resolvedSecretStore = secretStore ?? KeychainSecretStore(service: AppPaths.keychainService(environment: environment))
 
-        if environment["NDR_UI_TEST_RESET"] == "1" {
+        if environment["IRIS_UI_TEST_RESET"] == "1" {
             resolvedSecretStore.clear()
             try? fileManager.removeItem(at: resolvedDataDir)
         }

@@ -70,8 +70,8 @@ just android-assemble
 
 The Android emulator launcher passes explicit DNS servers by default because
 relay publishing depends on `wss://` hostname resolution. Override the default
-with `NDR_ANDROID_DNS_SERVERS=1.1.1.1,8.8.8.8 just run-android`, or set
-`NDR_ANDROID_DNS_SERVERS=off` to use the emulator's inherited resolver setup.
+with `IRIS_ANDROID_DNS_SERVERS=1.1.1.1,8.8.8.8 just run-android`, or set
+`IRIS_ANDROID_DNS_SERVERS=off` to use the emulator's inherited resolver setup.
 
 Build release artifacts:
 
@@ -89,7 +89,7 @@ Android release details live in [BETA_RELEASE.md](BETA_RELEASE.md) and
 ## iOS
 
 The iOS app is generated from `ios/project.yml` and links the shared Rust core
-through generated Swift bindings plus `ios/Frameworks/NdrDemoCore.xcframework`.
+through generated Swift bindings plus `ios/Frameworks/IrisChatCore.xcframework`.
 
 Common local flows:
 
@@ -116,7 +116,7 @@ $EDITOR release.env
 
 The first native desktop shell is a macOS SwiftUI target generated from
 `macos/project.yml`. It reuses the shared Apple shell layer in `ios/Sources/`
-and links the Rust core through `macos/Frameworks/NdrDemoCore.xcframework`.
+and links the Rust core through `macos/Frameworks/IrisChatCore.xcframework`.
 
 Common local flows:
 

@@ -27,15 +27,15 @@ ensure_local_properties() {
 print_config() {
   cat <<EOF
 android.dir=$ANDROID_DIR
-app.version.name=$NDR_APP_VERSION_NAME
-app.version.code=$NDR_APP_VERSION_CODE
-build.git.sha=$NDR_BUILD_GIT_SHA
-build.timestamp.utc=$NDR_BUILD_TIMESTAMP_UTC
-debug.relay.set.id=${NDR_DEBUG_RELAY_SET_ID:-public-dev}
-beta.relay.set.id=${NDR_BETA_RELAY_SET_ID:-beta-fallback}
-release.relay.set.id=${NDR_RELEASE_RELAY_SET_ID:-public-release}
-beta.signing.configured=$([[ -n "${NDR_BETA_KEYSTORE_PATH:-}" && -n "${NDR_BETA_KEY_ALIAS:-}" ]] && printf true || printf false)
-release.signing.configured=$([[ -n "${NDR_RELEASE_KEYSTORE_PATH:-}" && -n "${NDR_RELEASE_KEY_ALIAS:-}" ]] && printf true || printf false)
+app.version.name=$IRIS_APP_VERSION_NAME
+app.version.code=$IRIS_APP_VERSION_CODE
+build.git.sha=$IRIS_BUILD_GIT_SHA
+build.timestamp.utc=$IRIS_BUILD_TIMESTAMP_UTC
+debug.relay.set.id=${IRIS_DEBUG_RELAY_SET_ID:-public-dev}
+beta.relay.set.id=${IRIS_BETA_RELAY_SET_ID:-beta-fallback}
+release.relay.set.id=${IRIS_RELEASE_RELAY_SET_ID:-public-release}
+beta.signing.configured=$([[ -n "${IRIS_BETA_KEYSTORE_PATH:-}" && -n "${IRIS_BETA_KEY_ALIAS:-}" ]] && printf true || printf false)
+release.signing.configured=$([[ -n "${IRIS_RELEASE_KEYSTORE_PATH:-}" && -n "${IRIS_RELEASE_KEY_ALIAS:-}" ]] && printf true || printf false)
 dist.dir=$ANDROID_DIST_DIR
 EOF
 }
@@ -63,18 +63,18 @@ copy_artifact() {
     artifact_path "$destination" \
     artifact_source "$source_path" \
     build_channel "$channel" \
-    app_version_name "$NDR_APP_VERSION_NAME" \
-    app_version_code "$NDR_APP_VERSION_CODE" \
-    build_git_sha "$NDR_BUILD_GIT_SHA" \
-    build_timestamp_utc "$NDR_BUILD_TIMESTAMP_UTC"
+    app_version_name "$IRIS_APP_VERSION_NAME" \
+    app_version_code "$IRIS_APP_VERSION_CODE" \
+    build_git_sha "$IRIS_BUILD_GIT_SHA" \
+    build_timestamp_utc "$IRIS_BUILD_TIMESTAMP_UTC"
   write_manifest "$latest_manifest" \
     artifact_path "$latest_destination" \
     artifact_source "$source_path" \
     build_channel "$channel" \
-    app_version_name "$NDR_APP_VERSION_NAME" \
-    app_version_code "$NDR_APP_VERSION_CODE" \
-    build_git_sha "$NDR_BUILD_GIT_SHA" \
-    build_timestamp_utc "$NDR_BUILD_TIMESTAMP_UTC"
+    app_version_name "$IRIS_APP_VERSION_NAME" \
+    app_version_code "$IRIS_APP_VERSION_CODE" \
+    build_git_sha "$IRIS_BUILD_GIT_SHA" \
+    build_timestamp_utc "$IRIS_BUILD_TIMESTAMP_UTC"
 
   printf '%s\n' "$destination"
 }
@@ -87,10 +87,10 @@ build_variant() {
   local artifact_source
 
   if [[ "$channel" == "release" ]]; then
-    require_var NDR_RELEASE_KEYSTORE_PATH
-    require_var NDR_RELEASE_KEYSTORE_PASSWORD
-    require_var NDR_RELEASE_KEY_ALIAS
-    require_var NDR_RELEASE_KEY_PASSWORD
+    require_var IRIS_RELEASE_KEYSTORE_PATH
+    require_var IRIS_RELEASE_KEYSTORE_PASSWORD
+    require_var IRIS_RELEASE_KEY_ALIAS
+    require_var IRIS_RELEASE_KEY_PASSWORD
   fi
 
   ensure_local_properties

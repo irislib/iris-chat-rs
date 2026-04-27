@@ -20,11 +20,11 @@ source "$ROOT/scripts/release_common.sh"
 load_release_env "$ROOT"
 resolve_shared_build_metadata "$ROOT"
 
-PROFILE="${NDR_WINDOWS_RUST_PROFILE:-debug}"
+PROFILE="${IRIS_WINDOWS_RUST_PROFILE:-debug}"
 TARGET="${IRIS_WINDOWS_TARGET:-x86_64-pc-windows-msvc}"
 BINDGEN_CS_GIT_REF="${IRIS_WINDOWS_BINDGEN_CS_GIT_REF:-v0.10.0+v0.29.4}"
 LLVM_BIN="${IRIS_WINDOWS_LLVM_BIN:-C:\\Program Files\\LLVM\\bin}"
-DOTNET_CONFIG="${NDR_WINDOWS_DOTNET_CONFIG:-Debug}"
+DOTNET_CONFIG="${IRIS_WINDOWS_DOTNET_CONFIG:-Debug}"
 
 usage() {
   cat <<'EOF'
@@ -49,8 +49,8 @@ env knobs:
   IRIS_WINDOWS_TARGET            Rust target triple (default: x86_64-pc-windows-msvc)
   IRIS_WINDOWS_LLVM_BIN          LLVM bin dir for ring/sha2 cc-rs builds
   IRIS_WINDOWS_BINDGEN_CS_GIT_REF Tag/branch of NordSec/uniffi-bindgen-cs
-  NDR_WINDOWS_RUST_PROFILE       debug|release (default: debug)
-  NDR_WINDOWS_DOTNET_CONFIG      Debug|Release (default: Debug)
+  IRIS_WINDOWS_RUST_PROFILE       debug|release (default: debug)
+  IRIS_WINDOWS_DOTNET_CONFIG      Debug|Release (default: Debug)
 EOF
 }
 
@@ -474,8 +474,8 @@ run_installer() {
   local shared_repo
   shared_repo="$(detect_shared_repo_path)"
 
-  local iris_version="${NDR_APP_VERSION_NAME:-0.1.0}"
-  local iris_build_num="${NDR_APP_VERSION_CODE:-1}"
+  local iris_version="${IRIS_APP_VERSION_NAME:-0.1.0}"
+  local iris_build_num="${IRIS_APP_VERSION_CODE:-1}"
   local installer_basename="${IRIS_WINDOWS_INSTALLER_BASENAME:-IrisChat-windows-x64-setup}"
 
   local nsi_shared_path="${shared_repo}\\scripts\\windows-installer.nsi"

@@ -3,9 +3,9 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SIMULATOR_NAME="${NDR_IOS_SIMULATOR_NAME:-Iris Chat iPhone}"
-DESTINATION="${NDR_IOS_SIM_DESTINATION:-platform=iOS Simulator,name=${SIMULATOR_NAME}}"
-BUNDLE_ID="${NDR_IOS_BUNDLE_ID:-to.iris.chat}"
+SIMULATOR_NAME="${IRIS_IOS_SIMULATOR_NAME:-Iris Chat iPhone}"
+DESTINATION="${IRIS_IOS_SIM_DESTINATION:-platform=iOS Simulator,name=${SIMULATOR_NAME}}"
+BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-to.iris.chat}"
 IOS_PROJECT="$ROOT/ios/IrisChat.xcodeproj"
 IOS_SCHEME="IrisChat"
 
@@ -129,7 +129,7 @@ if simulator_name="$(destination_name)"; [[ -n "${simulator_name:-}" ]]; then
   "$ROOT/scripts/run_ios_simulators.sh" --no-open "$simulator_name" >/dev/null
 fi
 
-NDR_IOS_SIM_DESTINATION="$DESTINATION" "$ROOT/scripts/ios-build" ios-build-sim
+IRIS_IOS_SIM_DESTINATION="$DESTINATION" "$ROOT/scripts/ios-build" ios-build-sim
 UDID="$(resolve_udid)"
 APP_PATH="$(resolve_app_path)"
 if [[ -z "${UDID:-}" || -z "${APP_PATH:-}" ]]; then

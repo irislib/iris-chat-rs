@@ -6,7 +6,7 @@ release_root() {
 
 load_release_env() {
   local root="$1"
-  local env_file="${NDR_RELEASE_ENV_FILE:-$root/release.env}"
+  local env_file="${IRIS_RELEASE_ENV_FILE:-$root/release.env}"
   if [[ -f "$env_file" ]]; then
     set -a
     # shellcheck disable=SC1090
@@ -54,35 +54,35 @@ git_commit_timestamp_utc() {
 resolve_shared_build_metadata() {
   local root="$1"
 
-  NDR_APP_VERSION_NAME="${NDR_APP_VERSION_NAME:-0.1.0}"
-  NDR_APP_VERSION_CODE="${NDR_APP_VERSION_CODE:-1}"
-  NDR_BUILD_GIT_SHA="${NDR_BUILD_GIT_SHA:-$(git_short_sha "$root")}"
+  IRIS_APP_VERSION_NAME="${IRIS_APP_VERSION_NAME:-0.1.0}"
+  IRIS_APP_VERSION_CODE="${IRIS_APP_VERSION_CODE:-1}"
+  IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-$(git_short_sha "$root")}"
 
-  if [[ -z "${NDR_BUILD_TIMESTAMP_UTC:-}" ]]; then
+  if [[ -z "${IRIS_BUILD_TIMESTAMP_UTC:-}" ]]; then
     if [[ -n "${SOURCE_DATE_EPOCH:-}" ]]; then
-      NDR_BUILD_TIMESTAMP_UTC="$(epoch_to_iso8601 "$SOURCE_DATE_EPOCH")"
+      IRIS_BUILD_TIMESTAMP_UTC="$(epoch_to_iso8601 "$SOURCE_DATE_EPOCH")"
     else
-      NDR_BUILD_TIMESTAMP_UTC="$(git_commit_timestamp_utc "$root")"
+      IRIS_BUILD_TIMESTAMP_UTC="$(git_commit_timestamp_utc "$root")"
     fi
   fi
 
-  if [[ -z "${NDR_BUILD_TIMESTAMP_UTC:-}" ]]; then
-    NDR_BUILD_TIMESTAMP_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  if [[ -z "${IRIS_BUILD_TIMESTAMP_UTC:-}" ]]; then
+    IRIS_BUILD_TIMESTAMP_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   fi
 
-  export NDR_APP_VERSION_NAME
-  export NDR_APP_VERSION_CODE
-  export NDR_BUILD_GIT_SHA
-  export NDR_BUILD_TIMESTAMP_UTC
+  export IRIS_APP_VERSION_NAME
+  export IRIS_APP_VERSION_CODE
+  export IRIS_BUILD_GIT_SHA
+  export IRIS_BUILD_TIMESTAMP_UTC
 }
 
 release_slug() {
   local channel="$1"
   printf 'IrisChat-%s-%s+%s-%s' \
     "$channel" \
-    "$NDR_APP_VERSION_NAME" \
-    "$NDR_APP_VERSION_CODE" \
-    "$NDR_BUILD_GIT_SHA"
+    "$IRIS_APP_VERSION_NAME" \
+    "$IRIS_APP_VERSION_CODE" \
+    "$IRIS_BUILD_GIT_SHA"
 }
 
 ensure_dir() {

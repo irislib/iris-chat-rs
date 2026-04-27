@@ -249,17 +249,17 @@ assert_local_relay_healthy
 echo "Building Android debug apps against $(local_android_relay_url) ($(local_relay_set_id))"
 (
   cd "${ROOT_DIR}/android" &&
-    NDR_DEBUG_RELAYS="$(local_android_relay_url)" \
-    NDR_DEBUG_RELAY_SET_ID="$(local_relay_set_id)" \
+    IRIS_DEBUG_RELAYS="$(local_android_relay_url)" \
+    IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)" \
     ./gradlew :app:installDebug :app:installDebugAndroidTest
 )
 
 echo "Building iOS XCFramework against $(local_ios_relay_url) ($(local_relay_set_id))"
 (
   cd "${ROOT_DIR}" &&
-    NDR_DEFAULT_RELAYS="$(local_ios_relay_url)" \
-    NDR_RELAY_SET_ID="$(local_relay_set_id)" \
-    NDR_TRUSTED_TEST_BUILD=true \
+    IRIS_DEFAULT_RELAYS="$(local_ios_relay_url)" \
+    IRIS_RELAY_SET_ID="$(local_relay_set_id)" \
+    IRIS_TRUSTED_TEST_BUILD=true \
     ./scripts/ios-build ios-xcframework
 )
 

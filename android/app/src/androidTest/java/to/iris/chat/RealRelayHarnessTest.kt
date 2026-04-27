@@ -1779,6 +1779,6 @@ class RealRelayHarnessTest {
 
     private companion object {
         const val DEBUG_SNAPSHOT_FILENAME = "iris_chat_runtime_debug.json"
-        const val PERSISTED_STATE_FILENAME = "ndr_demo_core_state.json"
+        const val PERSISTED_STATE_FILENAME = "iris_chat_core_state.json"
     }
 }

@@ -827,7 +827,7 @@ class AppManager(
 
     private companion object {
         const val TAG = "NdrDebug"
-        const val DATASTORE_NAME = "ndr_demo_secure_store.preferences_pb"
+        const val DATASTORE_NAME = "iris_chat_secure_store.preferences_pb"
         const val DOWNLOADED_ATTACHMENT_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
         val SECRET_CIPHERTEXT = stringPreferencesKey("secret_ciphertext")
         val SECRET_IV = stringPreferencesKey("secret_iv")

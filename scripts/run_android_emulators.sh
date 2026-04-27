@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOCAL_PROPERTIES="${ROOT_DIR}/android/local.properties"
 SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_9a" "Pixel_Fold")
-DNS_SERVERS="${NDR_ANDROID_DNS_SERVERS:-8.8.8.8,1.1.1.1}"
+DNS_SERVERS="${IRIS_ANDROID_DNS_SERVERS:-8.8.8.8,1.1.1.1}"
 
 if [[ -z "${SDK_DIR}" && -f "${LOCAL_PROPERTIES}" ]]; then
   SDK_DIR="$(sed -n 's/^sdk\.dir=//p' "${LOCAL_PROPERTIES}" | tail -n 1)"
@@ -45,7 +45,7 @@ Options:
   --list       Print configured AVD names and exit
 
 Environment:
-  NDR_ANDROID_DNS_SERVERS  Comma-separated DNS servers passed to the emulator.
+  IRIS_ANDROID_DNS_SERVERS  Comma-separated DNS servers passed to the emulator.
                            Defaults to 8.8.8.8,1.1.1.1. Set to off to use
                            the emulator's inherited resolver configuration.
 

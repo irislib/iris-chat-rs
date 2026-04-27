@@ -177,8 +177,8 @@ NODE
 }
 
 echo "Building Android debug app and test APK"
-NDR_APP_VERSION_CODE="${NDR_APP_VERSION_CODE:-900001}" \
-NDR_DEBUG_APPLICATION_ID_SUFFIX="${NDR_DEBUG_APPLICATION_ID_SUFFIX-.debug}" \
+IRIS_APP_VERSION_CODE="${IRIS_APP_VERSION_CODE:-900001}" \
+IRIS_DEBUG_APPLICATION_ID_SUFFIX="${IRIS_DEBUG_APPLICATION_ID_SUFFIX-.debug}" \
   "${ANDROID_DIR}/gradlew" -p "${ANDROID_DIR}" :app:assembleDebug :app:assembleDebugAndroidTest
 
 echo "Installing on ${SERIAL}"

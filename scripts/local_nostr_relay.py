@@ -7,7 +7,7 @@ from pathlib import Path
 
 def main() -> int:
     root_dir = Path(__file__).resolve().parent.parent
-    bind_addr = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("NDR_LOCAL_RELAY_BIND", "0.0.0.0:4848")
+    bind_addr = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("IRIS_LOCAL_RELAY_BIND", "0.0.0.0:4848")
     command = [
         "cargo",
         "run",

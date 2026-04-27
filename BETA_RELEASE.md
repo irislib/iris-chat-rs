@@ -31,15 +31,15 @@ The Rust core reads its compiled relay defaults from the Android build.
 
 Override values before packaging the beta:
 
-- `beta.relaySetId` or `NDR_BETA_RELAY_SET_ID`
-- `beta.relays` or `NDR_BETA_RELAYS`
+- `beta.relaySetId` or `IRIS_BETA_RELAY_SET_ID`
+- `beta.relays` or `IRIS_BETA_RELAYS`
 
 Optional dedicated beta signing config:
 
-- `beta.storeFile` or `NDR_BETA_KEYSTORE_PATH`
-- `beta.storePassword` or `NDR_BETA_KEYSTORE_PASSWORD`
-- `beta.keyAlias` or `NDR_BETA_KEY_ALIAS`
-- `beta.keyPassword` or `NDR_BETA_KEY_PASSWORD`
+- `beta.storeFile` or `IRIS_BETA_KEYSTORE_PATH`
+- `beta.storePassword` or `IRIS_BETA_KEYSTORE_PASSWORD`
+- `beta.keyAlias` or `IRIS_BETA_KEY_ALIAS`
+- `beta.keyPassword` or `IRIS_BETA_KEY_PASSWORD`
 
 If dedicated beta signing is not supplied, the beta build falls back to release
 signing and then to debug signing.

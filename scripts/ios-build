@@ -8,8 +8,8 @@ IOS_DIR="$ROOT/ios"
 IOS_BINDINGS_DIR="$IOS_DIR/Bindings"
 IOS_FRAMEWORKS_DIR="$IOS_DIR/Frameworks"
 IOS_BUILD_DIR="$IOS_DIR/.build"
-PROFILE="${NDR_IOS_RUST_PROFILE:-debug}"
-TARGETS="${NDR_IOS_RUST_TARGETS:-aarch64-apple-ios aarch64-apple-ios-sim}"
+PROFILE="${IRIS_IOS_RUST_PROFILE:-debug}"
+TARGETS="${IRIS_IOS_RUST_TARGETS:-aarch64-apple-ios aarch64-apple-ios-sim}"
 
 usage() {
   cat <<'EOF'
@@ -181,13 +181,13 @@ run_ios_xcodeproj() {
 }
 
 default_ios_destination() {
-  local simulator_name="${NDR_IOS_SIMULATOR_NAME:-Iris Chat iPhone}"
+  local simulator_name="${IRIS_IOS_SIMULATOR_NAME:-Iris Chat iPhone}"
   "$ROOT/scripts/run_ios_simulators.sh" --no-open "$simulator_name" >/dev/null
   printf 'platform=iOS Simulator,name=%s\n' "$simulator_name"
 }
 
 run_ios_build_sim() {
-  local destination="${NDR_IOS_SIM_DESTINATION:-$(default_ios_destination)}"
+  local destination="${IRIS_IOS_SIM_DESTINATION:-$(default_ios_destination)}"
   run_ios_xcframework
   run_ios_xcodeproj
   xcodebuild \
@@ -198,7 +198,7 @@ run_ios_build_sim() {
 }
 
 run_ios_test() {
-  local destination="${NDR_IOS_SIM_DESTINATION:-$(default_ios_destination)}"
+  local destination="${IRIS_IOS_SIM_DESTINATION:-$(default_ios_destination)}"
   run_ios_xcframework
   run_ios_xcodeproj
   xcodebuild \

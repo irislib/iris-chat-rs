@@ -45,14 +45,14 @@ the plan first.
 
 These values are the common boundary between Android, iOS, and the Rust core:
 
-- `NDR_APP_VERSION_NAME`
-- `NDR_APP_VERSION_CODE`
-- `NDR_BUILD_GIT_SHA`
-- `NDR_BUILD_TIMESTAMP_UTC`
-- `NDR_RELEASE_RELAY_SET_ID`
-- `NDR_RELEASE_RELAYS`
+- `IRIS_APP_VERSION_NAME`
+- `IRIS_APP_VERSION_CODE`
+- `IRIS_BUILD_GIT_SHA`
+- `IRIS_BUILD_TIMESTAMP_UTC`
+- `IRIS_RELEASE_RELAY_SET_ID`
+- `IRIS_RELEASE_RELAYS`
 
-If `NDR_BUILD_GIT_SHA` and `NDR_BUILD_TIMESTAMP_UTC` are unset, the release
+If `IRIS_BUILD_GIT_SHA` and `IRIS_BUILD_TIMESTAMP_UTC` are unset, the release
 scripts derive them from the current Git `HEAD`. For stricter reproducibility,
 set them explicitly or provide `SOURCE_DATE_EPOCH`.
 
@@ -85,27 +85,27 @@ Android release inputs are read in this order:
 Supported keys:
 
 - App version:
-  - `app.versionName` or `NDR_APP_VERSION_NAME`
-  - `app.versionCode` or `NDR_APP_VERSION_CODE`
+  - `app.versionName` or `IRIS_APP_VERSION_NAME`
+  - `app.versionCode` or `IRIS_APP_VERSION_CODE`
 - Build metadata:
-  - `build.gitSha` or `NDR_BUILD_GIT_SHA`
-  - `build.timestampUtc` or `NDR_BUILD_TIMESTAMP_UTC`
+  - `build.gitSha` or `IRIS_BUILD_GIT_SHA`
+  - `build.timestampUtc` or `IRIS_BUILD_TIMESTAMP_UTC`
 - Relay/channel config:
-  - `debug.relaySetId` or `NDR_DEBUG_RELAY_SET_ID`
-  - `debug.relays` or `NDR_DEBUG_RELAYS`
-  - `beta.relaySetId` or `NDR_BETA_RELAY_SET_ID`
-  - `beta.relays` or `NDR_BETA_RELAYS`
-  - `release.relaySetId` or `NDR_RELEASE_RELAY_SET_ID`
-  - `release.relays` or `NDR_RELEASE_RELAYS`
+  - `debug.relaySetId` or `IRIS_DEBUG_RELAY_SET_ID`
+  - `debug.relays` or `IRIS_DEBUG_RELAYS`
+  - `beta.relaySetId` or `IRIS_BETA_RELAY_SET_ID`
+  - `beta.relays` or `IRIS_BETA_RELAYS`
+  - `release.relaySetId` or `IRIS_RELEASE_RELAY_SET_ID`
+  - `release.relays` or `IRIS_RELEASE_RELAYS`
 - Signing:
-  - `beta.storeFile` or `NDR_BETA_KEYSTORE_PATH`
-  - `beta.storePassword` or `NDR_BETA_KEYSTORE_PASSWORD`
-  - `beta.keyAlias` or `NDR_BETA_KEY_ALIAS`
-  - `beta.keyPassword` or `NDR_BETA_KEY_PASSWORD`
-  - `release.storeFile` or `NDR_RELEASE_KEYSTORE_PATH`
-  - `release.storePassword` or `NDR_RELEASE_KEYSTORE_PASSWORD`
-  - `release.keyAlias` or `NDR_RELEASE_KEY_ALIAS`
-  - `release.keyPassword` or `NDR_RELEASE_KEY_PASSWORD`
+  - `beta.storeFile` or `IRIS_BETA_KEYSTORE_PATH`
+  - `beta.storePassword` or `IRIS_BETA_KEYSTORE_PASSWORD`
+  - `beta.keyAlias` or `IRIS_BETA_KEY_ALIAS`
+  - `beta.keyPassword` or `IRIS_BETA_KEY_PASSWORD`
+  - `release.storeFile` or `IRIS_RELEASE_KEYSTORE_PATH`
+  - `release.storePassword` or `IRIS_RELEASE_KEYSTORE_PASSWORD`
+  - `release.keyAlias` or `IRIS_RELEASE_KEY_ALIAS`
+  - `release.keyPassword` or `IRIS_RELEASE_KEY_PASSWORD`
 
 Primary commands:
 
@@ -137,15 +137,15 @@ iOS has two layers:
 
 iOS release environment:
 
-- `NDR_IOS_BUNDLE_ID`
-- `NDR_IOS_DEVELOPMENT_TEAM`
-- `NDR_IOS_SIGNING_STYLE`
-- `NDR_IOS_EXPORT_METHOD`
-- `NDR_IOS_INTERNAL_ONLY`
-- `NDR_IOS_ALLOW_PROVISIONING_UPDATES`
-- `NDR_ASC_AUTH_KEY_PATH`
-- `NDR_ASC_AUTH_KEY_ID`
-- `NDR_ASC_AUTH_KEY_ISSUER_ID`
+- `IRIS_IOS_BUNDLE_ID`
+- `IRIS_IOS_DEVELOPMENT_TEAM`
+- `IRIS_IOS_SIGNING_STYLE`
+- `IRIS_IOS_EXPORT_METHOD`
+- `IRIS_IOS_INTERNAL_ONLY`
+- `IRIS_IOS_ALLOW_PROVISIONING_UPDATES`
+- `IRIS_ASC_AUTH_KEY_PATH`
+- `IRIS_ASC_AUTH_KEY_ID`
+- `IRIS_ASC_AUTH_KEY_ISSUER_ID`
 
 Current defaults:
 
@@ -164,7 +164,7 @@ with explicit release values instead of rewriting plist files in place.
 ### Android closed test or release
 
 1. Copy `release.env.example` to `release.env`.
-2. Fill `NDR_APP_VERSION_NAME`, `NDR_APP_VERSION_CODE`, relay values, and
+2. Fill `IRIS_APP_VERSION_NAME`, `IRIS_APP_VERSION_CODE`, relay values, and
    signing values.
 3. Inspect the resolved config:
 
@@ -187,10 +187,10 @@ cd /path/to/iris-chat-rs-cross-platform
 
 1. In App Store Connect, create the app record first.
 2. Copy `release.env.example` to `release.env`.
-3. Fill `NDR_APP_VERSION_NAME`, `NDR_APP_VERSION_CODE`, relay values,
-   `NDR_IOS_BUNDLE_ID`, and `NDR_IOS_DEVELOPMENT_TEAM`.
+3. Fill `IRIS_APP_VERSION_NAME`, `IRIS_APP_VERSION_CODE`, relay values,
+   `IRIS_IOS_BUNDLE_ID`, and `IRIS_IOS_DEVELOPMENT_TEAM`.
 4. If you want Xcode to create/fetch signing assets, set
-   `NDR_IOS_ALLOW_PROVISIONING_UPDATES=true`.
+   `IRIS_IOS_ALLOW_PROVISIONING_UPDATES=true`.
 5. Inspect the resolved config:
 
 ```bash

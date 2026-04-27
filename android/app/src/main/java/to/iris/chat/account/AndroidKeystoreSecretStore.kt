@@ -62,7 +62,7 @@ class AndroidKeystoreSecretStore : SecureSecretStore {
 
     private companion object {
         const val ANDROID_KEY_STORE = "AndroidKeyStore"
-        const val KEY_ALIAS = "ndr-demo-account-key"
+        const val KEY_ALIAS = "iris-chat-account-key"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val TAG_LENGTH_BITS = 128
     }

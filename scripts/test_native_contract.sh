@@ -4,13 +4,13 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="${ROOT_DIR}/android"
-ANDROID_TEST_AVD="${NDR_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
+ANDROID_TEST_AVD="${IRIS_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
 CONTRACT_CLASSES="to.iris.chat.core.AppManagerContractTest"
 SMOKE_CLASSES="to.iris.chat.PikaLikeUiTest,to.iris.chat.account.AndroidKeystoreSecretStoreTest"
 
 resolve_serial() {
-  if [[ -n "${NDR_ANDROID_SERIAL:-}" ]]; then
-    printf '%s\n' "${NDR_ANDROID_SERIAL}"
+  if [[ -n "${IRIS_ANDROID_SERIAL:-}" ]]; then
+    printf '%s\n' "${IRIS_ANDROID_SERIAL}"
     return 0
   fi
 

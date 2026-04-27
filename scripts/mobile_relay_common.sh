@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 
 local_relay_host() {
-  printf '%s' "${NDR_LOCAL_RELAY_HOST:-127.0.0.1}"
+  printf '%s' "${IRIS_LOCAL_RELAY_HOST:-127.0.0.1}"
 }
 
 local_relay_port() {
-  printf '%s' "${NDR_LOCAL_RELAY_PORT:-4848}"
+  printf '%s' "${IRIS_LOCAL_RELAY_PORT:-4848}"
 }
 
 local_relay_set_id() {
-  printf '%s' "${NDR_LOCAL_RELAY_SET_ID:-local-interop}"
+  printf '%s' "${IRIS_LOCAL_RELAY_SET_ID:-local-interop}"
 }
 
 local_android_relay_url() {

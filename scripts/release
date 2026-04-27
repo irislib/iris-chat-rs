@@ -41,7 +41,7 @@ dist/release/<tag>/, and optionally publish it via htree.
 Options:
   --publish                Publish the staged tree with `htree add` + `htree release publish`
   --publish-zapstore       Also publish the signed Android APK to Zapstore
-  --tag <vX.Y.Z>           Override release tag (defaults to v$NDR_APP_VERSION_NAME)
+  --tag <vX.Y.Z>           Override release tag (defaults to v$IRIS_APP_VERSION_NAME)
   --release-tree <name>    htree release tree name (default: releases/iris-chat)
   --only <csv>             Only run named steps (macos,windows,android,linux,ios)
   --skip <csv>             Skip named steps
@@ -49,7 +49,7 @@ Options:
   -h, --help               Show this help
 
 Environment:
-  NDR_RELEASE_TREE         Default for --release-tree
+  IRIS_RELEASE_TREE         Default for --release-tree
   IRIS_RELEASE_ALLOW_DIRTY  Allow building from a dirty git tree
 EOF
 }
@@ -75,8 +75,8 @@ normalize_tag() {
   if [[ "$v" == v* ]]; then echo "$v"; else echo "v$v"; fi
 }
 
-TAG="$(normalize_tag "${TAG_OVERRIDE:-$NDR_APP_VERSION_NAME}")"
-RELEASE_TREE="${RELEASE_TREE:-${NDR_RELEASE_TREE:-$RELEASE_TREE_DEFAULT}}"
+TAG="$(normalize_tag "${TAG_OVERRIDE:-$IRIS_APP_VERSION_NAME}")"
+RELEASE_TREE="${RELEASE_TREE:-${IRIS_RELEASE_TREE:-$RELEASE_TREE_DEFAULT}}"
 STAGE_DIR="$STAGE_ROOT/$TAG"
 
 ONLY_SET=""
@@ -131,7 +131,7 @@ build_macos() {
     note_skipped "macos: host is not Darwin"
     return 0
   fi
-  NDR_RELEASE_TAG="$TAG" "$ROOT/scripts/macos-build" macos-dmg >/dev/null
+  IRIS_RELEASE_TAG="$TAG" "$ROOT/scripts/macos-build" macos-dmg >/dev/null
   local dmg
   dmg="$(ls -1t "$ROOT/dist/macos/iris-chat-${TAG}-macos-arm64.dmg" 2>/dev/null | head -n 1)"
   if [[ -z "${dmg:-}" || ! -f "$dmg" ]]; then
@@ -153,19 +153,19 @@ build_windows() {
     return 0
   fi
 
-  NDR_WINDOWS_RUST_PROFILE=release \
-  NDR_WINDOWS_DOTNET_CONFIG=Release \
+  IRIS_WINDOWS_RUST_PROFILE=release \
+  IRIS_WINDOWS_DOTNET_CONFIG=Release \
     "$ROOT/scripts/windows-build" windows-build
 
   local installer_basename="iris-chat-${TAG}-windows-x64-setup"
   local zip_basename="iris-chat-${TAG}-windows-x64"
 
   IRIS_WINDOWS_INSTALLER_BASENAME="$installer_basename" \
-  NDR_WINDOWS_DOTNET_CONFIG=Release \
+  IRIS_WINDOWS_DOTNET_CONFIG=Release \
     "$ROOT/scripts/windows-build" windows-installer
 
   IRIS_WINDOWS_ZIP_BASENAME="$zip_basename" \
-  NDR_WINDOWS_DOTNET_CONFIG=Release \
+  IRIS_WINDOWS_DOTNET_CONFIG=Release \
     "$ROOT/scripts/windows-build" windows-zip
 
   local installer="$ROOT/dist/windows/${installer_basename}.exe"
@@ -176,16 +176,16 @@ build_windows() {
 
 # ---------- Android ----------
 build_android() {
-  if [[ -z "${NDR_RELEASE_KEYSTORE_PATH:-}" || -z "${NDR_RELEASE_KEY_ALIAS:-}" ]]; then
-    note_skipped "android: release signing not configured (NDR_RELEASE_KEYSTORE_PATH/NDR_RELEASE_KEY_ALIAS)"
+  if [[ -z "${IRIS_RELEASE_KEYSTORE_PATH:-}" || -z "${IRIS_RELEASE_KEY_ALIAS:-}" ]]; then
+    note_skipped "android: release signing not configured (IRIS_RELEASE_KEYSTORE_PATH/IRIS_RELEASE_KEY_ALIAS)"
     return 0
   fi
 
   "$ROOT/scripts/android-release" release-bundle >/dev/null
   "$ROOT/scripts/android-release" release-apk    >/dev/null
 
-  local sha="$NDR_BUILD_GIT_SHA"
-  local base="IrisChat-release-${NDR_APP_VERSION_NAME}+${NDR_APP_VERSION_CODE}-${sha}"
+  local sha="$IRIS_BUILD_GIT_SHA"
+  local base="IrisChat-release-${IRIS_APP_VERSION_NAME}+${IRIS_APP_VERSION_CODE}-${sha}"
   local apk="$ROOT/dist/android/${base}.apk"
   local aab="$ROOT/dist/android/${base}.aab"
 
@@ -224,8 +224,8 @@ build_ios() {
     note_skipped "ios: host is not Darwin"
     return 0
   fi
-  if [[ -z "${NDR_IOS_DEVELOPMENT_TEAM:-}" ]]; then
-    note_skipped "ios: NDR_IOS_DEVELOPMENT_TEAM not set; skipping archive"
+  if [[ -z "${IRIS_IOS_DEVELOPMENT_TEAM:-}" ]]; then
+    note_skipped "ios: IRIS_IOS_DEVELOPMENT_TEAM not set; skipping archive"
     return 0
   fi
   "$ROOT/scripts/ios-release" archive
@@ -245,8 +245,8 @@ build_ios() {
 echo "=== iris-chat release $TAG ==="
 echo "Release tree:    $RELEASE_TREE"
 echo "Stage dir:       $STAGE_DIR"
-echo "Version:         $NDR_APP_VERSION_NAME ($NDR_APP_VERSION_CODE)"
-echo "Git sha:         $NDR_BUILD_GIT_SHA"
+echo "Version:         $IRIS_APP_VERSION_NAME ($IRIS_APP_VERSION_CODE)"
+echo "Git sha:         $IRIS_BUILD_GIT_SHA"
 [[ "$DRY_RUN" -eq 1 ]] && echo "(dry-run; no commands executed)"
 
 run_step macos   build_macos
@@ -273,7 +273,7 @@ for asset in "${ASSET_PATHS[@]}"; do
 done
 
 CREATED_AT="$(date -u +%s)"
-COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$NDR_BUILD_GIT_SHA")"
+COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_GIT_SHA")"
 
 # Build minimal release.json
 {

@@ -143,23 +143,23 @@ def run_test(udid: str, xctestrun_path: Path) -> subprocess.CompletedProcess[str
 
 def build_env(args: argparse.Namespace) -> dict[str, str]:
     env_vars = {
-        "NDR_IOS_HARNESS_ACTION": args.action,
-        "NDR_IOS_HARNESS_DATA_ROOT": args.data_root,
+        "IRIS_IOS_HARNESS_ACTION": args.action,
+        "IRIS_IOS_HARNESS_DATA_ROOT": args.data_root,
     }
     if args.run_id:
-        env_vars["NDR_IOS_HARNESS_RUN_ID"] = args.run_id
+        env_vars["IRIS_IOS_HARNESS_RUN_ID"] = args.run_id
     if args.service:
-        env_vars["NDR_IOS_HARNESS_SERVICE"] = args.service
+        env_vars["IRIS_IOS_HARNESS_SERVICE"] = args.service
     if args.reset:
-        env_vars["NDR_IOS_HARNESS_RESET"] = "1"
+        env_vars["IRIS_IOS_HARNESS_RESET"] = "1"
     if args.use_app_storage:
-        env_vars["NDR_IOS_HARNESS_USE_APP_STORAGE"] = "1"
+        env_vars["IRIS_IOS_HARNESS_USE_APP_STORAGE"] = "1"
 
     for item in args.arg:
         if "=" not in item:
             raise SystemExit(f"Invalid --arg `{item}`. Expected KEY=VALUE.")
         key, value = item.split("=", 1)
-        env_key = "NDR_IOS_HARNESS_" + key.upper()
+        env_key = "IRIS_IOS_HARNESS_" + key.upper()
         env_vars[env_key] = value
     return env_vars
 

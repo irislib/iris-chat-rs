@@ -8,10 +8,10 @@ IOS_BINDINGS_DIR="$ROOT/ios/Bindings"
 MACOS_DIR="$ROOT/macos"
 MACOS_FRAMEWORKS_DIR="$MACOS_DIR/Frameworks"
 MACOS_BUILD_DIR="$MACOS_DIR/.build"
-PROFILE="${NDR_MACOS_RUST_PROFILE:-debug}"
-TARGETS="${NDR_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
+PROFILE="${IRIS_MACOS_RUST_PROFILE:-debug}"
+TARGETS="${IRIS_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
 MACOS_DIST_DIR="$ROOT/dist/macos"
-MACOS_APP_NAME="${NDR_MACOS_APP_NAME:-Iris Chat.app}"
+MACOS_APP_NAME="${IRIS_MACOS_APP_NAME:-Iris Chat.app}"
 
 usage() {
   cat <<'EOF'
@@ -192,8 +192,8 @@ run_macos_build() {
 
 run_macos_app() {
   PROFILE="release"
-  TARGETS="${NDR_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
-  export NDR_MACOS_RUST_PROFILE="release"
+  TARGETS="${IRIS_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
+  export IRIS_MACOS_RUST_PROFILE="release"
 
   run_macos_xcframework
   run_macos_xcodeproj
@@ -237,13 +237,13 @@ run_macos_dmg() {
     run_macos_app >/dev/null
   fi
 
-  local tag="${NDR_RELEASE_TAG:-}"
+  local tag="${IRIS_RELEASE_TAG:-}"
   if [[ -z "$tag" && -f "$ROOT/scripts/release_common.sh" ]]; then
     # shellcheck disable=SC1091
     source "$ROOT/scripts/release_common.sh"
     load_release_env "$ROOT"
     resolve_shared_build_metadata "$ROOT"
-    tag="v${NDR_APP_VERSION_NAME}"
+    tag="v${IRIS_APP_VERSION_NAME}"
   fi
   tag="${tag:-vdev}"
 

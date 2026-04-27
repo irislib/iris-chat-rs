@@ -177,13 +177,13 @@ final class IrisChatUITests: XCTestCase {
         profilePicturePath: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchEnvironment["NDR_UI_TEST_RESET"] = "1"
-        app.launchEnvironment["NDR_UI_TEST_RUN_ID"] = UUID().uuidString
+        app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = UUID().uuidString
         if let qrValue {
-            app.launchEnvironment["NDR_QR_TEST_VALUE"] = qrValue
+            app.launchEnvironment["IRIS_QR_TEST_VALUE"] = qrValue
         }
         if let profilePicturePath {
-            app.launchEnvironment["NDR_UI_TEST_PROFILE_PICTURE_PATH"] = profilePicturePath
+            app.launchEnvironment["IRIS_UI_TEST_PROFILE_PICTURE_PATH"] = profilePicturePath
         }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))

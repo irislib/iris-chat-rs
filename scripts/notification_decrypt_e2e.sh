@@ -15,7 +15,7 @@
 #
 # Prereqs:
 #   - `python3 scripts/local_nostr_relay.py` running on the host and
-#     reachable from both devices via `NDR_DEBUG_RELAYS=ws://<host>:4848`
+#     reachable from both devices via `IRIS_DEBUG_RELAYS=ws://<host>:4848`
 #   - debug + test APKs installed on each device (`./gradlew :app:assembleDebug
 #     :app:assembleDebugAndroidTest` then `adb install -r -t`).
 

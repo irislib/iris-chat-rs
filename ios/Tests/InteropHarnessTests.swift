@@ -29,18 +29,18 @@ final class InteropHarnessTests: XCTestCase {
 
     func testHarnessAction() async throws {
         let env = ProcessInfo.processInfo.environment
-        guard env["NDR_IOS_HARNESS_ACTION"] != nil else {
+        guard env["IRIS_IOS_HARNESS_ACTION"] != nil else {
             throw XCTSkip("Interop harness runs only via scripts/run_ios_harness.py")
         }
-        let action = try requiredEnv("NDR_IOS_HARNESS_ACTION", env: env)
-        let runID = env["NDR_IOS_HARNESS_RUN_ID"] ?? UUID().uuidString
-        let useAppStorage = env["NDR_IOS_HARNESS_USE_APP_STORAGE"] == "1"
-        let service = env["NDR_IOS_HARNESS_SERVICE"] ?? (useAppStorage ? "to.iris.chat" : "to.iris.chat.harness.\(runID)")
+        let action = try requiredEnv("IRIS_IOS_HARNESS_ACTION", env: env)
+        let runID = env["IRIS_IOS_HARNESS_RUN_ID"] ?? UUID().uuidString
+        let useAppStorage = env["IRIS_IOS_HARNESS_USE_APP_STORAGE"] == "1"
+        let service = env["IRIS_IOS_HARNESS_SERVICE"] ?? (useAppStorage ? "to.iris.chat" : "to.iris.chat.harness.\(runID)")
         let account = "stored-account-bundle"
         let dataDir = useAppStorage
             ? AppPaths.dataDir(fileManager: .default, environment: [:])
             : harnessRootDir(env: env).appendingPathComponent(runID, isDirectory: true)
-        let reset = env["NDR_IOS_HARNESS_RESET"] == "1"
+        let reset = env["IRIS_IOS_HARNESS_RESET"] == "1"
 
         let secretStore = KeychainSecretStore(service: service, account: account)
         if reset {
@@ -83,13 +83,13 @@ final class InteropHarnessTests: XCTestCase {
             UNUserNotificationCenter.current().removeAllDeliveredNotifications()
             status("cleared", "true")
         case "assert_no_visible_delivered_notifications":
-            let timeout = TimeInterval(Double(env["NDR_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 15)
+            let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 15)
             let delivered = try await waitForNoVisibleDeliveredNotifications(timeout: timeout)
             status("visible_notification_count", String(delivered.count))
             status("delivered_notifications", summarizeDeliveredNotifications(delivered))
         case "wait_for_visible_delivered_notification":
-            let expectedBody = env["NDR_IOS_HARNESS_EXPECTED_BODY"] ?? ""
-            let timeout = TimeInterval(Double(env["NDR_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 30)
+            let expectedBody = env["IRIS_IOS_HARNESS_EXPECTED_BODY"] ?? ""
+            let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 30)
             let notification = try await waitForVisibleDeliveredNotification(
                 expectedBody: expectedBody,
                 timeout: timeout
@@ -99,7 +99,7 @@ final class InteropHarnessTests: XCTestCase {
             status("notification_id", notification.request.identifier)
         case "wait_for_peer_roster_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env))
+            let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env))
             _ = try await waitFor(label: "peer roster \(peerOwnerHex)", timeout: 180) {
                 if self.splitPersistenceHasPeerRoster(dataDir: dataDir, peerOwnerHex: peerOwnerHex) {
                     return true
@@ -110,7 +110,7 @@ final class InteropHarnessTests: XCTestCase {
             status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
         case "wait_for_known_peer_session_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env))
+            let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env))
             _ = try await waitFor(label: "known peer session \(peerOwnerHex)", timeout: 180) {
                 if self.splitPersistenceHasPeerSession(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex) {
                     return true
@@ -121,7 +121,7 @@ final class InteropHarnessTests: XCTestCase {
             status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
         case "wait_for_peer_transport_ready_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env))
+            let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env))
             _ = try await waitFor(label: "peer transport ready \(peerOwnerHex)", timeout: 180) {
                 if self.splitPersistenceHasPeerSession(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex) {
                     return true
@@ -131,7 +131,7 @@ final class InteropHarnessTests: XCTestCase {
             status("peer_owner_hex", peerOwnerHex)
             status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
         case "create_chat_from_args":
-            let rawPeer = try requiredEnv("NDR_IOS_HARNESS_PEER_INPUT", env: env)
+            let rawPeer = try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env)
             let chatID = try await ensureChatOpen(manager: manager, dataDir: dataDir, chatID: nil, peerInput: rawPeer)
             let subtitle =
                 manager.state.currentChat?.subtitle ??
@@ -140,12 +140,12 @@ final class InteropHarnessTests: XCTestCase {
             status("chat_id", chatID)
             status("peer_npub", subtitle)
         case "send_message_from_args":
-            let message = try requiredEnv("NDR_IOS_HARNESS_MESSAGE", env: env)
+            let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
             let chatID = try await ensureChatOpen(
                 manager: manager,
                 dataDir: dataDir,
-                chatID: env["NDR_IOS_HARNESS_CHAT_ID"],
-                peerInput: env["NDR_IOS_HARNESS_PEER_INPUT"]
+                chatID: env["IRIS_IOS_HARNESS_CHAT_ID"],
+                peerInput: env["IRIS_IOS_HARNESS_PEER_INPUT"]
             )
             manager.dispatch(.sendMessage(chatId: chatID, text: message))
 
@@ -174,10 +174,10 @@ final class InteropHarnessTests: XCTestCase {
             status("message", message)
             status("delivery", finalizedDelivery)
         case "wait_for_message_from_args":
-            let message = try requiredEnv("NDR_IOS_HARNESS_MESSAGE", env: env)
-            let direction = (env["NDR_IOS_HARNESS_DIRECTION"] ?? "any").lowercased()
-            let requestedChatID = env["NDR_IOS_HARNESS_CHAT_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let peerInput = env["NDR_IOS_HARNESS_PEER_INPUT"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
+            let direction = (env["IRIS_IOS_HARNESS_DIRECTION"] ?? "any").lowercased()
+            let requestedChatID = env["IRIS_IOS_HARNESS_CHAT_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let peerInput = env["IRIS_IOS_HARNESS_PEER_INPUT"]?.trimmingCharacters(in: .whitespacesAndNewlines)
             let resolvedChatID: String?
 
             if let requestedChatID, !requestedChatID.isEmpty {
@@ -218,8 +218,8 @@ final class InteropHarnessTests: XCTestCase {
             status("message", message)
         case "create_group_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            let groupName = try requiredEnv("NDR_IOS_HARNESS_GROUP_NAME", env: env)
-            let memberInputs = parseList(env["NDR_IOS_HARNESS_MEMBER_INPUTS"] ?? "")
+            let groupName = try requiredEnv("IRIS_IOS_HARNESS_GROUP_NAME", env: env)
+            let memberInputs = parseList(env["IRIS_IOS_HARNESS_MEMBER_INPUTS"] ?? "")
             guard !memberInputs.isEmpty else {
                 throw HarnessError.unexpected("member input list is empty")
             }
@@ -237,7 +237,7 @@ final class InteropHarnessTests: XCTestCase {
             status("member_count", String(chat.memberCount))
         case "wait_for_group_chat_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            let chatID = try requiredEnv("NDR_IOS_HARNESS_CHAT_ID", env: env)
+            let chatID = try requiredEnv("IRIS_IOS_HARNESS_CHAT_ID", env: env)
             _ = try await waitFor(label: "group thread \(chatID)", timeout: 180) {
                 manager.state.chatList.first(where: { self.sameIdentifier($0.chatId, chatID) })
             }
@@ -253,8 +253,8 @@ final class InteropHarnessTests: XCTestCase {
             status("member_count", String(chat.memberCount))
         case "wait_for_group_member_count_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
-            let chatID = try requiredEnv("NDR_IOS_HARNESS_CHAT_ID", env: env)
-            let expectedMemberCount = UInt64(try requiredEnv("NDR_IOS_HARNESS_MEMBER_COUNT", env: env)) ?? 0
+            let chatID = try requiredEnv("IRIS_IOS_HARNESS_CHAT_ID", env: env)
+            let expectedMemberCount = UInt64(try requiredEnv("IRIS_IOS_HARNESS_MEMBER_COUNT", env: env)) ?? 0
             _ = try await ensureChatOpen(manager: manager, dataDir: dataDir, chatID: chatID, peerInput: nil)
             let chat = try await waitFor(label: "group member count \(expectedMemberCount)", timeout: 180) {
                 manager.state.currentChat.flatMap { current in
@@ -274,7 +274,7 @@ final class InteropHarnessTests: XCTestCase {
             return account
         }
 
-        manager.dispatch(.createAccount(name: env["NDR_IOS_HARNESS_DISPLAY_NAME"] ?? ""))
+        manager.dispatch(.createAccount(name: env["IRIS_IOS_HARNESS_DISPLAY_NAME"] ?? ""))
         return try await waitFor(label: "logged in account", timeout: 90) {
             manager.state.account
         }
@@ -297,7 +297,7 @@ final class InteropHarnessTests: XCTestCase {
         }
 
         let rawPeer = try requiredEnv(
-            "NDR_IOS_HARNESS_PEER_INPUT",
+            "IRIS_IOS_HARNESS_PEER_INPUT",
             env: ProcessInfo.processInfo.environment,
             fallback: peerInput
         )
@@ -515,7 +515,7 @@ final class InteropHarnessTests: XCTestCase {
     }
 
     private func harnessRootDir(env: [String: String]) -> URL {
-        if let explicit = env["NDR_IOS_HARNESS_DATA_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+        if let explicit = env["IRIS_IOS_HARNESS_DATA_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
            !explicit.isEmpty,
            isWritableHarnessRoot(explicit) {
             return URL(fileURLWithPath: explicit, isDirectory: true)

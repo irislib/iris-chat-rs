@@ -140,7 +140,7 @@ final class ScannerViewController: UIViewController, AVCaptureMetadataOutputObje
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
-        if let testValue = ProcessInfo.processInfo.environment["NDR_QR_TEST_VALUE"], !testValue.isEmpty {
+        if let testValue = ProcessInfo.processInfo.environment["IRIS_QR_TEST_VALUE"], !testValue.isEmpty {
             DispatchQueue.main.async { [weak self] in
                 self?.onCode?(testValue)
             }

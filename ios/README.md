@@ -15,7 +15,7 @@ This directory contains the native iOS shell for Iris Chat.
   - local iOS smoke tests
 - `Bindings/`
   - UniFFI-generated Swift bindings
-- `Frameworks/NdrDemoCore.xcframework`
+- `Frameworks/IrisChatCore.xcframework`
   - packaged Rust static library output
 - `project.yml`
   - XcodeGen source of truth for the generated project

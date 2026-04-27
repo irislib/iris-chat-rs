@@ -2848,7 +2848,7 @@ private struct ProfileEditorCard: View {
     }
 
     private func presentProfilePictureSource() {
-        if let testPath = ProcessInfo.processInfo.environment["NDR_UI_TEST_PROFILE_PICTURE_PATH"],
+        if let testPath = ProcessInfo.processInfo.environment["IRIS_UI_TEST_PROFILE_PICTURE_PATH"],
            !testPath.isEmpty {
             manager.uploadProfilePicture(fileURL: URL(fileURLWithPath: testPath))
             return

@@ -7,47 +7,47 @@ const FALLBACK_RELAYS: &str = "wss://relay.damus.io,wss://nos.lol,wss://relay.pr
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     for key in [
-        "NDR_APP_VERSION",
-        "NDR_BUILD_CHANNEL",
-        "NDR_BUILD_GIT_SHA",
-        "NDR_BUILD_TIMESTAMP_UTC",
-        "NDR_DEFAULT_RELAYS",
-        "NDR_RELAY_SET_ID",
-        "NDR_TRUSTED_TEST_BUILD",
+        "IRIS_APP_VERSION",
+        "IRIS_BUILD_CHANNEL",
+        "IRIS_BUILD_GIT_SHA",
+        "IRIS_BUILD_TIMESTAMP_UTC",
+        "IRIS_DEFAULT_RELAYS",
+        "IRIS_RELAY_SET_ID",
+        "IRIS_TRUSTED_TEST_BUILD",
         "SOURCE_DATE_EPOCH",
     ] {
         println!("cargo:rerun-if-env-changed={key}");
     }
 
     emit(
-        "NDR_APP_VERSION",
-        env::var("NDR_APP_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
+        "IRIS_APP_VERSION",
+        env::var("IRIS_APP_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
     );
     emit(
-        "NDR_BUILD_CHANNEL",
-        env::var("NDR_BUILD_CHANNEL").unwrap_or_else(|_| "debug".to_string()),
+        "IRIS_BUILD_CHANNEL",
+        env::var("IRIS_BUILD_CHANNEL").unwrap_or_else(|_| "debug".to_string()),
     );
     emit(
-        "NDR_BUILD_GIT_SHA",
-        env::var("NDR_BUILD_GIT_SHA").unwrap_or_else(|_| detect_git_sha()),
+        "IRIS_BUILD_GIT_SHA",
+        env::var("IRIS_BUILD_GIT_SHA").unwrap_or_else(|_| detect_git_sha()),
     );
     emit(
-        "NDR_BUILD_TIMESTAMP_UTC",
-        env::var("NDR_BUILD_TIMESTAMP_UTC")
+        "IRIS_BUILD_TIMESTAMP_UTC",
+        env::var("IRIS_BUILD_TIMESTAMP_UTC")
             .or_else(|_| env::var("SOURCE_DATE_EPOCH"))
             .unwrap_or_else(|_| detect_git_timestamp()),
     );
     emit(
-        "NDR_DEFAULT_RELAYS",
-        env::var("NDR_DEFAULT_RELAYS").unwrap_or_else(|_| FALLBACK_RELAYS.to_string()),
+        "IRIS_DEFAULT_RELAYS",
+        env::var("IRIS_DEFAULT_RELAYS").unwrap_or_else(|_| FALLBACK_RELAYS.to_string()),
     );
     emit(
-        "NDR_RELAY_SET_ID",
-        env::var("NDR_RELAY_SET_ID").unwrap_or_else(|_| "public-dev".to_string()),
+        "IRIS_RELAY_SET_ID",
+        env::var("IRIS_RELAY_SET_ID").unwrap_or_else(|_| "public-dev".to_string()),
     );
     emit(
-        "NDR_TRUSTED_TEST_BUILD",
-        env::var("NDR_TRUSTED_TEST_BUILD").unwrap_or_else(|_| "false".to_string()),
+        "IRIS_TRUSTED_TEST_BUILD",
+        env::var("IRIS_TRUSTED_TEST_BUILD").unwrap_or_else(|_| "false".to_string()),
     );
 }
 

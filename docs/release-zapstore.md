@@ -39,10 +39,10 @@ iris-chat-upload
 `release.env` contains Android release signing values:
 
 ```text
-NDR_RELEASE_KEYSTORE_PATH
-NDR_RELEASE_KEYSTORE_PASSWORD
-NDR_RELEASE_KEY_ALIAS
-NDR_RELEASE_KEY_PASSWORD
+IRIS_RELEASE_KEYSTORE_PATH
+IRIS_RELEASE_KEYSTORE_PASSWORD
+IRIS_RELEASE_KEY_ALIAS
+IRIS_RELEASE_KEY_PASSWORD
 ```
 
 `.env.zapstore.local` contains Zapstore publish settings:
@@ -228,8 +228,8 @@ Confirm that it is signing with the same `npub` listed in `zapstore.yaml`.
 1. Update version values in `release.env`:
 
 ```text
-NDR_APP_VERSION_NAME=0.1.1
-NDR_APP_VERSION_CODE=2
+IRIS_APP_VERSION_NAME=0.1.1
+IRIS_APP_VERSION_CODE=2
 ```
 
 2. Update `ZAPSTORE_RELEASE_NOTES.md` with the public notes you want shown in
@@ -278,7 +278,7 @@ set +a
 
 keytool -list -v \
   -keystore .zapstore/keystore/iris-chat-release.jks \
-  -storepass "$NDR_RELEASE_KEYSTORE_PASSWORD"
+  -storepass "$IRIS_RELEASE_KEYSTORE_PASSWORD"
 ```
 
 Check local secret wiring without printing passwords:

@@ -7,13 +7,13 @@ pub(super) const FALLBACK_DEFAULT_RELAYS: &[&str] = &[
     "wss://relay.snort.social",
     "wss://temp.iris.to",
 ];
-pub(super) const APP_VERSION: &str = env!("NDR_APP_VERSION");
-pub(super) const BUILD_CHANNEL: &str = env!("NDR_BUILD_CHANNEL");
-pub(super) const BUILD_GIT_SHA: &str = env!("NDR_BUILD_GIT_SHA");
-pub(super) const BUILD_TIMESTAMP_UTC: &str = env!("NDR_BUILD_TIMESTAMP_UTC");
-pub(super) const COMPILED_DEFAULT_RELAYS_CSV: &str = env!("NDR_DEFAULT_RELAYS");
-pub(super) const RELAY_SET_ID: &str = env!("NDR_RELAY_SET_ID");
-pub(super) const TRUSTED_TEST_BUILD: &str = env!("NDR_TRUSTED_TEST_BUILD");
+pub(super) const APP_VERSION: &str = env!("IRIS_APP_VERSION");
+pub(super) const BUILD_CHANNEL: &str = env!("IRIS_BUILD_CHANNEL");
+pub(super) const BUILD_GIT_SHA: &str = env!("IRIS_BUILD_GIT_SHA");
+pub(super) const BUILD_TIMESTAMP_UTC: &str = env!("IRIS_BUILD_TIMESTAMP_UTC");
+pub(super) const COMPILED_DEFAULT_RELAYS_CSV: &str = env!("IRIS_DEFAULT_RELAYS");
+pub(super) const RELAY_SET_ID: &str = env!("IRIS_RELAY_SET_ID");
+pub(super) const TRUSTED_TEST_BUILD: &str = env!("IRIS_TRUSTED_TEST_BUILD");
 pub(super) const MAX_SEEN_EVENT_IDS: usize = 2048;
 pub(super) const CATCH_UP_LOOKBACK_SECS: u64 = 30;
 pub(super) const DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS: u64 = 30 * 24 * 60 * 60;
@@ -29,7 +29,7 @@ pub(super) const PERSISTED_STATE_VERSION: u32 = 12;
 
 pub(crate) fn configured_relays() -> Vec<String> {
     let compiled_defaults = compiled_default_relays();
-    match std::env::var("NDR_DEMO_RELAYS") {
+    match std::env::var("IRIS_DEMO_RELAYS") {
         Ok(value) => {
             let custom: Vec<String> = value
                 .split(',')
