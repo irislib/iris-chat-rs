@@ -286,14 +286,26 @@ impl AppCore {
             });
         }
 
-        self.protocol_subscription_runtime.refresh_token = self
+        // Only bump the refresh token + emit a debug log entry when the
+        // computed plan has actually changed since the last emission.
+        // Otherwise the log fills up with identical lines on every chat
+        // action even though nothing on the relay side moved.
+        let plan_summary =
+            summarize_protocol_plan(self.compute_protocol_subscription_plan().as_ref());
+        let plan_changed = self
             .protocol_subscription_runtime
-            .refresh_token
-            .wrapping_add(1);
-        self.push_debug_log(
-            "protocol.subscription.refresh",
-            summarize_protocol_plan(self.compute_protocol_subscription_plan().as_ref()),
-        );
+            .last_emitted_plan_summary
+            .as_ref()
+            != Some(&plan_summary);
+        if plan_changed {
+            self.protocol_subscription_runtime.refresh_token = self
+                .protocol_subscription_runtime
+                .refresh_token
+                .wrapping_add(1);
+            self.protocol_subscription_runtime.last_emitted_plan_summary =
+                Some(plan_summary.clone());
+            self.push_debug_log("protocol.subscription.refresh", plan_summary);
+        }
     }
 
     pub(super) fn compute_protocol_subscription_plan(&self) -> Option<ProtocolSubscriptionPlan> {

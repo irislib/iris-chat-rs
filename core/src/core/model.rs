@@ -102,6 +102,10 @@ pub(crate) struct ProtocolSubscriptionPlan {
 pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) active_subscriptions: HashSet<String>,
     pub(super) refresh_token: u64,
+    /// Last subscription plan summary that was actually emitted via the
+    /// debug log / refresh-token bump. Lets the refresh path bail out early
+    /// when nothing has changed since the previous call.
+    pub(super) last_emitted_plan_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
