@@ -3,7 +3,7 @@ use crate::state::{
     AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, ChatThreadSnapshot,
     CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, DeviceEntrySnapshot,
     DeviceRosterSnapshot, GroupDetailsSnapshot, GroupMemberSnapshot, MessageAttachmentSnapshot,
-    MessageReactionSnapshot, MobilePushNotificationResolution, MobilePushSessionSnapshot,
+    MessageReactionSnapshot, MessageReactor, MobilePushNotificationResolution, MobilePushSessionSnapshot,
     MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
     OutgoingAttachment, PreferencesSnapshot, PublicInviteSnapshot, Router, Screen,
     TypingIndicatorSnapshot,

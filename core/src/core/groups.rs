@@ -498,10 +498,12 @@ impl AppCore {
                 }
             }
             REACTION_KIND => {
+                let sender_hex = sender_owner.to_hex();
                 for message_id in event_message_ids(&event.inner) {
                     self.apply_incoming_reaction_to_chat(
                         &chat_id,
                         &message_id,
+                        &sender_hex,
                         &event.inner.content,
                     );
                 }

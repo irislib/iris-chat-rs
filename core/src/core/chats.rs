@@ -373,6 +373,7 @@ impl AppCore {
             body,
             attachments,
             reactions: Vec::new(),
+            reactors: Vec::new(),
             is_outgoing: true,
             created_at_secs,
             expires_at_secs,
@@ -435,6 +436,7 @@ impl AppCore {
             body,
             attachments,
             reactions: Vec::new(),
+            reactors: Vec::new(),
             is_outgoing: false,
             created_at_secs,
             expires_at_secs,
@@ -473,6 +475,7 @@ impl AppCore {
             body,
             attachments: Vec::new(),
             reactions: Vec::new(),
+            reactors: Vec::new(),
             is_outgoing: false,
             created_at_secs,
             expires_at_secs: None,
@@ -624,10 +627,12 @@ impl AppCore {
                 }
             }
             REACTION_KIND => {
+                let sender_hex = sender_owner.to_hex();
                 for message_id in message_ids_from_tags(runtime_rumor.tags.iter()) {
                     self.apply_incoming_reaction_to_chat(
                         &chat_id,
                         &message_id,
+                        &sender_hex,
                         &runtime_rumor.content,
                     );
                 }

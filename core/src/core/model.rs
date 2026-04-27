@@ -297,6 +297,8 @@ pub(super) struct PersistedMessage {
     pub(super) attachments: Vec<MessageAttachmentSnapshot>,
     #[serde(default)]
     pub(super) reactions: Vec<MessageReactionSnapshot>,
+    #[serde(default)]
+    pub(super) reactors: Vec<MessageReactor>,
     pub(super) is_outgoing: bool,
     pub(super) created_at_secs: u64,
     #[serde(default)]

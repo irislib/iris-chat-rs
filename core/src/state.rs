@@ -146,6 +146,14 @@ pub struct MessageReactionSnapshot {
     pub reacted_by_me: bool,
 }
 
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageReactor {
+    /// Hex-encoded pubkey of the user who reacted.
+    pub author: String,
+    /// Emoji content of their current (latest) reaction. Empty means unreacted.
+    pub emoji: String,
+}
+
 #[derive(uniffi::Record, Clone, Debug)]
 pub struct ChatMessageSnapshot {
     pub id: String,
@@ -155,6 +163,7 @@ pub struct ChatMessageSnapshot {
     pub body: String,
     pub attachments: Vec<MessageAttachmentSnapshot>,
     pub reactions: Vec<MessageReactionSnapshot>,
+    pub reactors: Vec<MessageReactor>,
     pub is_outgoing: bool,
     pub created_at_secs: u64,
     pub expires_at_secs: Option<u64>,

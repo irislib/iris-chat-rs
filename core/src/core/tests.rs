@@ -184,6 +184,7 @@ fn queued_runtime_publish_completion_uses_inner_message_id() {
                 body: "queued".to_string(),
                 attachments: Vec::new(),
                 reactions: Vec::new(),
+                reactors: Vec::new(),
                 is_outgoing: true,
                 created_at_secs: 1,
                 expires_at_secs: None,
