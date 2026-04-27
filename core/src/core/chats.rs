@@ -378,6 +378,11 @@ impl AppCore {
             created_at_secs,
             expires_at_secs,
             delivery,
+            // Outgoing messages are composed locally; the wrapper event
+            // id only exists once the rumor has been published, and we
+            // never need it for notification preview lookups (we
+            // wouldn't notify ourselves).
+            source_event_id: None,
         };
         self.threads
             .entry(chat_id.to_string())
@@ -402,6 +407,7 @@ impl AppCore {
         created_at_secs: u64,
         expires_at_secs: Option<u64>,
         author: Option<String>,
+        source_event_id: Option<String>,
     ) {
         let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
         if self.threads.get(chat_id).is_some_and(|thread| {
@@ -441,6 +447,7 @@ impl AppCore {
             created_at_secs,
             expires_at_secs,
             delivery: DeliveryState::Received,
+            source_event_id,
         });
     }
 
@@ -480,6 +487,7 @@ impl AppCore {
             created_at_secs,
             expires_at_secs: None,
             delivery: DeliveryState::Received,
+            source_event_id: None,
         });
     }
 
@@ -573,6 +581,7 @@ impl AppCore {
                 content,
                 unix_now().get(),
                 None,
+                outer_event_id.clone(),
                 outer_event_id,
             );
             return;
@@ -603,23 +612,6 @@ impl AppCore {
         let chat_id = chat_id_for_tags(sender_owner, local_owner, runtime_rumor.tags.iter());
         let is_outgoing = sender_owner == local_owner;
         let message_id = runtime_rumor.id.or_else(|| outer_event_id.clone());
-        if !is_outgoing {
-            let group_id = runtime_rumor
-                .tags
-                .iter()
-                .find_map(|tag| match tag.as_slice() {
-                    [name, value, ..] if name == "l" && !value.is_empty() => Some(value.as_str()),
-                    _ => None,
-                });
-            remember_mobile_push_preview(
-                &self.data_dir,
-                outer_event_id.as_deref(),
-                sender_owner,
-                kind as u64,
-                &runtime_rumor.content,
-                group_id,
-            );
-        }
 
         match kind {
             GROUP_METADATA_KIND => {
@@ -636,6 +628,7 @@ impl AppCore {
                     created_at_secs,
                     expires_at_secs,
                     message_id.clone(),
+                    outer_event_id.clone(),
                 );
                 if !is_outgoing && self.preferences.send_read_receipts {
                     if let Some(receipt_id) = message_id {
@@ -697,6 +690,7 @@ impl AppCore {
         created_at_secs: u64,
         expires_at_secs: Option<u64>,
         message_id: Option<String>,
+        source_event_id: Option<String>,
     ) {
         let Some(local_owner) = self
             .logged_in
@@ -720,6 +714,7 @@ impl AppCore {
             created_at_secs,
             expires_at_secs,
             Some(self.owner_display_label(&sender_owner.to_hex())),
+            source_event_id,
         );
     }
 

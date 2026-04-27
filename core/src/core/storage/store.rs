@@ -282,8 +282,9 @@ impl SavePlan {
             let mut message_stmt = tx.prepare_cached(
                 "INSERT INTO messages(
                     chat_id, id, kind, author, body, is_outgoing, created_at_secs,
-                    expires_at_secs, delivery, attachments_json, reactions_json, reactors_json
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
+                    source_event_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             )?;
             for chat_id in self.threads_to_write.keys() {
                 let thread = snapshot
@@ -310,6 +311,7 @@ impl SavePlan {
                         serde_json::to_string(&message.attachments)?,
                         serde_json::to_string(&message.reactions)?,
                         serde_json::to_string(&message.reactors)?,
+                        message.source_event_id,
                     ])?;
                 }
             }
@@ -412,6 +414,7 @@ fn hash_thread(thread: &ThreadRecord) -> u64 {
         message.is_outgoing.hash(&mut hasher);
         message.created_at_secs.hash(&mut hasher);
         message.expires_at_secs.hash(&mut hasher);
+        message.source_event_id.hash(&mut hasher);
         serialize_delivery(&message.delivery).hash(&mut hasher);
         serialize_message_kind(&message.kind).hash(&mut hasher);
         // Attachments / reactions / reactors are vec-of-struct; fall
@@ -721,7 +724,7 @@ fn load_threads(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PersistedThre
 
     let mut messages_stmt = conn.prepare(
         "SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
-                delivery, attachments_json, reactions_json, reactors_json
+                delivery, attachments_json, reactions_json, reactors_json, source_event_id
          FROM messages
          ORDER BY chat_id ASC, created_at_secs ASC, id ASC",
     )?;
@@ -742,6 +745,7 @@ fn load_threads(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PersistedThre
                 created_at_secs: row.get::<_, i64>(6)? as u64,
                 expires_at_secs: row.get::<_, Option<i64>>(7)?.map(|secs| secs as u64),
                 delivery: parse_delivery(&row.get::<_, String>(8)?),
+                source_event_id: row.get(12)?,
             },
         ))
     })?;
@@ -863,6 +867,7 @@ mod tests {
             created_at_secs: ts,
             expires_at_secs: None,
             delivery: DeliveryState::Received,
+            source_event_id: None,
         }
     }
 

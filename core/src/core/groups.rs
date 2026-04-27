@@ -493,6 +493,7 @@ impl AppCore {
                     created_at_secs,
                     expires_at_secs,
                     message_id.clone(),
+                    Some(event.outer_event_id.clone()),
                 );
                 if !is_outgoing && self.preferences.send_read_receipts {
                     if let Some(message_id) = message_id {

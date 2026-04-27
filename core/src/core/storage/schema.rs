@@ -72,11 +72,17 @@ CREATE TABLE IF NOT EXISTS messages (
     attachments_json TEXT NOT NULL DEFAULT '[]',
     reactions_json TEXT NOT NULL DEFAULT '[]',
     reactors_json TEXT NOT NULL DEFAULT '[]',
+    source_event_id TEXT,
     PRIMARY KEY (chat_id, id)
 );
 
 CREATE INDEX IF NOT EXISTS messages_chat_order_idx
     ON messages(chat_id, created_at_secs, id);
+
+-- Used by the notification extension to find an already-decrypted
+-- rumor by its outer relay event id.
+CREATE INDEX IF NOT EXISTS messages_source_event_idx
+    ON messages(source_event_id) WHERE source_event_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS seen_events (
     event_id TEXT PRIMARY KEY,

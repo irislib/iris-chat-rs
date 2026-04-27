@@ -191,6 +191,13 @@ pub struct ChatMessageSnapshot {
     pub created_at_secs: u64,
     pub expires_at_secs: Option<u64>,
     pub delivery: DeliveryState,
+    /// Hex ID of the outer relay event that carried this rumor. The
+    /// notification extension joins on this to find a body the
+    /// foreground app already decrypted, so it can render a real
+    /// preview instead of "New activity". `None` for messages that
+    /// didn't come over the wire (system notices, locally-composed
+    /// outgoing rumors).
+    pub source_event_id: Option<String>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

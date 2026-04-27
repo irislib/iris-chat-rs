@@ -284,6 +284,113 @@ fn mobile_push_fallback_suppresses_opaque_encrypted_events() {
 }
 
 #[test]
+fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
+    // Simulates the "main app already consumed this event, ratchet has
+    // moved on, push extension can't decrypt anymore" race: the
+    // foreground app stored a message keyed by the outer event id; the
+    // extension can't decrypt the same event, so it falls back to the
+    // body/sender already on disk.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_path_buf();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir.to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let invite = Invite::create_new(device.public_key(), Some(device.public_key().to_hex()), None)
+        .expect("invite");
+    let runtime = NdrRuntime::new(
+        device.public_key(),
+        device.secret_key().to_secret_bytes(),
+        device.public_key().to_hex(),
+        owner.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    runtime.init().expect("runtime init");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: runtime,
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    // Pretend Alice's profile is already known.
+    let alice = Keys::generate();
+    core.owner_profiles.insert(
+        alice.public_key().to_hex(),
+        OwnerProfileRecord {
+            name: Some("alice".to_string()),
+            display_name: Some("Alice from work".to_string()),
+            picture: None,
+            updated_at_secs: 1,
+        },
+    );
+    let outer_event_id = "a".repeat(64);
+    let chat_id = alice.public_key().to_hex();
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 1,
+            updated_at_secs: 200,
+            messages: vec![ChatMessageSnapshot {
+                id: "rumor-1".to_string(),
+                chat_id: chat_id.clone(),
+                kind: ChatMessageKind::User,
+                author: alice.public_key().to_hex(),
+                body: "lunch?".to_string(),
+                attachments: Vec::new(),
+                reactions: Vec::new(),
+                reactors: Vec::new(),
+                is_outgoing: false,
+                created_at_secs: 199,
+                expires_at_secs: None,
+                delivery: DeliveryState::Received,
+                source_event_id: Some(outer_event_id.clone()),
+            }],
+        },
+    );
+    core.persist_best_effort_inner();
+
+    let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
+        .sign_with_keys(&alice)
+        .expect("outer event");
+    let payload = serde_json::json!({
+        "event": serde_json::json!({
+            "id": outer_event_id,
+            "kind": MESSAGE_EVENT_KIND,
+            "content": "",
+            "tags": [],
+            "pubkey": alice.public_key().to_hex(),
+            "created_at": 200,
+            "sig": outer_event.sig.to_string(),
+        }),
+        "title": "DM by Someone",
+        "body": "New message",
+    })
+    .to_string();
+
+    // Use bogus device keys so NDR decrypt fails immediately and we
+    // exercise the SQLite-backed preview path.
+    let resolution = decrypt_mobile_push_notification(
+        data_dir.to_string_lossy().to_string(),
+        owner.public_key().to_hex(),
+        "nsec1invalid".to_string(),
+        payload,
+    );
+    assert!(resolution.should_show);
+    assert_eq!(resolution.body, "lunch?");
+    assert_eq!(resolution.title, "Alice from work");
+}
+
+#[test]
 fn mobile_push_fallback_suppresses_decrypted_non_message_kinds() {
     for kind in [
         0_u64,
@@ -476,6 +583,7 @@ fn queued_runtime_publish_completion_uses_inner_message_id() {
                 created_at_secs: 1,
                 expires_at_secs: None,
                 delivery: DeliveryState::Queued,
+                source_event_id: None,
             }],
         },
     );
@@ -565,6 +673,11 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
         record.chat_id == chat_id && record.author_owner_hex == sender.public_key().to_hex()
     }));
 
+    // Typing rumors aren't durable, so the SQLite-backed
+    // notification preview path doesn't find them and falls through
+    // to the generic resolver — which suppresses non-message kinds.
+    // Only durable chat messages get a real preview after the
+    // foreground app has consumed the rumor.
     let payload = serde_json::json!({
         "event": outer_event,
         "title": "Iris Chat",
@@ -577,8 +690,7 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
         "invalid-device".to_string(),
         payload,
     );
-    assert!(resolution.should_show);
-    assert_eq!(resolution.body, "is typing");
+    assert!(!resolution.should_show);
 }
 
 #[test]
@@ -864,6 +976,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                         created_at_secs: 100,
                         expires_at_secs: None,
                         delivery: DeliveryState::Sent,
+                source_event_id: None,
                     },
                     ChatMessageSnapshot {
                         id: "m2".to_string(),
@@ -878,6 +991,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                         created_at_secs: 110,
                         expires_at_secs: None,
                         delivery: DeliveryState::Received,
+                source_event_id: None,
                     },
                 ],
             },
@@ -901,6 +1015,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                     created_at_secs: 50,
                     expires_at_secs: None,
                     delivery: DeliveryState::Received,
+                source_event_id: None,
                 }],
             },
         );

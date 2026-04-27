@@ -403,6 +403,7 @@ impl AppCore {
                                         created_at_secs: message.created_at_secs,
                                         expires_at_secs: message.expires_at_secs,
                                         delivery: message.delivery.clone().into(),
+                                        source_event_id: message.source_event_id.clone(),
                                     }
                                 })
                                 .collect(),

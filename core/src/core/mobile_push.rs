@@ -10,7 +10,6 @@ const MOBILE_PUSH_CHAT_MESSAGE_KIND: u64 = CHAT_MESSAGE_KIND as u64;
 const MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND: u64 = MESSAGE_EVENT_KIND as u64;
 const MOBILE_PUSH_PRODUCTION_SERVER_URL: &str = "https://notifications.iris.to";
 const MOBILE_PUSH_SANDBOX_SERVER_URL: &str = "https://notifications-sandbox.iris.to";
-const MOBILE_PUSH_PREVIEW_CACHE_LIMIT: usize = 128;
 
 impl AppCore {
     pub(super) fn build_mobile_push_sync_snapshot(&self) -> MobilePushSyncSnapshot {
@@ -232,25 +231,66 @@ pub(crate) fn decrypt_mobile_push_notification(
     }
 }
 
-pub(crate) fn remember_mobile_push_preview(
-    data_dir: &Path,
-    outer_event_id: Option<&str>,
-    sender_owner: nostr::PublicKey,
-    kind: u64,
-    content: &str,
-    group_id: Option<&str>,
-) {
-    let Some(event_id) = outer_event_id
-        .map(str::trim)
-        .filter(|value| value.len() == 64 && value.chars().all(|char| char.is_ascii_hexdigit()))
-    else {
-        return;
-    };
-    let data_dir_string = data_dir.to_string_lossy();
-    let sender_name = lookup_sender_display_name(&data_dir_string, &sender_owner)
-        .or_else(|| lookup_direct_thread_sender_name(&data_dir_string, &sender_owner))
-        .unwrap_or_else(|| "Iris Chat".to_string());
-    let group_title = group_id.and_then(|id| lookup_group_name(&data_dir_string, id));
+/// When the notification extension can't decrypt an event itself —
+/// usually because the foreground app already advanced the ratchet —
+/// fall back to the message the foreground app stored in SQLite. The
+/// body and sender/group titles are reconstructed from the same tables
+/// the chat list reads, so the notification matches what the user
+/// would see if they tapped through.
+fn lookup_mobile_push_preview(
+    data_dir: &str,
+    outer_event_id: &str,
+) -> Option<MobilePushNotificationResolution> {
+    let conn = open_lookup_connection(data_dir)?;
+    let (chat_id, kind, body, author_hex, attachments_json): (
+        String,
+        String,
+        String,
+        String,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT chat_id, kind, body, author, attachments_json
+             FROM messages
+             WHERE source_event_id = ?1
+             LIMIT 1",
+            [outer_event_id],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .ok()?;
+
+    let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX);
+    let sender_pubkey = nostr::PublicKey::parse(&author_hex).ok();
+    let sender_name = sender_pubkey
+        .as_ref()
+        .and_then(|pubkey| lookup_owner_display_name(&conn, pubkey))
+        .filter(|value| !is_generic_sender_title(value))
+        .unwrap_or_else(|| {
+            // Author column on incoming messages is the resolved
+            // display label the foreground app put there. If
+            // owner_profiles doesn't have a better one yet, that label
+            // is still our best bet — but only if it isn't a literal
+            // hex pubkey.
+            let fallback = author_hex.trim().to_string();
+            if !fallback.is_empty()
+                && !is_generic_sender_title(&fallback)
+                && !looks_like_hex_pubkey(&fallback)
+            {
+                fallback
+            } else {
+                "Iris Chat".to_string()
+            }
+        });
+    let group_title = group_id.and_then(|id| lookup_group_name_in(&conn, id));
+
     let title = match (&group_title, sender_name.as_str()) {
         (Some(group), sender) if !sender.is_empty() && sender != "Iris Chat" => {
             format!("{sender} in {group}")
@@ -258,104 +298,94 @@ pub(crate) fn remember_mobile_push_preview(
         (Some(group), _) => group.clone(),
         (None, sender) => sender.to_string(),
     };
-    let body = decrypted_mobile_push_body(kind, content);
+
+    // Persisted body has the attachment markup stripped already. If
+    // the message carried attachments and the visible body is empty,
+    // fall back to the kind-specific placeholder so the user gets
+    // something rather than a blank notification.
+    let inner_kind = parse_kind(&kind);
+    let body_text = if body.trim().is_empty() && attachments_json != "[]" {
+        decrypted_mobile_push_body(inner_kind, "")
+    } else if body.trim().is_empty() {
+        decrypted_mobile_push_body(inner_kind, "")
+    } else {
+        body.clone()
+    };
 
     let mut payload = serde_json::Map::new();
     payload.insert(
         "title".to_string(),
         serde_json::Value::String(title.clone()),
     );
-    payload.insert("body".to_string(), serde_json::Value::String(body.clone()));
+    payload.insert(
+        "body".to_string(),
+        serde_json::Value::String(body_text.clone()),
+    );
     payload.insert(
         "inner_kind".to_string(),
-        serde_json::Value::String(kind.to_string()),
+        serde_json::Value::String(inner_kind.to_string()),
     );
-    payload.insert(
-        "sender_pubkey".to_string(),
-        serde_json::Value::String(sender_owner.to_hex()),
-    );
-    if let Some(group_id) = group_id.map(str::trim).filter(|value| !value.is_empty()) {
+    if let Some(pubkey) = sender_pubkey {
+        payload.insert(
+            "sender_pubkey".to_string(),
+            serde_json::Value::String(pubkey.to_hex()),
+        );
+    }
+    if let Some(group_id) = group_id {
         payload.insert(
             "group_id".to_string(),
             serde_json::Value::String(group_id.to_string()),
         );
     }
-    let Ok(payload_json) = serde_json::to_string(&serde_json::Value::Object(payload)) else {
-        return;
-    };
+    let payload_json =
+        serde_json::to_string(&serde_json::Value::Object(payload)).unwrap_or_else(|_| "{}".to_string());
 
-    let mut cache = read_mobile_push_preview_cache(data_dir);
-    cache.entries.retain(|entry| entry.event_id != event_id);
-    cache.entries.push(MobilePushPreviewCacheEntry {
-        event_id: event_id.to_string(),
-        title,
-        body,
-        payload_json,
-        created_at_secs: unix_now().get(),
-    });
-    if cache.entries.len() > MOBILE_PUSH_PREVIEW_CACHE_LIMIT {
-        let drop_count = cache.entries.len() - MOBILE_PUSH_PREVIEW_CACHE_LIMIT;
-        cache.entries.drain(0..drop_count);
-    }
-    write_mobile_push_preview_cache(data_dir, &cache);
-}
-
-fn lookup_mobile_push_preview(
-    data_dir: &str,
-    outer_event_id: &str,
-) -> Option<MobilePushNotificationResolution> {
-    let cache = read_mobile_push_preview_cache(Path::new(data_dir));
-    let entry = cache
-        .entries
-        .iter()
-        .rev()
-        .find(|entry| entry.event_id == outer_event_id)?;
     Some(MobilePushNotificationResolution {
         should_show: true,
-        title: entry.title.clone(),
-        body: entry.body.clone(),
-        payload_json: entry.payload_json.clone(),
+        title,
+        body: body_text,
+        payload_json,
     })
 }
 
-#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
-struct MobilePushPreviewCache {
-    #[serde(default)]
-    entries: Vec<MobilePushPreviewCacheEntry>,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-struct MobilePushPreviewCacheEntry {
-    event_id: String,
-    title: String,
-    body: String,
-    payload_json: String,
-    created_at_secs: u64,
-}
-
-fn mobile_push_preview_cache_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("core").join("mobile_push_previews.json")
-}
-
-fn read_mobile_push_preview_cache(data_dir: &Path) -> MobilePushPreviewCache {
-    let path = mobile_push_preview_cache_path(data_dir);
-    let Ok(bytes) = std::fs::read(path) else {
-        return MobilePushPreviewCache::default();
-    };
-    serde_json::from_slice(&bytes).unwrap_or_default()
-}
-
-fn write_mobile_push_preview_cache(data_dir: &Path, cache: &MobilePushPreviewCache) {
-    let path = mobile_push_preview_cache_path(data_dir);
-    let Some(parent) = path.parent() else {
-        return;
-    };
-    if std::fs::create_dir_all(parent).is_err() {
-        return;
+fn parse_kind(raw: &str) -> u64 {
+    match raw {
+        "system" => CHAT_MESSAGE_KIND as u64,
+        _ => CHAT_MESSAGE_KIND as u64,
     }
-    if let Ok(bytes) = serde_json::to_vec(cache) {
-        let _ = std::fs::write(path, bytes);
-    }
+}
+
+fn looks_like_hex_pubkey(value: &str) -> bool {
+    value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+fn lookup_owner_display_name(
+    conn: &rusqlite::Connection,
+    pubkey: &nostr::PublicKey,
+) -> Option<String> {
+    let (display_name, name): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT display_name, name FROM owner_profiles WHERE owner_pubkey_hex = ?1",
+            [pubkey.to_hex()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()?;
+    display_name
+        .or(name)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn lookup_group_name_in(conn: &rusqlite::Connection, group_id: &str) -> Option<String> {
+    let name: String = conn
+        .query_row(
+            "SELECT name FROM groups WHERE group_id = ?1",
+            [group_id],
+            |row| row.get(0),
+        )
+        .ok()?;
+    let trimmed = name.trim().to_string();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 struct NotificationPreviewStorage {

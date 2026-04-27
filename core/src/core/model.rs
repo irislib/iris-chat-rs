@@ -318,6 +318,8 @@ pub(super) struct PersistedMessage {
     #[serde(default)]
     pub(super) expires_at_secs: Option<u64>,
     pub(super) delivery: PersistedDeliveryState,
+    #[serde(default)]
+    pub(super) source_event_id: Option<String>,
 }
 
 fn default_message_kind() -> ChatMessageKind {
