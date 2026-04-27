@@ -189,6 +189,82 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
 }
 
 #[test]
+fn mobile_push_decrypt_preview_renders_typing_activity() {
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_path_buf();
+    let bob_storage_dir = data_dir
+        .join("ndr_runtime")
+        .join(bob_keys.public_key().to_hex())
+        .join(bob_keys.public_key().to_hex());
+    let bob_storage = Arc::new(FileStorageAdapter::new(bob_storage_dir).expect("bob storage"))
+        as Arc<dyn StorageAdapter>;
+
+    let mut invite = Invite::create_new(
+        alice_keys.public_key(),
+        Some(alice_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("invite");
+    invite.owner_public_key = Some(alice_keys.public_key());
+
+    let alice = NdrRuntime::new(
+        alice_keys.public_key(),
+        alice_keys.secret_key().to_secret_bytes(),
+        alice_keys.public_key().to_hex(),
+        alice_keys.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    alice.init().expect("alice init");
+
+    let bob = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        Some(bob_storage),
+        None,
+    );
+    bob.init().expect("bob init");
+    bob.accept_invite(&invite, Some(alice_keys.public_key()))
+        .expect("bob accepts alice invite");
+    deliver_published_events(&bob, &bob_keys, &alice);
+
+    alice
+        .send_typing(bob_keys.public_key(), None)
+        .expect("alice sends typing");
+    let bob_message_authors = bob.session_manager().get_all_message_push_author_pubkeys();
+    let typing_event = drain_signed_events(&alice, &alice_keys)
+        .into_iter()
+        .find(|event| {
+            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
+                && bob_message_authors.contains(&event.pubkey)
+        })
+        .expect("typing event for Bob");
+    let payload = serde_json::json!({
+        "event": typing_event,
+        "title": "New message",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let resolution = decrypt_mobile_push_notification(
+        data_dir.to_string_lossy().to_string(),
+        bob_keys.public_key().to_hex(),
+        bob_keys
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
+        payload,
+    );
+
+    assert!(resolution.should_show);
+    assert_eq!(resolution.body, "is typing");
+}
+
+#[test]
 fn mobile_push_fallback_suppresses_opaque_encrypted_events() {
     let encrypted_outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
         .sign_with_keys(&Keys::generate())
@@ -458,6 +534,10 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
     let device = Keys::generate();
     let sender = Keys::generate();
     let mut core = logged_in_test_core("web-runtime-typing", &owner, &device);
+    let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
+        .sign_with_keys(&sender)
+        .expect("outer event");
+    let outer_event_id = outer_event.id.to_string();
     let content = serde_json::json!({
         "content": "typing",
         "kind": TYPING_KIND,
@@ -468,7 +548,12 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
     })
     .to_string();
 
-    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("e".repeat(64)));
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        content,
+        Some(outer_event_id.clone()),
+    );
 
     let chat_id = sender.public_key().to_hex();
     assert!(core
@@ -479,6 +564,21 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
     assert!(core.typing_indicators.values().any(|record| {
         record.chat_id == chat_id && record.author_owner_hex == sender.public_key().to_hex()
     }));
+
+    let payload = serde_json::json!({
+        "event": outer_event,
+        "title": "Iris Chat",
+        "body": "New message",
+    })
+    .to_string();
+    let resolution = decrypt_mobile_push_notification(
+        core.data_dir.to_string_lossy().to_string(),
+        "invalid-owner".to_string(),
+        "invalid-device".to_string(),
+        payload,
+    );
+    assert!(resolution.should_show);
+    assert_eq!(resolution.body, "is typing");
 }
 
 #[test]

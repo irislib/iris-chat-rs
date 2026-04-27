@@ -1,7 +1,7 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use nostr::Tag;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
@@ -10,6 +10,7 @@ const MOBILE_PUSH_CHAT_MESSAGE_KIND: u64 = CHAT_MESSAGE_KIND as u64;
 const MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND: u64 = MESSAGE_EVENT_KIND as u64;
 const MOBILE_PUSH_PRODUCTION_SERVER_URL: &str = "https://notifications.iris.to";
 const MOBILE_PUSH_SANDBOX_SERVER_URL: &str = "https://notifications-sandbox.iris.to";
+const MOBILE_PUSH_PREVIEW_CACHE_LIMIT: usize = 128;
 
 impl AppCore {
     pub(super) fn build_mobile_push_sync_snapshot(&self) -> MobilePushSyncSnapshot {
@@ -94,13 +95,17 @@ pub(crate) fn decrypt_mobile_push_notification(
         Err(_) => return fallback(),
     };
 
+    let outer_event_id = outer_event.id.to_string();
+    let cached_fallback =
+        || lookup_mobile_push_preview(&data_dir, &outer_event_id).unwrap_or_else(|| fallback());
+
     let owner_pubkey = match nostr::PublicKey::parse(owner_pubkey_hex.trim()) {
         Ok(pubkey) => pubkey,
-        Err(_) => return fallback(),
+        Err(_) => return cached_fallback(),
     };
     let device_keys = match nostr::Keys::parse(device_nsec.trim()) {
         Ok(keys) => keys,
-        Err(_) => return fallback(),
+        Err(_) => return cached_fallback(),
     };
 
     let storage_dir = PathBuf::from(&data_dir)
@@ -141,7 +146,7 @@ pub(crate) fn decrypt_mobile_push_notification(
     }
 
     let (Some(inner_json), Some(sender_owner)) = (decrypted_inner_json, decrypted_sender) else {
-        return fallback();
+        return cached_fallback();
     };
     let inner_value: serde_json::Value = match serde_json::from_str(&inner_json) {
         Ok(value) => value,
@@ -224,6 +229,132 @@ pub(crate) fn decrypt_mobile_push_notification(
         body,
         payload_json: serde_json::to_string(&serde_json::Value::Object(resolved_payload))
             .unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
+pub(crate) fn remember_mobile_push_preview(
+    data_dir: &Path,
+    outer_event_id: Option<&str>,
+    sender_owner: nostr::PublicKey,
+    kind: u64,
+    content: &str,
+    group_id: Option<&str>,
+) {
+    let Some(event_id) = outer_event_id
+        .map(str::trim)
+        .filter(|value| value.len() == 64 && value.chars().all(|char| char.is_ascii_hexdigit()))
+    else {
+        return;
+    };
+    let data_dir_string = data_dir.to_string_lossy();
+    let sender_name = lookup_sender_display_name(&data_dir_string, &sender_owner)
+        .or_else(|| lookup_direct_thread_sender_name(&data_dir_string, &sender_owner))
+        .unwrap_or_else(|| "Iris Chat".to_string());
+    let group_title = group_id.and_then(|id| lookup_group_name(&data_dir_string, id));
+    let title = match (&group_title, sender_name.as_str()) {
+        (Some(group), sender) if !sender.is_empty() && sender != "Iris Chat" => {
+            format!("{sender} in {group}")
+        }
+        (Some(group), _) => group.clone(),
+        (None, sender) => sender.to_string(),
+    };
+    let body = decrypted_mobile_push_body(kind, content);
+
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "title".to_string(),
+        serde_json::Value::String(title.clone()),
+    );
+    payload.insert("body".to_string(), serde_json::Value::String(body.clone()));
+    payload.insert(
+        "inner_kind".to_string(),
+        serde_json::Value::String(kind.to_string()),
+    );
+    payload.insert(
+        "sender_pubkey".to_string(),
+        serde_json::Value::String(sender_owner.to_hex()),
+    );
+    if let Some(group_id) = group_id.map(str::trim).filter(|value| !value.is_empty()) {
+        payload.insert(
+            "group_id".to_string(),
+            serde_json::Value::String(group_id.to_string()),
+        );
+    }
+    let Ok(payload_json) = serde_json::to_string(&serde_json::Value::Object(payload)) else {
+        return;
+    };
+
+    let mut cache = read_mobile_push_preview_cache(data_dir);
+    cache.entries.retain(|entry| entry.event_id != event_id);
+    cache.entries.push(MobilePushPreviewCacheEntry {
+        event_id: event_id.to_string(),
+        title,
+        body,
+        payload_json,
+        created_at_secs: unix_now().get(),
+    });
+    if cache.entries.len() > MOBILE_PUSH_PREVIEW_CACHE_LIMIT {
+        let drop_count = cache.entries.len() - MOBILE_PUSH_PREVIEW_CACHE_LIMIT;
+        cache.entries.drain(0..drop_count);
+    }
+    write_mobile_push_preview_cache(data_dir, &cache);
+}
+
+fn lookup_mobile_push_preview(
+    data_dir: &str,
+    outer_event_id: &str,
+) -> Option<MobilePushNotificationResolution> {
+    let cache = read_mobile_push_preview_cache(Path::new(data_dir));
+    let entry = cache
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| entry.event_id == outer_event_id)?;
+    Some(MobilePushNotificationResolution {
+        should_show: true,
+        title: entry.title.clone(),
+        body: entry.body.clone(),
+        payload_json: entry.payload_json.clone(),
+    })
+}
+
+#[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
+struct MobilePushPreviewCache {
+    #[serde(default)]
+    entries: Vec<MobilePushPreviewCacheEntry>,
+}
+
+#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
+struct MobilePushPreviewCacheEntry {
+    event_id: String,
+    title: String,
+    body: String,
+    payload_json: String,
+    created_at_secs: u64,
+}
+
+fn mobile_push_preview_cache_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("core").join("mobile_push_previews.json")
+}
+
+fn read_mobile_push_preview_cache(data_dir: &Path) -> MobilePushPreviewCache {
+    let path = mobile_push_preview_cache_path(data_dir);
+    let Ok(bytes) = std::fs::read(path) else {
+        return MobilePushPreviewCache::default();
+    };
+    serde_json::from_slice(&bytes).unwrap_or_default()
+}
+
+fn write_mobile_push_preview_cache(data_dir: &Path, cache: &MobilePushPreviewCache) {
+    let path = mobile_push_preview_cache_path(data_dir);
+    let Some(parent) = path.parent() else {
+        return;
+    };
+    if std::fs::create_dir_all(parent).is_err() {
+        return;
+    }
+    if let Ok(bytes) = serde_json::to_vec(cache) {
+        let _ = std::fs::write(path, bytes);
     }
 }
 

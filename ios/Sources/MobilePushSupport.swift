@@ -35,9 +35,9 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         guard let manager else {
             return [.banner, .sound, .list]
         }
-        return manager.shouldSuppressPushNotification(userInfo: notification.request.content.userInfo)
-            ? []
-            : [.banner, .sound, .list]
+        return await manager.foregroundPushPresentationOptions(
+            userInfo: notification.request.content.userInfo
+        )
     }
 
     func userNotificationCenter(

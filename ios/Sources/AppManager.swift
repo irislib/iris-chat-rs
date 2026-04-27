@@ -1,6 +1,9 @@
 import Foundation
 import Security
 import SwiftUI
+#if os(iOS)
+import UserNotifications
+#endif
 
 struct StoredAccountBundle: Codable, Equatable {
     let ownerNsec: String?
@@ -265,6 +268,26 @@ final class AppManager: ObservableObject {
     }
 
 #if os(iOS)
+    func foregroundPushPresentationOptions(
+        userInfo: [AnyHashable: Any]
+    ) async -> UNNotificationPresentationOptions {
+        if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
+            return [.banner, .sound, .list]
+        }
+        guard let resolution = resolvePushNotification(userInfo: userInfo) else {
+            return [.banner, .sound, .list]
+        }
+        guard resolution.shouldShow else {
+            return []
+        }
+        if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
+           state.currentChat?.chatId.caseInsensitiveCompare(chatID) == .orderedSame {
+            return []
+        }
+        await postForegroundDecryptedPush(resolution: resolution)
+        return []
+    }
+
     func shouldSuppressPushNotification(userInfo: [AnyHashable: Any]) -> Bool {
         guard let resolution = resolvePushNotification(userInfo: userInfo) else {
             return false
@@ -300,6 +323,22 @@ final class AppManager: ObservableObject {
             )
         }
         return resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
+    }
+
+    private func postForegroundDecryptedPush(
+        resolution: MobilePushNotificationResolution
+    ) async {
+        let content = UNMutableNotificationContent()
+        content.title = resolution.title.isEmpty ? "Iris Chat" : resolution.title
+        content.body = resolution.body
+        content.sound = .default
+        content.userInfo = foregroundDecryptedPushUserInfo(from: resolution.payloadJson)
+        let request = UNNotificationRequest(
+            identifier: UUID().uuidString,
+            content: content,
+            trigger: nil
+        )
+        try? await UNUserNotificationCenter.current().add(request)
     }
 #endif
 
@@ -802,6 +841,8 @@ private func chatLinkFragmentComponents(_ url: URL) -> [String] {
 }
 
 #if os(iOS)
+private let foregroundDecryptedPushMarkerKey = "iris_foreground_decrypted_push"
+
 private func serializedPushPayload(userInfo: [AnyHashable: Any]) -> String? {
     var dict: [String: Any] = [:]
     for (key, value) in userInfo {
@@ -816,6 +857,15 @@ private func serializedPushPayload(userInfo: [AnyHashable: Any]) -> String? {
         return nil
     }
     return json
+}
+
+private func foregroundDecryptedPushUserInfo(from payloadJson: String) -> [AnyHashable: Any] {
+    guard let data = payloadJson.data(using: .utf8),
+          var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        return [foregroundDecryptedPushMarkerKey: true]
+    }
+    object[foregroundDecryptedPushMarkerKey] = true
+    return object
 }
 
 private func chatID(fromPushPayloadJson payloadJson: String) -> String? {

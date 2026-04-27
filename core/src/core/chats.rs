@@ -603,6 +603,23 @@ impl AppCore {
         let chat_id = chat_id_for_tags(sender_owner, local_owner, runtime_rumor.tags.iter());
         let is_outgoing = sender_owner == local_owner;
         let message_id = runtime_rumor.id.or_else(|| outer_event_id.clone());
+        if !is_outgoing {
+            let group_id = runtime_rumor
+                .tags
+                .iter()
+                .find_map(|tag| match tag.as_slice() {
+                    [name, value, ..] if name == "l" && !value.is_empty() => Some(value.as_str()),
+                    _ => None,
+                });
+            remember_mobile_push_preview(
+                &self.data_dir,
+                outer_event_id.as_deref(),
+                sender_owner,
+                kind as u64,
+                &runtime_rumor.content,
+                group_id,
+            );
+        }
 
         match kind {
             GROUP_METADATA_KIND => {
