@@ -68,6 +68,7 @@ private enum SecretExportKind: Identifiable {
 
 struct RootView: View {
     @ObservedObject var manager: AppManager
+    @State private var directChatInfoChatId: String?
 
     var body: some View {
         IrisTheme {
@@ -99,6 +100,16 @@ struct RootView: View {
                 if manager.bootstrapInFlight {
                     LoadingOverlay()
                 }
+            }
+            .sheet(
+                item: Binding(
+                    get: { directChatInfoChatId.map(IdentifiedString.init) },
+                    set: { directChatInfoChatId = $0?.value }
+                )
+            ) { wrapper in
+                DirectChatInfoSheet(manager: manager, chatId: wrapper.value)
+                    .presentationDetents([.medium])
+                    .presentationDragIndicator(.visible)
             }
         }
     }
@@ -183,13 +194,9 @@ struct RootView: View {
             )
         }
 
-        guard case .chat(let chatId) = manager.activeScreen,
-              let chat = manager.state.currentChat,
-              chat.chatId == chatId else {
-            return AnyView(EmptyView())
-        }
-
-        return AnyView(ChatOverflowMenu(manager: manager, chat: chat))
+        // The chat header avatar/title is the entry point to chat info now —
+        // no overflow menu needed.
+        return AnyView(EmptyView())
     }
 
     private var backUnreadCount: UInt64 {
@@ -220,11 +227,15 @@ struct RootView: View {
         guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
             return nil
         }
-        guard let groupId = chat.groupId else {
-            return nil
+        if let groupId = chat.groupId {
+            return { [weak manager] in
+                manager?.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
+            }
         }
-        return { [weak manager] in
-            manager?.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
+        // Direct chat — open the inline info sheet.
+        let chatId = chat.chatId
+        return {
+            directChatInfoChatId = chatId
         }
     }
 
@@ -370,7 +381,7 @@ private struct DesktopChatShell: View {
                         )
                     )
                 } ?? AnyView(EmptyView()),
-                trailing: chat.map { AnyView(ChatOverflowMenu(manager: manager, chat: $0)) } ?? AnyView(EmptyView())
+                trailing: AnyView(EmptyView())
             )
             ChatScreen(manager: manager, chatId: chatId)
                 .id(chatId)
@@ -741,37 +752,93 @@ private struct DesktopSidebarChatRow: View {
     }
 }
 
-private struct ChatOverflowMenu: View {
+private struct IdentifiedString: Identifiable, Hashable {
+    let value: String
+    var id: String { value }
+}
+
+private struct DirectChatInfoSheet: View {
+    @Environment(\.irisPalette) private var palette
+    @Environment(\.dismiss) private var dismiss
     @ObservedObject var manager: AppManager
-    let chat: CurrentChatSnapshot
+    let chatId: String
+
+    private var chat: CurrentChatSnapshot? {
+        manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
+    }
 
     var body: some View {
-        Menu {
-            if chat.kind == .group, let groupId = chat.groupId {
-                Button("Group details") {
-                    manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
-                }
-            }
-            Menu("Disappearing messages") {
-                ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
-                    Button(action: {
-                        manager.dispatch(.setChatMessageTtl(chatId: chat.chatId, ttlSeconds: ttlSeconds))
-                    }) {
-                        if chat.messageTtlSeconds == ttlSeconds {
-                            Label(label, systemImage: "checkmark")
-                        } else {
-                            Text(label)
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 20) {
+                    if let chat {
+                        IrisAvatar(
+                            label: chat.displayName,
+                            size: 96,
+                            emphasize: true,
+                            pictureUrl: chat.pictureUrl,
+                            preferences: manager.state.preferences,
+                            manager: manager
+                        )
+                        .padding(.top, 8)
+
+                        Text(chat.displayName)
+                            .font(.system(.title2, design: .rounded, weight: .bold))
+                            .foregroundStyle(palette.textPrimary)
+                            .multilineTextAlignment(.center)
+
+                        if let subtitle = chat.subtitle, !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.system(.footnote, design: .rounded))
+                                .foregroundStyle(palette.muted)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 24)
                         }
+
+                        IrisSectionCard {
+                            CardHeader(
+                                title: "Disappearing messages",
+                                subtitle: "Messages auto-delete after the chosen interval."
+                            )
+                            VStack(spacing: 0) {
+                                ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
+                                    Button {
+                                        manager.dispatch(.setChatMessageTtl(chatId: chatId, ttlSeconds: ttlSeconds))
+                                    } label: {
+                                        HStack {
+                                            Text(label)
+                                                .foregroundStyle(palette.textPrimary)
+                                            Spacer()
+                                            if chat.messageTtlSeconds == ttlSeconds {
+                                                Image(systemName: "checkmark")
+                                                    .font(.system(size: 14, weight: .semibold))
+                                                    .foregroundStyle(palette.accent)
+                                            }
+                                        }
+                                        .padding(.vertical, 10)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    } else {
+                        ProgressView()
+                            .padding(.top, 40)
                     }
                 }
+                .padding(.horizontal, 18)
+                .padding(.bottom, 24)
+                .frame(maxWidth: .infinity)
             }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 40, height: 40)
+            .background(palette.background)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+            .navigationBarTitleDisplayMode(.inline)
         }
-        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-        .accessibilityIdentifier("chatOverflowButton")
     }
 }
 
@@ -1764,6 +1831,38 @@ struct GroupDetailsScreen: View {
                         .buttonStyle(IrisPrimaryButtonStyle())
                         .disabled(manager.state.busy.updatingGroup)
                         .accessibilityIdentifier("groupDetailsRenameButton")
+                    }
+                }
+
+                IrisSectionCard {
+                    CardHeader(
+                        title: "Disappearing messages",
+                        subtitle: "Messages auto-delete after the chosen interval."
+                    )
+                    let chatId = "group:\(groupId)"
+                    let currentTtl = manager.state.currentChat?.chatId == chatId
+                        ? manager.state.currentChat?.messageTtlSeconds
+                        : nil
+                    VStack(spacing: 0) {
+                        ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
+                            Button {
+                                manager.dispatch(.setChatMessageTtl(chatId: chatId, ttlSeconds: ttlSeconds))
+                            } label: {
+                                HStack {
+                                    Text(label)
+                                        .foregroundStyle(palette.textPrimary)
+                                    Spacer()
+                                    if currentTtl == ttlSeconds {
+                                        Image(systemName: "checkmark")
+                                            .font(.system(size: 14, weight: .semibold))
+                                            .foregroundStyle(palette.accent)
+                                    }
+                                }
+                                .padding(.vertical, 10)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
                     }
                 }
 
