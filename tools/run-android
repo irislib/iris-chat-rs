@@ -8,8 +8,8 @@ DEFAULT_AVD="${NDR_ANDROID_DEFAULT_AVD:-Medium_Phone_API_36.1}"
 BOOT_MODE="${NDR_ANDROID_BOOT_MODE:-headless}"
 LOCAL_PROPERTIES="$ROOT/android/local.properties"
 SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-APP_PACKAGE="social.innode.irischat"
-MAIN_ACTIVITY="social.innode.ndr.demo.MainActivity"
+APP_PACKAGE="${NDR_ANDROID_APP_PACKAGE:-to.iris.chat.debug}"
+MAIN_ACTIVITY="${NDR_ANDROID_MAIN_ACTIVITY:-social.innode.ndr.demo.MainActivity}"
 
 if [[ -z "${SDK_DIR}" && -f "${LOCAL_PROPERTIES}" ]]; then
   SDK_DIR="$(
