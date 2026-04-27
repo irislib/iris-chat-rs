@@ -776,6 +776,128 @@ class RealRelayHarnessTest {
         )
     }
 
+    /**
+     * Strict variant of [wait_for_message_from_args]. The other helper falls
+     * back to opening the matching chat from the chat list when the message
+     * doesn't surface in `state.currentChat` — that hides exactly the
+     * "messages only appear after navigating away and back" bug, because
+     * `OpenChat` triggers `fetch_recent_protocol_state` which forces a fresh
+     * relay catch-up.
+     *
+     * This test sets up the chat (peer_input or chat_id) and then waits
+     * strictly for the body to land in `state.currentChat.messages`. No
+     * fallback to `chatList`, no `openChat` after the initial setup. If the
+     * message never lands, the test fails — with a snapshot of how things
+     * looked elsewhere in state to make it obvious that the message *did*
+     * arrive on the wire but the open-chat projection didn't get the update.
+     */
+    @Test
+    fun wait_for_incoming_message_in_open_chat_strict_from_args() {
+        ensureLoggedIn()
+        val expectedMessage = requiredArg("message")
+        val peerInput = arguments.getString("peer_input").orEmpty()
+        val expectedChatId = arguments.getString("chat_id").orEmpty().takeIf { it.isNotBlank() }
+        val timeoutMs = optionalArg("timeout_ms")?.toLong() ?: 180_000L
+
+        val seededChat =
+            when {
+                !expectedChatId.isNullOrBlank() -> ensureChatOpenById(expectedChatId)
+                peerInput.isNotBlank() -> ensureChatOpen(peerInput)
+                else -> error("wait_for_incoming_message_in_open_chat_strict_from_args needs peer_input or chat_id")
+            }
+        val resolvedChatId =
+            expectedChatId
+                ?: seededChat?.chatId
+                ?: error("Could not resolve chat id for strict wait")
+
+        // Make sure the open chat is actually the one we're going to assert
+        // against. ensureChatOpen() already calls OpenChat once at setup; we
+        // do NOT call OpenChat again from here — that's the whole point.
+        val initialState = appManager().state.value
+        val initialOpen = initialState.currentChat
+        if (initialOpen == null || !initialOpen.chatId.equals(resolvedChatId, ignoreCase = true)) {
+            fail(
+                "Expected currentChat to be `$resolvedChatId` before the message arrives, " +
+                    "got `${initialOpen?.chatId}`. ensureChatOpen failed.",
+            )
+        }
+
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        var landedInCurrentChat = false
+        var landedInChatListOnly = false
+        var lastObserved: CurrentChatSnapshot? = initialOpen
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val state = appManager().state.value
+            val openChat =
+                state.currentChat?.takeIf { it.chatId.equals(resolvedChatId, ignoreCase = true) }
+            lastObserved = openChat
+            val inOpenChat =
+                openChat?.messages?.any { entry ->
+                    !entry.isOutgoing && entry.body == expectedMessage
+                } == true
+            if (inOpenChat) {
+                landedInCurrentChat = true
+                break
+            }
+            // Track whether the message reached the chat list / threads but
+            // *not* the open-chat projection. If we observe that without
+            // the open chat updating, that's the regression we're chasing.
+            val inChatListOnly =
+                state.chatList.any { thread ->
+                    thread.chatId.equals(resolvedChatId, ignoreCase = true) &&
+                        thread.lastMessagePreview == expectedMessage
+                }
+            if (inChatListOnly && !landedInChatListOnly) {
+                landedInChatListOnly = true
+            }
+            SystemClock.sleep(100)
+        }
+
+        if (!landedInCurrentChat) {
+            val openMessages =
+                lastObserved
+                    ?.messages
+                    ?.takeLast(5)
+                    ?.joinToString(", ") { msg ->
+                        "${if (msg.isOutgoing) "out" else "in"}:${msg.body}"
+                    }
+                    .orEmpty()
+            val matchingThread =
+                appManager().state.value.chatList.firstOrNull { thread ->
+                    thread.chatId.equals(resolvedChatId, ignoreCase = true)
+                }
+            val msg =
+                buildString {
+                    append("Expected `")
+                    append(expectedMessage)
+                    append("` to appear in state.currentChat.messages while chat ")
+                    append(resolvedChatId)
+                    append(" was open, but it never did within ")
+                    append(timeoutMs)
+                    append("ms.")
+                    if (landedInChatListOnly) {
+                        append(
+                            " The message DID appear in chatList.lastMessagePreview, " +
+                                "so it landed in `threads` but the current_chat projection " +
+                                "stayed stale — this is the rerender regression.",
+                        )
+                    }
+                    append(" Latest open-chat tail: [")
+                    append(openMessages)
+                    append("]. ChatList preview for chat: ")
+                    append(matchingThread?.lastMessagePreview)
+                }
+            fail(msg)
+        }
+
+        reportStatus(
+            "chat_id" to resolvedChatId,
+            "message" to expectedMessage,
+            "landed_in_current_chat" to landedInCurrentChat.toString(),
+            "landed_in_chat_list_only" to landedInChatListOnly.toString(),
+        )
+    }
+
     @Test
     fun assert_message_absent_from_args() {
         ensureLoggedIn()
