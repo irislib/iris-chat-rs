@@ -16,10 +16,11 @@ hashtree-blossom = "=0.2.8"
 hashtree-config = "=0.2.8"
 hashtree-core = "=0.2.8"
 hmac = "0.12"
-nostr = { version = "0.37", default-features = false, features = ["std", "nip44"] }
+nostr = { version = "0.44", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
-nostr-sdk = { version = "0.37", default-features = false, features = ["nip44"] }
-nostr-double-ratchet = { path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
+nostr-sdk = { version = "0.44", default-features = false, features = ["nip44"] }
+nostr-double-ratchet = { version = "0.0.101", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
+qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -27,7 +28,7 @@ sha2 = "0.10"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "fs"] }
 tokio-tungstenite = "0.24"
 tokio-util = { version = "0.7", features = ["compat"] }
-uniffi = "0.31"
+uniffi = "0.29.4"
 url = "2"
 urlencoding = "2"
 

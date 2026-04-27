@@ -267,6 +267,9 @@ impl AppCore {
         };
 
         if should_refresh {
+            self.relay_status_watch_urls
+                .retain(|url| self.preferences.nostr_relay_urls.contains(url));
+            self.start_relay_status_watchers();
             self.schedule_session_connect();
             self.request_protocol_subscription_refresh_forced();
             self.fetch_recent_protocol_state();

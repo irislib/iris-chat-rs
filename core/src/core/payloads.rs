@@ -123,7 +123,7 @@ pub(super) fn parse_runtime_rumor(content: &str) -> Option<RuntimeRumor> {
             id: event.id.as_ref().map(ToString::to_string),
             kind: event.kind.as_u16() as u32,
             content: event.content.clone(),
-            created_at_secs: event.created_at.as_u64(),
+            created_at_secs: event.created_at.as_secs(),
             tags: event.tags.iter().cloned().collect(),
             unsigned: Some(event),
         });

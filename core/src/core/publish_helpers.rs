@@ -9,9 +9,7 @@ pub(super) async fn publish_event_with_retry(
     let mut last_error = "no relays configured".to_string();
 
     for attempt in 0..5 {
-        client
-            .connect_with_timeout(Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
-            .await;
+        connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
         match publish_event_once(client, relay_urls, &event).await {
             Ok(()) => return Ok(()),
             Err(error) => last_error = error.to_string(),
@@ -35,9 +33,7 @@ pub(super) async fn publish_event_first_ack(
         return Err(anyhow::anyhow!("{label}: no relays configured"));
     }
 
-    client
-        .connect_with_timeout(Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
-        .await;
+    connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<Result<(), String>>(relay_urls.len().max(1));
 
@@ -46,12 +42,11 @@ pub(super) async fn publish_event_first_ack(
         let event = event.clone();
         let tx = tx.clone();
         tokio::spawn(async move {
-            let result = match client.send_event_to([relay_url.clone()], event).await {
+            let result = match client.send_event_to([relay_url.clone()], &event).await {
                 Ok(output) if !output.success.is_empty() => Ok(()),
                 Ok(output) => Err(output
                     .failed
                     .values()
-                    .flatten()
                     .next()
                     .cloned()
                     .unwrap_or_else(|| "no relay accepted event".to_string())),
@@ -90,16 +85,11 @@ pub(super) async fn publish_event_once(
     }
 
     let output = client
-        .send_event_to(relay_urls.to_vec(), event.clone())
+        .send_event_to(relay_urls.to_vec(), event)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if output.success.is_empty() {
-        let reasons = output
-            .failed
-            .values()
-            .flatten()
-            .cloned()
-            .collect::<Vec<_>>();
+        let reasons = output.failed.values().cloned().collect::<Vec<_>>();
         Err(anyhow::anyhow!(if reasons.is_empty() {
             "no relay accepted event".to_string()
         } else {

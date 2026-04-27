@@ -23,8 +23,8 @@ use nostr_double_ratchet::{
     MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
 use nostr_sdk::prelude::{
-    Client, Event, Filter, Keys, Kind, PublicKey, RelayPoolNotification, RelayUrl, SubscriptionId,
-    Timestamp, ToBech32,
+    Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
+    RelayStatus, RelayUrl, SubscriptionId, Timestamp, ToBech32,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
@@ -120,8 +120,10 @@ pub struct AppCore {
     seen_event_ids: HashSet<String>,
     seen_event_order: VecDeque<String>,
     device_invite_poll_token: u64,
+    protocol_reconnect_token: u64,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     direct_message_subscriptions: DirectMessageSubscriptionTracker,
+    relay_status_watch_urls: HashSet<String>,
     debug_log: VecDeque<DebugLogEntry>,
     debug_event_counters: DebugEventCounters,
     /// Reentrancy guard: while > 0, `rebuild_state` / `emit_state` /
@@ -154,4 +156,9 @@ pub struct AppCore {
     /// only recompute when `mobile_push_dirty` is set.
     cached_mobile_push: MobilePushSyncSnapshot,
     mobile_push_dirty: bool,
+}
+
+async fn connect_client_with_timeout(client: &Client, timeout: Duration) {
+    client.connect().await;
+    client.wait_for_connection(timeout).await;
 }

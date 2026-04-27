@@ -1,6 +1,8 @@
 use super::*;
 
 const GROUP_OUTER_SUBSCRIPTION_ID: &str = "ndr-group-outer";
+const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
+const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 
 impl AppCore {
     pub(super) fn remember_recent_handshake_peer(
@@ -73,6 +75,25 @@ impl AppCore {
         });
     }
 
+    pub(super) fn schedule_protocol_subscription_liveness_check(&mut self, after: Duration) {
+        if self
+            .protocol_subscription_runtime
+            .active_subscriptions
+            .is_empty()
+        {
+            return;
+        }
+        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        let token = self.protocol_reconnect_token;
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            sleep(after).await;
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::ProtocolSubscriptionLivenessCheck { token },
+            )));
+        });
+    }
+
     pub(super) fn schedule_pending_device_invite_poll(&mut self, after: Duration) {
         if !self.can_poll_pending_device_invites() {
             return;
@@ -108,12 +129,9 @@ impl AppCore {
         );
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
-            client.connect_with_timeout(Duration::from_secs(5)).await;
-            if let Ok(events) = client
-                .fetch_events(vec![filter], Some(Duration::from_secs(5)))
-                .await
-            {
-                let collected = events.into_iter().collect::<Vec<_>>();
+            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
+            if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
+                let collected = events.iter().cloned().collect::<Vec<_>>();
                 if !collected.is_empty() {
                     let _ = tx.send(CoreMsg::Internal(Box::new(
                         InternalEvent::FetchCatchUpEvents(collected),
@@ -171,13 +189,9 @@ impl AppCore {
 
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
-            client.connect_with_timeout(Duration::from_secs(5)).await;
-            match client
-                .fetch_events(filters, Some(Duration::from_secs(5)))
-                .await
-            {
-                Ok(events) => {
-                    let collected = events.into_iter().collect::<Vec<_>>();
+            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
+            match fetch_events_for_filters(&client, filters, Duration::from_secs(5)).await {
+                Ok(collected) => {
                     let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
                         category: "protocol.catch_up.result".to_string(),
                         detail: format!("events={}", collected.len()),
@@ -221,6 +235,50 @@ impl AppCore {
         });
     }
 
+    pub(super) fn start_relay_status_watchers(&mut self) {
+        let Some(client) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.client.clone())
+        else {
+            return;
+        };
+        let relays = self.runtime.block_on(client.relays());
+        for (relay_url, relay) in relays {
+            let relay_url = relay_url.to_string();
+            if !self.relay_status_watch_urls.insert(relay_url.clone()) {
+                continue;
+            }
+            let mut notifications = relay.notifications();
+            let tx = self.core_sender.clone();
+            self.runtime.spawn(async move {
+                loop {
+                    match notifications.recv().await {
+                        Ok(RelayNotification::RelayStatus { status }) => {
+                            let _ = tx.send(CoreMsg::Internal(Box::new(
+                                InternalEvent::RelayStatusChanged {
+                                    relay_url: relay_url.clone(),
+                                    status,
+                                },
+                            )));
+                        }
+                        Ok(RelayNotification::Shutdown) => {
+                            let _ = tx.send(CoreMsg::Internal(Box::new(
+                                InternalEvent::RelayStatusChanged {
+                                    relay_url: relay_url.clone(),
+                                    status: RelayStatus::Terminated,
+                                },
+                            )));
+                        }
+                        Ok(_) => {}
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    }
+                }
+            });
+        }
+    }
+
     pub(super) fn schedule_session_connect(&self) {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
@@ -229,8 +287,7 @@ impl AppCore {
         let relay_urls = logged_in.relay_urls.clone();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
-            client
-                .connect_with_timeout(Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
+            connect_client_with_timeout(&client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
                 .await;
         });
     }
@@ -243,7 +300,7 @@ impl AppCore {
         self.request_protocol_subscription_refresh_inner(true);
     }
 
-    pub(super) fn request_protocol_subscription_refresh_inner(&mut self, _force: bool) {
+    pub(super) fn request_protocol_subscription_refresh_inner(&mut self, force: bool) {
         let Some((client, owners, group_authors)) = self.logged_in.as_ref().map(|logged_in| {
             (
                 logged_in.client.clone(),
@@ -283,23 +340,32 @@ impl AppCore {
         }
         self.process_runtime_events();
 
-        if !group_authors.is_empty() {
+        let subscription_filters_changed = if !group_authors.is_empty() {
             let filter = Filter::new()
                 .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
                 .authors(group_authors.clone());
             let subid = GROUP_OUTER_SUBSCRIPTION_ID.to_string();
-            self.protocol_subscription_runtime
-                .active_subscriptions
-                .insert(subid.clone());
+            let changed = self.upsert_protocol_subscription(subid.clone(), filter);
             for author in group_authors {
                 self.fetch_recent_messages_for_author(author, unix_now(), CATCH_UP_LOOKBACK_SECS);
             }
-            self.runtime.spawn(async move {
-                let _ = client
-                    .subscribe_with_id(SubscriptionId::new(subid), vec![filter], None)
-                    .await;
-            });
-        }
+            changed
+        } else {
+            let removed = self
+                .protocol_subscription_runtime
+                .active_subscriptions
+                .remove(GROUP_OUTER_SUBSCRIPTION_ID)
+                .is_some();
+            if removed {
+                let client = client.clone();
+                self.runtime.spawn(async move {
+                    let _ = client
+                        .unsubscribe(&SubscriptionId::new(GROUP_OUTER_SUBSCRIPTION_ID))
+                        .await;
+                });
+            }
+            removed
+        };
 
         // Only bump the refresh token + emit a debug log entry when the
         // computed plan has actually changed since the last emission.
@@ -321,19 +387,177 @@ impl AppCore {
                 Some(plan_summary.clone());
             self.push_debug_log("protocol.subscription.refresh", plan_summary);
         }
+        if force || plan_changed || subscription_filters_changed {
+            let reason = if force {
+                "forced_refresh"
+            } else if subscription_filters_changed {
+                "filters_changed"
+            } else {
+                "plan_changed"
+            };
+            self.reconcile_protocol_subscriptions(reason, false);
+        }
+        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+            PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
+        ));
     }
 
     pub(super) fn compute_protocol_subscription_plan(&self) -> Option<ProtocolSubscriptionPlan> {
         let runtime_subscriptions = self
             .protocol_subscription_runtime
             .active_subscriptions
-            .iter()
+            .keys()
             .cloned()
             .collect::<HashSet<_>>();
         let runtime_subscriptions = sorted_hexes(runtime_subscriptions);
         (!runtime_subscriptions.is_empty()).then_some(ProtocolSubscriptionPlan {
             runtime_subscriptions,
         })
+    }
+
+    pub(super) fn handle_relay_status_changed(&mut self, relay_url: String, status: RelayStatus) {
+        self.push_debug_log("relay.status", format!("url={relay_url} status={status}"));
+        match status {
+            RelayStatus::Connected => {
+                self.reconcile_protocol_subscriptions("relay_connected", false);
+                self.fetch_recent_protocol_state();
+                self.fetch_recent_messages_for_tracked_peers(unix_now());
+                self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                    PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
+                ));
+            }
+            RelayStatus::Disconnected | RelayStatus::Terminated | RelayStatus::Sleeping => {
+                self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                    PROTOCOL_RECONNECT_CHECK_SECS,
+                ));
+            }
+            RelayStatus::Initialized
+            | RelayStatus::Pending
+            | RelayStatus::Connecting
+            | RelayStatus::Banned => {}
+        }
+    }
+
+    pub(super) fn handle_protocol_subscription_liveness_check(&mut self, token: u64) {
+        if token != self.protocol_reconnect_token || self.logged_in.is_none() {
+            return;
+        }
+        if self
+            .protocol_subscription_runtime
+            .active_subscriptions
+            .is_empty()
+        {
+            return;
+        }
+        self.process_runtime_events();
+        let connected_relays = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| {
+                self.runtime.block_on(async {
+                    logged_in
+                        .client
+                        .relays()
+                        .await
+                        .values()
+                        .filter(|relay| relay.status() == RelayStatus::Connected)
+                        .count()
+                })
+            })
+            .unwrap_or(0);
+        self.reconcile_protocol_subscriptions("liveness_check", true);
+        if connected_relays == 0 {
+            self.fetch_recent_protocol_state();
+            self.fetch_recent_messages_for_tracked_peers(unix_now());
+        }
+        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+            PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
+        ));
+    }
+
+    pub(super) fn upsert_protocol_subscription(&mut self, subid: String, filter: Filter) -> bool {
+        let summary = protocol_subscription_filter_summary(&filter);
+        let changed = self
+            .protocol_subscription_runtime
+            .active_subscriptions
+            .get(&subid)
+            .map(|existing| existing.summary != summary)
+            .unwrap_or(true);
+        self.protocol_subscription_runtime
+            .active_subscriptions
+            .insert(subid, ProtocolSubscriptionSpec { filter, summary });
+        changed
+    }
+
+    pub(super) fn reconcile_protocol_subscriptions(
+        &self,
+        reason: &'static str,
+        force_reconnect_if_offline: bool,
+    ) {
+        let Some((client, relay_urls)) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
+        else {
+            return;
+        };
+        let subscriptions = self
+            .protocol_subscription_runtime
+            .active_subscriptions
+            .iter()
+            .map(|(subid, spec)| (subid.clone(), spec.filter.clone()))
+            .collect::<Vec<_>>();
+        if subscriptions.is_empty() {
+            return;
+        }
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            let connected_relays = client
+                .relays()
+                .await
+                .values()
+                .filter(|relay| relay.status() == RelayStatus::Connected)
+                .count();
+            if force_reconnect_if_offline && connected_relays == 0 {
+                let _ = client.disconnect().await;
+            }
+            connect_client_with_timeout(
+                &client,
+                Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
+            )
+            .await;
+            let connected_after = wait_for_connected_relays(
+                &client,
+                Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
+            )
+            .await;
+
+            let mut applied = 0usize;
+            let mut failed = 0usize;
+            if connected_after == 0 {
+                failed = subscriptions.len();
+            } else {
+                for (subid, filter) in subscriptions {
+                    match client
+                        .subscribe_with_id(SubscriptionId::new(subid), filter, None)
+                        .await
+                    {
+                        Ok(_) => applied += 1,
+                        Err(_) => failed += 1,
+                    }
+                }
+            }
+            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                category: "protocol.subscription.reconcile".to_string(),
+                detail: format!(
+                    "reason={reason} relays={} connected_before={} connected_after={} applied={applied} failed={failed}",
+                    relay_urls.len(),
+                    connected_relays,
+                    connected_after,
+                ),
+            })));
+        });
     }
 
     pub(super) fn can_poll_pending_device_invites(&self) -> bool {
@@ -372,5 +596,58 @@ impl AppCore {
                 self.seen_event_ids.remove(&expired);
             }
         }
+    }
+}
+
+fn protocol_subscription_filter_summary(filter: &Filter) -> String {
+    serde_json::to_string(filter).unwrap_or_else(|_| "<filter>".to_string())
+}
+
+async fn fetch_events_for_filters(
+    client: &Client,
+    filters: Vec<Filter>,
+    timeout: Duration,
+) -> Result<Vec<Event>, String> {
+    let mut any_success = false;
+    let mut last_error = None;
+    let mut seen_event_ids = HashSet::new();
+    let mut collected = Vec::new();
+
+    for filter in filters {
+        match client.fetch_events(filter, timeout).await {
+            Ok(events) => {
+                any_success = true;
+                for event in events.iter() {
+                    if seen_event_ids.insert(event.id) {
+                        collected.push(event.clone());
+                    }
+                }
+            }
+            Err(error) => {
+                last_error = Some(error.to_string());
+            }
+        }
+    }
+
+    if any_success {
+        Ok(collected)
+    } else {
+        Err(last_error.unwrap_or_else(|| "no protocol filters fetched".to_string()))
+    }
+}
+
+async fn wait_for_connected_relays(client: &Client, timeout: Duration) -> usize {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let connected = client
+            .relays()
+            .await
+            .values()
+            .filter(|relay| relay.status() == RelayStatus::Connected)
+            .count();
+        if connected > 0 || tokio::time::Instant::now() >= deadline {
+            return connected;
+        }
+        sleep(Duration::from_millis(100)).await;
     }
 }

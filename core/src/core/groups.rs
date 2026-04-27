@@ -433,7 +433,7 @@ impl AppCore {
                     self.push_system_notice(
                         &group_chat_id(&metadata.id),
                         "You were removed from the group.".to_string(),
-                        event.created_at.as_u64(),
+                        event.created_at.as_secs(),
                     );
                     return;
                 }
@@ -450,14 +450,14 @@ impl AppCore {
                 picture: metadata.picture.clone(),
                 members: metadata.members.clone(),
                 admins: metadata.admins.clone(),
-                created_at: event.created_at.as_u64().saturating_mul(1000),
+                created_at: event.created_at.as_secs().saturating_mul(1000),
                 secret: metadata.secret.clone(),
                 accepted: Some(true),
             }
         };
 
         self.groups.insert(next.id.clone(), next.clone());
-        self.apply_group_snapshot_to_threads(&next, event.created_at.as_u64());
+        self.apply_group_snapshot_to_threads(&next, event.created_at.as_secs());
         self.sync_runtime_groups();
         self.apply_group_metadata_notice(previous.as_ref(), &next);
     }
@@ -468,7 +468,7 @@ impl AppCore {
         self.mark_mobile_push_dirty();
         let sender_owner = event.sender_owner_pubkey.unwrap_or(event.inner.pubkey);
         let kind = event.inner.kind.as_u16() as u32;
-        let created_at_secs = event.inner.created_at.as_u64();
+        let created_at_secs = event.inner.created_at.as_secs();
         let expires_at_secs = message_expiration_from_tags(event.inner.tags.iter());
         let chat_id = group_chat_id(&event.group_id);
         let message_id = event

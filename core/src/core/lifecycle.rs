@@ -40,8 +40,10 @@ impl AppCore {
             seen_event_ids: HashSet::new(),
             seen_event_order: VecDeque::new(),
             device_invite_poll_token: 0,
+            protocol_reconnect_token: 0,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
+            relay_status_watch_urls: HashSet::new(),
             debug_log: VecDeque::new(),
             debug_event_counters: DebugEventCounters::default(),
             batch_depth: 0,
@@ -72,13 +74,19 @@ impl AppCore {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::FetchTrackedPeerCatchUp => "FetchTrackedPeerCatchUp",
+                InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
+                    "ProtocolSubscriptionLivenessCheck"
+                }
                 InternalEvent::PollPendingDeviceInvites { .. } => "PollPendingDeviceInvites",
+                InternalEvent::RelayStatusChanged { .. } => "RelayStatusChanged",
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
                 InternalEvent::PublishFinished { .. } => "PublishFinished",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
-                InternalEvent::ProfilePictureUploadFinished { .. } => "ProfilePictureUploadFinished",
+                InternalEvent::ProfilePictureUploadFinished { .. } => {
+                    "ProfilePictureUploadFinished"
+                }
                 InternalEvent::SyncComplete => "SyncComplete",
             },
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
@@ -133,6 +141,8 @@ impl AppCore {
     pub(super) fn shutdown(&mut self) {
         self.push_debug_log("app.shutdown", "stopping core");
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
+        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.relay_status_watch_urls.clear();
         if let Some(existing) = self.logged_in.take() {
             self.runtime.block_on(async {
                 existing.client.unsubscribe_all().await;
@@ -272,12 +282,16 @@ impl AppCore {
             }
             InternalEvent::FetchTrackedPeerCatchUp => {
                 let now = unix_now();
+                self.process_runtime_events();
                 self.push_debug_log("protocol.catch_up.schedule", "fetch tracked peers");
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers(now);
                 if self.is_device_roster_open() {
                     self.fetch_pending_device_invites_for_local_owner();
                 }
+            }
+            InternalEvent::ProtocolSubscriptionLivenessCheck { token } => {
+                self.handle_protocol_subscription_liveness_check(token);
             }
             InternalEvent::PollPendingDeviceInvites { token } => {
                 if token != self.device_invite_poll_token || !self.can_poll_pending_device_invites()
@@ -302,6 +316,9 @@ impl AppCore {
                     self.handle_relay_event(event);
                 }
                 self.exit_batch();
+            }
+            InternalEvent::RelayStatusChanged { relay_url, status } => {
+                self.handle_relay_status_changed(relay_url, status);
             }
             InternalEvent::DebugLog { category, detail } => {
                 self.push_debug_log(&category, detail);

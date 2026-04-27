@@ -1,7 +1,7 @@
 use crate::actions::AppAction;
 use crate::state::AppState;
 use flume::Sender;
-use nostr_sdk::prelude::Event;
+use nostr_sdk::prelude::{Event, RelayStatus};
 
 #[derive(uniffi::Enum, Clone, Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -27,10 +27,17 @@ pub(crate) enum CoreMsg {
 pub(crate) enum InternalEvent {
     RelayEvent(Event),
     FetchTrackedPeerCatchUp,
+    ProtocolSubscriptionLivenessCheck {
+        token: u64,
+    },
     PollPendingDeviceInvites {
         token: u64,
     },
     FetchCatchUpEvents(Vec<Event>),
+    RelayStatusChanged {
+        relay_url: String,
+        status: RelayStatus,
+    },
     DebugLog {
         category: String,
         detail: String,

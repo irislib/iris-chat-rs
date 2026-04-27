@@ -67,10 +67,7 @@ impl AppCore {
     }
 
     pub(super) fn upload_profile_picture(&mut self, file_path: &str) {
-        self.push_debug_log(
-            "profile.picture.upload.start",
-            format!("path={file_path}"),
-        );
+        self.push_debug_log("profile.picture.upload.start", format!("path={file_path}"));
         let Some(logged_in) = self.logged_in.as_ref() else {
             self.push_debug_log("profile.picture.upload.skip", "no_logged_in".to_string());
             self.state.toast = Some("Create or restore an account first.".to_string());
@@ -114,10 +111,7 @@ impl AppCore {
         self.state.busy.uploading_attachment = false;
         match result {
             Ok(picture_url) => {
-                self.push_debug_log(
-                    "profile.picture.upload.ok",
-                    format!("url={picture_url}"),
-                );
+                self.push_debug_log("profile.picture.upload.ok", format!("url={picture_url}"));
                 let name = self
                     .state
                     .account
@@ -136,7 +130,7 @@ impl AppCore {
 
     pub(super) fn apply_profile_metadata_event(&mut self, event: &Event) -> bool {
         let owner_hex = event.pubkey.to_hex();
-        let Some(record) = parse_owner_profile_record(&event.content, event.created_at.as_u64())
+        let Some(record) = parse_owner_profile_record(&event.content, event.created_at.as_secs())
         else {
             return false;
         };

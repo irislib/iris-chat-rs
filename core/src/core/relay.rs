@@ -23,6 +23,8 @@ impl AppCore {
 
         let kind = event.kind.as_u16() as u32;
         self.push_debug_log("relay.event", format!("kind_raw={} id={event_id}", kind));
+        let protocol_inputs_changed = matches!(kind, INVITE_EVENT_KIND | INVITE_RESPONSE_KIND)
+            || (kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event));
 
         if kind == 0 {
             if self.apply_profile_metadata_event(&event) {
@@ -74,6 +76,11 @@ impl AppCore {
         }
         self.remember_event(event_id);
         self.process_runtime_events();
+        if protocol_inputs_changed {
+            self.setup_user_done.clear();
+            self.request_protocol_subscription_refresh();
+            self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
+        }
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
@@ -165,16 +172,6 @@ impl AppCore {
     }
 
     fn apply_runtime_subscription(&mut self, subid: String, filter_json: String) {
-        self.protocol_subscription_runtime
-            .active_subscriptions
-            .insert(subid.clone());
-        let added_authors = self
-            .direct_message_subscriptions
-            .register_subscription(&subid, &filter_json);
-        for author in added_authors {
-            self.fetch_recent_messages_for_author(author, unix_now(), CATCH_UP_LOOKBACK_SECS);
-        }
-
         let Ok(filter) = serde_json::from_str::<Filter>(&filter_json) else {
             self.push_debug_log(
                 "runtime.subscribe.parse",
@@ -182,40 +179,19 @@ impl AppCore {
             );
             return;
         };
-        let Some((client, relay_urls)) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
-        else {
-            return;
-        };
-        let tx = self.core_sender.clone();
-        let logged_subid = subid.clone();
-        self.runtime.spawn(async move {
-            // Make sure we're actually connected before sending REQ; otherwise
-            // the subscription is queued internally and any backfill from the
-            // relay never reaches us.
-            client
-                .connect_with_timeout(Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
-                .await;
-            let detail = match client
-                .subscribe_with_id(SubscriptionId::new(subid), vec![filter], None)
-                .await
-            {
-                Ok(_) => format!(
-                    "subid={logged_subid} relays={} status=ok",
-                    relay_urls.len()
-                ),
-                Err(error) => format!(
-                    "subid={logged_subid} relays={} status=err error={error}",
-                    relay_urls.len()
-                ),
-            };
-            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                category: "runtime.subscribe".to_string(),
-                detail,
-            })));
-        });
+        let changed = self.upsert_protocol_subscription(subid.clone(), filter);
+        let added_authors = self
+            .direct_message_subscriptions
+            .register_subscription(&subid, &filter_json);
+        for author in added_authors {
+            self.fetch_recent_messages_for_author(author, unix_now(), CATCH_UP_LOOKBACK_SECS);
+        }
+        self.reconcile_protocol_subscriptions("runtime_subscribe", false);
+        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
+        self.push_debug_log(
+            "runtime.subscribe",
+            format!("subid={subid} changed={changed}"),
+        );
     }
 
     fn remove_runtime_subscription(&mut self, subid: String) {
@@ -232,7 +208,7 @@ impl AppCore {
             return;
         };
         self.runtime.spawn(async move {
-            let _ = client.unsubscribe(SubscriptionId::new(subid)).await;
+            let _ = client.unsubscribe(&SubscriptionId::new(subid)).await;
         });
     }
 
@@ -254,13 +230,13 @@ impl AppCore {
         let Some(app_keys) = app_keys else {
             return;
         };
-        let known = known_app_keys_from_ndr(event.pubkey, &app_keys, event.created_at.as_u64());
+        let known = known_app_keys_from_ndr(event.pubkey, &app_keys, event.created_at.as_secs());
         self.app_keys.insert(event.pubkey.to_hex(), known);
         if let Some(logged_in) = self.logged_in.as_ref() {
             logged_in.ndr_runtime.ingest_app_keys_snapshot(
                 event.pubkey,
                 app_keys,
-                event.created_at.as_u64(),
+                event.created_at.as_secs(),
             );
         }
         self.mark_mobile_push_dirty();

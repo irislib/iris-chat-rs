@@ -129,6 +129,7 @@ impl AppCore {
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
+        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         if let Some(logged_in) = self.logged_in.take() {
             let client = logged_in.client.clone();
             self.runtime.spawn(async move {
@@ -149,6 +150,7 @@ impl AppCore {
         self.seen_event_order.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
+        self.relay_status_watch_urls.clear();
         self.setup_user_done.clear();
         self.cached_mobile_push = MobilePushSyncSnapshot::default();
         self.mobile_push_dirty = true;
@@ -474,6 +476,8 @@ impl AppCore {
             authorization_state,
         });
 
+        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.start_relay_status_watchers();
         self.schedule_session_connect();
         self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
         self.republish_local_identity_artifacts();
