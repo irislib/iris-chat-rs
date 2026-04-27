@@ -19,6 +19,7 @@ struct ChatScreen: View {
     @State private var imageViewerItem: ImageViewerItem?
     @State private var lastTypingSentAt: Date?
     @State private var sentTypingIndicator = false
+    @State private var activeActionDockMessageId: String?
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -59,6 +60,7 @@ struct ChatScreen: View {
                                                 isFirstInCluster: isFirstInCluster,
                                                 isLastInCluster: isLastInCluster,
                                                 reactions: message.reactions,
+                                                activeActionDockMessageId: $activeActionDockMessageId,
                                                 onReply: {
                                                     replyTarget = message
                                                 },
@@ -108,6 +110,13 @@ struct ChatScreen: View {
                                     .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 14)
                                     .padding(.vertical, 10)
                                     .accessibilityIdentifier("chatTimeline")
+                                    .background(
+                                        Color.clear
+                                            .contentShape(Rectangle())
+                                            .onTapGesture {
+                                                activeActionDockMessageId = nil
+                                            }
+                                    )
                                 }
                                 .simultaneousGesture(
                                     TapGesture().onEnded {
@@ -415,6 +424,7 @@ private struct ChatMessageRow: View {
     let isFirstInCluster: Bool
     let isLastInCluster: Bool
     let reactions: [MessageReactionSnapshot]
+    @Binding var activeActionDockMessageId: String?
     let onReply: () -> Void
     let onReact: (String) -> Void
     let onDelete: () -> Void
@@ -423,7 +433,10 @@ private struct ChatMessageRow: View {
     let onOpenImage: (Data, String) -> Void
 
     @State private var isHovering = false
-    @State private var isMobileActionDockOpen = false
+
+    private var isMobileActionDockOpen: Bool {
+        activeActionDockMessageId == message.id
+    }
 
     private var bodyParts: ReplyParsedMessage {
         parseReplyEncodedMessage(message.body)
@@ -543,7 +556,7 @@ private struct ChatMessageRow: View {
                     .contentShape(bubbleShape)
                     .onTapGesture {
                         if !IrisLayout.usesDesktopChrome {
-                            isMobileActionDockOpen.toggle()
+                            activeActionDockMessageId = isMobileActionDockOpen ? nil : message.id
                         }
                     }
                     .contextMenu {
@@ -694,18 +707,29 @@ private struct ChatMessageActionDock: View {
     let onCopyInfo: () -> Void
     let onDelete: () -> Void
 
+    @State private var showEmojiPicker = false
+
     var body: some View {
         HStack(spacing: 2) {
-            Menu {
-                ForEach(["👍", "❤️", "😂", "😮", "😢", "🙏"], id: \.self) { emoji in
-                    Button(emoji) { onReact(emoji) }
-                }
+            Button {
+                showEmojiPicker = true
             } label: {
                 Image(systemName: "face.smiling.fill")
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 26, height: 24)
             }
             .buttonStyle(.plain)
+            .popover(isPresented: $showEmojiPicker, arrowEdge: .top) {
+                let picker = IrisEmojiPicker { emoji in
+                    showEmojiPicker = false
+                    onReact(emoji)
+                }
+                if #available(iOS 16.4, macOS 13.3, *) {
+                    picker.presentationCompactAdaptation(.popover)
+                } else {
+                    picker
+                }
+            }
             dockButton("arrowshape.turn.up.left.fill", action: onReply)
             Menu {
                 Button("Message info", action: onCopyInfo)
@@ -717,6 +741,7 @@ private struct ChatMessageActionDock: View {
             }
             .buttonStyle(.plain)
         }
+        .foregroundStyle(palette.muted)
         .padding(5)
         .background(
             Capsule(style: .continuous)
@@ -731,6 +756,101 @@ private struct ChatMessageActionDock: View {
                 .frame(width: 26, height: 24)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct IrisEmojiPicker: View {
+    @Environment(\.irisPalette) private var palette
+    let onPick: (String) -> Void
+
+    @State private var query: String = ""
+
+    private static let categories: [(String, String, [String])] = [
+        ("Smileys", "face.smiling",
+         ["😀","😃","😄","😁","😆","😅","😂","🤣","😊","🙂","🙃","😉","😍","🥰","😘","😎","🤩","🥳","😏","😌","😴","😪","🤤","😋","😜","🤪","😝","🤔","🤨","😐","😑","😶","🙄","😬","🤐","🤧","🤒","🤕","😇","🤠","🥺","😢","😭","😠","🤬","🤯","🥶","🥵","😱","😨","😰","😳","🤗"]),
+        ("Hearts", "heart.fill",
+         ["❤️","🧡","💛","💚","💙","💜","🖤","🤍","🤎","💖","💗","💓","💞","💕","💘","💝","💟","♥️","💔","❣️","❤️‍🔥","❤️‍🩹"]),
+        ("Hands", "hand.thumbsup.fill",
+         ["👍","👎","👌","✌️","🤞","🤟","🤘","🤙","👈","👉","👆","👇","☝️","✋","🤚","🖐","🖖","👋","🤝","🙏","👏","🙌","💪","🫶","🫰","🫵","🫱","🫲"]),
+        ("Animals", "pawprint.fill",
+         ["🐶","🐱","🐭","🐹","🐰","🦊","🐻","🐼","🐨","🐯","🦁","🐮","🐷","🐸","🐵","🙈","🙉","🙊","🐔","🐧","🐦","🦅","🦉","🦄","🐝","🦋","🐞","🐢","🐍","🦖","🐙","🦀","🐬","🐳","🦈"]),
+        ("Food", "fork.knife",
+         ["🍏","🍎","🍐","🍊","🍋","🍌","🍉","🍇","🍓","🫐","🍒","🍑","🥭","🍍","🥥","🥝","🍅","🥑","🥕","🌽","🍆","🥔","🍕","🍔","🍟","🌭","🍿","🥪","🌮","🌯","🍣","🍜","🍝","🍦","🍩","🍪","🎂","🍰","☕","🍵","🍺","🥂","🍷","🥃"]),
+        ("Activities", "sportscourt",
+         ["⚽","🏀","🏈","⚾","🥎","🎾","🏐","🏉","🎱","🪀","🏓","🏸","🥅","🏒","🏑","🥍","🏏","🪃","🥊","🥋","🎽","⛸","🥌","🛷","🪂","🏋️","🤸","🤺","🏇","⛷","🏂","🏌️","🏄","🚣","🏊","🤽","🚴","🚵","🎯","🎮","🎲","🎼","🎤","🎧","🎷","🎸","🥁"]),
+        ("Travel", "airplane",
+         ["🚗","🚕","🚙","🚌","🚎","🏎","🚓","🚑","🚒","🚐","🛻","🚚","🚛","🚜","🛵","🏍","🛺","🚲","🛴","🛹","🚂","✈️","🚀","🛸","🛶","⛵","🚢","🚁","🗺","🗽","🗼","🏰","🎡","🎢","🎠","🏖","🏝","🏔","🌋","🏕","🌄","🌅","🌌"]),
+        ("Objects", "lightbulb.fill",
+         ["📱","💻","⌨️","🖥","🖨","🖱","💾","💿","📷","📸","📹","🎥","📺","📻","📞","☎️","🔌","🔋","💡","🔦","🕯","🧯","🛢","💵","💰","💳","💎","⚖️","🔧","🔨","🛠","⛏","🪛","🪚","🔩","⚙️","🧱","⛓","🧲","🔫","💣","🧨"]),
+        ("Symbols", "sparkles",
+         ["✅","❎","✔️","❌","⭕","🚫","⚠️","🔱","☑️","💯","🔥","✨","🌟","⭐","🌈","☀️","🌙","⚡","☄️","💥","🌊","💧","💦","🎉","🎊","🎁","🎀","🎈","🪅","🎂","🍾","🥇","🥈","🥉","🏆","🎖","🏅","💤","💭","🗯","💬","🆗","🆕","🆒","🆓","🆙","🔝","♻️","✅","❤️","💔","☮️","✝️","☪️","🕉","☸️","✡️","☯️","☦️"]),
+    ]
+
+    private var filteredCategories: [(String, String, [String])] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return Self.categories }
+        return Self.categories.compactMap { name, icon, list in
+            let hits = list.filter { $0.contains(q) || name.localizedCaseInsensitiveContains(q) }
+            return hits.isEmpty ? nil : (name, icon, hits)
+        }
+    }
+
+    private let columns = Array(repeating: GridItem(.fixed(36), spacing: 4), count: 7)
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(palette.muted)
+                TextField("Search", text: $query)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(palette.panel)
+            )
+            .padding(10)
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 12, pinnedViews: [.sectionHeaders]) {
+                    ForEach(filteredCategories, id: \.0) { name, icon, list in
+                        Section {
+                            LazyVGrid(columns: columns, spacing: 4) {
+                                ForEach(list, id: \.self) { emoji in
+                                    Button {
+                                        onPick(emoji)
+                                    } label: {
+                                        Text(emoji)
+                                            .font(.system(size: 26))
+                                            .frame(width: 36, height: 36)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                        } header: {
+                            HStack(spacing: 6) {
+                                Image(systemName: icon)
+                                    .font(.system(size: 11, weight: .semibold))
+                                Text(name)
+                                    .font(.system(.caption, weight: .semibold))
+                            }
+                            .foregroundStyle(palette.muted)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(palette.background)
+                        }
+                    }
+                }
+                .padding(.bottom, 10)
+            }
+        }
+        .frame(width: 300, height: 360)
+        .background(palette.background)
     }
 }
 
