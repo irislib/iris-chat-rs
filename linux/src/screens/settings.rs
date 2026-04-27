@@ -60,6 +60,26 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
     });
     group.add(&url);
 
+    let key = adw::EntryRow::builder().title("HMAC key (hex)").build();
+    key.set_text(&prefs.image_proxy_key_hex);
+    let manager_for_key = manager.clone();
+    key.connect_apply(move |row| {
+        manager_for_key.dispatch(AppAction::SetImageProxyKeyHex {
+            key_hex: row.text().to_string(),
+        });
+    });
+    group.add(&key);
+
+    let salt = adw::EntryRow::builder().title("Salt (hex)").build();
+    salt.set_text(&prefs.image_proxy_salt_hex);
+    let manager_for_salt = manager.clone();
+    salt.connect_apply(move |row| {
+        manager_for_salt.dispatch(AppAction::SetImageProxySaltHex {
+            salt_hex: row.text().to_string(),
+        });
+    });
+    group.add(&salt);
+
     let reset = adw::ActionRow::builder()
         .title("Reset image proxy settings")
         .activatable(true)

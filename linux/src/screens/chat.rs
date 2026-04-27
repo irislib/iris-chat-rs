@@ -580,6 +580,7 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     row.append(&send);
 
     let chat_id = chat.chat_id.clone();
+    let ttl = chat.message_ttl_seconds;
     let manager_for_click = manager.clone();
     let entry_for_click = entry.clone();
     send.connect_clicked(move |btn| {
@@ -589,13 +590,11 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
         }
         btn.set_sensitive(false);
         entry_for_click.set_text("");
-        manager_for_click.dispatch(AppAction::SendMessage {
-            chat_id: chat_id.clone(),
-            text,
-        });
+        manager_for_click.dispatch(send_action(&chat_id, text, ttl));
     });
 
     let chat_id = chat.chat_id.clone();
+    let ttl = chat.message_ttl_seconds;
     let manager_for_enter = manager.clone();
     entry.connect_activate(move |entry| {
         let text = entry.text().trim().to_string();
@@ -603,11 +602,24 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
             return;
         }
         entry.set_text("");
-        manager_for_enter.dispatch(AppAction::SendMessage {
-            chat_id: chat_id.clone(),
-            text,
-        });
+        manager_for_enter.dispatch(send_action(&chat_id, text, ttl));
     });
 
     row.upcast()
+}
+
+fn send_action(chat_id: &str, text: String, ttl_seconds: Option<u64>) -> AppAction {
+    if let Some(ttl) = ttl_seconds.filter(|t| *t > 0) {
+        let now = unix_now();
+        AppAction::SendDisappearingMessage {
+            chat_id: chat_id.to_string(),
+            text,
+            expires_at_secs: now + ttl,
+        }
+    } else {
+        AppAction::SendMessage {
+            chat_id: chat_id.to_string(),
+            text,
+        }
+    }
 }
