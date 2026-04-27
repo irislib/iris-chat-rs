@@ -131,4 +131,10 @@ pub struct AppCore {
     batch_depth: u32,
     batch_dirty_state: bool,
     batch_dirty_persist: bool,
+    /// Owners we've already passed through `ndr_runtime.setup_user(...)`.
+    /// `setup_user` is idempotent at the subscription level, but the work
+    /// it triggers in `sync_direct_message_subscriptions` (walking every
+    /// session, JSON-serialising state) is ~300ms per call on Android
+    /// debug. Skipping known owners turns a 5 s per-tap cost into < 50 ms.
+    setup_user_done: HashSet<String>,
 }

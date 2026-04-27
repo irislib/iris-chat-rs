@@ -47,10 +47,38 @@ impl AppCore {
             batch_depth: 0,
             batch_dirty_state: false,
             batch_dirty_persist: false,
+            setup_user_done: HashSet::new(),
         }
     }
 
     pub fn handle_message(&mut self, msg: CoreMsg) -> bool {
+        let t0 = crate::perflog::now_ms();
+        let label: &'static str = match &msg {
+            CoreMsg::Action(action) => match action {
+                AppAction::OpenChat { .. } => "OpenChat",
+                AppAction::SendMessage { .. } => "SendMessage",
+                AppAction::PushScreen { .. } => "PushScreen",
+                AppAction::UpdateScreenStack { .. } => "UpdateScreenStack",
+                AppAction::AppForegrounded => "AppForegrounded",
+                AppAction::MarkMessagesSeen { .. } => "MarkMessagesSeen",
+                _ => "Action.other",
+            },
+            CoreMsg::Internal(event) => match event.as_ref() {
+                InternalEvent::RelayEvent(_) => "RelayEvent",
+                InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
+                InternalEvent::FetchTrackedPeerCatchUp => "FetchTrackedPeerCatchUp",
+                InternalEvent::PollPendingDeviceInvites { .. } => "PollPendingDeviceInvites",
+                InternalEvent::DebugLog { .. } => "DebugLog",
+                InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
+                InternalEvent::PublishFinished { .. } => "PublishFinished",
+                InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
+                InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
+                InternalEvent::ProfilePictureUploadFinished { .. } => "ProfilePictureUploadFinished",
+                InternalEvent::SyncComplete => "SyncComplete",
+            },
+            CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
+            CoreMsg::Shutdown(_) => "Shutdown",
+        };
         match msg {
             CoreMsg::Action(action) => self.handle_action(action),
             CoreMsg::Internal(event) => self.handle_internal(*event),
@@ -65,7 +93,36 @@ impl AppCore {
                 return false;
             }
         }
+        crate::perflog!(
+            "handle_message label={label} elapsed_ms={}",
+            crate::perflog::now_ms().saturating_sub(t0)
+        );
         true
+    }
+
+    /// Process a coalesced batch of messages with a single rebuild + emit at
+    /// the end. Returns false if any message asked the core to shut down.
+    ///
+    /// The FFI message pump uses this so a burst of relay events plus user
+    /// actions (e.g. tapping a chat row while events are arriving) result in
+    /// one UI update instead of one per message.
+    pub fn handle_messages(&mut self, messages: Vec<CoreMsg>) -> bool {
+        if messages.is_empty() {
+            return true;
+        }
+        if messages.len() == 1 {
+            return self.handle_message(messages.into_iter().next().unwrap());
+        }
+        self.enter_batch();
+        let mut keep_running = true;
+        for msg in messages {
+            if !self.handle_message(msg) {
+                keep_running = false;
+                break;
+            }
+        }
+        self.exit_batch();
+        keep_running
     }
 
     pub(super) fn shutdown(&mut self) {

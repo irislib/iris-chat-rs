@@ -2,6 +2,7 @@ mod actions;
 mod core;
 pub mod image_proxy;
 pub mod local_relay;
+pub mod perflog;
 mod qr;
 mod state;
 mod updates;
@@ -46,10 +47,27 @@ impl FfiApp {
         let shared_for_thread = shared_state.clone();
         thread::spawn(move || {
             let mut core = AppCore::new(update_tx, core_tx_for_thread, data_dir, shared_for_thread);
-            while let Ok(msg) = core_rx.recv() {
-                if !core.handle_message(msg) {
+            // Drain whatever is already queued and process it as one batch so
+            // a flurry of relay events + user actions produces a single UI
+            // update instead of N. Without this, tapping a chat while a
+            // relay backlog drains can take seconds because OpenChat sits
+            // behind every queued event and the UI recomposes between each.
+            while let Ok(first) = core_rx.recv() {
+                let mut batch = Vec::with_capacity(8);
+                batch.push(first);
+                while let Ok(next) = core_rx.try_recv() {
+                    batch.push(next);
+                }
+                let batch_size = batch.len();
+                let t0 = crate::perflog::now_ms();
+                crate::perflog!("core.batch.start size={batch_size}");
+                if !core.handle_messages(batch) {
                     break;
                 }
+                crate::perflog!(
+                    "core.batch.end size={batch_size} elapsed_ms={}",
+                    crate::perflog::now_ms().saturating_sub(t0)
+                );
             }
         });
 
@@ -69,6 +87,7 @@ impl FfiApp {
     }
 
     pub fn dispatch(&self, action: AppAction) {
+        crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
         let _ = self.core_tx.send(CoreMsg::Action(action));
     }
 
@@ -108,7 +127,17 @@ impl FfiApp {
         let update_rx = self.update_rx.clone();
         thread::spawn(move || {
             while let Ok(update) = update_rx.recv() {
+                let kind = match &update {
+                    AppUpdate::FullState(_) => "FullState",
+                    AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
+                };
+                let t0 = crate::perflog::now_ms();
+                crate::perflog!("reconcile.start kind={kind}");
                 reconciler.reconcile(update);
+                crate::perflog!(
+                    "reconcile.end kind={kind} elapsed_ms={}",
+                    crate::perflog::now_ms().saturating_sub(t0)
+                );
             }
         });
     }

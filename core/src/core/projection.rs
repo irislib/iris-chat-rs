@@ -10,6 +10,7 @@ impl AppCore {
     }
 
     fn rebuild_state_inner(&mut self) {
+        let t0 = crate::perflog::now_ms();
         self.state.account = self.build_account_snapshot();
         self.state.device_roster = self.build_device_roster_snapshot();
         self.state.network_status = Some(self.build_network_status_snapshot());
@@ -129,6 +130,12 @@ impl AppCore {
             default_screen,
             screen_stack: self.screen_stack.clone(),
         };
+        crate::perflog!(
+            "rebuild_state elapsed_ms={} threads={} cur_chat_msgs={}",
+            crate::perflog::now_ms().saturating_sub(t0),
+            self.threads.len(),
+            self.state.current_chat.as_ref().map(|c| c.messages.len()).unwrap_or(0)
+        );
     }
 
     pub(super) fn prune_expired_typing_indicators(&mut self) {
@@ -399,12 +406,24 @@ impl AppCore {
 
     fn emit_state_inner(&mut self) {
         self.state.rev = self.state.rev.saturating_add(1);
+        let t0 = crate::perflog::now_ms();
         let snapshot = self.state.clone();
+        let t_clone1 = crate::perflog::now_ms();
         match self.shared_state.write() {
             Ok(mut slot) => *slot = snapshot.clone(),
             Err(poison) => *poison.into_inner() = snapshot.clone(),
         }
+        let t_shared = crate::perflog::now_ms();
         let _ = self.update_tx.send(AppUpdate::FullState(snapshot));
+        crate::perflog!(
+            "emit_state rev={} clone_ms={} shared_write_ms={} total_ms={} chats={} cur_chat_msgs={}",
+            self.state.rev,
+            t_clone1.saturating_sub(t0),
+            t_shared.saturating_sub(t_clone1),
+            crate::perflog::now_ms().saturating_sub(t0),
+            self.state.chat_list.len(),
+            self.state.current_chat.as_ref().map(|c| c.messages.len()).unwrap_or(0)
+        );
     }
 
     /// Enter a batch scope. While `batch_depth > 0`, calls to

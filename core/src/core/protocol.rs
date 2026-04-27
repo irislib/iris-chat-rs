@@ -261,9 +261,18 @@ impl AppCore {
             return;
         };
 
-        for owner in owners {
+        // setup_user is idempotent on the NDR side, but each call still walks
+        // every user record + JSON-serialises every session state to compute
+        // the DM subscription author set. Calling it for N owners on every
+        // chat tap was a 14 × 337 ms = 4.7 s hit on Android debug. Skip
+        // owners we've already initialised — once an owner is set up it
+        // stays set up for the lifetime of the AppCore.
+        for owner in &owners {
+            if !self.setup_user_done.insert(owner.to_hex()) {
+                continue;
+            }
             if let Some(logged_in) = self.logged_in.as_ref() {
-                let _ = logged_in.ndr_runtime.setup_user(owner);
+                let _ = logged_in.ndr_runtime.setup_user(*owner);
             }
         }
         self.process_runtime_events();
