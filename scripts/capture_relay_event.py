@@ -108,7 +108,7 @@ def main() -> int:
     parser.add_argument("--relay", required=True, help="ws://host:port")
     parser.add_argument("--kinds", default="1060", help="comma-separated event kinds")
     parser.add_argument("--p-tag", help="filter events tagged with #p=<hex>")
-    parser.add_argument("--author", help="filter events authored by <hex>")
+    parser.add_argument("--author", help="filter events authored by <hex> (comma- or pipe-separated)")
     parser.add_argument("--since-secs", type=int, default=0, help="only consider events created_at >= now-since")
     parser.add_argument("--timeout-secs", type=float, default=60.0)
     args = parser.parse_args()
@@ -121,7 +121,13 @@ def main() -> int:
     if args.p_tag:
         filter_["#p"] = [args.p_tag.lower()]
     if args.author:
-        filter_["authors"] = [args.author.lower()]
+        authors = [
+            value.strip().lower()
+            for value in args.author.replace("|", ",").split(",")
+            if value.strip()
+        ]
+        if authors:
+            filter_["authors"] = authors
     if args.since_secs:
         filter_["since"] = int(time.time()) - args.since_secs
     req = json.dumps(["REQ", sub_id, filter_])

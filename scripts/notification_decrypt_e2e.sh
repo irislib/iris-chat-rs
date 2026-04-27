@@ -117,22 +117,27 @@ run_test "${SERIAL_B}" wait_for_peer_profile_name_from_args \
   peer_pubkey_hex "${A_HEX}" \
   display_name "${ALICE_DISPLAY_NAME}" >/dev/null
 
+echo "Reading Bob's active NDR message-author subscription"
+B_PUSH_OUT="$(run_test "${SERIAL_B}" report_mobile_push_snapshot)"
+B_MESSAGE_AUTHORS="$(printf '%s\n' "${B_PUSH_OUT}" | extract_status message_author_pubkeys)"
+require_value message_author_pubkeys "${B_MESSAGE_AUTHORS}"
+
 echo "Force-stopping Bob's app to simulate the closed-app push case"
 "${ADB}" -s "${SERIAL_B}" shell am force-stop "${PACKAGE_NAME}" >/dev/null
 
-echo "Starting relay capture for B's incoming kind:1060"
+echo "Starting relay capture for B's incoming kind:1060 authors"
 CAPTURE_OUT="$(mktemp)"
 python3 "${CAPTURE}" \
   --relay "${RELAY_URL}" \
   --kinds 1060 \
-  --p-tag "${B_HEX}" \
+  --author "${B_MESSAGE_AUTHORS}" \
   --since-secs 5 \
   --timeout-secs 60 \
   > "${CAPTURE_OUT}" &
 CAPTURE_PID=$!
 sleep 1
 
-echo "Alice sends `${MESSAGE}` to Bob; capturing the wrapper off the relay"
+echo "Alice sends '${MESSAGE}' to Bob; capturing the wrapper off the relay"
 run_test "${SERIAL_A}" send_message_from_args \
   peer_input "${B_NPUB}" \
   message "${MESSAGE}" >/dev/null

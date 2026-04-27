@@ -13,6 +13,7 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        Log.d(TAG, "FCM message received with data keys=${message.data.keys.sorted()}")
         val payloadJson = message.toPayloadJson()
         val appManager = (applicationContext as? IrisChatApp)?.container?.appManager
         // Block here on purpose. Firebase keeps the wakelock alive for as
@@ -35,6 +36,7 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
             }
         PushNotificationProbe.recordReceived(this, payloadJson, resolution)
         if (!resolution.shouldShow) {
+            Log.d(TAG, "FCM message suppressed by resolver")
             return
         }
         MobilePushNotifier.show(this, resolution)

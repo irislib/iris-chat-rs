@@ -519,7 +519,7 @@ fun ChatScreen(
                 )
             }
 
-            if (directChatInfoOpen && chat != null) {
+            if (directChatInfoOpen) {
                 DirectChatInfoSheet(
                     appManager = appManager,
                     chatId = chatId,

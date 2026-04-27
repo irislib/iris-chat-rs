@@ -167,6 +167,23 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun report_mobile_push_snapshot() {
+        ensureLoggedIn()
+        val snapshot =
+            waitForState("mobile push author snapshot", timeoutMs = 90_000) {
+                appManager().state.value.mobilePush.takeIf { mobilePush ->
+                    mobilePush.messageAuthorPubkeys.isNotEmpty()
+                }
+            }
+
+        reportStatus(
+            "owner_pubkey_hex" to snapshot.ownerPubkeyHex.orEmpty(),
+            "message_author_pubkeys" to snapshot.messageAuthorPubkeys.joinToString(","),
+            "session_count" to snapshot.sessions.size.toString(),
+        )
+    }
+
+    @Test
     fun start_linked_device_and_report_identity() {
         val ownerInput = requiredArg("owner_input")
         val account = ensureLinkedDeviceStarted(ownerInput)

@@ -114,6 +114,22 @@ status_value() {
   sed -n "s/^INSTRUMENTATION_STATUS: ${key}=//p" | tail -n 1
 }
 
+package_pids() {
+  adb -s "${SERIAL}" shell pidof "${PACKAGE_NAME}" 2>/dev/null | tr -d '\r' | xargs || true
+}
+
+kill_background_app_process() {
+  adb -s "${SERIAL}" shell input keyevent HOME >/dev/null 2>&1 || true
+  adb -s "${SERIAL}" shell am kill "${PACKAGE_NAME}" >/dev/null 2>&1 || true
+  local pids
+  pids="$(package_pids)"
+  if [[ -n "${pids}" ]]; then
+    adb -s "${SERIAL}" shell run-as "${PACKAGE_NAME}" sh -c "kill -9 ${pids}" >/dev/null 2>&1 ||
+      adb -s "${SERIAL}" shell kill -9 ${pids} >/dev/null 2>&1 ||
+      true
+  fi
+}
+
 send_fcm_message() {
   local token="$1"
   local message="$2"
@@ -190,56 +206,45 @@ if [[ -z "${access_token}" ]]; then
   exit 1
 fi
 
-# Verifies that an FCM push wakes the app even when its process has been
-# killed (the "app closed" scenario users see when a chat notification
-# comes in while Iris isn't running). FirebaseMessagingService is started
-# by the system on data message arrival, the app's MobilePushNotifier
-# surfaces the notification, and the next instrumentation snapshot picks
-# it up.
-echo "Force-stopping ${PACKAGE_NAME} on ${SERIAL} to verify closed-app delivery"
-adb -s "${SERIAL}" shell am force-stop "${PACKAGE_NAME}" >/dev/null 2>&1 || true
-
-echo "Sending Firebase chat notification payload through project ${project}"
-wait_output="$(mktemp)"
-adb -s "${SERIAL}" shell am instrument -w -r \
-  -e class "${TEST_CLASS}#wait_for_firebase_chat_notification" \
-  -e message "${MESSAGE}" \
-  -e timeout_ms "${FCM_E2E_TIMEOUT_MS:-120000}" \
-  "${TEST_PACKAGE_NAME}/androidx.test.runner.AndroidJUnitRunner" >"${wait_output}" 2>&1 &
-wait_pid="$!"
-
-wait_ready=0
-for _ in {1..60}; do
-  if grep -q 'test=wait_for_firebase_chat_notification' "${wait_output}"; then
-    wait_ready=1
-    break
-  fi
-  if ! kill -0 "${wait_pid}" 2>/dev/null; then
-    cat "${wait_output}" >&2
-    rm -f "${wait_output}"
-    exit 1
-  fi
-  sleep 0.25
-done
-
-if [[ "${wait_ready}" != "1" ]]; then
-  kill "${wait_pid}" 2>/dev/null || true
-  cat "${wait_output}" >&2
-  rm -f "${wait_output}"
-  echo "Timed out waiting for Android notification probe to start." >&2
-  exit 1
+# Verifies that an FCM data push wakes the app when no Iris process is
+# running. Do not use `am force-stop` here: Android intentionally blocks
+# a force-stopped package from receiving push until the next explicit
+# launch, which is a different state from the user swiping the app away
+# or the system killing the background process.
+echo "Closing ${PACKAGE_NAME} on ${SERIAL} before sending FCM"
+kill_background_app_process
+remaining_pids="$(package_pids)"
+if [[ -n "${remaining_pids}" ]]; then
+  echo "Warning: ${PACKAGE_NAME} still has process id(s) before FCM send: ${remaining_pids}" >&2
 fi
 
 if ! send_fcm_message "${fcm_token}" "${MESSAGE}" "${project}" "${access_token}" >/dev/null; then
-  kill "${wait_pid}" 2>/dev/null || true
-  rm -f "${wait_output}"
   exit 1
 fi
 
-echo "Waiting for Android Firebase service and notification manager"
-wait_status=0
-wait "${wait_pid}" || wait_status="$?"
-if [[ "${wait_status}" != "0" ]] ||
+echo "Waiting for Firebase to wake the closed app process"
+woke_pids=""
+for _ in $(seq 1 "${FCM_E2E_WAKE_POLL_SECS:-45}"); do
+  woke_pids="$(package_pids)"
+  if [[ -n "${woke_pids}" ]]; then
+    break
+  fi
+  sleep 1
+done
+if [[ -z "${woke_pids}" ]]; then
+  echo "Warning: no ${PACKAGE_NAME} process observed before verification; checking notification probe anyway." >&2
+else
+  echo "Firebase woke ${PACKAGE_NAME} with process id(s): ${woke_pids}"
+  sleep "${FCM_E2E_POST_WAKE_GRACE_SECS:-10}"
+fi
+
+echo "Verifying Android notification probe and active notification"
+wait_output="$(mktemp)"
+if ! adb -s "${SERIAL}" shell am instrument -w -r \
+  -e class "${TEST_CLASS}#wait_for_firebase_chat_notification" \
+  -e message "${MESSAGE}" \
+  -e timeout_ms "${FCM_E2E_TIMEOUT_MS:-120000}" \
+  "${TEST_PACKAGE_NAME}/androidx.test.runner.AndroidJUnitRunner" >"${wait_output}" 2>&1 ||
   grep -Eq '(^FAILURES!!!|^INSTRUMENTATION_STATUS_CODE: -[0-9]|^Error in )' "${wait_output}"; then
   cat "${wait_output}" >&2
   rm -f "${wait_output}"

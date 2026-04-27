@@ -53,6 +53,125 @@ fn ndr_runtime_invite_session_round_trips_text() {
 }
 
 #[test]
+fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_path_buf();
+    let bob_storage_dir = data_dir
+        .join("ndr_runtime")
+        .join(bob_keys.public_key().to_hex())
+        .join(bob_keys.public_key().to_hex());
+    let bob_storage =
+        Arc::new(FileStorageAdapter::new(bob_storage_dir.clone()).expect("bob storage"))
+            as Arc<dyn StorageAdapter>;
+
+    let mut invite = Invite::create_new(
+        alice_keys.public_key(),
+        Some(alice_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("invite");
+    invite.owner_public_key = Some(alice_keys.public_key());
+
+    let alice = NdrRuntime::new(
+        alice_keys.public_key(),
+        alice_keys.secret_key().to_secret_bytes(),
+        alice_keys.public_key().to_hex(),
+        alice_keys.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    alice.init().expect("alice init");
+
+    let bob = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        Some(bob_storage.clone()),
+        None,
+    );
+    bob.init().expect("bob init");
+    bob.accept_invite(&invite, Some(alice_keys.public_key()))
+        .expect("bob accepts alice invite");
+    deliver_published_events(&bob, &bob_keys, &alice);
+
+    let user_record_key = format!("user/{}", alice_keys.public_key().to_hex());
+    let before = bob_storage
+        .get(&user_record_key)
+        .expect("read stored ratchet before notification")
+        .expect("stored ratchet before notification");
+
+    let message = "closed-app preview stays read-only";
+    alice
+        .send_text(bob_keys.public_key(), message.to_string(), None)
+        .expect("alice sends");
+    let bob_message_authors = bob.session_manager().get_all_message_push_author_pubkeys();
+    let published_events = drain_signed_events(&alice, &alice_keys);
+    let message_event = published_events
+        .iter()
+        .find(|event| {
+            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
+                && bob_message_authors.contains(&event.pubkey)
+        })
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "message event for Bob; published={}",
+                serde_json::to_string(&published_events).unwrap_or_default()
+            )
+        });
+    let payload = serde_json::json!({
+        "event": serde_json::to_string(&message_event).expect("outer event json"),
+        "title": "New message",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let resolution = decrypt_mobile_push_notification(
+        data_dir.to_string_lossy().to_string(),
+        bob_keys.public_key().to_hex(),
+        bob_keys
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
+        payload,
+    );
+    assert!(resolution.should_show);
+    assert_eq!(resolution.body, message);
+
+    let after = bob_storage
+        .get(&user_record_key)
+        .expect("read stored ratchet after notification")
+        .expect("stored ratchet after notification");
+    assert_eq!(
+        before, after,
+        "notification preview must not advance persisted ratchet state"
+    );
+
+    let bob_restarted_storage =
+        Arc::new(FileStorageAdapter::new(bob_storage_dir).expect("restarted storage"))
+            as Arc<dyn StorageAdapter>;
+    let bob_restarted = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        Some(bob_restarted_storage),
+        None,
+    );
+    bob_restarted.init().expect("bob restarted init");
+    bob_restarted.process_received_event(message_event);
+    assert!(
+        drain_text_messages(&bob_restarted)
+            .iter()
+            .any(|body| body == message),
+        "foreground runtime must still decrypt the relay event after notification preview"
+    );
+}
+
+#[test]
 fn app_keys_device_projection_is_deterministic() {
     let owner = Keys::generate().public_key();
     let device_a = Keys::generate().public_key();

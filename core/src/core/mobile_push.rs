@@ -2,7 +2,7 @@ use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use nostr::Tag;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
 const MOBILE_PUSH_RECEIPT_KIND: u64 = 15;
@@ -49,12 +49,15 @@ impl AppCore {
 ///
 /// Designed to run in the FCM service / iOS Notification Service
 /// Extension where there's no live `AppCore`. We spin up a one-shot
-/// `NdrRuntime` against the same `FileStorageAdapter` directory the
-/// main app uses, decrypt against the persisted ratchet state, then
-/// drop the runtime. If anything fails (no keys, foreign event,
-/// concurrent main-app holding storage open) we fall through to the
-/// vanilla `resolve_mobile_push_notification` so the user still gets
-/// *some* notification — just the generic kind.
+/// `NdrRuntime` against a read-through preview of the same
+/// `FileStorageAdapter` directory the main app uses, decrypt against
+/// the persisted ratchet state, then drop the runtime. Writes stay in
+/// the preview overlay so a notification preview cannot advance or
+/// otherwise mutate the chat runtime's persisted ratchet state before
+/// the foreground app processes the same relay event. If anything
+/// fails (no keys, foreign event, storage unavailable) we fall through
+/// to the vanilla `resolve_mobile_push_notification` so the user still
+/// gets *some* notification — just the generic kind.
 ///
 /// `data_dir` is the `app_data_dir` the FFI was constructed with;
 /// `owner_pubkey_hex` and `device_nsec` come from the same secure
@@ -108,10 +111,12 @@ pub(crate) fn decrypt_mobile_push_notification(
         .join("ndr_runtime")
         .join(owner_pubkey.to_hex())
         .join(device_keys.public_key().to_hex());
-    let storage = match FileStorageAdapter::new(storage_dir) {
+    let base_storage = match FileStorageAdapter::new(storage_dir) {
         Ok(adapter) => Arc::new(adapter) as Arc<dyn StorageAdapter>,
         Err(_) => return fallback(),
     };
+    let storage =
+        Arc::new(NotificationPreviewStorage::new(base_storage)) as Arc<dyn StorageAdapter>;
 
     let runtime = NdrRuntime::new(
         device_keys.public_key(),
@@ -169,12 +174,10 @@ pub(crate) fn decrypt_mobile_push_notification(
         .and_then(|value| serde_json::from_value(value.clone()).ok())
         .unwrap_or_default();
 
-    let group_id = inner_tags
-        .iter()
-        .find_map(|tag| match tag.as_slice() {
-            [name, value, ..] if name == "l" && !value.is_empty() => Some(value.clone()),
-            _ => None,
-        });
+    let group_id = inner_tags.iter().find_map(|tag| match tag.as_slice() {
+        [name, value, ..] if name == "l" && !value.is_empty() => Some(value.clone()),
+        _ => None,
+    });
     let sender_name = lookup_sender_display_name(&data_dir, &sender_owner);
     let group_title = group_id
         .as_ref()
@@ -218,7 +221,10 @@ pub(crate) fn decrypt_mobile_push_notification(
     for (key, value) in payload_object {
         resolved_payload.insert(key.clone(), value.clone());
     }
-    resolved_payload.insert("title".to_string(), serde_json::Value::String(title.clone()));
+    resolved_payload.insert(
+        "title".to_string(),
+        serde_json::Value::String(title.clone()),
+    );
     resolved_payload.insert("body".to_string(), serde_json::Value::String(body.clone()));
     resolved_payload.insert(
         "inner_event_json".to_string(),
@@ -233,10 +239,7 @@ pub(crate) fn decrypt_mobile_push_notification(
         serde_json::Value::String(sender_owner.to_hex()),
     );
     if let Some(group_id) = group_id {
-        resolved_payload.insert(
-            "group_id".to_string(),
-            serde_json::Value::String(group_id),
-        );
+        resolved_payload.insert("group_id".to_string(), serde_json::Value::String(group_id));
     }
 
     MobilePushNotificationResolution {
@@ -245,6 +248,60 @@ pub(crate) fn decrypt_mobile_push_notification(
         body,
         payload_json: serde_json::to_string(&serde_json::Value::Object(resolved_payload))
             .unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
+struct NotificationPreviewStorage {
+    base: Arc<dyn StorageAdapter>,
+    overlay: Mutex<BTreeMap<String, String>>,
+    deleted: Mutex<HashSet<String>>,
+}
+
+impl NotificationPreviewStorage {
+    fn new(base: Arc<dyn StorageAdapter>) -> Self {
+        Self {
+            base,
+            overlay: Mutex::new(BTreeMap::new()),
+            deleted: Mutex::new(HashSet::new()),
+        }
+    }
+}
+
+impl StorageAdapter for NotificationPreviewStorage {
+    fn get(&self, key: &str) -> nostr_double_ratchet::Result<Option<String>> {
+        if let Some(value) = self.overlay.lock().unwrap().get(key).cloned() {
+            return Ok(Some(value));
+        }
+        if self.deleted.lock().unwrap().contains(key) {
+            return Ok(None);
+        }
+        self.base.get(key)
+    }
+
+    fn put(&self, key: &str, value: String) -> nostr_double_ratchet::Result<()> {
+        self.overlay.lock().unwrap().insert(key.to_string(), value);
+        self.deleted.lock().unwrap().remove(key);
+        Ok(())
+    }
+
+    fn del(&self, key: &str) -> nostr_double_ratchet::Result<()> {
+        self.overlay.lock().unwrap().remove(key);
+        self.deleted.lock().unwrap().insert(key.to_string());
+        Ok(())
+    }
+
+    fn list(&self, prefix: &str) -> nostr_double_ratchet::Result<Vec<String>> {
+        let mut keys: HashSet<String> = self.base.list(prefix)?.into_iter().collect();
+        let deleted = self.deleted.lock().unwrap();
+        keys.retain(|key| !deleted.contains(key));
+        for key in self.overlay.lock().unwrap().keys() {
+            if key.starts_with(prefix) && !deleted.contains(key) {
+                keys.insert(key.clone());
+            }
+        }
+        let mut keys: Vec<String> = keys.into_iter().collect();
+        keys.sort();
+        Ok(keys)
     }
 }
 
