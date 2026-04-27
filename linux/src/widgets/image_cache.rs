@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 use std::thread;
 
-use adw::prelude::*;
 use gtk::gdk;
 use gtk::glib;
 

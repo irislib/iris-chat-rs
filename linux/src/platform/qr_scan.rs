@@ -1,14 +1,21 @@
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::thread;
-use std::time::Duration;
 
 use adw::prelude::*;
-use gtk::gdk;
-use gtk::glib;
+
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "linux")]
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::thread;
+#[cfg(target_os = "linux")]
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use gtk::{gdk, glib};
+#[cfg(target_os = "linux")]
 use image::ImageReader;
+#[cfg(target_os = "linux")]
 use v4l::{
     buffer::Type,
     io::traits::CaptureStream,
@@ -45,10 +52,23 @@ pub fn pick_and_decode<F: Fn(String) + 'static>(parent: Option<&gtk::Window>, on
     });
 }
 
+#[cfg(target_os = "linux")]
 pub fn camera_available() -> bool {
     Device::new(0).is_ok()
 }
 
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+pub fn camera_available() -> bool {
+    false
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn open_scanner<F: Fn(String) + 'static>(parent: Option<&gtk::Window>, on_result: F) {
+    pick_and_decode(parent, on_result);
+}
+
+#[cfg(target_os = "linux")]
 pub fn open_scanner<F: Fn(String) + 'static>(parent: Option<&gtk::Window>, on_result: F) {
     if !camera_available() {
         // Fall back to image-file scanning when no camera is reachable
@@ -145,12 +165,14 @@ pub fn open_scanner<F: Fn(String) + 'static>(parent: Option<&gtk::Window>, on_re
     dialog.present(parent);
 }
 
+#[cfg(target_os = "linux")]
 struct CameraFrame {
     rgb: Vec<u8>,
     width: u32,
     height: u32,
 }
 
+#[cfg(target_os = "linux")]
 fn capture_loop(
     stop: Arc<AtomicBool>,
     frame_tx: async_channel::Sender<CameraFrame>,
@@ -209,6 +231,7 @@ fn capture_loop(
     }
 }
 
+#[cfg(target_os = "linux")]
 fn decode_frame(
     buffer: &[u8],
     format: &v4l::Format,

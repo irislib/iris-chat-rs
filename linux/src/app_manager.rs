@@ -1,7 +1,9 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iris_chat_core::{AppAction, AppReconciler, AppState, AppUpdate, FfiApp};
+use iris_chat_core::{AppAction, AppReconciler, AppState, AppUpdate, FfiApp, OutgoingAttachment};
 
 use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
 
@@ -10,6 +12,7 @@ pub struct AppManager {
     update_rx: async_channel::Receiver<AppUpdate>,
     secret_store: Arc<dyn SecretStore>,
     data_dir: PathBuf,
+    staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
 }
 
 struct Reconciler {
@@ -67,7 +70,37 @@ impl AppManager {
             update_rx: rx,
             secret_store,
             data_dir,
+            staged_attachments: RefCell::new(HashMap::new()),
         }
+    }
+
+    pub fn staged_attachments(&self, chat_id: &str) -> Vec<OutgoingAttachment> {
+        self.staged_attachments
+            .borrow()
+            .get(chat_id)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub fn stage_attachment(&self, chat_id: &str, attachment: OutgoingAttachment) {
+        let mut staged = self.staged_attachments.borrow_mut();
+        let entry = staged.entry(chat_id.to_string()).or_default();
+        if !entry.iter().any(|a| a.file_path == attachment.file_path) {
+            entry.push(attachment);
+        }
+    }
+
+    pub fn unstage_attachment(&self, chat_id: &str, file_path: &str) {
+        if let Some(entry) = self.staged_attachments.borrow_mut().get_mut(chat_id) {
+            entry.retain(|a| a.file_path != file_path);
+        }
+    }
+
+    pub fn take_staged_attachments(&self, chat_id: &str) -> Vec<OutgoingAttachment> {
+        self.staged_attachments
+            .borrow_mut()
+            .remove(chat_id)
+            .unwrap_or_default()
     }
 
     pub fn current_state(&self) -> AppState {

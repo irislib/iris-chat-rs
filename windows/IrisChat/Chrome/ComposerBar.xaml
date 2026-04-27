@@ -5,37 +5,87 @@
             BorderBrush="{StaticResource Border}"
             BorderThickness="0,1,0,0"
             Padding="14,10">
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto" />
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
+        <StackPanel Orientation="Vertical">
+            <ItemsControl x:Name="StagedAttachmentsList"
+                          Visibility="Collapsed"
+                          Margin="0,0,0,8">
+                <ItemsControl.Template>
+                    <ControlTemplate TargetType="ItemsControl">
+                        <ScrollViewer HorizontalScrollBarVisibility="Auto"
+                                      VerticalScrollBarVisibility="Disabled"
+                                      Padding="0">
+                            <ItemsPresenter />
+                        </ScrollViewer>
+                    </ControlTemplate>
+                </ItemsControl.Template>
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Orientation="Horizontal" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Background="{StaticResource Panel}"
+                                BorderBrush="{StaticResource Border}"
+                                BorderThickness="1"
+                                CornerRadius="10"
+                                Padding="10,6"
+                                Margin="0,0,8,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding Icon}"
+                                           FontSize="16"
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,8,0" />
+                                <TextBlock Text="{Binding Filename}"
+                                           Foreground="{StaticResource TextMuted}"
+                                           VerticalAlignment="Center"
+                                           MaxWidth="220"
+                                           TextTrimming="CharacterEllipsis" />
+                                <Button Content="✕"
+                                        Tag="{Binding FilePath}"
+                                        Click="OnRemoveAttachment"
+                                        Style="{StaticResource IconButton}"
+                                        Margin="6,0,0,0"
+                                        Padding="4,0"
+                                        FontSize="12" />
+                            </StackPanel>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
 
-            <Button x:Name="AttachButton"
-                    Grid.Column="0"
-                    Style="{StaticResource IconButton}"
-                    Margin="0,0,6,0"
-                    ToolTip="Send file"
-                    Click="OnAttach">
-                <TextBlock Text="📎" FontSize="20" Foreground="{StaticResource TextMuted}" />
-            </Button>
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
 
-            <TextBox x:Name="Input"
-                     Grid.Column="1"
-                     AcceptsReturn="False"
-                     KeyDown="OnInputKeyDown"
-                     TextChanged="OnInputTextChanged"
-                     FontSize="14" />
+                <Button x:Name="AttachButton"
+                        Grid.Column="0"
+                        Style="{StaticResource IconButton}"
+                        Margin="0,0,6,0"
+                        ToolTip="Send file"
+                        Click="OnAttach">
+                    <TextBlock Text="📎" FontSize="20" Foreground="{StaticResource TextMuted}" />
+                </Button>
 
-            <Button x:Name="SendButton"
-                    Grid.Column="2"
-                    Style="{StaticResource PrimaryButton}"
-                    Margin="8,0,0,0"
-                    Padding="16,8"
-                    Click="OnSend">
-                <TextBlock Text="Send" />
-            </Button>
-        </Grid>
+                <TextBox x:Name="Input"
+                         Grid.Column="1"
+                         AcceptsReturn="False"
+                         KeyDown="OnInputKeyDown"
+                         TextChanged="OnInputTextChanged"
+                         FontSize="14" />
+
+                <Button x:Name="SendButton"
+                        Grid.Column="2"
+                        Style="{StaticResource PrimaryButton}"
+                        Margin="8,0,0,0"
+                        Padding="16,8"
+                        Click="OnSend">
+                    <TextBlock Text="Send" />
+                </Button>
+            </Grid>
+        </StackPanel>
     </Border>
 </UserControl>

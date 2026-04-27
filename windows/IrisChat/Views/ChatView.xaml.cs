@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
 using System.Windows;
@@ -94,11 +95,19 @@ public partial class ChatView : UserControl
         return pubkeyHex.Length <= 10 ? pubkeyHex : $"{pubkeyHex.Substring(0, 6)}…{pubkeyHex.Substring(pubkeyHex.Length - 4)}";
     }
 
-    private void OnSubmit(string text)
+    private void OnSubmit(string text, IList<string> stagedAttachments)
     {
         var chatId = App.CurrentManager.CurrentChat?.chatId;
         if (string.IsNullOrEmpty(chatId)) return;
-        App.CurrentManager.SendMessage(chatId, text);
+        if (stagedAttachments != null && stagedAttachments.Count > 0)
+        {
+            App.CurrentManager.SendAttachments(chatId, stagedAttachments, text);
+            return;
+        }
+        if (!string.IsNullOrEmpty(text))
+        {
+            App.CurrentManager.SendMessage(chatId, text);
+        }
     }
 
     private void OnAttach()
@@ -107,7 +116,7 @@ public partial class ChatView : UserControl
         if (string.IsNullOrEmpty(chatId)) return;
         var files = PlatformFilePicker.PickFiles("Attach files", multiselect: true);
         if (files == null || files.Length == 0) return;
-        App.CurrentManager.SendAttachments(chatId, files, string.Empty);
+        Composer.AddAttachments(files);
     }
 
     private void OnTyping()
