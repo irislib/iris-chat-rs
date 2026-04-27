@@ -20,6 +20,7 @@ import social.innode.ndr.demo.rust.CurrentChatSnapshot
 import social.innode.ndr.demo.rust.DeliveryState
 import social.innode.ndr.demo.rust.DeviceAuthorizationState
 import social.innode.ndr.demo.rust.normalizePeerInput
+import social.innode.ndr.demo.rust.peerInputToHex
 import java.io.File
 
 @RunWith(AndroidJUnit4::class)
@@ -1202,9 +1203,21 @@ class RealRelayHarnessTest {
         peerNpub: String,
         peerInput: String,
     ): Boolean {
-        val normalized = normalizePeerInput(peerInput)
-        return chatId.equals(normalized, ignoreCase = true) ||
-            peerNpub.equals(normalized, ignoreCase = true)
+        // chatId for direct chats is canonical lowercase hex; peerInput
+        // is whatever the caller had handy (npub / hex / nprofile…).
+        // `normalizePeerInput` returns an npub when the input is
+        // npub-shaped and hex when it's already hex, so it's not a
+        // single canonical form — compare against both via
+        // `peerInputToHex`. Without this the harness silently fails to
+        // find existing chats by npub, falls back to `createChat`, and
+        // times out waiting for a currentChat that already matches.
+        val normalizedDisplay = normalizePeerInput(peerInput)
+        val hex = peerInputToHex(peerInput)
+        if (hex.isNotEmpty() && chatId.equals(hex, ignoreCase = true)) {
+            return true
+        }
+        return chatId.equals(normalizedDisplay, ignoreCase = true) ||
+            peerNpub.equals(normalizedDisplay, ignoreCase = true)
     }
 
     private fun deviceMatchesInput(
@@ -1231,6 +1244,10 @@ class RealRelayHarnessTest {
             return chatId.equals(expectedChatId, ignoreCase = true)
         }
         if (peerInput.isBlank()) {
+            return true
+        }
+        val hex = peerInputToHex(peerInput)
+        if (hex.isNotEmpty() && chatId.equals(hex, ignoreCase = true)) {
             return true
         }
         return chatId.equals(normalizePeerInput(peerInput), ignoreCase = true)

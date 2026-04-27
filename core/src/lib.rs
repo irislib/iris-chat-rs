@@ -184,6 +184,19 @@ pub fn is_valid_peer_input(input: String) -> bool {
     crate::core::parse_peer_input(&input).is_ok()
 }
 
+/// Convert any pubkey-shaped input (hex, npub, nprofile, …) to its
+/// canonical lowercase-hex form. The empty string is returned when the
+/// input can't be parsed as a public key — callers expecting hex
+/// downstream can short-circuit on that.
+#[uniffi::export]
+pub fn peer_input_to_hex(input: String) -> String {
+    let normalized = crate::core::normalize_peer_input_for_display(&input);
+    match nostr::PublicKey::parse(&normalized) {
+        Ok(pubkey) => pubkey.to_hex(),
+        Err(_) => String::new(),
+    }
+}
+
 /// Convert any pubkey-shaped input (hex, npub, nprofile, …) to its npub form.
 /// Returns the original string when it can't be parsed as a public key.
 #[uniffi::export]
