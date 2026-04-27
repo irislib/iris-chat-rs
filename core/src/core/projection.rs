@@ -172,39 +172,33 @@ impl AppCore {
 
     pub(super) fn prune_expired_typing_indicators(&mut self) {
         let now = unix_now().get();
-        let latest_message_secs_by_chat = self
-            .threads
-            .iter()
-            .filter_map(|(chat_id, thread)| {
-                thread
-                    .messages
-                    .last()
-                    .map(|message| (chat_id.clone(), message.created_at_secs))
-            })
-            .collect::<BTreeMap<_, _>>();
+        let latest_message_secs_by_chat = self.latest_message_secs_by_chat();
         self.typing_indicators.retain(|_, indicator| {
-            indicator.expires_at_secs > now
-                && latest_message_secs_by_chat
-                    .get(&indicator.chat_id)
-                    .map_or(true, |latest_message_secs| {
-                        *latest_message_secs <= indicator.last_event_secs
-                    })
+            typing_indicator_is_active(indicator, now, &latest_message_secs_by_chat)
         });
     }
 
     pub(super) fn thread_has_typing_indicator(&self, chat_id: &str) -> bool {
         let now = unix_now().get();
-        self.typing_indicators
-            .values()
-            .any(|indicator| indicator.chat_id == chat_id && indicator.expires_at_secs > now)
+        let latest_message_secs = self.latest_message_secs_for_chat(chat_id);
+        self.typing_indicators.values().any(|indicator| {
+            indicator.chat_id == chat_id
+                && indicator.expires_at_secs > now
+                && indicator.last_event_secs > latest_message_secs
+        })
     }
 
     pub(super) fn typing_indicator_snapshots(&self, chat_id: &str) -> Vec<TypingIndicatorSnapshot> {
         let now = unix_now().get();
+        let latest_message_secs = self.latest_message_secs_for_chat(chat_id);
         let mut indicators = self
             .typing_indicators
             .values()
-            .filter(|indicator| indicator.chat_id == chat_id && indicator.expires_at_secs > now)
+            .filter(|indicator| {
+                indicator.chat_id == chat_id
+                    && indicator.expires_at_secs > now
+                    && indicator.last_event_secs > latest_message_secs
+            })
             .map(|indicator| TypingIndicatorSnapshot {
                 chat_id: indicator.chat_id.clone(),
                 display_name: self.owner_display_label(&indicator.author_owner_hex),
@@ -213,6 +207,26 @@ impl AppCore {
             .collect::<Vec<_>>();
         indicators.sort_by(|left, right| left.display_name.cmp(&right.display_name));
         indicators
+    }
+
+    fn latest_message_secs_for_chat(&self, chat_id: &str) -> u64 {
+        self.threads
+            .get(chat_id)
+            .and_then(|thread| thread.messages.last())
+            .map(|message| message.created_at_secs)
+            .unwrap_or(0)
+    }
+
+    fn latest_message_secs_by_chat(&self) -> BTreeMap<String, u64> {
+        self.threads
+            .iter()
+            .filter_map(|(chat_id, thread)| {
+                thread
+                    .messages
+                    .last()
+                    .map(|message| (chat_id.clone(), message.created_at_secs))
+            })
+            .collect()
     }
 
     pub(super) fn build_account_snapshot(&self) -> Option<AccountSnapshot> {
@@ -506,4 +520,19 @@ impl AppCore {
             self.emit_state_inner();
         }
     }
+}
+
+fn typing_indicator_is_active(
+    indicator: &TypingIndicatorRecord,
+    now: u64,
+    latest_message_secs_by_chat: &BTreeMap<String, u64>,
+) -> bool {
+    if indicator.expires_at_secs <= now {
+        return false;
+    }
+    let latest_message_secs = latest_message_secs_by_chat
+        .get(&indicator.chat_id)
+        .copied()
+        .unwrap_or(0);
+    indicator.last_event_secs > latest_message_secs
 }

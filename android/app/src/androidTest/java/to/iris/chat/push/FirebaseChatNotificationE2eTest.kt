@@ -17,6 +17,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import social.innode.ndr.demo.IrisChatApp
 
 @RunWith(AndroidJUnit4::class)
 class FirebaseChatNotificationE2eTest {
@@ -40,6 +41,24 @@ class FirebaseChatNotificationE2eTest {
         reportStatus(
             "fcm_token" to token,
             "app_package" to context.packageName,
+        )
+    }
+
+    @Test
+    fun report_last_push_resolution() {
+        val snapshot = PushNotificationProbe.snapshot(context)
+        val rawPayload = snapshot.optString("raw_payload_json")
+        assertTrue("No recorded push payload", rawPayload.isNotBlank())
+        val appManager = (context as IrisChatApp).container.appManager
+        val resolution =
+            kotlinx.coroutines.runBlocking {
+                appManager.decryptOrResolveNotificationPayload(rawPayload)
+            }
+        reportStatus(
+            "should_show" to resolution.shouldShow.toString(),
+            "title" to resolution.title,
+            "body" to resolution.body,
+            "payload" to resolution.payloadJson,
         )
     }
 
