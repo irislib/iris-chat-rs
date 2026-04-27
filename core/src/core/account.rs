@@ -148,6 +148,7 @@ impl AppCore {
         self.recent_handshake_peers.clear();
         self.seen_event_ids.clear();
         self.seen_event_order.clear();
+        self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
         self.relay_status_watch_urls.clear();
@@ -292,6 +293,7 @@ impl AppCore {
         self.recent_handshake_peers.clear();
         self.seen_event_ids.clear();
         self.seen_event_order.clear();
+        self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
         self.debug_log.clear();
@@ -409,6 +411,20 @@ impl AppCore {
                                 .collect(),
                         },
                     )
+                })
+                .collect();
+            // Prime the typing floor from the most recent message we
+            // restored for each chat. Without this, a typing rumor
+            // delivered right after restart could re-arm an indicator
+            // even though we already have a newer message on disk.
+            self.typing_floor_secs = self
+                .threads
+                .iter()
+                .filter_map(|(chat_id, thread)| {
+                    thread
+                        .messages
+                        .last()
+                        .map(|message| (chat_id.clone(), message.created_at_secs))
                 })
                 .collect();
         }

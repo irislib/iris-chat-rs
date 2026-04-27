@@ -396,6 +396,7 @@ impl AppCore {
         if let Some(thread) = self.threads.get_mut(chat_id) {
             thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         }
+        self.bump_typing_floor(chat_id, created_at_secs);
         message
     }
 
@@ -449,6 +450,7 @@ impl AppCore {
             delivery: DeliveryState::Received,
             source_event_id,
         });
+        self.bump_typing_floor(chat_id, created_at_secs);
     }
 
     pub(super) fn push_system_notice(&mut self, chat_id: &str, body: String, created_at_secs: u64) {
@@ -489,6 +491,7 @@ impl AppCore {
             delivery: DeliveryState::Received,
             source_event_id: None,
         });
+        self.bump_typing_floor(chat_id, created_at_secs);
     }
 
     pub(super) fn delete_local_message(&mut self, chat_id: &str, message_id: &str) {

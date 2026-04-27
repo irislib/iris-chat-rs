@@ -117,6 +117,16 @@ pub struct AppCore {
     app_keys: BTreeMap<String, KnownAppKeys>,
     groups: BTreeMap<String, GroupData>,
     typing_indicators: BTreeMap<String, TypingIndicatorRecord>,
+    /// Monotonic per-chat ceiling on `last_event_secs` we'll accept
+    /// for incoming typing events. Bumped to the wire-clock
+    /// timestamp of every message that lands in the thread. Defends
+    /// against peer clients (notably iris-chat web) that don't send
+    /// a stop-typing event when the user hits send: a stray typing
+    /// rumor with the same wire-second as the message — or a
+    /// re-delivery from a different device — never re-arms the
+    /// indicator once we've already seen the message. Not persisted;
+    /// rebuilt from `threads.messages.last()` on session start.
+    typing_floor_secs: BTreeMap<String, u64>,
     chat_message_ttl_seconds: BTreeMap<String, u64>,
     preferences: PreferencesSnapshot,
     recent_handshake_peers: BTreeMap<String, RecentHandshakePeer>,

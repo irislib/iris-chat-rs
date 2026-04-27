@@ -906,6 +906,87 @@ fn first_received_message_at_same_second_clears_typing_indicator() {
 }
 
 #[test]
+fn typing_floor_blocks_late_typing_after_message() {
+    // Bug shape from peer apps that don't send a stop-typing event:
+    // a typing rumor with `created_at_secs` strictly greater than the
+    // latest message slips through the projection's `>` filter and
+    // re-arms the indicator after we've already shown the message.
+    //
+    // The floor is bumped when the message lands and gates any
+    // subsequent typing event with `event_secs <= floor`. Even though
+    // the typing rumor here has T=200 > the message's T=100, the
+    // floor is also at 100 (it's the same chat) — the typing must
+    // strictly exceed the floor *and* the floor itself was set by
+    // the message we already saw, so a new typing event has to be
+    // genuinely after that message's wire-clock second to surface.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("typing-floor-late", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let sender_hex = sender.public_key().to_hex();
+
+    core.apply_runtime_text_message(
+        sender.public_key(),
+        Some(chat_id.clone()),
+        "hi".to_string(),
+        100,
+        None,
+        Some("msg-1".to_string()),
+        None,
+    );
+
+    // Typing rumor races in after the message with the *same* wire
+    // second — the floor at 100 keeps it suppressed.
+    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), 100, None);
+    assert!(!core
+        .typing_indicators
+        .values()
+        .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex));
+
+    // A genuinely newer typing event (peer is typing again) does
+    // arm the indicator.
+    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), 101, None);
+    assert!(core
+        .typing_indicators
+        .values()
+        .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex));
+}
+
+#[test]
+fn typing_floor_persists_across_message_deletion() {
+    // iris-chat (JS) keeps `lastMessageAt` monotonic so that deleting
+    // a message doesn't let a stale typing rumor slip through. Same
+    // contract here: once the floor reaches a given second, deleting
+    // the message that put it there leaves the floor in place.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("typing-floor-delete", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let sender_hex = sender.public_key().to_hex();
+
+    core.apply_runtime_text_message(
+        sender.public_key(),
+        Some(chat_id.clone()),
+        "hi".to_string(),
+        100,
+        None,
+        Some("msg-1".to_string()),
+        None,
+    );
+    core.delete_local_message(&chat_id, "msg-1");
+
+    // The thread is now empty (latest_message_secs would be 0) but
+    // the floor must stay at 100 from the message we already saw.
+    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), 100, None);
+    assert!(!core
+        .typing_indicators
+        .values()
+        .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex));
+}
+
+#[test]
 fn web_runtime_control_rumors_do_not_create_chat_messages() {
     let owner = Keys::generate();
     let device = Keys::generate();

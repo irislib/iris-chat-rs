@@ -62,7 +62,33 @@ impl AppCore {
             self.clear_typing_indicator(&chat_id, &author_owner_hex);
             return;
         }
+        // Don't re-arm an indicator at or before the chat's typing
+        // floor. The floor is bumped to the wire-clock timestamp of
+        // every message we add to the thread, so a stray typing
+        // rumor that races (or a peer that doesn't send a stop-
+        // typing event) can't keep the indicator alive after we've
+        // already seen the message.
+        if let Some(floor) = self.typing_floor_secs.get(&chat_id).copied() {
+            if event_secs <= floor {
+                self.clear_typing_indicator(&chat_id, &author_owner_hex);
+                return;
+            }
+        }
         self.set_typing_indicator(chat_id, author_owner_hex, event_secs);
+    }
+
+    /// Raise the per-chat typing floor to `ts` if it's higher than
+    /// what we already have. Called at every message-add site so the
+    /// floor tracks the latest message wire-clock timestamp seen for
+    /// the chat, monotonically.
+    pub(super) fn bump_typing_floor(&mut self, chat_id: &str, ts: u64) {
+        let entry = self
+            .typing_floor_secs
+            .entry(chat_id.to_string())
+            .or_insert(0);
+        if *entry < ts {
+            *entry = ts;
+        }
     }
 
     pub(super) fn set_typing_indicator(

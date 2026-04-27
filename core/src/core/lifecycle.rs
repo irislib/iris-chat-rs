@@ -37,6 +37,7 @@ impl AppCore {
             app_keys: BTreeMap::new(),
             groups: BTreeMap::new(),
             typing_indicators: BTreeMap::new(),
+            typing_floor_secs: BTreeMap::new(),
             chat_message_ttl_seconds: BTreeMap::new(),
             preferences: state.preferences.clone(),
             recent_handshake_peers: BTreeMap::new(),
