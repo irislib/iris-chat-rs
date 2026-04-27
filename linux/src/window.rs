@@ -1,12 +1,16 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
-use ndr_demo_core::{AppAction, AppState, AppUpdate, Screen};
+use ndr_demo_core::{AppAction, AppState, AppUpdate, ChatThreadSnapshot, Screen};
 
 use crate::app_manager::AppManager;
+use crate::platform::notifications;
 use crate::screens;
+
+const APP_ID: &str = "to.iris.chat";
 
 pub fn build_ui(app: &adw::Application) {
     let manager = Rc::new(AppManager::new());
@@ -129,6 +133,11 @@ pub fn build_ui(app: &adw::Application) {
             if let AppUpdate::FullState(state) = update {
                 let mut slot = current_for_updates.borrow_mut();
                 if state.rev >= slot.rev {
+                    let prev_chat_list = slot.chat_list.clone();
+                    let prev_focused_chat_id = slot
+                        .current_chat
+                        .as_ref()
+                        .map(|c| c.chat_id.clone());
                     *slot = state;
                     apply_state(
                         &content_for_updates,
@@ -137,6 +146,9 @@ pub fn build_ui(app: &adw::Application) {
                         &slot,
                     );
                     show_toast_if_changed(&toast_for_updates, &last_toast_for_updates, &slot.toast);
+                    if slot.preferences.desktop_notifications_enabled {
+                        notify_new_messages(&prev_chat_list, &slot.chat_list, prev_focused_chat_id.as_deref());
+                    }
                 }
             }
         }
@@ -204,6 +216,36 @@ fn apply_state(
 
     let widget = screens::render(&screen, state, manager);
     slot.append(&widget);
+}
+
+fn notify_new_messages(
+    prev: &[ChatThreadSnapshot],
+    current: &[ChatThreadSnapshot],
+    focused_chat_id: Option<&str>,
+) {
+    let prev_map: HashMap<&str, &ChatThreadSnapshot> =
+        prev.iter().map(|c| (c.chat_id.as_str(), c)).collect();
+    for chat in current {
+        if Some(chat.chat_id.as_str()) == focused_chat_id {
+            continue;
+        }
+        let last_at = chat.last_message_at_secs.unwrap_or(0);
+        let prev_at = prev_map
+            .get(chat.chat_id.as_str())
+            .and_then(|p| p.last_message_at_secs)
+            .unwrap_or(0);
+        if last_at <= prev_at {
+            continue;
+        }
+        if !matches!(chat.last_message_is_outgoing, Some(false)) {
+            continue;
+        }
+        let body = chat
+            .last_message_preview
+            .clone()
+            .unwrap_or_else(|| "New message".to_string());
+        notifications::notify(APP_ID, &chat.display_name, &body);
+    }
 }
 
 fn chat_title(screen: &Screen, state: &AppState) -> Option<String> {

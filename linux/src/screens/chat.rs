@@ -310,6 +310,25 @@ fn render_message(
         bubble.add_css_class("accent");
     }
 
+    let popover = build_message_popover(message, manager);
+    popover.set_parent(&bubble);
+    let popover_for_gesture = popover.clone();
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(3);
+    gesture.connect_pressed(move |_, _, x, y| {
+        popover_for_gesture.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover_for_gesture.popup();
+    });
+    bubble.add_controller(gesture);
+
+    let popover_for_long = popover.clone();
+    let long_press = gtk::GestureLongPress::new();
+    long_press.connect_pressed(move |_, x, y| {
+        popover_for_long.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover_for_long.popup();
+    });
+    bubble.add_controller(long_press);
+
     column.append(&bubble);
 
     if !message.reactions.is_empty() {
@@ -329,6 +348,74 @@ fn render_message(
     }
 
     row.upcast()
+}
+
+fn build_message_popover(
+    message: &ChatMessageSnapshot,
+    manager: &Rc<AppManager>,
+) -> gtk::Popover {
+    let popover = gtk::Popover::new();
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Top);
+
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    column.set_margin_top(6);
+    column.set_margin_bottom(6);
+    column.set_margin_start(6);
+    column.set_margin_end(6);
+
+    let reactions_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    for emoji in ["👍", "❤️", "😂", "🎉", "😢", "🔥"] {
+        let btn = gtk::Button::with_label(emoji);
+        btn.add_css_class("flat");
+        btn.add_css_class("circular");
+        let manager = manager.clone();
+        let chat_id = message.chat_id.clone();
+        let message_id = message.id.clone();
+        let emoji_owned = emoji.to_string();
+        let popover_for_close = popover.clone();
+        btn.connect_clicked(move |_| {
+            manager.dispatch(AppAction::ToggleReaction {
+                chat_id: chat_id.clone(),
+                message_id: message_id.clone(),
+                emoji: emoji_owned.clone(),
+            });
+            popover_for_close.popdown();
+        });
+        reactions_row.append(&btn);
+    }
+    column.append(&reactions_row);
+
+    let copy = gtk::Button::with_label("Copy text");
+    copy.add_css_class("flat");
+    copy.set_halign(gtk::Align::Fill);
+    let body = message.body.clone();
+    let popover_for_copy = popover.clone();
+    copy.connect_clicked(move |_| {
+        crate::platform::clipboard::copy(&body);
+        popover_for_copy.popdown();
+    });
+    column.append(&copy);
+
+    let delete = gtk::Button::with_label("Delete locally");
+    delete.add_css_class("flat");
+    delete.add_css_class("error");
+    delete.set_halign(gtk::Align::Fill);
+    let manager_for_delete = manager.clone();
+    let chat_id = message.chat_id.clone();
+    let message_id = message.id.clone();
+    let popover_for_delete = popover.clone();
+    delete.connect_clicked(move |_| {
+        manager_for_delete.dispatch(AppAction::DeleteLocalMessage {
+            chat_id: chat_id.clone(),
+            message_id: message_id.clone(),
+        });
+        popover_for_delete.popdown();
+    });
+    column.append(&delete);
+
+    popover.set_child(Some(&column));
+    popover
 }
 
 fn reactions_row(
