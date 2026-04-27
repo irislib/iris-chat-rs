@@ -611,6 +611,13 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     entry.set_height_request(40);
     row.append(&entry);
 
+    if manager.should_focus_composer(&chat.chat_id) {
+        let entry_for_focus = entry.clone();
+        gtk::glib::idle_add_local_once(move || {
+            entry_for_focus.grab_focus();
+        });
+    }
+
     {
         let manager_for_typing = manager.clone();
         let chat_id_for_typing = chat.chat_id.clone();

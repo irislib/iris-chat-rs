@@ -13,6 +13,7 @@ pub struct AppManager {
     secret_store: Arc<dyn SecretStore>,
     data_dir: PathBuf,
     staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
+    last_focused_chat_id: RefCell<Option<String>>,
 }
 
 struct Reconciler {
@@ -71,7 +72,17 @@ impl AppManager {
             secret_store,
             data_dir,
             staged_attachments: RefCell::new(HashMap::new()),
+            last_focused_chat_id: RefCell::new(None),
         }
+    }
+
+    pub fn should_focus_composer(&self, chat_id: &str) -> bool {
+        let mut slot = self.last_focused_chat_id.borrow_mut();
+        if slot.as_deref() == Some(chat_id) {
+            return false;
+        }
+        *slot = Some(chat_id.to_string());
+        true
     }
 
     pub fn staged_attachments(&self, chat_id: &str) -> Vec<OutgoingAttachment> {

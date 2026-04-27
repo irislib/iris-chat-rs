@@ -13,6 +13,8 @@ public partial class ChatView : UserControl
 {
     public string? ChatId { get; set; }
 
+    private string? _focusedChatId;
+
     public ChatView()
     {
         InitializeComponent();
@@ -24,7 +26,6 @@ public partial class ChatView : UserControl
             Composer.Typing += OnTyping;
             Composer.StoppedTyping += OnStoppedTyping;
             Refresh();
-            Composer.FocusInput();
         };
         Unloaded += (_, _) =>
         {
@@ -42,6 +43,12 @@ public partial class ChatView : UserControl
     {
         var chat = App.CurrentManager.CurrentChat;
         if (chat == null || (ChatId != null && chat.chatId != ChatId)) return;
+
+        if (_focusedChatId != chat.chatId)
+        {
+            _focusedChatId = chat.chatId;
+            Dispatcher.BeginInvoke(new Action(() => Composer.FocusInput()));
+        }
 
         HeaderTitle.Text = chat.displayName;
         HeaderSubtitle.Text = chat.subtitle ?? string.Empty;

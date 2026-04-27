@@ -198,6 +198,11 @@ struct ChatScreen: View {
                                     }
                                     scrollToBottom(proxy: proxy, animated: true)
                                 }
+                                .task(id: chatId) {
+                                    if IrisLayout.usesDesktopChrome {
+                                        isComposerFocused = true
+                                    }
+                                }
 
                                 if !isNearBottom && !chat.messages.isEmpty {
                                     Button {

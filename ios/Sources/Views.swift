@@ -76,7 +76,10 @@ struct RootView: View {
                 BackgroundFill()
 
                 if usesDesktopChatShell {
-                    DesktopChatShell(manager: manager)
+                    DesktopChatShell(
+                        manager: manager,
+                        directChatInfoChatId: $directChatInfoChatId
+                    )
                 } else {
                     NavigationShell(
                         title: screenTitle(manager.activeScreen),
@@ -320,6 +323,7 @@ struct NavigationShell<Content: View>: View {
 private struct DesktopChatShell: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
+    @Binding var directChatInfoChatId: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -367,6 +371,8 @@ private struct DesktopChatShell: View {
                     {
                         if let groupId = current.groupId {
                             manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
+                        } else {
+                            directChatInfoChatId = current.chatId
                         }
                     }
                 },
