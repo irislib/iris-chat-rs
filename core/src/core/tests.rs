@@ -467,6 +467,119 @@ fn group_metadata_changes_create_system_notices() {
 }
 
 #[test]
+fn incoming_message_emits_full_state_for_open_chat() {
+    // Repros the "messages don't appear until you navigate away and back"
+    // bug: while a chat screen is open, an incoming DM should
+    // (a) surface in `state.current_chat.messages` after rebuild and
+    // (b) trigger a `FullState` push so the UI recomposes — without it
+    // the shell sits on a stale `currentChat` until the next OpenChat.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let (update_tx, update_rx) = flume::unbounded();
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-incoming-emit-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let device_id = device.public_key().to_hex();
+    let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+        .expect("local invite");
+    let runtime = NdrRuntime::new(
+        device.public_key(),
+        device.secret_key().to_secret_bytes(),
+        device_id,
+        owner.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    runtime.init().expect("runtime init");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: runtime,
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+
+    // Simulate "user opened the chat with `sender`": active_chat_id,
+    // screen_stack and the thread record all exist, exactly as
+    // `open_direct_chat_from_peer_input` leaves them.
+    let chat_id = sender.public_key().to_hex();
+    core.active_chat_id = Some(chat_id.clone());
+    core.screen_stack = vec![Screen::Chat {
+        chat_id: chat_id.clone(),
+    }];
+    core.ensure_thread_record(&chat_id, 1_777_159_000);
+    core.rebuild_state();
+    core.emit_state();
+    // Drain the priming emit so we measure only the post-receive push.
+    while update_rx.try_recv().is_ok() {}
+
+    // An incoming DM lands. This is the same call path
+    // `process_runtime_events_with_completions` takes when the relay
+    // delivers a `SessionManagerEvent::DecryptedMessage`.
+    let inner_id = "a".repeat(64);
+    let outer_id = "b".repeat(64);
+    let content = serde_json::json!({
+        "content": "hi",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_160_000u64,
+        "tags": [],
+        "pubkey": sender.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some(outer_id));
+    core.rebuild_state();
+    core.emit_state();
+
+    // (a) In-memory snapshot reflects the new message.
+    let current_chat = core
+        .state
+        .current_chat
+        .as_ref()
+        .expect("current_chat present");
+    assert_eq!(
+        current_chat.chat_id, chat_id,
+        "current_chat tracks the open chat"
+    );
+    assert_eq!(
+        current_chat.messages.len(),
+        1,
+        "incoming message lands in current_chat after rebuild_state"
+    );
+    assert_eq!(current_chat.messages[0].body, "hi");
+    assert!(!current_chat.messages[0].is_outgoing);
+
+    // (b) A FullState was emitted carrying the new message. If the
+    // dedupe in `emit_state_inner` is too aggressive (or some upstream
+    // skipped rebuild_state), the UI never sees the update until the
+    // user navigates away and back — that's the regression we guard
+    // against here.
+    let mut last_full_state: Option<AppState> = None;
+    while let Ok(update) = update_rx.try_recv() {
+        if let crate::updates::AppUpdate::FullState(state) = update {
+            last_full_state = Some(state);
+        }
+    }
+    let pushed = last_full_state.expect("FullState emitted after incoming message");
+    let pushed_chat = pushed.current_chat.expect("pushed current_chat present");
+    assert_eq!(pushed_chat.messages.len(), 1);
+    assert_eq!(pushed_chat.messages[0].body, "hi");
+}
+
+#[test]
 fn profile_picture_upload_propagates_to_account_snapshot() {
     let owner = Keys::generate();
     let device = Keys::generate();

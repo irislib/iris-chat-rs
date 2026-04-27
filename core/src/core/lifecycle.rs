@@ -219,6 +219,8 @@ impl AppCore {
                 self.set_image_proxy_salt_hex(&salt_hex)
             }
             AppAction::ResetImageProxySettings => self.reset_image_proxy_settings(),
+            AppAction::SetMobilePushServerUrl { url } => self.set_mobile_push_server_url(&url),
+            AppAction::ResetMobilePushServerUrl => self.reset_mobile_push_server_url(),
             AppAction::MarkMessagesSeen {
                 chat_id,
                 message_ids,

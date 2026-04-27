@@ -272,6 +272,7 @@ impl AppCore {
             image_proxy_url: self.preferences.image_proxy_url.clone(),
             image_proxy_key_hex: self.preferences.image_proxy_key_hex.clone(),
             image_proxy_salt_hex: self.preferences.image_proxy_salt_hex.clone(),
+            mobile_push_server_url: self.preferences.mobile_push_server_url.clone(),
         };
         if let Some(bytes) =
             serialise_if_changed(&preferences, &mut self.persistence_cache.preferences)

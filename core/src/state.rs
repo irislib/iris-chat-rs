@@ -52,6 +52,12 @@ pub struct PreferencesSnapshot {
     pub image_proxy_url: String,
     pub image_proxy_key_hex: String,
     pub image_proxy_salt_hex: String,
+    /// User-configurable notification server URL. Empty string means
+    /// "use the platform default" (notifications.iris.to in release,
+    /// notifications-sandbox.iris.to in debug). When non-empty, the
+    /// shells should pass this as the override to
+    /// `build_mobile_push_*_subscription_request`.
+    pub mobile_push_server_url: String,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -323,6 +329,7 @@ impl AppState {
                 image_proxy_url: crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string(),
                 image_proxy_key_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string(),
                 image_proxy_salt_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
+                mobile_push_server_url: String::new(),
             },
             toast: None,
         }

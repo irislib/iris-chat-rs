@@ -59,11 +59,14 @@ final class MobilePushRuntime {
         let ownerSecret = ownerNsec?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let authors = state.mobilePush.messageAuthorPubkeys
         let enabled = state.preferences.desktopNotificationsEnabled
+        let userServerOverride = state.preferences.mobilePushServerUrl.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+        let serverOverride = userServerOverride ?? mobilePushBuildServerOverride
         let signature = [
             enabled ? "1" : "0",
             owner ?? "",
             ownerSecret == nil ? "0" : "1",
             authors.joined(separator: ","),
+            serverOverride ?? "",
         ].joined(separator: "|")
 
         guard signature != lastSyncSignature else {
@@ -75,7 +78,8 @@ final class MobilePushRuntime {
             await self?.sync(
                 enabled: enabled,
                 ownerNsec: ownerSecret,
-                messageAuthorPubkeys: authors
+                messageAuthorPubkeys: authors,
+                serverOverride: serverOverride
             )
         }
     }
@@ -83,11 +87,12 @@ final class MobilePushRuntime {
     private func sync(
         enabled: Bool,
         ownerNsec: String?,
-        messageAuthorPubkeys: [String]
+        messageAuthorPubkeys: [String],
+        serverOverride: String?
     ) async {
         let storageKey = mobilePushSubscriptionIdKey(platformKey: "ios")
         guard enabled, let ownerNsec, !messageAuthorPubkeys.isEmpty else {
-            await disableStoredSubscription(ownerNsec: ownerNsec, storageKey: storageKey)
+            await disableStoredSubscription(ownerNsec: ownerNsec, storageKey: storageKey, serverOverride: serverOverride)
             return
         }
 
@@ -99,7 +104,8 @@ final class MobilePushRuntime {
         let existingId = await resolveExistingSubscriptionId(
             ownerNsec: ownerNsec,
             pushToken: token,
-            storedId: storedId
+            storedId: storedId,
+            serverOverride: serverOverride
         )
         if let existingId,
            await updateSubscription(
@@ -107,7 +113,8 @@ final class MobilePushRuntime {
                subscriptionId: existingId,
                pushToken: token,
                messageAuthorPubkeys: messageAuthorPubkeys,
-               storageKey: storageKey
+               storageKey: storageKey,
+               serverOverride: serverOverride
            ) {
             return
         }
@@ -116,7 +123,8 @@ final class MobilePushRuntime {
             ownerNsec: ownerNsec,
             pushToken: token,
             messageAuthorPubkeys: messageAuthorPubkeys,
-            storageKey: storageKey
+            storageKey: storageKey,
+            serverOverride: serverOverride
         )
     }
 
@@ -152,13 +160,14 @@ final class MobilePushRuntime {
     private func resolveExistingSubscriptionId(
         ownerNsec: String,
         pushToken: String,
-        storedId: String?
+        storedId: String?,
+        serverOverride: String?
     ) async -> String? {
         guard let request = buildMobilePushListSubscriptionsRequest(
             ownerNsec: ownerNsec,
             platformKey: "ios",
             isRelease: isMobilePushReleaseBuild,
-            serverUrlOverride: mobilePushServerOverride
+            serverUrlOverride: serverOverride
         ) else {
             return storedId
         }
@@ -187,7 +196,8 @@ final class MobilePushRuntime {
         subscriptionId: String,
         pushToken: String,
         messageAuthorPubkeys: [String],
-        storageKey: String
+        storageKey: String,
+        serverOverride: String?
     ) async -> Bool {
         guard let request = buildMobilePushUpdateSubscriptionRequest(
             ownerNsec: ownerNsec,
@@ -197,7 +207,7 @@ final class MobilePushRuntime {
             apnsTopic: Bundle.main.bundleIdentifier,
             messageAuthorPubkeys: messageAuthorPubkeys,
             isRelease: isMobilePushReleaseBuild,
-            serverUrlOverride: mobilePushServerOverride
+            serverUrlOverride: serverOverride
         ) else {
             return false
         }
@@ -216,7 +226,8 @@ final class MobilePushRuntime {
         ownerNsec: String,
         pushToken: String,
         messageAuthorPubkeys: [String],
-        storageKey: String
+        storageKey: String,
+        serverOverride: String?
     ) async {
         guard let request = buildMobilePushCreateSubscriptionRequest(
             ownerNsec: ownerNsec,
@@ -225,7 +236,7 @@ final class MobilePushRuntime {
             apnsTopic: Bundle.main.bundleIdentifier,
             messageAuthorPubkeys: messageAuthorPubkeys,
             isRelease: isMobilePushReleaseBuild,
-            serverUrlOverride: mobilePushServerOverride
+            serverUrlOverride: serverOverride
         ) else {
             return
         }
@@ -240,7 +251,7 @@ final class MobilePushRuntime {
         userDefaults.set(id, forKey: storageKey)
     }
 
-    private func disableStoredSubscription(ownerNsec: String?, storageKey: String) async {
+    private func disableStoredSubscription(ownerNsec: String?, storageKey: String, serverOverride: String?) async {
         guard let storedId = userDefaults.string(forKey: storageKey)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty else {
             return
         }
@@ -250,7 +261,7 @@ final class MobilePushRuntime {
                   subscriptionId: storedId,
                   platformKey: "ios",
                   isRelease: isMobilePushReleaseBuild,
-                  serverUrlOverride: mobilePushServerOverride
+                  serverUrlOverride: serverOverride
               ) else {
             userDefaults.removeObject(forKey: storageKey)
             return
@@ -300,7 +311,7 @@ private var isMobilePushReleaseBuild: Bool {
 #endif
 }
 
-private var mobilePushServerOverride: String? {
+private var mobilePushBuildServerOverride: String? {
     ProcessInfo.processInfo.environment["IRIS_NOTIFICATION_SERVER_URL"]?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
 }
 

@@ -39,12 +39,14 @@ class AndroidMobilePushRuntime(
         val ownerSecret = ownerNsec?.trim()?.ifEmpty { null }
         val authors = state.mobilePush.messageAuthorPubkeys
         val enabled = state.preferences.desktopNotificationsEnabled
+        val serverOverride = userServerOverride(state) ?: buildServerOverride()
         val signature =
             listOf(
                 if (enabled) "1" else "0",
                 owner.orEmpty(),
                 if (ownerSecret == null) "0" else "1",
                 authors.joinToString(","),
+                serverOverride.orEmpty(),
             ).joinToString("|")
         if (signature == lastSyncSignature) {
             return
@@ -54,30 +56,31 @@ class AndroidMobilePushRuntime(
         val storageKeyName = mobilePushSubscriptionIdKey(PLATFORM_KEY)
         val storageKey = stringPreferencesKey(storageKeyName)
         if (!enabled || ownerSecret == null || authors.isEmpty()) {
-            disableStoredSubscription(ownerSecret, storageKey)
+            disableStoredSubscription(ownerSecret, storageKey, serverOverride)
             return
         }
 
         val token = messaging.token.await()?.trim()?.ifEmpty { null } ?: return
         val storedId = currentStoredId(storageKey)
-        val existingId = resolveExistingSubscriptionId(ownerSecret, token, storedId)
-        if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, storageKey)) {
+        val existingId = resolveExistingSubscriptionId(ownerSecret, token, storedId, serverOverride)
+        if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, storageKey, serverOverride)) {
             return
         }
-        createSubscription(ownerSecret, token, authors, storageKey)
+        createSubscription(ownerSecret, token, authors, storageKey, serverOverride)
     }
 
     private suspend fun resolveExistingSubscriptionId(
         ownerNsec: String,
         pushToken: String,
         storedId: String?,
+        serverOverride: String?,
     ): String? {
         val request =
             buildMobilePushListSubscriptionsRequest(
                 ownerNsec = ownerNsec,
                 platformKey = PLATFORM_KEY,
                 isRelease = !BuildConfig.DEBUG,
-                serverUrlOverride = mobilePushServerOverride(),
+                serverUrlOverride = serverOverride,
             ) ?: return storedId
         val response = perform(request)
         val body = response.body ?: return storedId
@@ -105,6 +108,7 @@ class AndroidMobilePushRuntime(
         pushToken: String,
         authors: List<String>,
         storageKey: Preferences.Key<String>,
+        serverOverride: String?,
     ): Boolean {
         val request =
             buildMobilePushUpdateSubscriptionRequest(
@@ -115,7 +119,7 @@ class AndroidMobilePushRuntime(
                 apnsTopic = null,
                 messageAuthorPubkeys = authors,
                 isRelease = !BuildConfig.DEBUG,
-                serverUrlOverride = mobilePushServerOverride(),
+                serverUrlOverride = serverOverride,
             ) ?: return false
         val response = perform(request)
         if (response.isSuccess) {
@@ -133,6 +137,7 @@ class AndroidMobilePushRuntime(
         pushToken: String,
         authors: List<String>,
         storageKey: Preferences.Key<String>,
+        serverOverride: String?,
     ) {
         val request =
             buildMobilePushCreateSubscriptionRequest(
@@ -142,7 +147,7 @@ class AndroidMobilePushRuntime(
                 apnsTopic = null,
                 messageAuthorPubkeys = authors,
                 isRelease = !BuildConfig.DEBUG,
-                serverUrlOverride = mobilePushServerOverride(),
+                serverUrlOverride = serverOverride,
             ) ?: return
         val response = perform(request)
         if (!response.isSuccess) {
@@ -161,6 +166,7 @@ class AndroidMobilePushRuntime(
     private suspend fun disableStoredSubscription(
         ownerNsec: String?,
         storageKey: Preferences.Key<String>,
+        serverOverride: String?,
     ) {
         val storedId = currentStoredId(storageKey) ?: return
         if (ownerNsec == null) {
@@ -173,7 +179,7 @@ class AndroidMobilePushRuntime(
                 subscriptionId = storedId,
                 platformKey = PLATFORM_KEY,
                 isRelease = !BuildConfig.DEBUG,
-                serverUrlOverride = mobilePushServerOverride(),
+                serverUrlOverride = serverOverride,
             ) ?: return
         val response = perform(request)
         if (response.isSuccess || response.statusCode == 404) {
@@ -208,13 +214,16 @@ class AndroidMobilePushRuntime(
         }
     }
 
+    private fun userServerOverride(state: AppState): String? =
+        state.preferences.mobilePushServerUrl.trim().ifEmpty { null }
+
+    private fun buildServerOverride(): String? =
+        BuildConfig.MOBILE_PUSH_SERVER_URL.trim().ifEmpty { null }
+
     private companion object {
         const val TAG = "IrisPush"
         const val PLATFORM_KEY = "android"
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
-
-        fun mobilePushServerOverride(): String? =
-            BuildConfig.MOBILE_PUSH_SERVER_URL.trim().ifEmpty { null }
     }
 }
 

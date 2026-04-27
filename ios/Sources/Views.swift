@@ -2298,17 +2298,6 @@ struct SettingsScreen: View {
                         )
                         .accessibilityIdentifier("myProfileReadReceiptsToggle")
 
-                        Toggle(
-                            "Notifications",
-                            isOn: Binding(
-                                get: { manager.state.preferences.desktopNotificationsEnabled },
-                                set: { enabled in
-                                    manager.dispatch(.setDesktopNotificationsEnabled(enabled: enabled))
-                                }
-                            )
-                        )
-                        .accessibilityIdentifier("myProfileDesktopNotificationsToggle")
-
                         if PlatformStartupAtLogin.isSupported {
                             Toggle(
                                 "Open at login",
@@ -2321,6 +2310,11 @@ struct SettingsScreen: View {
                             )
                             .accessibilityIdentifier("myProfileStartupAtLoginToggle")
                         }
+                    }
+
+                    IrisSectionCard {
+                        CardHeader(title: "Notifications")
+                        NotificationsSettingsSection(manager: manager)
                     }
 
                     IrisSectionCard {
@@ -2511,6 +2505,50 @@ struct SettingsScreen: View {
         }
     }
 
+}
+
+private struct NotificationsSettingsSection: View {
+    @ObservedObject var manager: AppManager
+
+    private static let defaultServerUrl = "https://notifications.iris.to"
+    private static let projectUrl = URL(string: "https://github.com/mmalmi/nostr-notification-server")!
+    private static let projectLabel = "github.com/mmalmi/nostr-notification-server"
+
+    var body: some View {
+        Toggle("Enabled", isOn: enabled)
+            .accessibilityIdentifier("myProfileDesktopNotificationsToggle")
+
+        TextField(Self.defaultServerUrl, text: serverUrl)
+            .textFieldStyle(.roundedBorder)
+            .autocorrectionDisabled()
+            .keyboardType(.URL)
+            .textInputAutocapitalization(.never)
+            .accessibilityIdentifier("myProfileNotificationsServerUrlInput")
+
+        Link(destination: Self.projectUrl) {
+            HStack(spacing: 8) {
+                Image(systemName: "chevron.left.forwardslash.chevron.right")
+                Text(Self.projectLabel)
+                    .font(.system(.body, design: .rounded))
+                Spacer()
+            }
+        }
+        .accessibilityIdentifier("myProfileNotificationsServerProjectLink")
+    }
+
+    private var enabled: Binding<Bool> {
+        Binding(
+            get: { manager.state.preferences.desktopNotificationsEnabled },
+            set: { enabled in manager.dispatch(.setDesktopNotificationsEnabled(enabled: enabled)) }
+        )
+    }
+
+    private var serverUrl: Binding<String> {
+        Binding(
+            get: { manager.state.preferences.mobilePushServerUrl },
+            set: { value in manager.dispatch(.setMobilePushServerUrl(url: value)) }
+        )
+    }
 }
 
 private struct ImageProxySettingsSection: View {

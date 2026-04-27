@@ -190,6 +190,15 @@ if [[ -z "${access_token}" ]]; then
   exit 1
 fi
 
+# Verifies that an FCM push wakes the app even when its process has been
+# killed (the "app closed" scenario users see when a chat notification
+# comes in while Iris isn't running). FirebaseMessagingService is started
+# by the system on data message arrival, the app's MobilePushNotifier
+# surfaces the notification, and the next instrumentation snapshot picks
+# it up.
+echo "Force-stopping ${PACKAGE_NAME} on ${SERIAL} to verify closed-app delivery"
+adb -s "${SERIAL}" shell am force-stop "${PACKAGE_NAME}" >/dev/null 2>&1 || true
+
 echo "Sending Firebase chat notification payload through project ${project}"
 wait_output="$(mktemp)"
 adb -s "${SERIAL}" shell am instrument -w -r \

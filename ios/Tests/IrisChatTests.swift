@@ -70,7 +70,8 @@ private final class MockRustApp: RustAppClient {
             imageProxyEnabled: true,
             imageProxyUrl: "https://imgproxy.iris.to",
             imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
-            imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c"
+            imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
+            mobilePushServerUrl: ""
         ),
         toast: nil
     )) {
@@ -131,7 +132,8 @@ private func makeAppState(
         imageProxyEnabled: true,
         imageProxyUrl: "https://imgproxy.iris.to",
         imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
-        imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c"
+        imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
+            mobilePushServerUrl: ""
     ),
     toast: String? = nil
 ) -> AppState {
@@ -247,7 +249,8 @@ final class IrisChatTests: XCTestCase {
                     imageProxyEnabled: true,
                     imageProxyUrl: "https://imgproxy.iris.to",
                     imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
-                    imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c"
+                    imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
+            mobilePushServerUrl: ""
                 )
             )
         )
@@ -271,7 +274,8 @@ final class IrisChatTests: XCTestCase {
                 imageProxyEnabled: true,
                 imageProxyUrl: "https://imgproxy.iris.to",
                 imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
-                imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c"
+                imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
+            mobilePushServerUrl: ""
             )
         )))
 

@@ -240,6 +240,8 @@ pub(super) struct PersistedPreferences {
     pub(super) image_proxy_key_hex: String,
     #[serde(default = "default_image_proxy_salt_hex")]
     pub(super) image_proxy_salt_hex: String,
+    #[serde(default)]
+    pub(super) mobile_push_server_url: String,
 }
 
 impl Default for PersistedPreferences {
@@ -254,6 +256,7 @@ impl Default for PersistedPreferences {
             image_proxy_url: default_image_proxy_url(),
             image_proxy_key_hex: default_image_proxy_key_hex(),
             image_proxy_salt_hex: default_image_proxy_salt_hex(),
+            mobile_push_server_url: String::new(),
         }
     }
 }

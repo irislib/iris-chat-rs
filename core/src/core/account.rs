@@ -335,6 +335,8 @@ impl AppCore {
                 persisted.preferences.image_proxy_key_hex.clone();
             self.preferences.image_proxy_salt_hex =
                 persisted.preferences.image_proxy_salt_hex.clone();
+            self.preferences.mobile_push_server_url =
+                persisted.preferences.mobile_push_server_url.clone();
             self.seen_event_order = persisted
                 .seen_event_ids
                 .iter()

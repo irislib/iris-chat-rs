@@ -211,6 +211,27 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn set_mobile_push_server_url(&mut self, url: &str) {
+        let normalized = url.trim().to_string();
+        if self.preferences.mobile_push_server_url == normalized {
+            return;
+        }
+        self.preferences.mobile_push_server_url = normalized;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn reset_mobile_push_server_url(&mut self) {
+        if self.preferences.mobile_push_server_url.is_empty() {
+            return;
+        }
+        self.preferences.mobile_push_server_url.clear();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn reset_image_proxy_settings(&mut self) {
         self.preferences.image_proxy_enabled = true;
         self.preferences.image_proxy_url = crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string();

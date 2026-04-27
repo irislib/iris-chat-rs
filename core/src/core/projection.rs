@@ -32,16 +32,17 @@ impl AppCore {
         self.state.device_roster = self.build_device_roster_snapshot();
         self.state.network_status = Some(self.build_network_status_snapshot());
         self.state.public_invite = self.build_public_invite_snapshot();
-        // Mobile push: cached behind a dirty flag. Used to walk every
-        // NDR session state and `serde_json::to_string` each one,
-        // ~440 ms per call on Android debug. The serialised `sessions`
-        // vec was never actually consumed by any shell, so we drop it
-        // entirely now; the rebuild itself is also a no-op when the
-        // tracked-author set hasn't changed.
-        if self.mobile_push_dirty {
-            self.cached_mobile_push = self.build_mobile_push_sync_snapshot();
-            self.mobile_push_dirty = false;
+        // Mobile push snapshot drives the FCM/APNs push subscription
+        // author list. Recompute every rebuild so newly tracked DM
+        // peers / group senders (which the tracker exposes lazily via
+        // `known_message_author_hexes`) are reflected immediately on
+        // mobile. The historical heavy `sessions` vec is gone, so
+        // building this is just a HashSet walk + sort.
+        let next_mobile_push = self.build_mobile_push_sync_snapshot();
+        if next_mobile_push != self.cached_mobile_push {
+            self.cached_mobile_push = next_mobile_push;
         }
+        self.mobile_push_dirty = false;
         self.state.mobile_push = self.cached_mobile_push.clone();
         self.state.preferences = self.preferences.clone();
 

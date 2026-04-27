@@ -1,11 +1,7 @@
-# Iris Chat 2.6.26
+# Iris Chat 2.6.28
 
-Performance release. Opening a chat is now near-instant on Android.
+Push notifications fix.
 
-- Cut chat-open core-thread time on Android from ~5.5 s to ~50 ms by deduping `setup_user` calls and dropping a dead-code mobile-push session walk that was running `serde_json::to_string` on every ratchet state of every tracked owner on every emit.
-- Persist split into per-slice files under `core/`. Tapping a chat now writes ~170 bytes (a small `meta.json`) instead of rewriting a 74 KB monolithic JSON. Per-chat `threads/<id>.json` mean a relay event for one chat only touches that one file.
-- Coalesce queued state updates: a flurry of relay events flushed by a relay produces a single UI update, not one per event.
-- Skip pushing `FullState` to the UI when nothing user-visible changed.
-- Per-slice `StateFlow`s on Android: `ChatScreen` only recomposes when its specific slice (currentChat / preferences / busy / router / chatList) actually changed.
-- Drain the FFI listener queue and deliver only the latest snapshot when the core emits a tight burst.
-- Throttle DM-subscription resyncs in nostr-double-ratchet (1.5 s trailing) so ratchet steps stop slamming relays with redundant REQs.
+- Mobile push subscription now reflects the live double-ratchet author set on every state rebuild instead of staying frozen between login and a few `mark_dirty` callsites. Starting a new chat, accepting an invite, or rotating a session immediately tells the notification server which authors to push from. Previously Android often missed notifications until the app was reopened.
+- Settings now has a Notifications section with an enable toggle, a custom server URL field (default `notifications.iris.to`), and a link to `github.com/mmalmi/nostr-notification-server`. Same UI on Android and iOS.
+- Android FCM e2e test now `force-stop`s the app before pushing the message, so it actually verifies that a closed-app push wakes Iris and surfaces the notification.

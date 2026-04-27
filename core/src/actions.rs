@@ -107,6 +107,10 @@ pub enum AppAction {
         salt_hex: String,
     },
     ResetImageProxySettings,
+    SetMobilePushServerUrl {
+        url: String,
+    },
+    ResetMobilePushServerUrl,
     MarkMessagesSeen {
         chat_id: String,
         message_ids: Vec<String>,

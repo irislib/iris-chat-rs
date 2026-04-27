@@ -71,6 +71,9 @@ private const val IrisSourceUrl =
     "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
 private const val IrisSourceLabel =
     "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
+private const val NotificationsServerDefault = "https://notifications.iris.to"
+private const val NotificationsServerProjectUrl = "https://github.com/mmalmi/nostr-notification-server"
+private const val NotificationsServerProjectLabel = "github.com/mmalmi/nostr-notification-server"
 
 private enum class SecretExportKind {
     Owner,
@@ -339,23 +342,6 @@ fun MyProfileSheet(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Notifications",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = desktopNotificationsEnabled,
-                        onCheckedChange = { enabled ->
-                            appManager.dispatch(AppAction.SetDesktopNotificationsEnabled(enabled))
-                        },
-                        modifier = Modifier.testTag("myProfileDesktopNotificationsSwitch"),
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
                         text = "Image proxy",
                         style = MaterialTheme.typography.bodyLarge,
                     )
@@ -401,6 +387,51 @@ fun MyProfileSheet(
                     },
                     modifier = Modifier.testTag("myProfileResetImageProxyButton"),
                 )
+            }
+
+            IrisSectionCard {
+                Text(
+                    text = "Notifications",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Enabled",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Switch(
+                        checked = desktopNotificationsEnabled,
+                        onCheckedChange = { enabled ->
+                            appManager.dispatch(AppAction.SetDesktopNotificationsEnabled(enabled))
+                        },
+                        modifier = Modifier.testTag("myProfileDesktopNotificationsSwitch"),
+                    )
+                }
+                TextField(
+                    value = preferences.mobilePushServerUrl,
+                    onValueChange = { value ->
+                        appManager.dispatch(AppAction.SetMobilePushServerUrl(value))
+                    },
+                    label = { Text("Server URL") },
+                    placeholder = { Text(NotificationsServerDefault) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("myProfileNotificationsServerUrlInput"),
+                )
+                IrisInlineAction(
+                    text = NotificationsServerProjectLabel,
+                    onClick = {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(NotificationsServerProjectUrl)),
+                        )
+                    },
+                    modifier = Modifier.testTag("myProfileNotificationsServerProjectLink"),
+                ) {
+                    Icon(imageVector = IrisIcons.File, contentDescription = null)
+                }
             }
 
             IrisSectionCard {

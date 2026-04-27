@@ -146,6 +146,7 @@ mod tests {
             image_proxy_url: DEFAULT_IMAGE_PROXY_URL.to_string(),
             image_proxy_key_hex: DEFAULT_IMAGE_PROXY_KEY_HEX.to_string(),
             image_proxy_salt_hex: DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
+            mobile_push_server_url: String::new(),
         }
     }
 
