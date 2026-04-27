@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(uniffi::Enum, Clone, Debug)]
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
 pub enum Screen {
     Welcome,
     CreateAccount,
@@ -19,13 +19,13 @@ pub enum Screen {
     DeviceRevoked,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct Router {
     pub default_screen: Screen,
     pub screen_stack: Vec<Screen>,
 }
 
-#[derive(uniffi::Record, Clone, Debug, Default)]
+#[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]
 pub struct BusyState {
     pub creating_account: bool,
     pub restoring_session: bool,
@@ -41,7 +41,7 @@ pub struct BusyState {
     pub uploading_attachment: bool,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct PreferencesSnapshot {
     pub send_typing_indicators: bool,
     pub send_read_receipts: bool,
@@ -54,26 +54,26 @@ pub struct PreferencesSnapshot {
     pub image_proxy_salt_hex: String,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct OutgoingAttachment {
     pub file_path: String,
     pub filename: String,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct AttachmentDownloadResult {
     pub data_base64: Option<String>,
     pub error: Option<String>,
 }
 
-#[derive(uniffi::Enum, Clone, Debug)]
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
 pub enum DeviceAuthorizationState {
     Authorized,
     AwaitingApproval,
     Revoked,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct AccountSnapshot {
     pub public_key_hex: String,
     pub npub: String,
@@ -85,7 +85,7 @@ pub struct AccountSnapshot {
     pub authorization_state: DeviceAuthorizationState,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct DeviceEntrySnapshot {
     pub device_pubkey_hex: String,
     pub device_npub: String,
@@ -95,7 +95,7 @@ pub struct DeviceEntrySnapshot {
     pub last_activity_secs: Option<u64>,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct DeviceRosterSnapshot {
     pub owner_public_key_hex: String,
     pub owner_npub: String,
@@ -106,7 +106,7 @@ pub struct DeviceRosterSnapshot {
     pub devices: Vec<DeviceEntrySnapshot>,
 }
 
-#[derive(uniffi::Enum, Clone, Debug)]
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
 pub enum DeliveryState {
     Queued,
     Pending,
@@ -116,7 +116,7 @@ pub enum DeliveryState {
     Failed,
 }
 
-#[derive(uniffi::Enum, Clone, Debug)]
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
 pub enum ChatKind {
     Direct,
     Group,
@@ -154,7 +154,7 @@ pub struct MessageReactor {
     pub emoji: String,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessageSnapshot {
     pub id: String,
     pub chat_id: String,
@@ -170,14 +170,14 @@ pub struct ChatMessageSnapshot {
     pub delivery: DeliveryState,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct TypingIndicatorSnapshot {
     pub chat_id: String,
     pub display_name: String,
     pub expires_at_secs: u64,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatThreadSnapshot {
     pub chat_id: String,
     pub kind: ChatKind,
@@ -193,7 +193,7 @@ pub struct ChatThreadSnapshot {
     pub is_typing: bool,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct CurrentChatSnapshot {
     pub chat_id: String,
     pub kind: ChatKind,
@@ -207,7 +207,7 @@ pub struct CurrentChatSnapshot {
     pub typing_indicators: Vec<TypingIndicatorSnapshot>,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct GroupMemberSnapshot {
     pub owner_pubkey_hex: String,
     pub display_name: String,
@@ -217,7 +217,7 @@ pub struct GroupMemberSnapshot {
     pub is_local_owner: bool,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct GroupDetailsSnapshot {
     pub group_id: String,
     pub name: String,
@@ -229,7 +229,7 @@ pub struct GroupDetailsSnapshot {
     pub members: Vec<GroupMemberSnapshot>,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct NetworkStatusSnapshot {
     pub relay_set_id: String,
     pub relay_urls: Vec<String>,
@@ -242,7 +242,7 @@ pub struct NetworkStatusSnapshot {
     pub last_debug_detail: Option<String>,
 }
 
-#[derive(uniffi::Record, Clone, Debug, Default)]
+#[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MobilePushSessionSnapshot {
     pub recipient_pubkey_hex: String,
     pub display_name: String,
@@ -251,14 +251,14 @@ pub struct MobilePushSessionSnapshot {
     pub has_receiving_capability: bool,
 }
 
-#[derive(uniffi::Record, Clone, Debug, Default)]
+#[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]
 pub struct MobilePushSyncSnapshot {
     pub owner_pubkey_hex: Option<String>,
     pub message_author_pubkeys: Vec<String>,
     pub sessions: Vec<MobilePushSessionSnapshot>,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct MobilePushNotificationResolution {
     pub should_show: bool,
     pub title: String,
@@ -266,7 +266,7 @@ pub struct MobilePushNotificationResolution {
     pub payload_json: String,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct MobilePushSubscriptionRequest {
     pub method: String,
     pub url: String,
@@ -274,12 +274,12 @@ pub struct MobilePushSubscriptionRequest {
     pub body_json: Option<String>,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct PublicInviteSnapshot {
     pub url: String,
 }
 
-#[derive(uniffi::Record, Clone, Debug)]
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct AppState {
     pub rev: u64,
     pub router: Router,

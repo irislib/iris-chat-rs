@@ -137,4 +137,9 @@ pub struct AppCore {
     /// session, JSON-serialising state) is ~300ms per call on Android
     /// debug. Skipping known owners turns a 5 s per-tap cost into < 50 ms.
     setup_user_done: HashSet<String>,
+    /// Last `AppState` we successfully pushed across the FFI boundary, kept
+    /// so `emit_state_inner` can skip pushes that don't change anything
+    /// user-visible (a full `AppState` JNI marshal + Compose recomposition
+    /// is ~400-1000 ms on Android debug).
+    last_emitted_state: Option<AppState>,
 }

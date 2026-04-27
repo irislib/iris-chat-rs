@@ -1,5 +1,22 @@
 use super::*;
 
+/// Compare two `AppState` snapshots ignoring `rev`. Returns true if the UI
+/// would render identically.
+fn state_content_eq(a: &AppState, b: &AppState) -> bool {
+    a.router == b.router
+        && a.account == b.account
+        && a.device_roster == b.device_roster
+        && a.busy == b.busy
+        && a.chat_list == b.chat_list
+        && a.current_chat == b.current_chat
+        && a.group_details == b.group_details
+        && a.public_invite == b.public_invite
+        && a.network_status == b.network_status
+        && a.mobile_push == b.mobile_push
+        && a.preferences == b.preferences
+        && a.toast == b.toast
+}
+
 impl AppCore {
     pub(super) fn rebuild_state(&mut self) {
         if self.batch_depth > 0 {
@@ -405,6 +422,19 @@ impl AppCore {
     }
 
     fn emit_state_inner(&mut self) {
+        // Skip the push if nothing user-visible changed since the last
+        // emit. Compare every field except `rev`, which we own and bump
+        // ourselves. On Android debug each FullState push triggers a
+        // full Compose recomposition of ChatScreen (~400-1000 ms of UI
+        // thread). The post-OpenChat cascade (SyncComplete →
+        // FetchCatchUpEvents → ...) was producing 3-4 redundant pushes
+        // and >1 s of Skipped frames each time.
+        if let Some(last) = self.last_emitted_state.as_ref() {
+            if state_content_eq(last, &self.state) {
+                return;
+            }
+        }
+
         self.state.rev = self.state.rev.saturating_add(1);
         let t0 = crate::perflog::now_ms();
         let snapshot = self.state.clone();
@@ -414,6 +444,7 @@ impl AppCore {
             Err(poison) => *poison.into_inner() = snapshot.clone(),
         }
         let t_shared = crate::perflog::now_ms();
+        self.last_emitted_state = Some(snapshot.clone());
         let _ = self.update_tx.send(AppUpdate::FullState(snapshot));
         crate::perflog!(
             "emit_state rev={} clone_ms={} shared_write_ms={} total_ms={} chats={} cur_chat_msgs={}",

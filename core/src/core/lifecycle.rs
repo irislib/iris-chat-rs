@@ -48,6 +48,7 @@ impl AppCore {
             batch_dirty_state: false,
             batch_dirty_persist: false,
             setup_user_done: HashSet::new(),
+            last_emitted_state: None,
         }
     }
 

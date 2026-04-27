@@ -126,18 +126,43 @@ impl FfiApp {
 
         let update_rx = self.update_rx.clone();
         thread::spawn(move || {
-            while let Ok(update) = update_rx.recv() {
-                let kind = match &update {
-                    AppUpdate::FullState(_) => "FullState",
-                    AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
+            // Drain queued updates and deliver the latest FullState only.
+            // The shell side already discards FullStates with stale `rev`,
+            // but the JNI marshal of an AppState is itself ~20-30 ms and
+            // each push triggers a full Compose recomposition (~400 ms on
+            // Android debug). When the core emits a tight burst of 3-4
+            // updates (OpenChat → SyncComplete → FetchCatchUpEvents → …)
+            // the UI keeps re-rendering for seconds even though only the
+            // final state mattered.
+            //
+            // PersistAccountBundle is a side-effect (key persistence), not
+            // a UI update, so we never collapse those — every one must run.
+            while let Ok(first) = update_rx.recv() {
+                let mut latest_full_state: Option<AppUpdate> = None;
+                let mut sidecar: Vec<AppUpdate> = Vec::new();
+                let process = |update: AppUpdate,
+                                   latest: &mut Option<AppUpdate>,
+                                   side: &mut Vec<AppUpdate>| match update {
+                    full @ AppUpdate::FullState(_) => *latest = Some(full),
+                    other => side.push(other),
                 };
-                let t0 = crate::perflog::now_ms();
-                crate::perflog!("reconcile.start kind={kind}");
-                reconciler.reconcile(update);
-                crate::perflog!(
-                    "reconcile.end kind={kind} elapsed_ms={}",
-                    crate::perflog::now_ms().saturating_sub(t0)
-                );
+                process(first, &mut latest_full_state, &mut sidecar);
+                while let Ok(next) = update_rx.try_recv() {
+                    process(next, &mut latest_full_state, &mut sidecar);
+                }
+                for update in sidecar.into_iter().chain(latest_full_state) {
+                    let kind = match &update {
+                        AppUpdate::FullState(_) => "FullState",
+                        AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
+                    };
+                    let t0 = crate::perflog::now_ms();
+                    crate::perflog!("reconcile.start kind={kind}");
+                    reconciler.reconcile(update);
+                    crate::perflog!(
+                        "reconcile.end kind={kind} elapsed_ms={}",
+                        crate::perflog::now_ms().saturating_sub(t0)
+                    );
+                }
             }
         });
     }
