@@ -405,13 +405,25 @@ fun IrisChatListRow(
 }
 
 @Composable
-fun DeliveryGlyph(delivery: DeliveryState) {
+fun DeliveryGlyph(
+    delivery: DeliveryState,
+    isOutgoing: Boolean = false,
+) {
+    // Match iOS: delivered uses double-check in the bubble's text colour;
+    // seen escalates to the accent (sky/blue). Single-check stays muted while
+    // a message is queued/pending/sent.
+    val onBubble =
+        if (isOutgoing) {
+            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.72f)
+        } else {
+            IrisTheme.palette.muted
+        }
     val tint =
         when (delivery) {
-            DeliveryState.QUEUED -> IrisTheme.palette.muted
-            DeliveryState.PENDING -> IrisTheme.palette.muted
-            DeliveryState.SENT -> IrisTheme.palette.muted
-            DeliveryState.RECEIVED -> IrisTheme.palette.accentAlt
+            DeliveryState.QUEUED -> onBubble
+            DeliveryState.PENDING -> onBubble
+            DeliveryState.SENT -> onBubble
+            DeliveryState.RECEIVED -> onBubble
             DeliveryState.SEEN -> Sky500
             DeliveryState.FAILED -> MaterialTheme.colorScheme.error
         }
@@ -420,7 +432,7 @@ fun DeliveryGlyph(delivery: DeliveryState) {
             DeliveryState.QUEUED -> Icons.Rounded.Schedule
             DeliveryState.PENDING -> Icons.Rounded.Schedule
             DeliveryState.SENT -> Icons.Rounded.Check
-            DeliveryState.RECEIVED -> Icons.Rounded.Check
+            DeliveryState.RECEIVED -> Icons.Rounded.DoneAll
             DeliveryState.SEEN -> Icons.Rounded.DoneAll
             DeliveryState.FAILED -> Icons.Rounded.MoreHoriz
         }

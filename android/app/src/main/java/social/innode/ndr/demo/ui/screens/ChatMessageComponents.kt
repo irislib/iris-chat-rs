@@ -193,7 +193,7 @@ internal fun MessageBubble(
                         }
                         if (isLastInCluster) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.align(Alignment.End),
                                 horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -224,7 +224,10 @@ internal fun MessageBubble(
                                         },
                                 )
                                 if (message.isOutgoing) {
-                                    DeliveryGlyph(message.delivery)
+                                    DeliveryGlyph(
+                                        message.delivery,
+                                        isOutgoing = true,
+                                    )
                                 }
                             }
                         }
