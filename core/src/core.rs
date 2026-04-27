@@ -16,7 +16,7 @@ use nostr_double_ratchet::{
     is_app_keys_event, parse_group_metadata, remove_group_admin, remove_group_member,
     update_group_data, validate_metadata_creation, validate_metadata_update, AppKeys,
     CreateGroupOptions, DeviceEntry, DirectMessageSubscriptionTracker, FanoutGroupMetadataOptions,
-    FileStorageAdapter, GroupData, GroupDecryptedEvent, GroupSendEvent, GroupUpdate, Invite,
+    GroupData, GroupDecryptedEvent, GroupSendEvent, GroupUpdate, Invite,
     MetadataValidation, NdrRuntime, SendOptions, SessionManagerEvent, StorageAdapter,
     APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_METADATA_KIND,
     GROUP_SENDER_KEY_DISTRIBUTION_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
@@ -61,6 +61,7 @@ mod publish_helpers;
 mod publishing;
 mod relay;
 mod routing;
+mod storage;
 mod support;
 #[cfg(test)]
 mod tests;
@@ -98,6 +99,7 @@ use payloads::*;
 use profile_helpers::*;
 use protocol_filters::*;
 use publish_helpers::*;
+use storage::{open_database, AppStore, SqliteStorageAdapter};
 
 pub struct AppCore {
     update_tx: Sender<AppUpdate>,
@@ -145,10 +147,9 @@ pub struct AppCore {
     /// user-visible (a full `AppState` JNI marshal + Compose recomposition
     /// is ~400-1000 ms on Android debug).
     last_emitted_state: Option<AppState>,
-    /// Hashes of the last bytes we wrote to each persisted slice, so
-    /// `persist_best_effort` can skip files whose content hasn't changed.
-    /// See `core/persistence.rs`.
-    persistence_cache: persistence::PersistenceCache,
+    /// SQLite-backed durable storage for app state and NDR ratchet
+    /// state. See `core/storage/`.
+    app_store: AppStore,
     /// Cached `MobilePushSyncSnapshot`. Computing it walks every NDR
     /// session state and runs `serde_json::to_string` on each — that
     /// was ~440 ms per `rebuild_state`, dominating tap-to-render. The

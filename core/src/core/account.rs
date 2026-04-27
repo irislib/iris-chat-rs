@@ -422,9 +422,11 @@ impl AppCore {
             self.upsert_local_app_key_device(owner_pubkey, device_pubkey);
         }
 
-        let storage = Arc::new(FileStorageAdapter::new(
-            self.ndr_storage_dir(owner_pubkey, device_pubkey),
-        )?) as Arc<dyn StorageAdapter>;
+        let storage = Arc::new(SqliteStorageAdapter::new(
+            self.app_store.shared(),
+            owner_pubkey.to_hex(),
+            device_pubkey.to_hex(),
+        )) as Arc<dyn StorageAdapter>;
         let device_id = device_pubkey.to_hex();
         let local_invite =
             load_or_create_local_invite(storage.as_ref(), device_pubkey, &device_id, owner_pubkey)?;

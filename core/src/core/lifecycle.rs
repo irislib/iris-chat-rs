@@ -18,12 +18,15 @@ impl AppCore {
             Err(poison) => *poison.into_inner() = state.clone(),
         }
 
+        let data_dir = PathBuf::from(data_dir);
+        let app_store = AppStore::new(open_database(&data_dir).expect("open core.sqlite3"));
+
         Self {
             update_tx,
             core_sender,
             shared_state,
             runtime,
-            data_dir: PathBuf::from(data_dir),
+            data_dir,
             state: state.clone(),
             logged_in: None,
             threads: BTreeMap::new(),
@@ -51,7 +54,7 @@ impl AppCore {
             batch_dirty_persist: false,
             setup_user_done: HashSet::new(),
             last_emitted_state: None,
-            persistence_cache: persistence::PersistenceCache::default(),
+            app_store,
             cached_mobile_push: MobilePushSyncSnapshot::default(),
             // First rebuild populates the cache.
             mobile_push_dirty: true,

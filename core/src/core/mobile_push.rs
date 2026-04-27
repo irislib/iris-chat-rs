@@ -108,14 +108,15 @@ pub(crate) fn decrypt_mobile_push_notification(
         Err(_) => return cached_fallback(),
     };
 
-    let storage_dir = PathBuf::from(&data_dir)
-        .join("ndr_runtime")
-        .join(owner_pubkey.to_hex())
-        .join(device_keys.public_key().to_hex());
-    let base_storage = match FileStorageAdapter::new(storage_dir) {
-        Ok(adapter) => Arc::new(adapter) as Arc<dyn StorageAdapter>,
-        Err(_) => return fallback(),
+    let shared_conn = match super::storage::open_database(Path::new(&data_dir)) {
+        Ok(conn) => conn,
+        Err(_) => return cached_fallback(),
     };
+    let base_storage = Arc::new(super::storage::SqliteStorageAdapter::new(
+        shared_conn.clone(),
+        owner_pubkey.to_hex(),
+        device_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
     let storage =
         Arc::new(NotificationPreviewStorage::new(base_storage)) as Arc<dyn StorageAdapter>;
 
@@ -412,67 +413,63 @@ impl StorageAdapter for NotificationPreviewStorage {
     }
 }
 
+fn open_lookup_connection(data_dir: &str) -> Option<rusqlite::Connection> {
+    let path = PathBuf::from(data_dir).join(super::storage::CORE_DB_FILENAME);
+    if !path.exists() {
+        return None;
+    }
+    rusqlite::Connection::open_with_flags(
+        path,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+    )
+    .ok()
+}
+
 fn lookup_sender_display_name(data_dir: &str, sender: &nostr::PublicKey) -> Option<String> {
-    let profiles_path = PathBuf::from(data_dir).join("core").join("profiles.json");
-    let bytes = std::fs::read(&profiles_path).ok()?;
-    let profiles: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let map = profiles.as_object()?;
-    let entry = map.get(&sender.to_hex())?.as_object()?;
-    let name = entry
-        .get("display_name")
-        .and_then(|value| value.as_str())
-        .or_else(|| entry.get("name").and_then(|value| value.as_str()))
-        .map(str::trim)
+    let conn = open_lookup_connection(data_dir)?;
+    let (display_name, name): (Option<String>, Option<String>) = conn
+        .query_row(
+            "SELECT display_name, name FROM owner_profiles WHERE owner_pubkey_hex = ?1",
+            [sender.to_hex()],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()?;
+    display_name
+        .or(name)
+        .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .map(str::to_string);
-    name
 }
 
 fn lookup_direct_thread_sender_name(data_dir: &str, sender: &nostr::PublicKey) -> Option<String> {
-    let thread_path = PathBuf::from(data_dir)
-        .join("core")
-        .join("threads")
-        .join(format!("{}.json", sender.to_hex()));
-    let bytes = std::fs::read(thread_path).ok()?;
-    let thread: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let messages = thread.get("messages")?.as_array()?;
-    messages.iter().rev().find_map(|message| {
-        let object = message.as_object()?;
-        let is_outgoing = object
-            .get("is_outgoing")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false);
-        if is_outgoing {
-            return None;
-        }
-        object
-            .get("author")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .filter(|value| !is_generic_sender_title(value))
-            .map(str::to_string)
-    })
-}
-
-fn lookup_group_name(data_dir: &str, group_id: &str) -> Option<String> {
-    let groups_path = PathBuf::from(data_dir).join("core").join("groups.json");
-    let bytes = std::fs::read(&groups_path).ok()?;
-    let groups: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let array = groups.as_array()?;
-    for entry in array {
-        let object = entry.as_object()?;
-        let id = object.get("id").and_then(|value| value.as_str())?;
-        if id == group_id {
-            return object
-                .get("name")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
+    let conn = open_lookup_connection(data_dir)?;
+    let mut stmt = conn
+        .prepare(
+            "SELECT author FROM messages
+             WHERE chat_id = ?1 AND is_outgoing = 0
+             ORDER BY created_at_secs DESC, id DESC",
+        )
+        .ok()?;
+    let rows = stmt.query_map([sender.to_hex()], |row| row.get::<_, String>(0)).ok()?;
+    for row in rows.flatten() {
+        let author = row.trim().to_string();
+        if !author.is_empty() && !is_generic_sender_title(&author) {
+            return Some(author);
         }
     }
     None
+}
+
+fn lookup_group_name(data_dir: &str, group_id: &str) -> Option<String> {
+    let conn = open_lookup_connection(data_dir)?;
+    let name: String = conn
+        .query_row(
+            "SELECT name FROM groups WHERE group_id = ?1",
+            [group_id],
+            |row| row.get(0),
+        )
+        .ok()?;
+    let trimmed = name.trim().to_string();
+    (!trimmed.is_empty()).then_some(trimmed)
 }
 
 pub(crate) fn resolve_mobile_push_notification(

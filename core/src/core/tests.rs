@@ -58,13 +58,12 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     let bob_keys = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let data_dir = temp_dir.path().to_path_buf();
-    let bob_storage_dir = data_dir
-        .join("ndr_runtime")
-        .join(bob_keys.public_key().to_hex())
-        .join(bob_keys.public_key().to_hex());
-    let bob_storage =
-        Arc::new(FileStorageAdapter::new(bob_storage_dir.clone()).expect("bob storage"))
-            as Arc<dyn StorageAdapter>;
+    let bob_shared_conn = crate::core::storage::open_database(&data_dir).expect("bob db");
+    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        bob_shared_conn.clone(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
 
     let mut invite = Invite::create_new(
         alice_keys.public_key(),
@@ -167,9 +166,11 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
         "notification preview must not advance persisted ratchet state"
     );
 
-    let bob_restarted_storage =
-        Arc::new(FileStorageAdapter::new(bob_storage_dir).expect("restarted storage"))
-            as Arc<dyn StorageAdapter>;
+    let bob_restarted_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        crate::core::storage::open_database(&data_dir).expect("restarted db"),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
     let bob_restarted = NdrRuntime::new(
         bob_keys.public_key(),
         bob_keys.secret_key().to_secret_bytes(),
@@ -194,12 +195,11 @@ fn mobile_push_decrypt_preview_renders_typing_activity() {
     let bob_keys = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let data_dir = temp_dir.path().to_path_buf();
-    let bob_storage_dir = data_dir
-        .join("ndr_runtime")
-        .join(bob_keys.public_key().to_hex())
-        .join(bob_keys.public_key().to_hex());
-    let bob_storage = Arc::new(FileStorageAdapter::new(bob_storage_dir).expect("bob storage"))
-        as Arc<dyn StorageAdapter>;
+    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        crate::core::storage::open_database(&data_dir).expect("bob db"),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
 
     let mut invite = Invite::create_new(
         alice_keys.public_key(),
