@@ -3,8 +3,9 @@ package social.innode.ndr.demo.push
 import android.util.Log
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
+import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
-import social.innode.ndr.demo.rust.resolveMobilePushNotificationPayload
+import social.innode.ndr.demo.IrisChatApp
 
 class IrisFirebaseMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
@@ -13,13 +14,25 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
 
     override fun onMessageReceived(message: RemoteMessage) {
         val payloadJson = message.toPayloadJson()
+        val appManager = (applicationContext as? IrisChatApp)?.container?.appManager
+        // Block here on purpose. Firebase keeps the wakelock alive for as
+        // long as onMessageReceived is on-stack, so a quick suspend block
+        // is the right shape for "load secrets + decrypt + post" in
+        // background or killed-app states. Decrypt + filesystem reads are
+        // a few ms; any longer and we fall through anyway.
         val resolution =
-            runCatching { resolveMobilePushNotificationPayload(payloadJson) }
-                .getOrElse { error ->
-                    Log.w(TAG, "Failed to resolve FCM push payload", error)
-                    PushNotificationProbe.recordError(this, payloadJson, error)
-                    return
+            runCatching {
+                if (appManager != null) {
+                    runBlocking { appManager.decryptOrResolveNotificationPayload(payloadJson) }
+                } else {
+                    social.innode.ndr.demo.rust
+                        .resolveMobilePushNotificationPayload(payloadJson)
                 }
+            }.getOrElse { error ->
+                Log.w(TAG, "Failed to resolve FCM push payload", error)
+                PushNotificationProbe.recordError(this, payloadJson, error)
+                return
+            }
         PushNotificationProbe.recordReceived(this, payloadJson, resolution)
         if (!resolution.shouldShow) {
             return

@@ -23,23 +23,37 @@ protocol AccountSecretStore {
 final class KeychainSecretStore: AccountSecretStore {
     private let service: String
     private let account: String
+    private let accessGroup: String?
 
     init(
         service: String = "social.innode.irischat",
-        account: String = "stored-account-bundle"
+        account: String = "stored-account-bundle",
+        accessGroup: String? = "social.innode.irischat"
     ) {
         self.service = service
         self.account = account
+        self.accessGroup = accessGroup
     }
 
-    func load() -> StoredAccountBundle? {
-        let query: [CFString: Any] = [
+    private func baseQuery() -> [CFString: Any] {
+        var query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne,
         ]
+        if let accessGroup, !accessGroup.isEmpty {
+            // The Notification Service Extension reads the same item via
+            // its `keychain-access-groups` entitlement. The app prefix is
+            // applied by the OS, so the bare group name is what we use.
+            query[kSecAttrAccessGroup] = accessGroup
+        }
+        return query
+    }
+
+    func load() -> StoredAccountBundle? {
+        var query = baseQuery()
+        query[kSecReturnData] = true
+        query[kSecMatchLimit] = kSecMatchLimitOne
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         guard status == errSecSuccess, let data = item as? Data else {
@@ -52,12 +66,7 @@ final class KeychainSecretStore: AccountSecretStore {
         guard let data = try? JSONEncoder().encode(bundle) else {
             return
         }
-
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-        ]
+        let query = baseQuery()
         let update: [CFString: Any] = [kSecValueData: data]
         let updateStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if updateStatus == errSecItemNotFound {
@@ -68,12 +77,7 @@ final class KeychainSecretStore: AccountSecretStore {
     }
 
     func clear() {
-        let query: [CFString: Any] = [
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: account,
-        ]
-        SecItemDelete(query as CFDictionary)
+        SecItemDelete(baseQuery() as CFDictionary)
     }
 }
 
@@ -109,6 +113,8 @@ final class LiveRustAppClient: RustAppClient {
 }
 
 private enum AppPaths {
+    static let appGroupIdentifier = "group.social.innode.irischat"
+
     static func appVersion(bundle: Bundle = .main) -> String {
         bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
@@ -122,9 +128,43 @@ private enum AppPaths {
     }
 
     static func dataDir(fileManager: FileManager, environment: [String: String]) -> URL {
-        let base = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let suffix = environment["NDR_UI_TEST_RUN_ID"].flatMap { $0.isEmpty ? nil : $0 } ?? "iris-chat"
-        return base.appendingPathComponent(suffix, isDirectory: true)
+        // Prefer the App Group container so the Notification Service
+        // Extension reads the *same* persisted ratchet state. Older
+        // installs lived in the per-app `applicationSupportDirectory`,
+        // so on first launch with this version migrate the legacy tree
+        // into the shared container.
+        let legacyBase = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let legacy = legacyBase.appendingPathComponent(suffix, isDirectory: true)
+        if let shared = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+            let target = shared.appendingPathComponent(suffix, isDirectory: true)
+            migrateLegacyDataDir(from: legacy, to: target, fileManager: fileManager)
+            return target
+        }
+        return legacy
+    }
+
+    private static func migrateLegacyDataDir(
+        from legacy: URL,
+        to target: URL,
+        fileManager: FileManager
+    ) {
+        let targetExists = fileManager.fileExists(atPath: target.path)
+        let legacyExists = fileManager.fileExists(atPath: legacy.path)
+        guard legacyExists, !targetExists else {
+            return
+        }
+        do {
+            try fileManager.createDirectory(
+                at: target.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.moveItem(at: legacy, to: target)
+        } catch {
+            // Best effort. If the move fails the user just appears
+            // logged out and re-logs in; their key never left the
+            // device.
+        }
     }
 }
 

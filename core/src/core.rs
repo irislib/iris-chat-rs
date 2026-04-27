@@ -88,8 +88,8 @@ pub(crate) use identity::{normalize_peer_input_for_display, parse_peer_input};
 pub(crate) use mobile_push::{
     build_mobile_push_create_subscription_request, build_mobile_push_delete_subscription_request,
     build_mobile_push_list_subscriptions_request, build_mobile_push_update_subscription_request,
-    mobile_push_stored_subscription_id_key, resolve_mobile_push_notification,
-    resolve_mobile_push_server_url,
+    decrypt_mobile_push_notification, mobile_push_stored_subscription_id_key,
+    resolve_mobile_push_notification, resolve_mobile_push_server_url,
 };
 pub(crate) use model::ProtocolSubscriptionPlan;
 use model::*;

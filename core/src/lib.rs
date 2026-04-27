@@ -229,6 +229,26 @@ pub fn resolve_mobile_push_notification_payload(
     crate::core::resolve_mobile_push_notification(raw_payload_json)
 }
 
+/// Decrypt a notification payload against the persisted double-ratchet
+/// state under `data_dir`. Use from the FCM service (Android) or
+/// Notification Service Extension (iOS) where there's no live `FfiApp`.
+/// Falls back to the generic resolver when keys, payload, or storage
+/// are unavailable so the user still gets *some* notification.
+#[uniffi::export]
+pub fn decrypt_mobile_push_notification_payload(
+    data_dir: String,
+    owner_pubkey_hex: String,
+    device_nsec: String,
+    raw_payload_json: String,
+) -> MobilePushNotificationResolution {
+    crate::core::decrypt_mobile_push_notification(
+        data_dir,
+        owner_pubkey_hex,
+        device_nsec,
+        raw_payload_json,
+    )
+}
+
 #[uniffi::export]
 pub fn resolve_mobile_push_subscription_server_url(
     platform_key: String,

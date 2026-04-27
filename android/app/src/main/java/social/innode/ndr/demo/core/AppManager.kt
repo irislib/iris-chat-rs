@@ -597,6 +597,34 @@ class AppManager(
         return initial
     }
 
+    /**
+     * Decrypt an incoming FCM push payload against the persisted ratchet
+     * state. Returns a resolution with the sender's display name (or
+     * "<sender> in <group>" for groups) as the title and the decrypted
+     * plaintext as the body. If we don't have the secrets yet (logged
+     * out, restore in flight) or anything else fails, falls back to the
+     * generic resolver so the user still gets *some* notification.
+     *
+     * Safe to call from the FCM service. Internally this loads the
+     * encrypted bundle from the same DataStore + Android Keystore the
+     * main process uses, so it works whether the app is alive,
+     * background, or just been woken from killed by FCM.
+     */
+    suspend fun decryptOrResolveNotificationPayload(
+        payloadJson: String,
+    ): social.innode.ndr.demo.rust.MobilePushNotificationResolution {
+        val bundle = loadPersistedBundle()
+        if (bundle == null) {
+            return social.innode.ndr.demo.rust.resolveMobilePushNotificationPayload(payloadJson)
+        }
+        return social.innode.ndr.demo.rust.decryptMobilePushNotificationPayload(
+            dataDir = rustDataDir,
+            ownerPubkeyHex = bundle.ownerPubkeyHex,
+            deviceNsec = bundle.deviceNsec,
+            rawPayloadJson = payloadJson,
+        )
+    }
+
     private suspend fun persistBundle(bundle: StoredAccountBundle) {
         val encrypted = secureSecretStore.encrypt(bundle.toJson().encodeToByteArray())
         dataStore.edit { preferences ->

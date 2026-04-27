@@ -840,7 +840,9 @@ private struct DirectChatInfoSheet: View {
                     Button("Done") { dismiss() }
                 }
             }
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
         }
     }
 }
@@ -2521,8 +2523,10 @@ private struct NotificationsSettingsSection: View {
         TextField(Self.defaultServerUrl, text: serverUrl)
             .textFieldStyle(.roundedBorder)
             .autocorrectionDisabled()
+            #if os(iOS)
             .keyboardType(.URL)
             .textInputAutocapitalization(.never)
+            #endif
             .accessibilityIdentifier("myProfileNotificationsServerUrlInput")
 
         Link(destination: Self.projectUrl) {

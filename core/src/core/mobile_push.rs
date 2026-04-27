@@ -1,6 +1,8 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use nostr::Tag;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
 const MOBILE_PUSH_RECEIPT_KIND: u64 = 15;
@@ -36,6 +38,250 @@ impl AppCore {
             sessions: Vec::new(),
         }
     }
+}
+
+/// Decrypt the encrypted Nostr event the notification server forwarded
+/// (key `event`), look up the sender's display name from
+/// `profiles.json`, look up the group title (when the rumor carries a
+/// `["l", group_id]` tag) from `groups.json`, and return a notification
+/// resolution whose `title` and `body` are the decrypted plaintext —
+/// not the generic "New activity" placeholder the server sent.
+///
+/// Designed to run in the FCM service / iOS Notification Service
+/// Extension where there's no live `AppCore`. We spin up a one-shot
+/// `NdrRuntime` against the same `FileStorageAdapter` directory the
+/// main app uses, decrypt against the persisted ratchet state, then
+/// drop the runtime. If anything fails (no keys, foreign event,
+/// concurrent main-app holding storage open) we fall through to the
+/// vanilla `resolve_mobile_push_notification` so the user still gets
+/// *some* notification — just the generic kind.
+///
+/// `data_dir` is the `app_data_dir` the FFI was constructed with;
+/// `owner_pubkey_hex` and `device_nsec` come from the same secure
+/// store the main app reads on launch.
+pub(crate) fn decrypt_mobile_push_notification(
+    data_dir: String,
+    owner_pubkey_hex: String,
+    device_nsec: String,
+    raw_payload_json: String,
+) -> MobilePushNotificationResolution {
+    let fallback = || resolve_mobile_push_notification(raw_payload_json.clone());
+
+    let payload_value: serde_json::Value = match serde_json::from_str(&raw_payload_json) {
+        Ok(value) => value,
+        Err(_) => return fallback(),
+    };
+    let payload_object = match payload_value.as_object() {
+        Some(object) => object,
+        None => return fallback(),
+    };
+
+    let outer_event_json = payload_object
+        .get("event")
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+        .or_else(|| {
+            payload_object
+                .get("inner_event_json")
+                .and_then(|value| value.as_str())
+                .map(str::to_string)
+        });
+    let Some(outer_event_json) = outer_event_json else {
+        return fallback();
+    };
+
+    let outer_event: nostr::Event = match serde_json::from_str(&outer_event_json) {
+        Ok(event) => event,
+        Err(_) => return fallback(),
+    };
+
+    let owner_pubkey = match nostr::PublicKey::parse(owner_pubkey_hex.trim()) {
+        Ok(pubkey) => pubkey,
+        Err(_) => return fallback(),
+    };
+    let device_keys = match nostr::Keys::parse(device_nsec.trim()) {
+        Ok(keys) => keys,
+        Err(_) => return fallback(),
+    };
+
+    let storage_dir = PathBuf::from(&data_dir)
+        .join("ndr_runtime")
+        .join(owner_pubkey.to_hex())
+        .join(device_keys.public_key().to_hex());
+    let storage = match FileStorageAdapter::new(storage_dir) {
+        Ok(adapter) => Arc::new(adapter) as Arc<dyn StorageAdapter>,
+        Err(_) => return fallback(),
+    };
+
+    let runtime = NdrRuntime::new(
+        device_keys.public_key(),
+        device_keys.secret_key().to_secret_bytes(),
+        device_keys.public_key().to_hex(),
+        owner_pubkey,
+        Some(storage),
+        None,
+    );
+    if runtime.init().is_err() {
+        return fallback();
+    }
+    runtime.process_received_event(outer_event);
+
+    let mut decrypted_inner_json: Option<String> = None;
+    let mut decrypted_sender: Option<nostr::PublicKey> = None;
+    for event in runtime.drain_events() {
+        if let SessionManagerEvent::DecryptedMessage {
+            sender, content, ..
+        } = event
+        {
+            decrypted_inner_json = Some(content);
+            decrypted_sender = Some(sender);
+            break;
+        }
+    }
+
+    let (Some(inner_json), Some(sender_owner)) = (decrypted_inner_json, decrypted_sender) else {
+        return fallback();
+    };
+    let inner_value: serde_json::Value = match serde_json::from_str(&inner_json) {
+        Ok(value) => value,
+        Err(_) => return fallback(),
+    };
+    let inner_kind = inner_value
+        .get("kind")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(MOBILE_PUSH_DM_EVENT_KIND);
+    if should_suppress_mobile_push_kind(inner_kind) {
+        return MobilePushNotificationResolution {
+            should_show: false,
+            title: String::new(),
+            body: String::new(),
+            payload_json: "{}".to_string(),
+        };
+    }
+
+    let inner_content = inner_value
+        .get("content")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    let inner_tags: Vec<Vec<String>> = inner_value
+        .get("tags")
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+        .unwrap_or_default();
+
+    let group_id = inner_tags
+        .iter()
+        .find_map(|tag| match tag.as_slice() {
+            [name, value, ..] if name == "l" && !value.is_empty() => Some(value.clone()),
+            _ => None,
+        });
+    let sender_name = lookup_sender_display_name(&data_dir, &sender_owner);
+    let group_title = group_id
+        .as_ref()
+        .and_then(|id| lookup_group_name(&data_dir, id));
+
+    let body = if inner_kind == MOBILE_PUSH_REACTION_KIND {
+        let emoji = inner_content.trim();
+        if emoji.is_empty() {
+            "Reacted".to_string()
+        } else if emoji.to_lowercase().starts_with("reacted") {
+            emoji.to_string()
+        } else {
+            format!("Reacted {emoji}")
+        }
+    } else if !inner_content.trim().is_empty() {
+        inner_content.trim().to_string()
+    } else {
+        "New message".to_string()
+    };
+
+    // Title shape:
+    //   1-1 chat:    "<sender_name>"
+    //   group chat:  "<sender_name> in <group_title>"   (or just the group
+    //                title when we can't resolve a sender name)
+    let resolved_sender_name = sender_name.unwrap_or_else(|| {
+        payload_object
+            .get("sender_name")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| "Iris Chat".to_string())
+    });
+    let title = match (&group_title, resolved_sender_name.as_str()) {
+        (Some(group), sender) if !sender.is_empty() && sender != "Iris Chat" => {
+            format!("{sender} in {group}")
+        }
+        (Some(group), _) => group.clone(),
+        (None, sender) => sender.to_string(),
+    };
+
+    let mut resolved_payload = serde_json::Map::new();
+    for (key, value) in payload_object {
+        resolved_payload.insert(key.clone(), value.clone());
+    }
+    resolved_payload.insert("title".to_string(), serde_json::Value::String(title.clone()));
+    resolved_payload.insert("body".to_string(), serde_json::Value::String(body.clone()));
+    resolved_payload.insert(
+        "inner_event_json".to_string(),
+        serde_json::Value::String(inner_json),
+    );
+    resolved_payload.insert(
+        "inner_kind".to_string(),
+        serde_json::Value::String(inner_kind.to_string()),
+    );
+    resolved_payload.insert(
+        "sender_pubkey".to_string(),
+        serde_json::Value::String(sender_owner.to_hex()),
+    );
+    if let Some(group_id) = group_id {
+        resolved_payload.insert(
+            "group_id".to_string(),
+            serde_json::Value::String(group_id),
+        );
+    }
+
+    MobilePushNotificationResolution {
+        should_show: true,
+        title,
+        body,
+        payload_json: serde_json::to_string(&serde_json::Value::Object(resolved_payload))
+            .unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
+fn lookup_sender_display_name(data_dir: &str, sender: &nostr::PublicKey) -> Option<String> {
+    let profiles_path = PathBuf::from(data_dir).join("core").join("profiles.json");
+    let bytes = std::fs::read(&profiles_path).ok()?;
+    let profiles: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let map = profiles.as_object()?;
+    let entry = map.get(&sender.to_hex())?.as_object()?;
+    let name = entry
+        .get("display_name")
+        .and_then(|value| value.as_str())
+        .or_else(|| entry.get("name").and_then(|value| value.as_str()))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    name
+}
+
+fn lookup_group_name(data_dir: &str, group_id: &str) -> Option<String> {
+    let groups_path = PathBuf::from(data_dir).join("core").join("groups.json");
+    let bytes = std::fs::read(&groups_path).ok()?;
+    let groups: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let array = groups.as_array()?;
+    for entry in array {
+        let object = entry.as_object()?;
+        let id = object.get("id").and_then(|value| value.as_str())?;
+        if id == group_id {
+            return object
+                .get("name")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+        }
+    }
+    None
 }
 
 pub(crate) fn resolve_mobile_push_notification(
