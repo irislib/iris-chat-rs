@@ -165,11 +165,11 @@ fun NewChatScreen(
                             },
                         )
                         IrisSecondaryButton(
-                            text = "",
+                            text = "Show",
                             onClick = { showInviteQr = true },
                             modifier = Modifier.testTag("newChatInviteQrButton"),
                             icon = {
-                                Icon(imageVector = IrisIcons.ScanQr, contentDescription = "Show QR Code")
+                                Icon(imageVector = IrisIcons.ScanQr, contentDescription = null)
                             },
                         )
                     }

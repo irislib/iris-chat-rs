@@ -4,7 +4,6 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -16,7 +15,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -58,6 +56,7 @@ import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.rust.MessageReactionSnapshot
 import to.iris.chat.ui.components.DeliveryGlyph
+import to.iris.chat.ui.components.IrisEmojiPickerSheet
 import to.iris.chat.ui.components.formatMessageClock
 import to.iris.chat.ui.components.isSameTimelineDay
 import to.iris.chat.ui.components.messageBubbleShape
@@ -354,40 +353,11 @@ private fun ReactionPickerMenu(
     onDismiss: () -> Unit,
     onEmoji: (String) -> Unit,
 ) {
-    DropdownMenu(
-        expanded = expanded,
-        onDismissRequest = onDismiss,
-        modifier =
-            Modifier
-                .widthIn(max = 324.dp)
-                .testTag("messageReactionPicker"),
-    ) {
-        Row(
-            modifier =
-                Modifier
-                    .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            ChatEmojiChoices.forEachIndexed { index, emoji ->
-                Box(
-                    modifier =
-                        Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onEmoji(emoji) }
-                            .testTag("messageReactionEmoji-$index"),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        text = emoji,
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                }
-            }
-        }
-    }
+    if (!expanded) return
+    IrisEmojiPickerSheet(
+        onDismiss = onDismiss,
+        onPick = onEmoji,
+    )
 }
 
 @Composable

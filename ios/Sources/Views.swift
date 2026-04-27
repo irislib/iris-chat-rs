@@ -1315,9 +1315,13 @@ struct NewChatScreen: View {
                 showingScanner = false
             }
         }
+        #if os(macOS)
+        .overlay { inviteQrOverlay }
+        #else
         .sheet(isPresented: $showingInviteQr) {
             inviteQrSheet
         }
+        #endif
         .irisOnChange(of: peerInput) { _ in
             autoProceedIfReady()
         }
@@ -1327,6 +1331,33 @@ struct NewChatScreen: View {
             }
         }
     }
+
+    #if os(macOS)
+    @ViewBuilder
+    private var inviteQrOverlay: some View {
+        if showingInviteQr {
+            ZStack {
+                Color.black.opacity(0.45)
+                    .ignoresSafeArea()
+                    .contentShape(Rectangle())
+                    .onTapGesture { showingInviteQr = false }
+                inviteQrSheet
+                    .background(palette.background)
+                    .clipShape(RoundedRectangle(cornerRadius: 16))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .strokeBorder(palette.border, lineWidth: 1)
+                    )
+                    .shadow(radius: 22)
+                    .frame(maxWidth: 420)
+                    .padding(40)
+                    .contentShape(Rectangle())
+                    .onTapGesture {}
+                    .irisOnEscapeKey { showingInviteQr = false }
+            }
+        }
+    }
+    #endif
 
     private var newChatCard: some View {
         IrisSectionCard {
@@ -1349,14 +1380,14 @@ struct NewChatScreen: View {
                     .accessibilityIdentifier("newChatInviteCopyButton")
 
                     Button(action: { showingInviteQr = true }) {
-                        Image(systemName: "qrcode")
-                            .font(.system(size: 16, weight: .semibold))
-                            .frame(width: 36, height: 36)
-                            .contentShape(Rectangle())
+                        HStack(spacing: 8) {
+                            Image(systemName: "qrcode")
+                            Text("Show")
+                        }
+                        .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(IrisSecondaryButtonStyle())
                     .accessibilityIdentifier("newChatInviteQrButton")
-                    .accessibilityLabel("Show QR Code")
                 }
             } else {
                 ProgressView()
