@@ -6,11 +6,11 @@
   <string>$(APS_ENVIRONMENT)</string>
   <key>com.apple.security.application-groups</key>
   <array>
-    <string>group.social.innode.irischat</string>
+    <string>group.to.iris.chat</string>
   </array>
   <key>keychain-access-groups</key>
   <array>
-    <string>$(AppIdentifierPrefix)social.innode.irischat</string>
+    <string>$(AppIdentifierPrefix)to.iris.chat</string>
   </array>
 </dict>
 </plist>

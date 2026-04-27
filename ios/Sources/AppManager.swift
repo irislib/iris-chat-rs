@@ -26,9 +26,9 @@ final class KeychainSecretStore: AccountSecretStore {
     private let accessGroup: String?
 
     init(
-        service: String = "social.innode.irischat",
+        service: String = "to.iris.chat",
         account: String = "stored-account-bundle",
-        accessGroup: String? = "social.innode.irischat"
+        accessGroup: String? = "to.iris.chat"
     ) {
         self.service = service
         self.account = account
@@ -113,14 +113,14 @@ final class LiveRustAppClient: RustAppClient {
 }
 
 private enum AppPaths {
-    static let appGroupIdentifier = "group.social.innode.irischat"
+    static let appGroupIdentifier = "group.to.iris.chat"
 
     static func appVersion(bundle: Bundle = .main) -> String {
         bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
 
     static func keychainService(environment: [String: String]) -> String {
-        let base = "social.innode.irischat"
+        let base = "to.iris.chat"
         guard let runId = environment["NDR_UI_TEST_RUN_ID"], !runId.isEmpty else {
             return base
         }

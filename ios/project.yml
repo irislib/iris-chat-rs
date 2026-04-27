@@ -1,13 +1,14 @@
 name: IrisChat
 options:
-  bundleIdPrefix: social.innode.irischat
+  bundleIdPrefix: to.iris.chat
   deploymentTarget:
     iOS: "16.0"
   createIntermediateGroups: true
 
 settings:
   base:
-    PRODUCT_BUNDLE_IDENTIFIER: social.innode.irischat
+    PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat
+    DEVELOPMENT_TEAM: J8PPJKD7TA
     MARKETING_VERSION: 0.1.0
     CURRENT_PROJECT_VERSION: 1
     VERSIONING_SYSTEM: apple-generic
@@ -55,7 +56,8 @@ targets:
     settings:
       base:
         PRODUCT_NAME: NotificationService
-        PRODUCT_BUNDLE_IDENTIFIER: social.innode.irischat.NotificationService
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.NotificationService
+        DEVELOPMENT_TEAM: J8PPJKD7TA
         CODE_SIGN_ENTITLEMENTS: NotificationService/NotificationService.entitlements
         INFOPLIST_FILE: NotificationService/Info.plist
         SKIP_INSTALL: YES

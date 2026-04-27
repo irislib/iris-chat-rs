@@ -47,7 +47,7 @@ cd /path/to/iris-chat-rs-cross-platform
 ./scripts/ios-release upload
 ```
 
-The default bundle ID is `social.innode.irischat`.
+The default bundle ID is `to.iris.chat` (matches the Flutter app, dev team `J8PPJKD7TA`).
 
 ## Harness Flow
 

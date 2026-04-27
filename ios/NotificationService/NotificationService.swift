@@ -10,8 +10,8 @@ import UserNotifications
 /// account, missing storage, ratchet already advanced by the foreground
 /// app — the original (generic) notification is delivered as-is.
 final class NotificationService: UNNotificationServiceExtension {
-    private static let appGroupIdentifier = "group.social.innode.irischat"
-    private static let keychainService = "social.innode.irischat"
+    private static let appGroupIdentifier = "group.to.iris.chat"
+    private static let keychainService = "to.iris.chat"
     private static let keychainAccount = "stored-account-bundle"
 
     private var contentHandler: ((UNNotificationContent) -> Void)?
