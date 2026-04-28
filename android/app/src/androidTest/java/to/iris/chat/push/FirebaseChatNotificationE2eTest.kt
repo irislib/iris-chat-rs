@@ -17,7 +17,7 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
-import social.innode.ndr.demo.IrisChatApp
+import to.iris.chat.IrisChatApp
 
 @RunWith(AndroidJUnit4::class)
 class FirebaseChatNotificationE2eTest {
