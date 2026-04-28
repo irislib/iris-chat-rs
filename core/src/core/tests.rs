@@ -1374,6 +1374,66 @@ fn profile_picture_upload_propagates_to_account_snapshot() {
     );
 }
 
+#[test]
+fn delete_chat_removes_thread_and_navigates_back() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("delete-chat", &owner, &device);
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 2,
+            updated_at_secs: 100,
+            messages: vec![ChatMessageSnapshot {
+                id: "m1".to_string(),
+                chat_id: chat_id.clone(),
+                kind: ChatMessageKind::User,
+                author: chat_id.clone(),
+                body: "hi".to_string(),
+                attachments: Vec::new(),
+                reactions: Vec::new(),
+                reactors: Vec::new(),
+                is_outgoing: false,
+                created_at_secs: 100,
+                expires_at_secs: None,
+                delivery: DeliveryState::Received,
+                source_event_id: None,
+            }],
+        },
+    );
+    core.chat_message_ttl_seconds.insert(chat_id.clone(), 3600);
+    core.active_chat_id = Some(chat_id.clone());
+    core.screen_stack = vec![Screen::Chat {
+        chat_id: chat_id.clone(),
+    }];
+
+    core.handle_action(AppAction::DeleteChat {
+        chat_id: chat_id.clone(),
+    });
+
+    assert!(!core.threads.contains_key(&chat_id), "thread removed");
+    assert!(!core.chat_message_ttl_seconds.contains_key(&chat_id), "ttl cleared");
+    assert!(core.active_chat_id.is_none(), "active chat cleared");
+    assert!(
+        !core
+            .screen_stack
+            .iter()
+            .any(|s| matches!(s, Screen::Chat { chat_id: cid } if cid == &chat_id)),
+        "chat screen popped"
+    );
+    assert!(
+        !core
+            .state
+            .chat_list
+            .iter()
+            .any(|chat| chat.chat_id == chat_id),
+        "chat_list snapshot reflects removal"
+    );
+}
+
 fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
     let mut core = AppCore::new(
         flume::unbounded().0,

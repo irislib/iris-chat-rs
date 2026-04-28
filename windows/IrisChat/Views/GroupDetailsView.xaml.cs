@@ -255,4 +255,11 @@ public partial class GroupDetailsView : UserControl
         App.CurrentManager.AddGroupMembers(details.groupId, new[] { input });
         AddMemberInput.Clear();
     }
+
+    private void OnDeleteChat(object sender, RoutedEventArgs e)
+    {
+        var details = App.CurrentManager.GroupDetails;
+        if (details == null) return;
+        App.CurrentManager.DeleteChat($"group:{details.groupId}");
+    }
 }

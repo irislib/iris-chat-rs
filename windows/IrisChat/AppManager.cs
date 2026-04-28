@@ -296,6 +296,9 @@ public sealed class AppManager : INotifyPropertyChanged
     public void RemoveGroupMember(string groupId, string ownerPubkeyHex) =>
         _ffi.Dispatch(new AppAction.RemoveGroupMember(groupId, ownerPubkeyHex));
 
+    public void DeleteChat(string chatId) =>
+        _ffi.Dispatch(new AppAction.DeleteChat(chatId));
+
     // ─────────────────────────────── settings ─────────────────────────────────
 
     public void SetTypingIndicatorsEnabled(bool enabled) =>

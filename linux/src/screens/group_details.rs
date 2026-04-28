@@ -40,9 +40,36 @@ pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk
     if details.can_manage {
         inner.append(&add_members_card(group_id, details, state, manager));
     }
+    inner.append(&delete_chat_card(group_id, manager));
 
     scrolled.set_child(Some(&inner));
     scrolled.upcast()
+}
+
+fn delete_chat_card(group_id: &str, manager: &Rc<AppManager>) -> gtk::Widget {
+    let group = adw::PreferencesGroup::builder()
+        .title("Delete chat")
+        .description("Removes this group from your chat list and forgets local messages.")
+        .build();
+
+    let row = adw::ActionRow::builder()
+        .title("Delete chat")
+        .activatable(true)
+        .build();
+    let icon = gtk::Image::from_icon_name("user-trash-symbolic");
+    row.add_prefix(&icon);
+    row.add_css_class("destructive-action");
+
+    let manager_for_click = manager.clone();
+    let chat_id = format!("group:{}", group_id);
+    row.connect_activated(move |_| {
+        manager_for_click.dispatch(AppAction::DeleteChat {
+            chat_id: chat_id.clone(),
+        });
+    });
+    group.add(&row);
+
+    group.upcast()
 }
 
 fn settings_card(

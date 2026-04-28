@@ -776,30 +776,30 @@ private struct DirectChatInfoSheet: View {
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 20) {
                     if let chat {
-                        IrisAvatar(
-                            label: chat.displayName,
-                            size: 96,
-                            emphasize: true,
-                            pictureUrl: chat.pictureUrl,
-                            preferences: manager.state.preferences,
-                            manager: manager
-                        )
-                        .padding(.top, 8)
-
-                        Text(chat.displayName)
-                            .font(.system(.title2, design: .rounded, weight: .bold))
-                            .foregroundStyle(palette.textPrimary)
-                            .multilineTextAlignment(.center)
-
-                        if let subtitle = chat.subtitle, !subtitle.isEmpty {
-                            Text(subtitle)
-                                .font(.system(.footnote, design: .rounded))
-                                .foregroundStyle(palette.muted)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 24)
+                        HStack(spacing: 14) {
+                            IrisAvatar(
+                                label: chat.displayName,
+                                size: 72,
+                                emphasize: true,
+                                pictureUrl: chat.pictureUrl,
+                                preferences: manager.state.preferences,
+                                manager: manager
+                            )
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(chat.displayName)
+                                    .font(.system(.title3, design: .rounded, weight: .bold))
+                                    .foregroundStyle(palette.textPrimary)
+                                if let subtitle = chat.subtitle, !subtitle.isEmpty {
+                                    Text(subtitle)
+                                        .font(.system(.footnote, design: .rounded))
+                                        .foregroundStyle(palette.muted)
+                                }
+                            }
+                            Spacer(minLength: 0)
                         }
+                        .padding(.top, 8)
 
                         IrisCopyButton(label: "Copy user ID", value: peerInputToNpub(input: chatId))
                             .accessibilityIdentifier("directChatCopyUserIdButton")
@@ -831,6 +831,20 @@ private struct DirectChatInfoSheet: View {
                                 }
                             }
                         }
+
+                        Button {
+                            manager.dispatch(.deleteChat(chatId: chatId))
+                            dismiss()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "trash")
+                                Text("Delete chat")
+                            }
+                            .foregroundStyle(.red)
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("directChatDeleteButton")
                     } else {
                         ProgressView()
                             .padding(.top, 40)
@@ -838,7 +852,7 @@ private struct DirectChatInfoSheet: View {
                 }
                 .padding(.horizontal, 18)
                 .padding(.bottom, 24)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
             .background(palette.background)
             .toolbar {
@@ -2048,6 +2062,23 @@ struct GroupDetailsScreen: View {
                             }
                         }
                     }
+                }
+
+                IrisSectionCard {
+                    CardHeader(
+                        title: "Delete chat",
+                        subtitle: "Removes this group from your chat list and forgets local messages."
+                    )
+                    Button(role: .destructive) {
+                        manager.dispatch(.deleteChat(chatId: "group:\(groupId)"))
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "trash")
+                            Text("Delete chat")
+                        }
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("groupDetailsDeleteChatButton")
                 }
             }
         }

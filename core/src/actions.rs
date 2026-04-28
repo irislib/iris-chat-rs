@@ -119,6 +119,9 @@ pub enum AppAction {
         chat_id: String,
         message_id: String,
     },
+    DeleteChat {
+        chat_id: String,
+    },
     UpdateGroupName {
         group_id: String,
         name: String,

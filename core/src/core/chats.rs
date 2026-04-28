@@ -519,6 +519,48 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn delete_chat(&mut self, chat_id: &str) {
+        if chat_id.is_empty() {
+            return;
+        }
+        let normalized = self.normalize_chat_id(chat_id).unwrap_or_else(|| chat_id.to_string());
+        let removed_thread = self.threads.remove(&normalized).is_some();
+        self.chat_message_ttl_seconds.remove(&normalized);
+        self.typing_indicators
+            .retain(|_, indicator| indicator.chat_id != normalized);
+        self.typing_floor_secs.remove(&normalized);
+
+        let removed_group = if let Some(group_id) = parse_group_id_from_chat_id(&normalized) {
+            let was_present = self.groups.remove(&group_id).is_some();
+            if was_present {
+                self.sync_runtime_groups();
+            }
+            was_present
+        } else {
+            false
+        };
+
+        if !removed_thread && !removed_group {
+            return;
+        }
+
+        if self.active_chat_id.as_deref() == Some(normalized.as_str()) {
+            self.active_chat_id = None;
+        }
+        self.screen_stack.retain(|screen| match screen {
+            Screen::Chat { chat_id } => chat_id != &normalized,
+            Screen::GroupDetails { group_id } => {
+                parse_group_id_from_chat_id(&normalized).as_deref() != Some(group_id.as_str())
+            }
+            _ => true,
+        });
+
+        self.push_debug_log("chat.delete", normalized);
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn send_group_event(
         &mut self,
         chat_id: &str,

@@ -581,26 +581,36 @@ private fun DirectChatInfoSheet(
                             .verticalScroll(rememberScrollState())
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    IrisAvatar(
-                        label = chat.displayName,
-                        size = 96.dp,
-                        emphasize = true,
-                        imageUrl = proxiedAvatarUrl,
-                        imageData = avatarBytes,
-                    )
-                    Text(
-                        text = chat.displayName,
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    chat.subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = IrisTheme.palette.muted,
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IrisAvatar(
+                            label = chat.displayName,
+                            size = 72.dp,
+                            emphasize = true,
+                            imageUrl = proxiedAvatarUrl,
+                            imageData = avatarBytes,
                         )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            Text(
+                                text = chat.displayName,
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            chat.subtitle?.takeIf { it.isNotBlank() }?.let { subtitle ->
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = IrisTheme.palette.muted,
+                                )
+                            }
+                        }
                     }
                     val clipboard = rememberIrisClipboard()
                     IrisInlineAction(
@@ -617,6 +627,20 @@ private fun DirectChatInfoSheet(
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    IrisInlineAction(
+                        text = "Delete chat",
+                        onClick = {
+                            appManager.dispatch(AppAction.DeleteChat(chatId))
+                            onDismiss()
+                        },
+                        modifier = Modifier.testTag("directChatDeleteButton"),
+                    ) {
+                        Icon(
+                            imageVector = IrisIcons.DeleteForever,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
                 }
             }
         }

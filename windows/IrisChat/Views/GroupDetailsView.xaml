@@ -76,6 +76,26 @@
                 </StackPanel>
             </Border>
 
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Delete chat"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,4" />
+                    <TextBlock Style="{StaticResource MutedText}"
+                               Text="Removes this group from your chat list and forgets local messages."
+                               Margin="0,0,0,12" />
+                    <Button Style="{StaticResource SecondaryButton}"
+                            HorizontalAlignment="Left"
+                            Click="OnDeleteChat">
+                        <TextBlock Text="Delete chat"
+                                   Foreground="{StaticResource Danger}" />
+                    </Button>
+                </StackPanel>
+            </Border>
+
         </StackPanel>
     </ScrollViewer>
 </UserControl>

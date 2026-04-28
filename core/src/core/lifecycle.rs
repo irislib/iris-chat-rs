@@ -243,6 +243,7 @@ impl AppCore {
                 chat_id,
                 message_id,
             } => self.delete_local_message(&chat_id, &message_id),
+            AppAction::DeleteChat { chat_id } => self.delete_chat(&chat_id),
             AppAction::UpdateGroupName { group_id, name } => {
                 self.update_group_name(&group_id, &name)
             }

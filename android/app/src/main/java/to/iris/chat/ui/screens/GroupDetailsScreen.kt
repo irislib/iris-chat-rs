@@ -431,6 +431,41 @@ fun GroupDetailsScreen(
                     }
                 }
             }
+
+            IrisSectionCard {
+                Text(
+                    text = "Delete chat",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "Removes this group from your chat list and forgets local messages.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = IrisTheme.palette.muted,
+                )
+                Row(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                appManager.dispatch(AppAction.DeleteChat("group:$groupId"))
+                            }
+                            .padding(vertical = 10.dp)
+                            .testTag("groupDetailsDeleteChatButton"),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        imageVector = IrisIcons.DeleteForever,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                    )
+                    Text(
+                        text = "Delete chat",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            }
         }
     }
 

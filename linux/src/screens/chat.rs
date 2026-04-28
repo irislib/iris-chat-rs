@@ -12,6 +12,7 @@ use crate::screens::chat_list::{relative_time, unix_now};
 use crate::widgets::image_cache;
 
 pub struct ChatInfoSnapshot {
+    pub chat_id: String,
     pub display_name: String,
     pub subtitle: Option<String>,
     pub picture_url: Option<String>,
@@ -39,50 +40,74 @@ pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk:
     container.upcast()
 }
 
-pub fn present_chat_info(parent: Option<&gtk::Window>, info: ChatInfoSnapshot) {
+pub fn present_chat_info(
+    parent: Option<&gtk::Window>,
+    info: ChatInfoSnapshot,
+    manager: Rc<AppManager>,
+) {
     let dialog = adw::Dialog::builder()
         .title(&info.display_name)
-        .content_width(320)
+        .content_width(360)
         .build();
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
-    content.set_margin_top(28);
-    content.set_margin_bottom(28);
-    content.set_margin_start(24);
-    content.set_margin_end(24);
-    content.set_halign(gtk::Align::Center);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
+    content.set_margin_top(24);
+    content.set_margin_bottom(20);
+    content.set_margin_start(20);
+    content.set_margin_end(20);
 
-    let avatar = adw::Avatar::new(96, Some(&info.display_name), true);
+    let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 14);
+    header_row.set_halign(gtk::Align::Start);
+
+    let avatar = adw::Avatar::new(72, Some(&info.display_name), true);
     if let Some(url) = info.picture_url.as_deref() {
         if url.starts_with("http://") || url.starts_with("https://") {
             let proxied = proxied_image_url(
                 url.to_string(),
                 info.preferences.clone(),
-                Some(192),
-                Some(192),
+                Some(144),
+                Some(144),
                 true,
             );
             image_cache::fetch_into_avatar(&avatar, &proxied);
         }
     }
-    avatar.set_halign(gtk::Align::Center);
-    content.append(&avatar);
+    header_row.append(&avatar);
+
+    let text_column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    text_column.set_valign(gtk::Align::Center);
 
     let header = gtk::Label::new(Some(&info.display_name));
     header.add_css_class("title-2");
-    header.set_halign(gtk::Align::Center);
+    header.set_halign(gtk::Align::Start);
+    header.set_xalign(0.0);
     header.set_wrap(true);
-    header.set_justify(gtk::Justification::Center);
-    content.append(&header);
+    text_column.append(&header);
 
     if let Some(subtitle) = info.subtitle.as_deref().filter(|s| !s.is_empty()) {
         let sub = gtk::Label::new(Some(subtitle));
         sub.add_css_class("dim-label");
         sub.set_wrap(true);
-        sub.set_max_width_chars(28);
-        sub.set_justify(gtk::Justification::Center);
-        sub.set_halign(gtk::Align::Center);
-        content.append(&sub);
+        sub.set_max_width_chars(36);
+        sub.set_xalign(0.0);
+        sub.set_halign(gtk::Align::Start);
+        text_column.append(&sub);
     }
+    header_row.append(&text_column);
+    content.append(&header_row);
+
+    let delete = gtk::Button::with_label("Delete chat");
+    delete.add_css_class("destructive-action");
+    delete.set_halign(gtk::Align::Start);
+    let manager_for_delete = manager.clone();
+    let chat_id_for_delete = info.chat_id.clone();
+    let dialog_for_delete = dialog.clone();
+    delete.connect_clicked(move |_| {
+        manager_for_delete.dispatch(AppAction::DeleteChat {
+            chat_id: chat_id_for_delete.clone(),
+        });
+        dialog_for_delete.close();
+    });
+    content.append(&delete);
 
     dialog.set_child(Some(&content));
     dialog.present(parent);

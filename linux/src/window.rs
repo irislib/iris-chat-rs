@@ -34,10 +34,17 @@ pub fn build_ui(app: &adw::Application) {
     let header = adw::HeaderBar::new();
     let title_label = gtk::Label::new(None);
     title_label.add_css_class("heading");
+    title_label.set_xalign(0.0);
+    title_label.set_halign(gtk::Align::Start);
     let title_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title_slot.set_valign(gtk::Align::Center);
+    title_slot.set_halign(gtk::Align::Start);
     title_slot.append(&title_label);
-    header.set_title_widget(Some(&title_slot));
+    // Use an empty title so the header bar doesn't reserve centered space
+    // for it; we pack the avatar+name on the left edge instead.
+    let empty_title = gtk::Label::new(None);
+    header.set_title_widget(Some(&empty_title));
+    header.pack_start(&title_slot);
 
     let back_button = gtk::Button::from_icon_name("go-previous-symbolic");
     back_button.set_tooltip_text(Some("Back"));
@@ -103,11 +110,13 @@ pub fn build_ui(app: &adw::Application) {
                 crate::screens::chat::present_chat_info(
                     parent.as_ref(),
                     crate::screens::chat::ChatInfoSnapshot {
+                        chat_id: chat.chat_id.clone(),
                         display_name: chat.display_name.clone(),
                         subtitle: chat.subtitle.clone(),
                         picture_url: chat.picture_url.clone(),
                         preferences: state.preferences.clone(),
                     },
+                    manager.clone(),
                 );
             }
         });
@@ -354,11 +363,13 @@ fn attach_chat_title_click(
         crate::screens::chat::present_chat_info(
             widget.as_ref(),
             crate::screens::chat::ChatInfoSnapshot {
+                chat_id: chat.chat_id.clone(),
                 display_name: chat.display_name.clone(),
                 subtitle: chat.subtitle.clone(),
                 picture_url: chat.picture_url.clone(),
                 preferences: state.preferences.clone(),
             },
+            manager.clone(),
         );
     });
     slot.add_controller(gesture);

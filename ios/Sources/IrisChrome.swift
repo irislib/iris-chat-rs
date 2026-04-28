@@ -214,7 +214,7 @@ struct IrisTopBar: View {
                     titleContent
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             trailing
                 .frame(minWidth: 44, alignment: .trailing)

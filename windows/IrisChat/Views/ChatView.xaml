@@ -40,6 +40,14 @@
                             Visibility="Collapsed">
                         <TextBlock Text="Details" />
                     </Button>
+                    <Button Style="{StaticResource GhostButton}"
+                            Click="OnDeleteChat"
+                            x:Name="DeleteChatButton"
+                            Margin="6,0,0,0"
+                            Visibility="Collapsed">
+                        <TextBlock Text="Delete chat"
+                                   Foreground="{StaticResource Danger}" />
+                    </Button>
                 </StackPanel>
             </Grid>
         </Border>

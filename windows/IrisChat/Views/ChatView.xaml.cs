@@ -55,6 +55,7 @@ public partial class ChatView : UserControl
         HeaderAvatar.Label = chat.displayName;
         HeaderAvatar.PictureUrl = chat.pictureUrl;
         GroupDetailsButton.Visibility = chat.kind == ChatKind.Group ? Visibility.Visible : Visibility.Collapsed;
+        DeleteChatButton.Visibility = chat.kind == ChatKind.Direct ? Visibility.Visible : Visibility.Collapsed;
 
         // Typing indicator
         if (chat.typingIndicators != null && chat.typingIndicators.Length > 0)
@@ -145,5 +146,12 @@ public partial class ChatView : UserControl
         {
             App.CurrentManager.Push(new Screen.GroupDetails(gid));
         }
+    }
+
+    private void OnDeleteChat(object sender, RoutedEventArgs e)
+    {
+        var chat = App.CurrentManager.CurrentChat;
+        if (chat == null) return;
+        App.CurrentManager.DeleteChat(chat.chatId);
     }
 }
