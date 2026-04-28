@@ -500,7 +500,7 @@ class RealRelayHarnessTest {
     fun create_group_from_args() {
         ensureLoggedIn()
         val groupName = requiredArg("group_name")
-        val memberInputs = requiredListArg("member_inputs")
+        val memberInputs = optionalListArg("member_inputs")
 
         appManager().createGroup(groupName, memberInputs)
 
@@ -1383,6 +1383,13 @@ class RealRelayHarnessTest {
             .filter(String::isNotEmpty)
             .takeIf { it.isNotEmpty() }
             ?: throw AssertionError("Missing non-empty list argument: $name")
+
+    private fun optionalListArg(name: String): List<String> =
+        optionalArg(name)
+            ?.split(',', '\n', '|')
+            ?.map(String::trim)
+            ?.filter(String::isNotEmpty)
+            ?: emptyList()
 
     private fun decodeBase64Arg(value: String): String =
         String(Base64.decode(value, Base64.NO_WRAP or Base64.URL_SAFE), Charsets.UTF_8)

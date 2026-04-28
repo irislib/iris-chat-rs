@@ -1806,7 +1806,6 @@ struct NewGroupScreen: View {
 
     private var canCreate: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
-        !selectedOwners.isEmpty &&
         !manager.state.busy.creatingGroup
     }
 
@@ -1893,11 +1892,10 @@ struct NewGroupScreen: View {
                 knownUsersCard
             }
 
-            Button("Next (\(selectedOwners.count))") {
+            Button(selectedOwners.isEmpty ? "Next" : "Next (\(selectedOwners.count))") {
                 step = .details
             }
             .buttonStyle(IrisPrimaryButtonStyle())
-            .disabled(selectedOwners.isEmpty)
             .accessibilityIdentifier("newGroupNextButton")
         }
     }

@@ -332,7 +332,7 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("newChatNewGroupButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newGroupMemberStep")
-        composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).assertIsNotEnabled()
+        composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).assertIsEnabled()
     }
 
     @Test
@@ -362,6 +362,30 @@ class PikaLikeUiTest {
             .performScrollTo()
             .assertIsDisplayed()
         composeRule.onNodeWithTag("groupDetailsAddMembersButton", useUnmergedTree = true)
+            .performScrollTo()
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun create_self_only_group() {
+        composeRule.ensureChatList()
+        composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("newChatNewGroupButton")
+        composeRule.onNodeWithTag("newChatNewGroupButton", useUnmergedTree = true).performClick()
+
+        composeRule.waitForTag("newGroupMemberStep")
+        composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).assertIsEnabled()
+        composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("newGroupDetailsStep")
+        composeRule.onNodeWithTag("newGroupNameInput", useUnmergedTree = true)
+            .performTextInput("Solo notes")
+        composeRule.onNodeWithTag("newGroupCreateButton", useUnmergedTree = true).assertIsEnabled()
+        composeRule.onNodeWithTag("newGroupCreateButton", useUnmergedTree = true).performClick()
+
+        composeRule.waitForTag("chatMessageInput")
+        composeRule.onNodeWithTag("chatHeaderTitleButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("groupDetailsScreen")
+        composeRule.onNodeWithTag("groupDetailsNameInput", useUnmergedTree = true)
             .performScrollTo()
             .assertIsDisplayed()
     }

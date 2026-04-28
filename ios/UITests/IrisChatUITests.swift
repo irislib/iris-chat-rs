@@ -101,6 +101,28 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "groupDetailsAddMembersButton").waitForExistence(timeout: 5))
     }
 
+    func testCreateSelfOnlyGroup() {
+        let app = launchCleanApp()
+
+        createAccount(app)
+
+        tapNewChat(app)
+        XCTAssertTrue(element(app, "newChatNewGroupButton").waitForExistence(timeout: 10))
+        element(app, "newChatNewGroupButton").tap()
+        XCTAssertTrue(element(app, "newGroupMemberStep").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "newGroupNextButton").isEnabled)
+        element(app, "newGroupNextButton").tap()
+        XCTAssertTrue(element(app, "newGroupDetailsStep").waitForExistence(timeout: 10))
+        typeText("Solo notes", into: element(app, "newGroupNameInput"), app: app)
+        XCTAssertTrue(element(app, "newGroupCreateButton").isEnabled)
+        element(app, "newGroupCreateButton").tap()
+
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 45))
+        openGroupDetails(app)
+        XCTAssertTrue(element(app, "groupDetailsScreen").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "groupDetailsNameInput").waitForExistence(timeout: 5))
+    }
+
     func testDesktopSidebarNewChatAndSettingsDoNotShowDispatchFailure() throws {
         let app = launchCleanApp()
         createAccount(app)

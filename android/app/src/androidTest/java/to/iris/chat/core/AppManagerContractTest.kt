@@ -99,6 +99,20 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun create_group_allows_empty_member_list() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+
+        appManager.createGroup("  Notes  ", emptyList())
+
+        val action = rust.dispatchedActions.single()
+        assertTrue(action is AppAction.CreateGroup)
+        action as AppAction.CreateGroup
+        assertEquals("Notes", action.name)
+        assertEquals(emptyList<String>(), action.memberInputs)
+    }
+
+    @Test
     fun dispatch_failure_shows_diagnostic_toast_instead_of_throwing() {
         val appManager = createManager()
         val rust = rustFactory.instances.single()
@@ -478,6 +492,8 @@ private class MockRustAppClient(
         dispatchError?.let { throw it }
         dispatchedActions += action
     }
+
+    override fun ingestNearbyEventJson(eventJson: String): Boolean = true
 
     override fun exportSupportBundleJson(): String = """{"ok":true}"""
 

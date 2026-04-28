@@ -1504,6 +1504,25 @@ fn chat_ttl_applies_to_outgoing_message_expiration() {
 }
 
 #[test]
+fn create_group_allows_self_only_group() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("self-only-group", &owner, &device);
+
+    core.handle_action(AppAction::CreateGroup {
+        name: "Notes".to_string(),
+        member_inputs: Vec::new(),
+    });
+
+    let current = core.state.current_chat.as_ref().expect("opened group chat");
+    let group_id = current.group_id.as_ref().expect("group id").clone();
+    let group = core.groups.get(&group_id).expect("stored group");
+    assert_eq!(group.name, "Notes");
+    assert_eq!(group.members, vec![owner.public_key().to_hex()]);
+    assert_eq!(group.admins, vec![owner.public_key().to_hex()]);
+}
+
+#[test]
 fn group_metadata_changes_create_system_notices() {
     let owner = Keys::generate();
     let device = Keys::generate();

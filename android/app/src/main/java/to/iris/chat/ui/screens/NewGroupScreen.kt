@@ -75,7 +75,7 @@ fun NewGroupScreen(
     val existingDirectChats =
         appState.chatList.filter { it.kind == ChatKind.DIRECT && it.chatId != localOwner }
     val filteredKnownChats = existingDirectChats.filterByQuery(memberInput)
-    val canCreate = name.isNotBlank() && selectedOwners.isNotEmpty() && !appState.busy.creatingGroup
+    val canCreate = name.isNotBlank() && !appState.busy.creatingGroup
     val picturePicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) {
@@ -235,9 +235,8 @@ fun NewGroupScreen(
                 }
 
                 IrisPrimaryButton(
-                    text = "Next (${selectedOwners.size})",
+                    text = if (selectedOwners.isEmpty()) "Next" else "Next (${selectedOwners.size})",
                     onClick = { step = NewGroupStep.DETAILS },
-                    enabled = selectedOwners.isNotEmpty(),
                     modifier =
                         Modifier
                             .fillMaxWidth()

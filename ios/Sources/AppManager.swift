@@ -719,7 +719,7 @@ final class AppManager: ObservableObject {
         let members = memberInputs
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        guard !trimmedName.isEmpty, !members.isEmpty else {
+        guard !trimmedName.isEmpty else {
             return
         }
 

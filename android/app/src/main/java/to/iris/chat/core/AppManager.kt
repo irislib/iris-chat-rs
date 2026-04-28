@@ -290,7 +290,7 @@ class AppManager(
     ) {
         val trimmedName = name.trim()
         val trimmedMembers = memberInputs.map(String::trim).filter(String::isNotEmpty)
-        if (trimmedName.isEmpty() || trimmedMembers.isEmpty()) {
+        if (trimmedName.isEmpty()) {
             return
         }
         val trimmedPicturePath = pictureFilePath?.trim().orEmpty()

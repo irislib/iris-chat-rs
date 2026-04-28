@@ -225,9 +225,6 @@ final class InteropHarnessTests: XCTestCase {
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let groupName = try requiredEnv("IRIS_IOS_HARNESS_GROUP_NAME", env: env)
             let memberInputs = parseList(env["IRIS_IOS_HARNESS_MEMBER_INPUTS"] ?? "")
-            guard !memberInputs.isEmpty else {
-                throw HarnessError.unexpected("member input list is empty")
-            }
 
             manager.dispatch(.createGroup(name: groupName, memberInputs: memberInputs))
             let chat = try await waitFor(label: "group \(groupName)", timeout: 180) {

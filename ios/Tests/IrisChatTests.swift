@@ -774,6 +774,25 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testCreateGroupAllowsEmptyMemberList() async {
+        let rust = MockRustApp()
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.createGroup(name: "  Notes  ", memberInputs: [], picture: nil)
+
+        XCTAssertEqual(rust.dispatchedActions.last, .createGroup(name: "Notes", memberInputs: []))
+    }
+
+    @MainActor
     func testRemoveAuthorizedDeviceTrimsInputBeforeDispatch() async {
         let rust = MockRustApp()
         let store = InMemorySecretStore()
