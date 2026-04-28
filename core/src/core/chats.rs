@@ -40,6 +40,7 @@ impl AppCore {
     ) -> anyhow::Result<String> {
         let (chat_id, peer_pubkey) = parse_peer_input(peer_input)?;
         let now = unix_now().get();
+        self.prune_expired_messages(now);
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
         self.load_latest_message_page_for_chat(&chat_id);
 
@@ -120,6 +121,7 @@ impl AppCore {
         };
 
         let now = unix_now().get();
+        self.prune_expired_messages(now);
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
         self.load_latest_message_page_for_chat(&chat_id);
         self.active_chat_id = Some(chat_id.clone());
@@ -438,9 +440,13 @@ impl AppCore {
             thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         }
         self.bump_typing_floor(chat_id, created_at_secs);
+        if expires_at_secs.is_some() {
+            self.schedule_next_message_expiry();
+        }
         message
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn push_incoming_message_from(
         &mut self,
         chat_id: &str,
@@ -509,6 +515,9 @@ impl AppCore {
             }
         }
         self.bump_typing_floor(chat_id, created_at_secs);
+        if expires_at_secs.is_some() {
+            self.schedule_next_message_expiry();
+        }
     }
 
     pub(super) fn push_system_notice(&mut self, chat_id: &str, body: String, created_at_secs: u64) {
@@ -801,6 +810,7 @@ impl AppCore {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn apply_runtime_text_message(
         &mut self,
         sender_owner: PublicKey,

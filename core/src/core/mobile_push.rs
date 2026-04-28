@@ -722,6 +722,7 @@ pub(crate) fn build_mobile_push_create_subscription_request(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_mobile_push_update_subscription_request(
     owner_nsec: String,
     subscription_id: String,

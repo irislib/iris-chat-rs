@@ -55,7 +55,7 @@ pub(super) fn relay_urls_from_strings(relays: &[String]) -> Vec<RelayUrl> {
     if parsed.is_empty() {
         FALLBACK_DEFAULT_RELAYS
             .iter()
-            .filter_map(|relay| RelayUrl::parse(*relay).ok())
+            .filter_map(|relay| RelayUrl::parse(relay).ok())
             .collect()
     } else {
         parsed

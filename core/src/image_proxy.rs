@@ -99,7 +99,7 @@ fn resolved_hex<'a>(value: &'a str, fallback: &'a str) -> &'a str {
 
 fn decode_hex(value: &str) -> Option<Vec<u8>> {
     let normalized = value.trim();
-    if normalized.is_empty() || normalized.len() % 2 != 0 {
+    if normalized.is_empty() || !normalized.len().is_multiple_of(2) {
         return None;
     }
     let mut bytes = Vec::with_capacity(normalized.len() / 2);

@@ -26,11 +26,16 @@ impl AppCore {
             return;
         }
 
+        let now = unix_now();
+        let expired = self.prune_expired_messages(now.get());
+        if expired > 0 {
+            self.push_debug_log("messages.expired", format!("removed={expired}"));
+        }
         self.push_debug_log("app.foreground", "refresh relay session");
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced();
         self.fetch_recent_protocol_state();
-        self.fetch_recent_messages_for_tracked_peers(unix_now());
+        self.fetch_recent_messages_for_tracked_peers(now);
         self.state.busy.syncing_network = true;
         self.rebuild_state();
         self.persist_best_effort();
@@ -129,6 +134,7 @@ impl AppCore {
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
+        self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         if let Some(logged_in) = self.logged_in.take() {
             let client = logged_in.client.clone();
@@ -502,6 +508,7 @@ impl AppCore {
         self.republish_local_identity_artifacts();
         self.drain_pending_mobile_push_events();
         self.process_runtime_events();
+        self.schedule_next_message_expiry();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
         self.state.busy.syncing_network = true;

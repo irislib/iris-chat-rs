@@ -225,15 +225,12 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
             if let Some(sender) = sender {
                 for event in events {
                     if matches_any_filter(&event, &filters) {
-                        let payload = Message::Text(
-                            json!(["EVENT", subscription_id, event]).to_string().into(),
-                        );
+                        let payload =
+                            Message::Text(json!(["EVENT", subscription_id, event]).to_string());
                         let _ = sender.send(payload);
                     }
                 }
-                let _ = sender.send(Message::Text(
-                    json!(["EOSE", subscription_id]).to_string().into(),
-                ));
+                let _ = sender.send(Message::Text(json!(["EOSE", subscription_id]).to_string()));
             }
         }
         "CLOSE" if parts.len() >= 2 => {
@@ -260,9 +257,7 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
                 (sender, deliveries)
             };
             if let Some(sender) = sender {
-                let _ = sender.send(Message::Text(
-                    json!(["OK", event_id, true, ""]).to_string().into(),
-                ));
+                let _ = sender.send(Message::Text(json!(["OK", event_id, true, ""]).to_string()));
             }
 
             for (target, payload) in deliveries {
@@ -301,7 +296,7 @@ fn matching_deliveries(
             if matches_any_filter(event, filters) {
                 deliveries.push((
                     target.clone(),
-                    Message::Text(json!(["EVENT", subscription_id, event]).to_string().into()),
+                    Message::Text(json!(["EVENT", subscription_id, event]).to_string()),
                 ));
             }
         }

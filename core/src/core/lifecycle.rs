@@ -44,6 +44,7 @@ impl AppCore {
             seen_event_ids: HashSet::new(),
             seen_event_order: VecDeque::new(),
             device_invite_poll_token: 0,
+            message_expiry_token: 0,
             protocol_reconnect_token: 0,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
@@ -83,6 +84,7 @@ impl AppCore {
                     "ProtocolSubscriptionLivenessCheck"
                 }
                 InternalEvent::PollPendingDeviceInvites { .. } => "PollPendingDeviceInvites",
+                InternalEvent::PruneExpiredMessages { .. } => "PruneExpiredMessages",
                 InternalEvent::RelayStatusChanged { .. } => "RelayStatusChanged",
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
@@ -311,6 +313,9 @@ impl AppCore {
                 self.schedule_pending_device_invite_poll(Duration::from_secs(
                     DEVICE_INVITE_DISCOVERY_POLL_SECS,
                 ));
+            }
+            InternalEvent::PruneExpiredMessages { token } => {
+                self.handle_prune_expired_messages(token);
             }
             InternalEvent::FetchCatchUpEvents(events) => {
                 // Coalesce: a catch-up burst of N events used to cause N

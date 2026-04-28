@@ -1318,6 +1318,60 @@ fn web_runtime_chat_settings_create_system_notice() {
 }
 
 #[test]
+fn web_runtime_chat_message_expiration_tag_is_persisted() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("web-runtime-expiring-message", &owner, &device);
+    let inner_id = "e".repeat(64);
+    let content = serde_json::json!({
+        "content": "secret",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_483u64,
+        "tags": [["expiration", "1777159543"]],
+        "pubkey": "0".repeat(64),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("f".repeat(64)));
+
+    let chat_id = sender.public_key().to_hex();
+    let thread = core.threads.get(&chat_id).expect("thread");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].body, "secret");
+    assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
+    assert_eq!(
+        stored_message_expiration(&core, &chat_id, &inner_id),
+        Some(1_777_159_543)
+    );
+}
+
+#[test]
+fn chat_ttl_applies_to_outgoing_message_expiration() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core("outgoing-message-ttl", &owner, &device);
+    core.chat_message_ttl_seconds.insert(chat_id.clone(), 60);
+
+    let before = unix_now().get();
+    core.send_message(&chat_id, "secret", None);
+    let after = unix_now().get();
+
+    let thread = core.threads.get(&chat_id).expect("thread");
+    let message = thread
+        .messages
+        .iter()
+        .find(|message| message.body == "secret")
+        .expect("sent message");
+    let expires_at = message.expires_at_secs.expect("message expiration");
+    assert!(expires_at >= before.saturating_add(60));
+    assert!(expires_at <= after.saturating_add(60));
+}
+
+#[test]
 fn group_metadata_changes_create_system_notices() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1706,6 +1760,77 @@ fn delete_chat_removes_thread_and_navigates_back() {
     );
 }
 
+#[test]
+fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core("message-expiry-prune", &owner, &device);
+    core.active_chat_id = Some(chat_id.clone());
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 2,
+            updated_at_secs: 200,
+            messages: vec![
+                ChatMessageSnapshot {
+                    id: "expired".to_string(),
+                    chat_id: chat_id.clone(),
+                    kind: ChatMessageKind::User,
+                    author: chat_id.clone(),
+                    body: "gone".to_string(),
+                    attachments: Vec::new(),
+                    reactions: Vec::new(),
+                    reactors: Vec::new(),
+                    is_outgoing: false,
+                    created_at_secs: 100,
+                    expires_at_secs: Some(150),
+                    delivery: DeliveryState::Received,
+                    source_event_id: None,
+                },
+                ChatMessageSnapshot {
+                    id: "future".to_string(),
+                    chat_id: chat_id.clone(),
+                    kind: ChatMessageKind::User,
+                    author: chat_id.clone(),
+                    body: "stays".to_string(),
+                    attachments: Vec::new(),
+                    reactions: Vec::new(),
+                    reactors: Vec::new(),
+                    is_outgoing: false,
+                    created_at_secs: 200,
+                    expires_at_secs: Some(300),
+                    delivery: DeliveryState::Received,
+                    source_event_id: None,
+                },
+            ],
+        },
+    );
+    core.persist_best_effort_inner();
+    assert_eq!(stored_message_count(&core), 2);
+
+    let removed = core.prune_expired_messages(200);
+
+    assert_eq!(removed, 1);
+    assert_eq!(stored_message_count(&core), 1);
+    let thread = core.threads.get(&chat_id).expect("thread");
+    assert_eq!(thread.unread_count, 1);
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].body, "stays");
+    core.rebuild_state();
+    assert_eq!(
+        core.state
+            .current_chat
+            .as_ref()
+            .expect("current chat")
+            .messages
+            .len(),
+        1
+    );
+}
+
 fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
     let mut core = AppCore::new(
         flume::unbounded().0,
@@ -1742,6 +1867,30 @@ fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
         authorization_state: LocalAuthorizationState::Authorized,
     });
     core
+}
+
+fn stored_message_count(core: &AppCore) -> i64 {
+    let conn = core.app_store.shared();
+    let count = conn
+        .lock()
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+        .unwrap();
+    count
+}
+
+fn stored_message_expiration(core: &AppCore, chat_id: &str, message_id: &str) -> Option<u64> {
+    let conn = core.app_store.shared();
+    let expires_at: Option<i64> = conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT expires_at_secs FROM messages WHERE chat_id = ?1 AND id = ?2",
+            rusqlite::params![chat_id, message_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    expires_at.map(|secs| secs as u64)
 }
 
 fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {

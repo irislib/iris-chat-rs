@@ -85,6 +85,7 @@ impl AppCore {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 enum PublicInviteInput {
     Invite(Invite),
     DirectChat,

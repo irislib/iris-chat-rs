@@ -162,6 +162,57 @@ impl AppStore {
         Ok(())
     }
 
+    pub(crate) fn delete_expired_messages(&mut self, now_secs: u64) -> anyhow::Result<usize> {
+        let (deleted, chat_ids) = {
+            let mut conn = self
+                .conn
+                .lock()
+                .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+            let tx = conn.transaction()?;
+            let chat_ids = {
+                let mut stmt = tx.prepare(
+                    "SELECT DISTINCT chat_id FROM messages
+                     WHERE expires_at_secs IS NOT NULL AND expires_at_secs <= ?1",
+                )?;
+                let rows = stmt.query_map([now_secs as i64], |row| row.get::<_, String>(0))?;
+                let mut chat_ids = Vec::new();
+                for row in rows {
+                    chat_ids.push(row?);
+                }
+                chat_ids
+            };
+            let deleted = tx.execute(
+                "DELETE FROM messages
+                 WHERE expires_at_secs IS NOT NULL AND expires_at_secs <= ?1",
+                [now_secs as i64],
+            )?;
+            tx.commit()?;
+            (deleted, chat_ids)
+        };
+
+        for chat_id in chat_ids {
+            self.cache.threads.remove(&chat_id);
+        }
+        Ok(deleted)
+    }
+
+    pub(crate) fn next_message_expiration_after(
+        &self,
+        now_secs: u64,
+    ) -> anyhow::Result<Option<u64>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let expires_at = conn.query_row(
+            "SELECT MIN(expires_at_secs) FROM messages
+             WHERE expires_at_secs IS NOT NULL AND expires_at_secs > ?1",
+            [now_secs as i64],
+            |row| row.get::<_, Option<i64>>(0),
+        )?;
+        Ok(expires_at.map(|secs| secs as u64))
+    }
+
     pub(crate) fn load_recent_messages(
         &self,
         chat_id: &str,
@@ -1016,6 +1067,19 @@ mod tests {
         }
     }
 
+    fn sample_expiring_message(
+        chat_id: &str,
+        id: &str,
+        body: &str,
+        ts: u64,
+        expires_at_secs: Option<u64>,
+    ) -> ChatMessageSnapshot {
+        let mut message = sample_message(id, body, ts);
+        message.chat_id = chat_id.to_string();
+        message.expires_at_secs = expires_at_secs;
+        message
+    }
+
     fn thread_from_messages(chat_id: &str, messages: Vec<ChatMessageSnapshot>) -> ThreadRecord {
         ThreadRecord {
             chat_id: chat_id.to_string(),
@@ -1241,6 +1305,69 @@ mod tests {
         assert_eq!(count(&conn_handle, "messages"), total as i64);
         store.delete_message("chat", "1").unwrap();
         assert_eq!(count(&conn_handle, "messages"), total as i64 - 1);
+    }
+
+    #[test]
+    fn delete_expired_messages_removes_rows_across_all_threads() {
+        let (_tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let conn_handle = store.shared();
+        let mut threads = BTreeMap::new();
+        threads.insert(
+            "chat-a".to_string(),
+            thread_from_messages(
+                "chat-a",
+                vec![
+                    sample_expiring_message("chat-a", "old-a", "gone", 1, Some(10)),
+                    sample_expiring_message("chat-a", "keep-a", "stays", 2, Some(200)),
+                ],
+            ),
+        );
+        threads.insert(
+            "chat-b".to_string(),
+            thread_from_messages(
+                "chat-b",
+                vec![
+                    sample_expiring_message("chat-b", "old-b", "gone too", 3, Some(99)),
+                    sample_expiring_message("chat-b", "keep-b", "plain", 4, None),
+                ],
+            ),
+        );
+        let snapshot = empty_snapshot(
+            None,
+            1,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+        assert_eq!(count(&conn_handle, "messages"), 4);
+        assert_eq!(store.next_message_expiration_after(0).unwrap(), Some(10));
+        assert_eq!(store.next_message_expiration_after(100).unwrap(), Some(200));
+
+        let deleted = store.delete_expired_messages(100).unwrap();
+
+        assert_eq!(deleted, 2);
+        assert_eq!(count(&conn_handle, "messages"), 2);
+        assert_eq!(store.next_message_expiration_after(100).unwrap(), Some(200));
+        assert_eq!(store.next_message_expiration_after(200).unwrap(), None);
+        let loaded = store.load_state().unwrap().expect("state present");
+        let mut loaded_bodies = loaded
+            .threads
+            .iter()
+            .flat_map(|thread| thread.messages.iter().map(|message| message.body.as_str()))
+            .collect::<Vec<_>>();
+        loaded_bodies.sort_unstable();
+        assert_eq!(loaded_bodies, vec!["plain", "stays"]);
     }
 
     #[test]

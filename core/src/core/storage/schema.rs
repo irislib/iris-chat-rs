@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS messages_chat_order_idx
     ON messages(chat_id, created_at_secs, id);
+
+CREATE INDEX IF NOT EXISTS messages_expires_idx
+    ON messages(expires_at_secs) WHERE expires_at_secs IS NOT NULL;
 
 -- Used by the notification extension to find an already-decrypted
 -- rumor by its outer relay event id.

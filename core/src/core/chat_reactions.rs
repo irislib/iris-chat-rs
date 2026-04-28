@@ -202,7 +202,7 @@ fn rebuild_reaction_aggregate(message: &mut ChatMessageSnapshot, local_owner: Op
         }
         let entry = counts.entry(reactor.emoji.clone()).or_insert((0, false));
         entry.0 = entry.0.saturating_add(1);
-        if local_owner.map_or(false, |me| me == reactor.author) {
+        if local_owner.is_some_and(|me| me == reactor.author) {
             entry.1 = true;
         }
     }

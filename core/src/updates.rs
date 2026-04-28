@@ -33,6 +33,9 @@ pub(crate) enum InternalEvent {
     PollPendingDeviceInvites {
         token: u64,
     },
+    PruneExpiredMessages {
+        token: u64,
+    },
     FetchCatchUpEvents(Vec<Event>),
     RelayStatusChanged {
         relay_url: String,

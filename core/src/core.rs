@@ -48,6 +48,7 @@ mod groups;
 mod identity;
 mod invites;
 mod lifecycle;
+mod message_expiry;
 mod mobile_push;
 mod model;
 mod payloads;
@@ -133,6 +134,7 @@ pub struct AppCore {
     seen_event_ids: HashSet<String>,
     seen_event_order: VecDeque<String>,
     device_invite_poll_token: u64,
+    message_expiry_token: u64,
     protocol_reconnect_token: u64,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     direct_message_subscriptions: DirectMessageSubscriptionTracker,
