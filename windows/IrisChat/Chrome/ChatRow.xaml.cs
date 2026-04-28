@@ -49,12 +49,12 @@ public partial class ChatRow : UserControl
         if (chat == null) return;
 
         AvatarView.Label = string.IsNullOrEmpty(chat.displayName)
-            ? chat.chatId
+            ? "Iris user"
             : chat.displayName;
         AvatarView.PictureUrl = chat.pictureUrl;
 
         NameText.Text = string.IsNullOrEmpty(chat.displayName)
-            ? chat.chatId.Substring(0, Math.Min(10, chat.chatId.Length))
+            ? "Iris user"
             : chat.displayName;
 
         if (chat.lastMessageAtSecs is { } secs && secs > 0)

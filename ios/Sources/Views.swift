@@ -6,7 +6,7 @@ import PhotosUI
 #endif
 
 private let irisSourceURL = URL(string: "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs")!
-private let irisSourceLabel = "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
+private let irisSourceLabel = "git.iris.to/iris-chat-rs"
 private let disappearingMessageOptions: [(String, UInt64?)] = [
     ("Off", nil),
     ("5 minutes", 300),
@@ -80,6 +80,8 @@ struct RootView: View {
                         manager: manager,
                         directChatInfoChatId: $directChatInfoChatId
                     )
+                } else if case .welcome = manager.activeScreen {
+                    WelcomeScreen(manager: manager)
                 } else {
                     NavigationShell(
                         title: screenTitle(manager.activeScreen),
@@ -946,53 +948,68 @@ struct WelcomeScreen: View {
 
     var body: some View {
         IrisScrollScreen {
-            VStack(spacing: 18) {
-                IrisSectionCard(accent: true) {
+            VStack(spacing: 20) {
+                VStack(spacing: 18) {
                     Color.clear
                         .frame(height: 0)
                         .accessibilityIdentifier("welcomeChooserCard")
 
-                    VStack(alignment: .leading, spacing: 18) {
-                        IrisAvatar(label: "Iris Chat", size: 62, emphasize: true)
+                    Image("IrisLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 132, height: 132)
+                        .accessibilityHidden(true)
 
-                        Text("Iris Chat")
-                            .font(.system(.largeTitle, design: .rounded, weight: .bold))
+                    HStack(spacing: 0) {
+                        Text("iris")
+                            .foregroundStyle(palette.accent)
+                        Text(" chat")
                             .foregroundStyle(palette.textPrimary)
-
-                        VStack(spacing: 10) {
-                            Button("Create account") {
-                                manager.dispatch(.pushScreen(screen: .createAccount))
-                            }
-                            .buttonStyle(IrisPrimaryButtonStyle())
-                            .accessibilityIdentifier("welcomeCreateAction")
-
-                            Button("Restore account") {
-                                manager.dispatch(.pushScreen(screen: .restoreAccount))
-                            }
-                            .buttonStyle(IrisSecondaryButtonStyle())
-                            .accessibilityIdentifier("welcomeRestoreAction")
-
-                            Button("Link this device") {
-                                manager.dispatch(.pushScreen(screen: .addDevice))
-                            }
-                            .buttonStyle(IrisSecondaryButtonStyle())
-                            .accessibilityIdentifier("welcomeAddDeviceAction")
-                        }
                     }
+                    .font(.system(.largeTitle, design: .rounded, weight: .bold))
+
+                    VStack(spacing: 10) {
+                        Button {
+                            manager.dispatch(.pushScreen(screen: .createAccount))
+                        } label: {
+                            Label("Create account", systemImage: "plus")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(IrisPrimaryButtonStyle())
+                        .accessibilityIdentifier("welcomeCreateAction")
+
+                        Button {
+                            manager.dispatch(.pushScreen(screen: .restoreAccount))
+                        } label: {
+                            Label("Restore account", systemImage: "key.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(IrisSecondaryButtonStyle())
+                        .accessibilityIdentifier("welcomeRestoreAction")
+
+                        Button {
+                            manager.dispatch(.pushScreen(screen: .addDevice))
+                        } label: {
+                            Label("Link this device", systemImage: "iphone")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(IrisSecondaryButtonStyle())
+                        .accessibilityIdentifier("welcomeAddDeviceAction")
+                    }
+                    .frame(maxWidth: 320)
                 }
+                .frame(maxWidth: .infinity)
 
                 if manager.trustedTestBuildEnabled() {
-                    IrisSectionCard(accent: true) {
-                        Color.clear
-                            .frame(height: 0)
-                            .accessibilityIdentifier("welcomeSecondaryCard")
-
-                        CardHeader(title: "Test build")
-                    }
+                    Text("Test build")
+                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.accentAlt)
+                        .accessibilityIdentifier("welcomeSecondaryCard")
                 }
             }
             .frame(maxWidth: 480)
             .frame(maxWidth: .infinity)
+            .padding(.top, IrisLayout.usesDesktopChrome ? 96 : 56)
         }
     }
 }
@@ -1138,19 +1155,23 @@ struct AddDeviceScreen: View {
             CardHeader(
                 title: awaitingApproval ? "Finish linking" : "Link this device",
                 subtitle: awaitingApproval
-                    ? "Use your signed-in device to approve this one. If it asks for a code, scan the QR below."
-                    : "Scan the account QR from your signed-in device, or paste its user ID."
+                    ? "Use your signed-in device to approve this one. If it asks for a code, scan the code below."
+                    : "Scan the account code from your signed-in device, or paste its user ID."
             )
 
             if awaitingApproval, let account = manager.state.account {
-                MonoValue(label: "User ID", value: account.npub, identifier: "awaitingApprovalOwnerNpub")
-                MonoValue(label: "This device", value: account.deviceNpub, identifier: "awaitingApprovalDeviceNpub")
-
                 HStack(spacing: 10) {
+                    Button("Copy user ID") {
+                        manager.copyToClipboard(account.npub)
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                    .accessibilityIdentifier("awaitingApprovalOwnerNpub")
+
                     Button("Copy device code") {
                         manager.copyToClipboard(account.deviceNpub)
                     }
                     .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                    .accessibilityIdentifier("awaitingApprovalDeviceNpub")
                 }
 
                 Button("Sign out") {
@@ -1165,7 +1186,7 @@ struct AddDeviceScreen: View {
                     .accessibilityIdentifier("linkOwnerInput")
 
                 if !ownerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !validOwnerInput {
-                    Text("That QR or user ID is not valid.")
+                    Text("That code or user ID is not valid.")
                         .font(.system(.footnote, design: .rounded))
                         .foregroundStyle(.red)
                 }
@@ -1178,7 +1199,7 @@ struct AddDeviceScreen: View {
                     .accessibilityIdentifier("linkOwnerPasteButton")
 
                     if irisSupportsQrScanning {
-                        Button("Scan account QR") { showingScanner = true }
+                        Button("Scan account code") { showingScanner = true }
                             .buttonStyle(IrisSecondaryButtonStyle())
                             .accessibilityIdentifier("linkOwnerScanQrButton")
                     }
@@ -1213,7 +1234,7 @@ struct AddDeviceScreen: View {
                     .accessibilityIdentifier("awaitingApprovalScreen")
 
                 CardHeader(
-                    title: "Approval QR",
+                    title: "Approval code",
                     subtitle: "Scan this from Manage devices on your signed-in device."
                 )
 
@@ -1402,7 +1423,7 @@ struct NewChatScreen: View {
                 .frame(maxWidth: .infinity, alignment: .center)
 
             if let invite = manager.state.publicInvite {
-                Text("Share an invite link to start a chat")
+                Text("Share an invite to start a chat")
                     .font(.system(.footnote, design: .rounded))
                     .foregroundStyle(palette.muted)
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -1439,7 +1460,7 @@ struct NewChatScreen: View {
                 .foregroundStyle(palette.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            TextField("Paste invite link", text: $peerInput)
+            TextField("Paste invite", text: $peerInput)
                 .irisIdentifierInputModifiers()
                 .textFieldStyle(.plain)
                 .irisInputField()
@@ -1449,7 +1470,7 @@ struct NewChatScreen: View {
                 Button(action: { showingScanner = true }) {
                     HStack(spacing: 8) {
                         Image(systemName: "qrcode.viewfinder")
-                        Text("Scan QR Code")
+                        Text("Scan code")
                     }
                     .frame(maxWidth: .infinity)
                 }
@@ -1493,7 +1514,7 @@ struct NewChatScreen: View {
     private var inviteQrSheet: some View {
         if let invite = manager.state.publicInvite {
             VStack(spacing: 18) {
-                Text("Invite QR Code")
+                Text("Invite code")
                     .font(.system(.title3, design: .rounded, weight: .bold))
                     .foregroundStyle(palette.textPrimary)
 
@@ -1613,7 +1634,7 @@ struct JoinInviteScreen: View {
             IrisSectionCard(accent: true) {
                 CardHeader(title: "Join chat")
 
-                TextField("Invite link", text: $inviteInput)
+                TextField("Invite", text: $inviteInput)
                     .textFieldStyle(.plain)
                     .irisInputField()
                     .accessibilityIdentifier("joinInviteInput")
@@ -1626,7 +1647,7 @@ struct JoinInviteScreen: View {
                     .accessibilityIdentifier("joinInvitePasteButton")
 
                     if irisSupportsQrScanning {
-                        Button("Scan QR") { showingScanner = true }
+                        Button("Scan code") { showingScanner = true }
                             .buttonStyle(IrisSecondaryButtonStyle())
                             .accessibilityIdentifier("joinInviteScanQrButton")
                     }
@@ -1816,7 +1837,7 @@ struct NewGroupScreen: View {
     private var scanMemberButton: some View {
         Group {
             if irisSupportsQrScanning {
-                Button("Scan QR") { showingScanner = true }
+                Button("Scan code") { showingScanner = true }
                     .buttonStyle(IrisSecondaryButtonStyle())
                     .accessibilityIdentifier("newGroupScanQrButton")
             }
@@ -2008,7 +2029,7 @@ struct GroupDetailsScreen: View {
 
                         VStack(spacing: 10) {
                             if irisSupportsQrScanning {
-                                Button("Scan member QR") { showingScanner = true }
+                                Button("Scan code") { showingScanner = true }
                                     .buttonStyle(IrisSecondaryButtonStyle())
                                     .accessibilityIdentifier("groupDetailsScanQrButton")
                             }
@@ -2164,7 +2185,7 @@ struct DeviceRosterScreen: View {
             return ""
         }
         if roster.canManageDevices {
-            return "Scan the QR from the device you want to link, or paste its code."
+            return "Scan the code from the device you want to link, or paste it."
         }
         if isCurrentDeviceRegistered {
             return "This device can view the list but cannot change it."
@@ -2181,8 +2202,17 @@ struct DeviceRosterScreen: View {
                         subtitle: "These devices can use your account."
                     )
 
-                    MonoValue(label: "User ID", value: roster.ownerNpub, identifier: "deviceRosterOwnerNpub")
-                    MonoValue(label: "Device ID", value: roster.currentDeviceNpub, identifier: "deviceRosterCurrentDeviceNpub")
+                    Button("Copy user ID") {
+                        manager.copyToClipboard(roster.ownerNpub)
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("deviceRosterOwnerNpub")
+
+                    Button("Copy this device code") {
+                        manager.copyToClipboard(roster.currentDeviceNpub)
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("deviceRosterCurrentDeviceNpub")
                 }
 
                 IrisSectionCard {
@@ -2191,7 +2221,7 @@ struct DeviceRosterScreen: View {
                         subtitle: deviceAccessSubtitle
                     )
 
-                    TextField("Device code", text: $deviceInput)
+                    TextField("Link code", text: $deviceInput)
                         .irisIdentifierInputModifiers()
                         .textFieldStyle(.plain)
                         .irisInputField()
@@ -2205,7 +2235,7 @@ struct DeviceRosterScreen: View {
 
                     VStack(spacing: 10) {
                         if irisSupportsQrScanning {
-                            Button("Scan QR") { showingScanner = true }
+                            Button("Scan code") { showingScanner = true }
                                 .buttonStyle(IrisSecondaryButtonStyle())
                                 .accessibilityIdentifier("deviceRosterScanButton")
                         }
@@ -2277,7 +2307,7 @@ private struct DeviceRosterRow: View {
 
     private var displaySubtitle: String {
         let client = device.isCurrentDevice ? PlatformDeviceLabels.currentClientLabel : "Iris Chat"
-        return "\(client) - \(device.deviceNpub)"
+        return client
     }
 
     var body: some View {
@@ -2466,7 +2496,7 @@ struct SettingsScreen: View {
                     }
 
                     IrisSectionCard {
-                        CardHeader(title: "Relays")
+                        CardHeader(title: "Message servers")
                         NostrRelaySettingsSection(
                             manager: manager,
                             newRelayURL: $newRelayURL,
@@ -2491,7 +2521,7 @@ struct SettingsScreen: View {
                         Button {
                             pendingSecretExport = .device
                         } label: {
-                            Label("Export device key", systemImage: "key.fill")
+                            Label("Export this device's key", systemImage: "key.fill")
                         }
                         .buttonStyle(IrisSecondaryButtonStyle())
                         .accessibilityIdentifier("myProfileExportDeviceKeyButton")
@@ -2544,24 +2574,15 @@ struct SettingsScreen: View {
                         Text("Build \(manager.buildSummaryText())")
                             .font(.system(.body, design: .rounded))
                             .foregroundStyle(palette.textPrimary)
-                        Text("Relay set \(manager.relaySetIdText())")
-                            .font(.system(.body, design: .rounded))
-                            .foregroundStyle(palette.muted)
-
                         if let networkStatus = manager.state.networkStatus {
                             Text(
                                 "Network \(networkStatus.syncing ? "syncing" : "idle") · " +
-                                    "\(networkStatus.relayUrls.count) relays · " +
-                                    "\(networkStatus.recentEventCount) events"
+                                    "\(networkStatus.relayUrls.count) servers · " +
+                                    "\(networkStatus.recentEventCount) updates"
                             )
                             .font(.system(.body, design: .rounded))
                             .foregroundStyle(palette.muted)
                             .accessibilityIdentifier("myProfileNetworkStatusValue")
-
-                            Text(networkStatus.relayUrls.joined(separator: ", "))
-                                .font(.system(.caption, design: .rounded))
-                                .foregroundStyle(palette.muted)
-                                .accessibilityIdentifier("myProfileRelayUrlsValue")
 
                             if let category = networkStatus.lastDebugCategory {
                                 Text("Last debug \(category)")
@@ -2587,7 +2608,7 @@ struct SettingsScreen: View {
                     IrisSectionCard {
                         CardHeader(
                             title: "Danger Zone",
-                            subtitle: "Local identity, keys, messages, and cached files are removed from this device."
+                            subtitle: "Local account, secret keys, messages, and cached files are removed from this device."
                         )
 
                         Button("Logout", role: .destructive) {
@@ -2622,12 +2643,12 @@ struct SettingsScreen: View {
         .alert(item: $pendingSecretExport) { exportKind in
             let isDeviceExport = exportKind == .device
             return Alert(
-                title: Text(isDeviceExport ? "Export Device Key" : "Export Secret Key"),
+                title: Text(isDeviceExport ? "Export This Device's Key" : "Export Secret Key"),
                 message: Text(isDeviceExport
-                    ? "This device key only unlocks this linked device. Copy it from this device?"
-                    : "Your secret key gives full access to your identity. Never share it with anyone. Store it securely."),
+                    ? "This key only unlocks this device. Copy it now?"
+                    : "Your secret key gives full access to your account. Never share it with anyone. Store it securely."),
                 primaryButton: .cancel(Text("Cancel")),
-                secondaryButton: .default(Text(isDeviceExport ? "Copy Device Key" : "Copy")) {
+                secondaryButton: .default(Text(isDeviceExport ? "Copy Key" : "Copy")) {
                     let secret = isDeviceExport ? manager.exportDeviceNsec() : manager.exportOwnerNsec()
                     guard let secret, !secret.isEmpty else {
                         manager.showSecretExportUnavailable()
@@ -2644,7 +2665,7 @@ struct SettingsScreen: View {
             }
             .accessibilityIdentifier("myProfileConfirmDeleteAllDataButton")
         } message: {
-            Text("This permanently deletes your identity, keys, messages, and cached files from this device. This action cannot be undone.")
+            Text("This permanently deletes your account, secret keys, messages, and cached files from this device. This action cannot be undone.")
         }
     }
 
@@ -2710,15 +2731,17 @@ private struct ImageProxySettingsSection: View {
         )
 
         imageProxyTextField(
-            title: "Key hex",
+            title: "Proxy key",
             text: imageProxyKeyHex,
-            identifier: "myProfileImageProxyKeyInput"
+            identifier: "myProfileImageProxyKeyInput",
+            secure: true
         )
 
         imageProxyTextField(
-            title: "Salt hex",
+            title: "Proxy salt",
             text: imageProxySaltHex,
-            identifier: "myProfileImageProxySaltInput"
+            identifier: "myProfileImageProxySaltInput",
+            secure: true
         )
 
         Button("Reset image proxy") {
@@ -2759,12 +2782,19 @@ private struct ImageProxySettingsSection: View {
     private func imageProxyTextField(
         title: String,
         text: Binding<String>,
-        identifier: String
+        identifier: String,
+        secure: Bool = false
     ) -> some View {
-        TextField(title, text: text)
-            .textFieldStyle(.roundedBorder)
-            .autocorrectionDisabled()
-            .accessibilityIdentifier(identifier)
+        Group {
+            if secure {
+                SecureField(title, text: text)
+            } else {
+                TextField(title, text: text)
+            }
+        }
+        .textFieldStyle(.roundedBorder)
+        .autocorrectionDisabled()
+        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -2781,7 +2811,7 @@ private struct NostrRelaySettingsSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Nostr relays")
+            Text("Message servers")
                 .font(.system(.headline, design: .rounded, weight: .semibold))
 
             ForEach(relayURLs, id: \.self) { relayURL in
@@ -2789,7 +2819,7 @@ private struct NostrRelaySettingsSection: View {
             }
 
             HStack(spacing: 8) {
-                TextField("wss://relay.example", text: $newRelayURL)
+                TextField("wss://server.example", text: $newRelayURL)
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("myProfileNewRelayInput")
@@ -2801,11 +2831,11 @@ private struct NostrRelaySettingsSection: View {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
-                .accessibilityLabel("Add relay")
+                .accessibilityLabel("Add server")
                 .accessibilityIdentifier("myProfileAddRelayButton")
             }
 
-            Button("Reset relays") {
+            Button("Reset servers") {
                 manager.dispatch(.resetNostrRelays)
             }
             .buttonStyle(IrisSecondaryButtonStyle())
@@ -2817,7 +2847,7 @@ private struct NostrRelaySettingsSection: View {
     private func relayRow(_ relayURL: String) -> some View {
         if editingRelayURL == relayURL {
             HStack(spacing: 8) {
-                TextField("Relay URL", text: $editingRelayDraft)
+                TextField("Server URL", text: $editingRelayDraft)
                     .textFieldStyle(.roundedBorder)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("myProfileEditRelayInput-\(relayIdentifier(relayURL))")
@@ -2857,7 +2887,7 @@ private struct NostrRelaySettingsSection: View {
                     Image(systemName: "pencil")
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Edit relay")
+                .accessibilityLabel("Edit server")
 
                 Button(role: .destructive) {
                     manager.dispatch(.removeNostrRelay(relayUrl: relayURL))
@@ -2865,7 +2895,7 @@ private struct NostrRelaySettingsSection: View {
                     Image(systemName: "trash")
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Delete relay")
+                .accessibilityLabel("Delete server")
             }
         }
     }
@@ -2905,7 +2935,7 @@ private struct ProfileEditorCard: View {
             HStack(spacing: 14) {
                 profileAvatar
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(account.displayName.isEmpty ? "Owner profile" : account.displayName)
+                    Text(account.displayName.isEmpty ? "Profile" : account.displayName)
                         .font(.system(.title3, design: .rounded, weight: .bold))
                         .foregroundStyle(palette.textPrimary)
                 }
@@ -2948,11 +2978,9 @@ private struct ProfileEditorCard: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .accessibilityIdentifier("myProfileQrCode")
 
-            MonoValue(label: "Device ID", value: account.deviceNpub)
-
             VStack(spacing: 10) {
                 IrisCopyButton(label: "Copy user ID", value: account.npub, compact: false)
-                IrisCopyButton(label: "Copy device ID", value: account.deviceNpub, compact: false)
+                IrisCopyButton(label: "Copy this device code", value: account.deviceNpub, compact: false)
             }
         }
         .fileImporter(

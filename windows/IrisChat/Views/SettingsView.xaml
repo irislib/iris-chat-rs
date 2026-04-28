@@ -24,7 +24,6 @@
                             <TextBox x:Name="ProfileNameInput" />
                             <TextBlock x:Name="NpubText"
                                        Style="{StaticResource MutedText}"
-                                       FontFamily="Consolas, 'Cascadia Mono', monospace"
                                        Margin="0,6,0,0" />
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
@@ -40,12 +39,19 @@
                         </StackPanel>
                     </Grid>
 
-                    <Button Style="{StaticResource SecondaryButton}"
-                            Click="OnManageDevices"
-                            Margin="0,16,0,0"
-                            HorizontalAlignment="Left">
-                        <TextBlock Text="Manage devices" />
-                    </Button>
+                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="OnManageDevices"
+                                HorizontalAlignment="Left">
+                            <TextBlock Text="Manage devices" />
+                        </Button>
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="OnCopyUserId"
+                                Margin="8,0,0,0"
+                                HorizontalAlignment="Left">
+                            <TextBlock Text="Copy user ID" />
+                        </Button>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 
@@ -69,13 +75,13 @@
                 </StackPanel>
             </Border>
 
-            <!-- relays -->
+            <!-- servers -->
             <Border Background="{StaticResource Panel}"
                     CornerRadius="{StaticResource SectionRadius}"
                     Padding="20"
                     Margin="0,0,0,16">
                 <StackPanel>
-                    <TextBlock Text="Nostr relays"
+                    <TextBlock Text="Message servers"
                                Style="{StaticResource SectionTitleText}"
                                Margin="0,0,0,8" />
                     <ItemsControl x:Name="RelaysList" />
@@ -121,7 +127,7 @@
                     <Button Style="{StaticResource SecondaryButton}"
                             Click="OnExportDevice"
                             HorizontalAlignment="Left">
-                        <TextBlock Text="Copy device key" />
+                        <TextBlock Text="Copy this device's key" />
                     </Button>
                 </StackPanel>
             </Border>

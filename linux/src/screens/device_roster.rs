@@ -51,9 +51,7 @@ fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {
 fn authorize_card(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder().title("Link another device").build();
 
-    let entry = adw::EntryRow::builder()
-        .title("Device code")
-        .build();
+    let entry = adw::EntryRow::builder().title("Link code").build();
     let busy = state.busy.updating_roster;
     let submit = gtk::Button::with_label(if busy { "Linking…" } else { "Link device" });
     submit.add_css_class("suggested-action");

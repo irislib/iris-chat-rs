@@ -50,7 +50,7 @@ pub fn title(screen: &Screen) -> &'static str {
         Screen::ChatList => "Chats",
         Screen::NewChat => "New chat",
         Screen::NewGroup => "New group",
-        Screen::CreateInvite => "Invite link",
+        Screen::CreateInvite => "Invite",
         Screen::JoinInvite => "Join invite",
         Screen::Settings => "Settings",
         Screen::Chat { .. } => "Chat",

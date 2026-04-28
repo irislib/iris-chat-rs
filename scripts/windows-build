@@ -32,7 +32,7 @@ usage: ./scripts/windows-build <command>
 
 commands:
   windows-doctor     Probe the Parallels VM for required toolchain pieces
-  windows-setup      Install the .NET 8 SDK in the VM (one-time, via winget)
+  windows-setup      Install normal Windows build tools in the VM
   windows-sync       Robocopy the repo from the Mac shared mount into the guest
   windows-rust       Build the Rust cdylib inside the VM (x86_64-pc-windows-msvc)
   windows-gen-cs     Generate C# bindings inside the VM via uniffi-bindgen-cs
@@ -51,6 +51,7 @@ env knobs:
   IRIS_WINDOWS_BINDGEN_CS_GIT_REF Tag/branch of NordSec/uniffi-bindgen-cs
   IRIS_WINDOWS_RUST_PROFILE       debug|release (default: debug)
   IRIS_WINDOWS_DOTNET_CONFIG      Debug|Release (default: Debug)
+  IRIS_WINDOWS_SETUP_INSTALL_NSIS Set to 1 to include installer tooling
 EOF
 }
 
@@ -182,9 +183,10 @@ if (Test-Path $vswhere) {
   }
 }
 $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+$dotnetTools = Join-Path $env:USERPROFILE '.dotnet\tools'
 $shimBin = Join-Path $env:USERPROFILE 'bin'
 PS
-  printf '%s\n' "\$env:PATH = \$cargoBin + ';' + \$shimBin + ';' + ${llvm_quoted} + ';' + \$env:PATH"
+  printf '%s\n' "\$env:PATH = \$cargoBin + ';' + \$dotnetTools + ';' + \$shimBin + ';' + ${llvm_quoted} + ';' + \$env:PATH"
 }
 
 run_doctor() {
@@ -222,6 +224,8 @@ try {
   \$dotnetVersion = (dotnet --info | Select-String -Pattern 'Version:' | Select-Object -First 1).Line.Trim()
   Write-Output ("[ok] dotnet: {0}" -f \$dotnetVersion)
 } catch { Write-Output ("[missing] dotnet: {0}" -f \$_.Exception.Message) }
+try { Write-Output ("[ok] csharpier: {0}" -f ((csharpier --version 2>&1 | Out-String).Trim())) }
+catch { Write-Output ("[missing] csharpier: {0}" -f \$_.Exception.Message) }
 try { Write-Output ("[ok] msbuild link.exe (x64 host -> x64 target): {0}" -f (Get-Command link.exe -ErrorAction Stop).Source) }
 catch { Write-Output ("[missing] msbuild link.exe (x64 host -> x64 target): {0}" -f \$_.Exception.Message) }
 try {
@@ -438,12 +442,15 @@ run_setup() {
   require_macos
   local vm
   vm="$(detect_vm_name)"
+  local install_nsis
+  install_nsis="${IRIS_WINDOWS_SETUP_INSTALL_NSIS:-0}"
 
-  ps_run "$vm" "$(cat <<'PS'
+  ps_run "$vm" "$(printf '$env:IRIS_WINDOWS_SETUP_INSTALL_NSIS = %s\n' "$(ps_quote "$install_nsis")"; cat <<'PS'
 $ErrorActionPreference = 'Continue'
+$dotnetTools = Join-Path $env:USERPROFILE '.dotnet\tools'
+$env:PATH = $dotnetTools + ';' + $env:PATH
 $packages = @(
-  @{ id = 'Microsoft.DotNet.SDK.8'; check = { Get-Command dotnet -ErrorAction SilentlyContinue } },
-  @{ id = 'NSIS.NSIS';              check = { Get-Command makensis.exe -ErrorAction SilentlyContinue } }
+  @{ id = 'Microsoft.DotNet.SDK.8'; check = { Get-Command dotnet -ErrorAction SilentlyContinue } }
 )
 foreach ($pkg in $packages) {
   if (& $pkg.check) {
@@ -455,6 +462,28 @@ foreach ($pkg in $packages) {
   if ($LASTEXITCODE -ne 0) {
     throw ("winget install failed for {0} (exit {1})" -f $pkg.id, $LASTEXITCODE)
   }
+}
+if (-not (Get-Command csharpier -ErrorAction SilentlyContinue)) {
+  Write-Output "[install] csharpier"
+  dotnet tool install -g csharpier
+  if ($LASTEXITCODE -ne 0) {
+    throw ("dotnet tool install failed for csharpier (exit {0})" -f $LASTEXITCODE)
+  }
+} else {
+  Write-Output "[skip] csharpier already installed"
+}
+if ($env:IRIS_WINDOWS_SETUP_INSTALL_NSIS -eq '1') {
+  if (Get-Command makensis.exe -ErrorAction SilentlyContinue) {
+    Write-Output "[skip] NSIS.NSIS already installed"
+  } else {
+    Write-Output "[install] NSIS.NSIS"
+    winget install --id NSIS.NSIS --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+    if ($LASTEXITCODE -ne 0) {
+      throw ("winget install failed for NSIS.NSIS (exit {0})" -f $LASTEXITCODE)
+    }
+  }
+} else {
+  Write-Output "[skip] NSIS.NSIS (set IRIS_WINDOWS_SETUP_INSTALL_NSIS=1 for installer builds)"
 }
 Write-Output 'Setup complete. You may need a new shell session for PATH changes to take effect.'
 PS

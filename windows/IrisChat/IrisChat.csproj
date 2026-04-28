@@ -23,6 +23,7 @@
        Generated C# bindings under Bindings/ are picked up by the SDK's default
        Compile glob — no explicit ItemGroup needed. -->
   <ItemGroup>
+    <Resource Include="Resources\IrisLogo.png" />
     <Content Include="Frameworks\iris_chat_core.dll" Condition="Exists('Frameworks\iris_chat_core.dll')">
       <Link>iris_chat_core.dll</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

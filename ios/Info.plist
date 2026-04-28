@@ -25,7 +25,7 @@
   <key>ITSAppUsesNonExemptEncryption</key>
   <false/>
   <key>NSCameraUsageDescription</key>
-  <string>Scan QR codes to add devices and members.</string>
+  <string>Scan codes to link devices and add members.</string>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>Attach photos and videos to your messages.</string>
   <key>NSPhotoLibraryAddUsageDescription</key>

@@ -60,8 +60,7 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
     });
     group.add(&url);
 
-    let key = adw::EntryRow::builder().title("HMAC key (hex)").build();
-    key.set_text(&prefs.image_proxy_key_hex);
+    let key = adw::EntryRow::builder().title("Proxy key").build();
     let manager_for_key = manager.clone();
     key.connect_apply(move |row| {
         manager_for_key.dispatch(AppAction::SetImageProxyKeyHex {
@@ -70,8 +69,7 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
     });
     group.add(&key);
 
-    let salt = adw::EntryRow::builder().title("Salt (hex)").build();
-    salt.set_text(&prefs.image_proxy_salt_hex);
+    let salt = adw::EntryRow::builder().title("Proxy salt").build();
     let manager_for_salt = manager.clone();
     salt.connect_apply(move |row| {
         manager_for_salt.dispatch(AppAction::SetImageProxySaltHex {
@@ -198,8 +196,8 @@ fn profile_group(
     group.add(&name_row);
 
     let qr_row = adw::ActionRow::builder()
-        .title("Show my QR")
-        .subtitle("Show this QR to link another device or start a chat")
+        .title("Show my code")
+        .subtitle("Show this code to link another device or start a chat")
         .activatable(true)
         .build();
     let qr_icon = gtk::Image::from_icon_name("preferences-other-symbolic");
@@ -315,7 +313,7 @@ fn messaging_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw
 }
 
 fn relays_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Relays").build();
+    let group = adw::PreferencesGroup::builder().title("Message servers").build();
 
     for url in &prefs.nostr_relay_urls {
         let row = adw::ActionRow::builder().title(url).build();
@@ -334,7 +332,7 @@ fn relays_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::P
         group.add(&row);
     }
 
-    let add_row = adw::EntryRow::builder().title("Add relay").build();
+    let add_row = adw::EntryRow::builder().title("Add server").build();
     let add_button = gtk::Button::from_icon_name("list-add-symbolic");
     add_button.add_css_class("flat");
     add_button.set_valign(gtk::Align::Center);
@@ -414,7 +412,7 @@ fn about_group(state: &AppState) -> adw::PreferencesGroup {
         let status = adw::ActionRow::builder()
             .title("Network")
             .subtitle(format!(
-                "{} · {} relays · {} events",
+                "{} · {} servers · {} updates",
                 if net.syncing { "syncing" } else { "idle" },
                 net.relay_urls.len(),
                 net.recent_event_count

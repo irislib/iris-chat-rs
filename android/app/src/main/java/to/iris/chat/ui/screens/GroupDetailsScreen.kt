@@ -349,7 +349,7 @@ fun GroupDetailsScreen(
                             },
                         )
                         IrisSecondaryButton(
-                            text = "Scan QR",
+                            text = "Scan code",
                             onClick = { showScanner = true },
                             modifier = Modifier.testTag("groupDetailsScanQrButton"),
                             icon = {
@@ -475,7 +475,7 @@ fun GroupDetailsScreen(
             onScanned = { scanned ->
                 val normalized = normalizePeerInput(scanned)
                 if (!isValidPeerInput(normalized)) {
-                    "Scanned QR did not contain a valid owner public key."
+                    "That code or user ID is not valid."
                 } else {
                     memberInput = normalized
                     showScanner = false

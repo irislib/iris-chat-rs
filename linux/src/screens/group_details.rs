@@ -344,7 +344,7 @@ fn add_members_card(
         let mut row_widgets: Vec<adw::ActionRow> = Vec::with_capacity(candidates.len());
         for chat in &candidates {
             let title = if chat.display_name.trim().is_empty() {
-                chat.chat_id.clone()
+                "Iris user".to_string()
             } else {
                 chat.display_name.clone()
             };

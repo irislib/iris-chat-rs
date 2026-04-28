@@ -47,7 +47,7 @@ func resolveDeviceAuthorizationInput(
         if !acceptedOwnerInputs.contains(normalizedOwner) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput: "",
-                errorMessage: "This QR is for a different account."
+                errorMessage: "This code is for a different account."
             )
         }
 
@@ -55,7 +55,7 @@ func resolveDeviceAuthorizationInput(
         if !isValidPeerInput(input: normalizedDevice) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput: "",
-                errorMessage: "That QR does not contain a valid device code."
+                errorMessage: "That code is not valid."
             )
         }
         return ResolvedDeviceAuthorizationInput(deviceInput: normalizedDevice, errorMessage: nil)
@@ -68,7 +68,7 @@ func resolveDeviceAuthorizationInput(
 
     return ResolvedDeviceAuthorizationInput(
         deviceInput: "",
-        errorMessage: "Not a valid device code."
+        errorMessage: "Not a valid link code."
     )
 }
 
@@ -92,7 +92,7 @@ struct QrCodeImage: View {
         } else {
             Color.secondary.opacity(0.1)
                 .frame(width: size, height: size)
-                .overlay(Text("QR unavailable").font(.footnote))
+                .overlay(Text("Code unavailable").font(.footnote))
         }
     }
 
@@ -207,7 +207,7 @@ struct QrScannerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("QR scanning is not wired for macOS yet.")
+            Text("Scanning is not available on macOS yet.")
                 .font(.system(.title3, design: .rounded, weight: .bold))
             Text("Paste the code instead.")
                 .font(.system(.body, design: .rounded))

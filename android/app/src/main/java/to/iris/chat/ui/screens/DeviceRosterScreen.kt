@@ -40,6 +40,7 @@ import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
+import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 
 @Composable
@@ -48,6 +49,7 @@ fun DeviceRosterScreen(
     appState: AppState,
 ) {
     val roster = appState.deviceRoster
+    val clipboard = rememberIrisClipboard()
     var deviceInput by remember { mutableStateOf("") }
     var showScanner by remember { mutableStateOf(false) }
     val resolvedInput =
@@ -111,23 +113,15 @@ fun DeviceRosterScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
                 )
-                Text(
-                    text = "User ID",
-                    style = MaterialTheme.typography.titleSmall,
+                IrisSecondaryButton(
+                    text = "Copy user ID",
+                    onClick = { clipboard.setText("User ID", roster.ownerNpub) },
+                    modifier = Modifier.fillMaxWidth().testTag("deviceRosterOwnerNpub"),
                 )
-                Text(
-                    text = roster.ownerNpub,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.testTag("deviceRosterOwnerNpub"),
-                )
-                Text(
-                    text = "Device ID",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = roster.currentDeviceNpub,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.testTag("deviceRosterCurrentDeviceNpub"),
+                IrisSecondaryButton(
+                    text = "Copy this device code",
+                    onClick = { clipboard.setText("Link code", roster.currentDeviceNpub) },
+                    modifier = Modifier.fillMaxWidth().testTag("deviceRosterCurrentDeviceNpub"),
                 )
             }
 
@@ -139,7 +133,7 @@ fun DeviceRosterScreen(
                 Text(
                     text =
                         if (roster.canManageDevices) {
-                            "Scan the QR from the device you want to link, or paste its code."
+                            "Scan the code from the device you want to link, or paste it."
                         } else if (isCurrentDeviceRegistered) {
                             "This device can view the list but cannot change it."
                         } else {
@@ -159,7 +153,7 @@ fun DeviceRosterScreen(
                                 .testTag("deviceRosterAddInput"),
                         placeholder = {
                             Text(
-                                text = "Device code",
+                                text = "Link code",
                                 color = IrisTheme.palette.muted,
                             )
                         },
@@ -186,7 +180,7 @@ fun DeviceRosterScreen(
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         IrisSecondaryButton(
-                            text = "Scan QR",
+                            text = "Scan code",
                             onClick = { showScanner = true },
                             modifier = Modifier.testTag("deviceRosterScanButton"),
                             icon = {
@@ -402,7 +396,7 @@ private fun deviceDisplaySubtitle(device: DeviceEntrySnapshot): String {
         } else {
             "Iris Chat"
         }
-    return "$clientLabel - ${device.deviceNpub}"
+    return clientLabel
 }
 
 private fun currentDeviceLabel(): String {
@@ -455,7 +449,7 @@ private fun resolveDeviceAuthorizationInput(
         if (normalizedOwner !in acceptedOwnerInputs) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput = "",
-                errorMessage = "This QR is for a different account.",
+                errorMessage = "This code is for a different account.",
             )
         }
 
@@ -463,7 +457,7 @@ private fun resolveDeviceAuthorizationInput(
         if (!isValidPeerInput(normalizedDevice)) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput = "",
-                errorMessage = "That QR does not contain a valid device code.",
+                errorMessage = "That code is not valid.",
             )
         }
         return ResolvedDeviceAuthorizationInput(deviceInput = normalizedDevice, errorMessage = null)
@@ -475,7 +469,7 @@ private fun resolveDeviceAuthorizationInput(
     } else {
         ResolvedDeviceAuthorizationInput(
             deviceInput = "",
-            errorMessage = "Not a valid device code.",
+            errorMessage = "Not a valid link code.",
         )
     }
 }

@@ -45,6 +45,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -70,7 +71,7 @@ import to.iris.chat.ui.theme.IrisTheme
 private const val IrisSourceUrl =
     "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
 private const val IrisSourceLabel =
-    "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
+    "git.iris.to/iris-chat-rs"
 private const val NotificationsServerDefault = "https://notifications.iris.to"
 private const val NotificationsServerProjectUrl = "https://github.com/mmalmi/nostr-notification-server"
 private const val NotificationsServerProjectLabel = "github.com/mmalmi/nostr-notification-server"
@@ -205,7 +206,7 @@ fun MyProfileSheet(
                     )
                     Column {
                         Text(
-                            text = displayName.ifBlank { "Owner profile" },
+                            text = displayName.ifBlank { "Profile" },
                             style = MaterialTheme.typography.headlineSmall,
                         )
                         Text(
@@ -251,7 +252,7 @@ fun MyProfileSheet(
                     modifier = Modifier.testTag("myProfileSaveProfileButton"),
                 )
                 Text(
-                    text = "Scan this QR on another device to link it.",
+                    text = "Scan this code on another device to link it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
                 )
@@ -275,7 +276,7 @@ fun MyProfileSheet(
                     if (qrBitmap != null) {
                         Image(
                             bitmap = qrBitmap.asImageBitmap(),
-                            contentDescription = "My user ID QR code",
+                            contentDescription = "My user ID code",
                             modifier =
                                 Modifier
                                     .size(260.dp)
@@ -290,8 +291,8 @@ fun MyProfileSheet(
                     Icon(imageVector = IrisIcons.Copy, contentDescription = null)
                 }
                 IrisInlineAction(
-                    text = "Copy device ID",
-                    onClick = { clipboard.setText("Device ID", deviceNpub) },
+                    text = "Copy this device code",
+                    onClick = { clipboard.setText("Link code", deviceNpub) },
                 ) {
                     Icon(imageVector = IrisIcons.Copy, contentDescription = null)
                 }
@@ -367,8 +368,9 @@ fun MyProfileSheet(
                     onValueChange = { value ->
                         appManager.dispatch(AppAction.SetImageProxyKeyHex(value))
                     },
-                    label = { Text("Key hex") },
+                    label = { Text("Proxy key") },
                     singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxyKeyInput"),
                 )
                 TextField(
@@ -376,8 +378,9 @@ fun MyProfileSheet(
                     onValueChange = { value ->
                         appManager.dispatch(AppAction.SetImageProxySaltHex(value))
                     },
-                    label = { Text("Salt hex") },
+                    label = { Text("Proxy salt") },
                     singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
                     modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxySaltInput"),
                 )
                 IrisSecondaryButton(
@@ -500,7 +503,7 @@ fun MyProfileSheet(
                     )
                 }
                 IrisSecondaryButton(
-                    text = "Export device key",
+                    text = "Export this device's key",
                     onClick = { pendingSecretExport = SecretExportKind.Device },
                     modifier = Modifier.testTag("myProfileExportDeviceKeyButton"),
                     icon = {
@@ -514,28 +517,7 @@ fun MyProfileSheet(
 
             IrisSectionCard {
                 Text(
-                    text = "User ID",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    npub,
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.testTag("myProfileNpubValue"),
-                )
-                Text(
-                    text = "Current device ID",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = deviceNpub,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                )
-            }
-
-            IrisSectionCard {
-                Text(
-                    text = "Nostr relays",
+                    text = "Message servers",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 relayUrls.forEach { relayUrl ->
@@ -600,14 +582,14 @@ fun MyProfileSheet(
                                     editingRelayDraft = relayUrl
                                 },
                             ) {
-                                Icon(IrisIcons.Edit, contentDescription = "Edit relay")
+                                Icon(IrisIcons.Edit, contentDescription = "Edit server")
                             }
                             IconButton(
                                 onClick = {
                                     appManager.dispatch(AppAction.RemoveNostrRelay(relayUrl))
                                 },
                             ) {
-                                Icon(IrisIcons.DeleteForever, contentDescription = "Delete relay")
+                                Icon(IrisIcons.DeleteForever, contentDescription = "Delete server")
                             }
                         }
                     }
@@ -620,7 +602,7 @@ fun MyProfileSheet(
                     TextField(
                         value = newRelayUrl,
                         onValueChange = { newRelayUrl = it },
-                        label = { Text("Relay URL") },
+                        label = { Text("Server URL") },
                         singleLine = true,
                         modifier = Modifier.weight(1f).testTag("myProfileNewRelayInput"),
                     )
@@ -634,7 +616,7 @@ fun MyProfileSheet(
                     )
                 }
                 IrisSecondaryButton(
-                    text = "Reset relays",
+                    text = "Reset servers",
                     onClick = { appManager.dispatch(AppAction.ResetNostrRelays) },
                     modifier = Modifier.testTag("myProfileResetRelaysButton"),
                 )
@@ -649,25 +631,14 @@ fun MyProfileSheet(
                     text = "Build ${appManager.buildSummary()}",
                     style = MaterialTheme.typography.bodyMedium,
                 )
-                Text(
-                    text = "Relay set ${appManager.relaySetId()}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                )
                 networkStatus?.let { status ->
                     Text(
                         text =
                             "Network ${if (status.syncing) "syncing" else "idle"} · " +
-                                "${status.relayUrls.size} relays · ${status.recentEventCount} events",
+                                "${status.relayUrls.size} servers · ${status.recentEventCount} updates",
                         style = MaterialTheme.typography.bodySmall,
                         color = IrisTheme.palette.muted,
                         modifier = Modifier.testTag("myProfileNetworkStatusValue"),
-                    )
-                    Text(
-                        text = status.relayUrls.joinToString(", "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = IrisTheme.palette.muted,
-                        modifier = Modifier.testTag("myProfileRelayUrlsValue"),
                     )
                     status.lastDebugCategory?.let { category ->
                         Text(
@@ -727,7 +698,7 @@ fun MyProfileSheet(
                     color = MaterialTheme.colorScheme.error,
                 )
                 Text(
-                    text = "Local identity, keys, messages, and cached files are removed from this device.",
+                    text = "Your account, secret keys, messages, and cached files are removed from this device.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
                     modifier = Modifier.testTag("myProfileDangerZoneText"),
@@ -773,7 +744,7 @@ fun MyProfileSheet(
             title = { Text("Delete All Data?") },
             text = {
                 Text(
-                    "This permanently deletes your identity, keys, messages, and cached files from this device. This action cannot be undone.",
+                    "This permanently deletes your account, secret keys, messages, and cached files from this device. This action cannot be undone.",
                 )
             },
             dismissButton = {
@@ -804,14 +775,14 @@ fun MyProfileSheet(
         AlertDialog(
             onDismissRequest = { pendingSecretExport = null },
             title = {
-                Text(if (isDeviceExport) "Export Device Key" else "Export Secret Key")
+                Text(if (isDeviceExport) "Export This Device's Key" else "Export Secret Key")
             },
             text = {
                 Text(
                     if (isDeviceExport) {
-                        "This device key only unlocks this linked device. Copy it from this device?"
+                        "This key only unlocks this device. Copy it now?"
                     } else {
-                        "Your secret key gives full access to your identity. Never share it with anyone. Store it securely."
+                        "Your secret key gives full access to your account. Never share it with anyone. Store it securely."
                     },
                 )
             },
@@ -847,7 +818,7 @@ fun MyProfileSheet(
                         },
                     ),
                 ) {
-                    Text(if (isDeviceExport) "Copy Device Key" else "Copy")
+                    Text(if (isDeviceExport) "Copy Key" else "Copy")
                 }
             },
         )

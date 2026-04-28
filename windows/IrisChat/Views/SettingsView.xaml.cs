@@ -30,11 +30,11 @@ public partial class SettingsView : UserControl
         var account = App.CurrentManager.Account;
         if (account != null)
         {
-            ProfileAvatar.Label = string.IsNullOrEmpty(account.displayName) ? account.npub : account.displayName;
+            ProfileAvatar.Label = string.IsNullOrEmpty(account.displayName) ? "Iris user" : account.displayName;
             ProfileAvatar.PictureUrl = account.pictureUrl;
             if (!ProfileNameInput.IsKeyboardFocused)
                 ProfileNameInput.Text = account.displayName;
-            NpubText.Text = account.npub;
+            NpubText.Text = "Signed in";
             ExportOwnerKeyButton.Visibility = account.hasOwnerSigningAuthority
                 ? Visibility.Visible
                 : Visibility.Collapsed;
@@ -52,13 +52,13 @@ public partial class SettingsView : UserControl
         RebuildRelays(prefs);
 
         VersionText.Text = $"Version {App.CurrentManager.BuildSummary()}";
-        RelaySetText.Text = $"Relay set {App.CurrentManager.RelaySetIdText()}";
+        RelaySetText.Text = string.Empty;
 
         var net = App.CurrentManager.NetworkStatus;
         if (net != null)
         {
             NetworkText.Text =
-                $"Network {(net.syncing ? "syncing" : "idle")} · {net.relayUrls.Length} relays · {net.recentEventCount} events";
+                $"Network {(net.syncing ? "syncing" : "idle")} · {net.relayUrls.Length} servers · {net.recentEventCount} updates";
         }
         else
         {
@@ -164,6 +164,12 @@ public partial class SettingsView : UserControl
 
     private void OnManageDevices(object sender, RoutedEventArgs e) =>
         App.CurrentManager.Push(new Screen.DeviceRoster());
+
+    private void OnCopyUserId(object sender, RoutedEventArgs e)
+    {
+        var npub = App.CurrentManager.Account?.npub;
+        if (!string.IsNullOrEmpty(npub)) App.CurrentManager.CopyToClipboard(npub);
+    }
 
     private void OnExportOwner(object sender, RoutedEventArgs e)
     {

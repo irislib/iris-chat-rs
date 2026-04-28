@@ -18,7 +18,7 @@
                                HorizontalAlignment="Center"
                                Margin="0,0,0,6" />
                     <TextBlock x:Name="NewChatHint"
-                               Text="Share an invite link to start a chat"
+                               Text="Share an invite to start a chat"
                                Foreground="{StaticResource TextMuted}"
                                FontSize="12"
                                HorizontalAlignment="Center"
@@ -39,9 +39,9 @@
                                 Style="{StaticResource SecondaryButton}"
                                 Padding="14,10"
                                 Margin="10,0,0,0"
-                                ToolTip="Show QR code"
+                                ToolTip="Show code"
                                 Click="OnShowQr">
-                            <TextBlock Text="QR" FontWeight="Bold" />
+                            <TextBlock Text="Code" FontWeight="Bold" />
                         </Button>
                     </Grid>
 
@@ -82,7 +82,7 @@
                     <TextBox x:Name="PeerInput"
                              TextChanged="OnPeerInputChanged" />
                     <TextBlock Style="{StaticResource MutedText}"
-                               Text="Paste a user ID or invite link."
+                               Text="Paste a user ID or invite."
                                Margin="2,8,2,0" />
                 </StackPanel>
             </Border>

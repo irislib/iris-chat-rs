@@ -106,7 +106,7 @@ public partial class GroupDetailsView : UserControl
         };
         info.Children.Add(new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(chat.displayName) ? Shorten(chat.chatId) : chat.displayName,
+            Text = string.IsNullOrWhiteSpace(chat.displayName) ? "Iris user" : chat.displayName,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
         });
@@ -151,12 +151,6 @@ public partial class GroupDetailsView : UserControl
         if (string.IsNullOrEmpty(ownerHex)) return;
         App.CurrentManager.AddGroupMembers(groupId, new[] { ownerHex });
         AddMemberInput.Clear();
-    }
-
-    private static string Shorten(string value)
-    {
-        if (string.IsNullOrEmpty(value) || value.Length <= 18) return value ?? string.Empty;
-        return $"{value[..10]}…{value[^6..]}";
     }
 
     private FrameworkElement BuildMember(GroupDetailsSnapshot details, GroupMemberSnapshot m)

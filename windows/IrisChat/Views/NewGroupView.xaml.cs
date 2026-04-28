@@ -98,7 +98,7 @@ public partial class NewGroupView : UserControl
         {
             var chat = KnownUsers.FirstOrDefault(c =>
                 string.Equals(c.chatId, owner, StringComparison.OrdinalIgnoreCase));
-            var label = !string.IsNullOrWhiteSpace(chat?.displayName) ? chat!.displayName : Shorten(owner);
+            var label = !string.IsNullOrWhiteSpace(chat?.displayName) ? chat!.displayName : "Iris user";
             SelectedMembersList.Items.Add(BuildSelectedRow(owner, label));
         }
     }
@@ -141,7 +141,7 @@ public partial class NewGroupView : UserControl
         };
         info.Children.Add(new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(chat.displayName) ? Shorten(chat.chatId) : chat.displayName,
+            Text = string.IsNullOrWhiteSpace(chat.displayName) ? "Iris user" : chat.displayName,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
         });
@@ -217,12 +217,6 @@ public partial class NewGroupView : UserControl
             Padding = new Thickness(10, 6, 10, 6),
             Child = grid,
         };
-    }
-
-    private static string Shorten(string value)
-    {
-        if (value.Length <= 18) return value;
-        return $"{value[..10]}…{value[^6..]}";
     }
 
     private void OnCreate(object sender, RoutedEventArgs e)

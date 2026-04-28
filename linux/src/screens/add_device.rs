@@ -15,7 +15,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&header);
 
     let hint = gtk::Label::new(Some(
-        "Scan the account QR from your signed-in device, or paste its user ID.",
+        "Scan the account code from your signed-in device, or paste its user ID.",
     ));
     hint.add_css_class("dim-label");
     hint.set_halign(gtk::Align::Start);
@@ -26,7 +26,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&owner);
 
     let owner_for_scan = owner.clone();
-    let scan = scan_qr_button("Scan account QR", move |text| {
+    let scan = scan_qr_button("Scan account code", move |text| {
         owner_for_scan.set_text(&text);
     });
     container.append(&scan);

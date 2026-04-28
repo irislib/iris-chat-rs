@@ -36,7 +36,7 @@ pub fn decode_image_file(path: &Path) -> Option<String> {
 
 pub fn pick_and_decode<F: Fn(String) + 'static>(parent: Option<&gtk::Window>, on_result: F) {
     let dialog = gtk::FileDialog::builder()
-        .title("Scan QR from image")
+        .title("Scan code from image")
         .build();
     let on_result = Rc::new(on_result);
     dialog.open(parent, gtk::gio::Cancellable::NONE, move |result| {
@@ -78,7 +78,7 @@ pub fn open_scanner<F: Fn(String) + 'static>(parent: Option<&gtk::Window>, on_re
     }
 
     let dialog = adw::Dialog::builder()
-        .title("Scan QR")
+        .title("Scan code")
         .content_width(360)
         .build();
 
@@ -95,7 +95,7 @@ pub fn open_scanner<F: Fn(String) + 'static>(parent: Option<&gtk::Window>, on_re
     picture.add_css_class("card");
     content.append(&picture);
 
-    let status = gtk::Label::new(Some("Point the camera at a QR code"));
+    let status = gtk::Label::new(Some("Point the camera at a code"));
     status.add_css_class("dim-label");
     content.append(&status);
 

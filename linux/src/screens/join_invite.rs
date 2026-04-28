@@ -15,7 +15,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let invite = entry("Invite link");
+    let invite = entry("Invite");
     container.append(&invite);
 
     let paste = pill_button("Paste");
@@ -31,7 +31,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&paste);
 
     let invite_for_scan = invite.clone();
-    let scan = scan_qr_button("Scan QR", move |text| {
+    let scan = scan_qr_button("Scan code", move |text| {
         invite_for_scan.set_text(&text);
     });
     container.append(&scan);

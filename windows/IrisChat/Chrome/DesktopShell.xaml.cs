@@ -51,7 +51,7 @@ public partial class DesktopShell : UserControl
         if (account != null)
         {
             ProfileAvatar.Label = string.IsNullOrEmpty(account.displayName)
-                ? account.npub
+                ? "Iris user"
                 : account.displayName;
             ProfileAvatar.PictureUrl = account.pictureUrl;
         }

@@ -85,7 +85,7 @@ fun CreateInviteScreen(
             if (qrBitmap != null && inviteUrl != null) {
                 Image(
                     bitmap = qrBitmap.asImageBitmap(),
-                    contentDescription = "Invite QR code",
+                    contentDescription = "Invite code",
                     modifier =
                         Modifier
                             .align(Alignment.CenterHorizontally)
@@ -97,7 +97,7 @@ fun CreateInviteScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     IrisSecondaryButton(
                         text = "Copy",
-                        onClick = { clipboard.setText("Invite link", inviteUrl) },
+                        onClick = { clipboard.setText("Invite", inviteUrl) },
                         modifier = Modifier.weight(1f).testTag("createInviteCopyButton"),
                         icon = {
                             Icon(imageVector = IrisIcons.Copy, contentDescription = null)
@@ -178,7 +178,7 @@ fun JoinInviteScreen(
                             .testTag("joinInviteInput"),
                     placeholder = {
                         Text(
-                            text = "Invite link",
+                            text = "Invite",
                             color = IrisTheme.palette.muted,
                         )
                     },
@@ -206,7 +206,7 @@ fun JoinInviteScreen(
                         },
                     )
                     IrisSecondaryButton(
-                        text = "Scan QR",
+                        text = "Scan code",
                         onClick = { showScanner = true },
                         modifier = Modifier.testTag("joinInviteScanQrButton"),
                         icon = {

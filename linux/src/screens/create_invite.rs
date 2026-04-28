@@ -16,7 +16,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         manager.dispatch(AppAction::CreatePublicInvite);
     }
 
-    let title = gtk::Label::new(Some("Invite link"));
+    let title = gtk::Label::new(Some("Invite"));
     title.add_css_class("title-2");
     title.set_halign(gtk::Align::Start);
     container.append(&title);
@@ -24,7 +24,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     if let Some(invite) = state.public_invite.as_ref() {
         container.append(&qr::build(&invite.url, 240));
 
-        let copy = primary_button("Copy link");
+        let copy = primary_button("Copy");
         copy.set_halign(gtk::Align::Center);
         copy.set_width_request(220);
         let invite_url = invite.url.clone();

@@ -112,10 +112,7 @@ public partial class ChatView : UserControl
 
     private string AuthorLabel(string pubkeyHex)
     {
-        // Best-effort: shorten the hex pubkey. Group member display names are
-        // available via group_details when on the group's members tab.
-        if (string.IsNullOrEmpty(pubkeyHex)) return string.Empty;
-        return pubkeyHex.Length <= 10 ? pubkeyHex : $"{pubkeyHex.Substring(0, 6)}…{pubkeyHex.Substring(pubkeyHex.Length - 4)}";
+        return string.IsNullOrEmpty(pubkeyHex) ? string.Empty : "Iris user";
     }
 
     private void OnSubmit(string text, IList<string> stagedAttachments)

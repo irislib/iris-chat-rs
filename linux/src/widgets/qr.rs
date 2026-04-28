@@ -15,7 +15,7 @@ pub fn build(text: &str, size: i32) -> gtk::Widget {
         .find_map(|level| QrCode::with_error_correction_level(text.as_bytes(), level).ok());
 
     let Some(code) = code else {
-        let label = gtk::Label::new(Some("QR encoding failed"));
+        let label = gtk::Label::new(Some("Code unavailable"));
         label.add_css_class("dim-label");
         label.set_halign(gtk::Align::Center);
         return label.upcast();

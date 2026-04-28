@@ -201,12 +201,14 @@ run_macos_xcodeproj() {
 }
 
 run_macos_build() {
+  local host_arch
+  host_arch="$(uname -m)"
   run_macos_xcframework
   run_macos_xcodeproj
   xcodebuild \
     -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
     -scheme IrisChatMac \
-    -destination 'platform=macOS' \
+    -destination "platform=macOS,arch=$host_arch" \
     build
 }
 

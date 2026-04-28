@@ -174,7 +174,7 @@ where
     F: Fn(String) + Clone + 'static,
 {
     let title = if chat.display_name.trim().is_empty() {
-        chat.chat_id.clone()
+        "Iris user".to_string()
     } else {
         chat.display_name.clone()
     };

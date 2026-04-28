@@ -79,7 +79,7 @@ fun QrScannerDialog(
         rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
             hasPermission = granted
             if (!granted) {
-                error = "Camera permission is required to scan QR codes."
+                error = "Camera permission is required to scan codes."
             }
         }
 
@@ -92,7 +92,7 @@ fun QrScannerDialog(
     if (!hasPermission) {
         AlertDialog(
             onDismissRequest = onDismiss,
-            title = { Text("Scan QR") },
+            title = { Text("Scan code") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -213,7 +213,7 @@ fun QrScannerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Scan QR") },
+        title = { Text("Scan code") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 error?.let {

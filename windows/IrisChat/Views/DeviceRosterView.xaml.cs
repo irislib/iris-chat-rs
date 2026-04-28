@@ -65,8 +65,7 @@ public partial class DeviceRosterView : UserControl
         var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var primary = new TextBlock
         {
-            Text = TruncateNpub(d.deviceNpub) +
-                   (d.isCurrentDevice ? "  (this device)" : string.Empty),
+            Text = d.isCurrentDevice ? "This device" : "Linked device",
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
             FontWeight = FontWeights.SemiBold,
         };
@@ -114,12 +113,6 @@ public partial class DeviceRosterView : UserControl
             Margin = new Thickness(0, 0, 0, 8),
             Child = grid,
         };
-    }
-
-    private static string TruncateNpub(string npub)
-    {
-        if (string.IsNullOrEmpty(npub) || npub.Length < 16) return npub;
-        return $"{npub.Substring(0, 10)}…{npub.Substring(npub.Length - 6)}";
     }
 
     private static string StatusText(DeviceEntrySnapshot d)

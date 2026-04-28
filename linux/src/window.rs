@@ -292,7 +292,7 @@ fn apply_state(
 
 fn build_own_avatar(account: &AccountSnapshot, state: &AppState) -> gtk::Widget {
     let label = if account.display_name.is_empty() {
-        account.npub.as_str()
+        "Iris user"
     } else {
         account.display_name.as_str()
     };

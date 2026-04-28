@@ -15,13 +15,13 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let hint = gtk::Label::new(Some("Paste a user ID or invite link."));
+    let hint = gtk::Label::new(Some("Paste a user ID or invite."));
     hint.add_css_class("dim-label");
     hint.set_halign(gtk::Align::Start);
     hint.set_wrap(true);
     container.append(&hint);
 
-    let peer = entry("User ID or invite link");
+    let peer = entry("User ID or invite");
     container.append(&peer);
 
     let paste = pill_button("Paste");
@@ -37,7 +37,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&paste);
 
     let peer_for_scan = peer.clone();
-    let scan = scan_qr_button("Scan QR", move |text| {
+    let scan = scan_qr_button("Scan code", move |text| {
         peer_for_scan.set_text(&text);
     });
     container.append(&scan);
@@ -96,8 +96,8 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     other_actions.add(&new_group);
 
     let create_invite = adw::ActionRow::builder()
-        .title("Share an invite link")
-        .subtitle("Anyone with the link can chat with you")
+        .title("Share an invite")
+        .subtitle("Anyone with it can chat with you")
         .activatable(true)
         .build();
     let chevron2 = gtk::Image::from_icon_name("go-next-symbolic");
@@ -114,7 +114,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     other_actions.add(&create_invite);
 
     let join_invite = adw::ActionRow::builder()
-        .title("Join with invite link")
+        .title("Join with invite")
         .subtitle("Use a link someone shared with you")
         .activatable(true)
         .build();

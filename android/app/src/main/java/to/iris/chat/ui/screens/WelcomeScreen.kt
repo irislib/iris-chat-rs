@@ -3,15 +3,21 @@ package to.iris.chat.ui.screens
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Devices
+import androidx.compose.material.icons.rounded.Key
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -27,10 +33,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import to.iris.chat.BuildConfig
+import to.iris.chat.R
 import to.iris.chat.core.AppManager
 import to.iris.chat.qr.DeviceApprovalQr
 import to.iris.chat.rust.AppAction
@@ -48,26 +56,33 @@ import to.iris.chat.ui.theme.IrisTheme
 fun WelcomeScreen(
     appManager: AppManager,
 ) {
-    OnboardingColumn {
+    Box(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 28.dp),
+        contentAlignment = Alignment.Center,
+    ) {
         Column(
             modifier = Modifier.fillMaxWidth(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            WelcomeHeroCard(
+            WelcomeHero(
                 appManager = appManager,
                 modifier =
                     Modifier
+                        .widthIn(max = 360.dp)
                         .fillMaxWidth()
-                        .widthIn(max = 520.dp)
                         .testTag("welcomeChooserCard"),
             )
             if (BuildConfig.TRUSTED_TEST_BUILD) {
                 WelcomeTrustedBuildCard(
                     modifier =
                         Modifier
+                            .widthIn(max = 360.dp)
                             .fillMaxWidth()
-                            .widthIn(max = 520.dp)
                             .testTag("welcomeSecondaryCard"),
                 )
             }
@@ -76,21 +91,53 @@ fun WelcomeScreen(
 }
 
 @Composable
-private fun WelcomeHeroCard(
+private fun WelcomeHero(
     appManager: AppManager,
     modifier: Modifier = Modifier,
 ) {
-    IrisSectionCard(modifier = modifier) {
-        Text(
-            text = "Iris Chat",
-            style = MaterialTheme.typography.headlineMedium,
-            fontWeight = FontWeight.Bold,
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        Image(
+            painter = painterResource(id = R.drawable.iris_logo),
+            contentDescription = null,
+            modifier = Modifier.size(132.dp),
         )
 
-        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "iris",
+                style = MaterialTheme.typography.headlineLarge,
+                color = IrisTheme.palette.accent,
+                fontWeight = FontWeight.ExtraBold,
+            )
+            Text(
+                text = " chat",
+                style = MaterialTheme.typography.headlineLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.ExtraBold,
+            )
+        }
+
+        Column(
+            modifier =
+                Modifier
+                    .widthIn(max = 320.dp)
+                    .fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
             IrisPrimaryButton(
                 text = "Create account",
                 onClick = { appManager.pushScreen(Screen.CreateAccount) },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Rounded.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
                 modifier =
                     Modifier
                         .fillMaxWidth()
@@ -99,6 +146,13 @@ private fun WelcomeHeroCard(
             IrisSecondaryButton(
                 text = "Restore account",
                 onClick = { appManager.pushScreen(Screen.RestoreAccount) },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Rounded.Key,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
                 modifier =
                     Modifier
                         .fillMaxWidth()
@@ -107,6 +161,13 @@ private fun WelcomeHeroCard(
             IrisSecondaryButton(
                 text = "Link this device",
                 onClick = { appManager.pushScreen(Screen.AddDevice) },
+                icon = {
+                    Icon(
+                        imageVector = Icons.Rounded.Devices,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
                 modifier =
                     Modifier
                         .fillMaxWidth()
@@ -258,9 +319,9 @@ fun AddDeviceScreen(
             Text(
                 text =
                     if (awaitingApproval) {
-                        "Use your signed-in device to approve this one. If it asks for a code, scan the QR below."
+                        "Use your signed-in device to approve this one. If it asks for a code, scan the code below."
                     } else {
-                        "Scan the account QR from your signed-in device, or paste its user ID."
+                        "Scan the account code from your signed-in device, or paste its user ID."
                     },
                 style = MaterialTheme.typography.bodyMedium,
                 color = IrisTheme.palette.muted,
@@ -287,7 +348,7 @@ fun AddDeviceScreen(
 
                 if (ownerInput.isNotBlank() && !isValidOwnerInput) {
                     Text(
-                        text = "That QR or user ID is not valid.",
+                        text = "That code or user ID is not valid.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -308,7 +369,7 @@ fun AddDeviceScreen(
                                 .testTag("linkOwnerPasteButton"),
                     )
                     IrisSecondaryButton(
-                        text = "Scan account QR",
+                        text = "Scan account code",
                         onClick = { showScanner = true },
                         enabled = !appState.busy.linkingDevice,
                         modifier =
@@ -328,15 +389,21 @@ fun AddDeviceScreen(
                 }
             } else {
                 appState.account?.let { account ->
-                    MonoValue(
-                        label = "User ID",
-                        value = account.npub,
-                        identifier = "awaitingApprovalOwnerNpub",
+                    IrisSecondaryButton(
+                        text = "Copy user ID",
+                        onClick = { clipboard.setText("User ID", account.npub) },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .testTag("awaitingApprovalOwnerNpub"),
                     )
-                    MonoValue(
-                        label = "This device",
-                        value = account.deviceNpub,
-                        identifier = "awaitingApprovalDeviceNpub",
+                    IrisSecondaryButton(
+                        text = "Copy this device code",
+                        onClick = { clipboard.setText("Link code", account.deviceNpub) },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .testTag("awaitingApprovalDeviceNpub"),
                     )
                 }
             }
@@ -367,7 +434,7 @@ fun AddDeviceScreen(
             onScanned = { scanned ->
                 val normalized = normalizePeerInput(scanned)
                 if (!isValidPeerInput(normalized)) {
-                    "That QR or user ID is not valid."
+                    "That code or user ID is not valid."
                 } else {
                     ownerInput = normalized
                     showScanner = false
@@ -405,7 +472,7 @@ private fun AddDeviceQrPanel(
 
     IrisSectionCard(modifier = Modifier.testTag("awaitingApprovalScreen")) {
         Text(
-            text = "Approval QR",
+            text = "Approval code",
             style = MaterialTheme.typography.titleMedium,
         )
         Text(
@@ -420,7 +487,7 @@ private fun AddDeviceQrPanel(
             if (qrBitmap != null) {
                 Image(
                     bitmap = qrBitmap.asImageBitmap(),
-                    contentDescription = "Approval QR code",
+                    contentDescription = "Approval code",
                     modifier =
                         Modifier
                             .size(260.dp)
@@ -430,7 +497,7 @@ private fun AddDeviceQrPanel(
         }
         IrisSecondaryButton(
             text = "Copy approval code",
-            onClick = { clipboard.setText("Approval QR", approvalQrValue) },
+            onClick = { clipboard.setText("Approval code", approvalQrValue) },
             modifier =
                 Modifier
                     .fillMaxWidth()
@@ -473,23 +540,6 @@ private fun OnboardingColumn(
                 .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
         content = content,
-    )
-}
-
-@Composable
-private fun MonoValue(
-    label: String,
-    value: String,
-    identifier: String,
-) {
-    Text(
-        text = label,
-        style = MaterialTheme.typography.titleSmall,
-    )
-    Text(
-        text = value,
-        style = MaterialTheme.typography.bodyMedium,
-        modifier = Modifier.testTag(identifier),
     )
 }
 
