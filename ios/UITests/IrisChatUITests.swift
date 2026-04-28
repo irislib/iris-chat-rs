@@ -158,6 +158,26 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Invalid key."].waitForExistence(timeout: 10))
     }
 
+    func testOnboardingScreensUseHeaderBackOnly() {
+        let app = launchCleanApp()
+
+        assertOnboardingScreenUsesHeaderBack(
+            app,
+            actionIdentifier: "welcomeCreateAction",
+            screenIdentifier: "createAccountScreen"
+        )
+        assertOnboardingScreenUsesHeaderBack(
+            app,
+            actionIdentifier: "welcomeRestoreAction",
+            screenIdentifier: "restoreAccountScreen"
+        )
+        assertOnboardingScreenUsesHeaderBack(
+            app,
+            actionIdentifier: "welcomeAddDeviceAction",
+            screenIdentifier: "addDeviceScreen"
+        )
+    }
+
     func testLogoutReturnsToWelcomeChooser() {
         let app = launchCleanApp()
 
@@ -282,6 +302,22 @@ final class IrisChatUITests: XCTestCase {
 
     private func waitForChatList(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
         waitForAnyElement(app, identifiers: ["chatListNewChatButton", "desktopNewChatRow"], timeout: timeout) != nil
+    }
+
+    private func assertOnboardingScreenUsesHeaderBack(
+        _ app: XCUIApplication,
+        actionIdentifier: String,
+        screenIdentifier: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertTrue(element(app, actionIdentifier).waitForExistence(timeout: 10), file: file, line: line)
+        element(app, actionIdentifier).tap()
+        XCTAssertTrue(element(app, screenIdentifier).waitForExistence(timeout: 10), file: file, line: line)
+        XCTAssertTrue(element(app, "navigationBackButton").waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertFalse(element(app, "onboardingBackButton").exists, file: file, line: line)
+        element(app, "navigationBackButton").tap()
+        XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 10), file: file, line: line)
     }
 
     private func tapNewChat(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {

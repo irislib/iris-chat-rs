@@ -1067,8 +1067,6 @@ struct CreateAccountScreen: View {
 
     var body: some View {
         IrisScrollScreen {
-            onboardingBackButton
-
             IrisSectionCard {
                 Color.clear
                     .frame(height: 0)
@@ -1101,14 +1099,6 @@ struct CreateAccountScreen: View {
             }
         }
     }
-
-    private var onboardingBackButton: some View {
-        Button("Back") {
-            manager.dispatch(.updateScreenStack(stack: []))
-        }
-        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-        .accessibilityIdentifier("onboardingBackButton")
-    }
 }
 
 struct RestoreAccountScreen: View {
@@ -1117,8 +1107,6 @@ struct RestoreAccountScreen: View {
 
     var body: some View {
         IrisScrollScreen {
-            onboardingBackButton
-
             IrisSectionCard {
                 Color.clear
                     .frame(height: 0)
@@ -1144,14 +1132,6 @@ struct RestoreAccountScreen: View {
             }
         }
     }
-
-    private var onboardingBackButton: some View {
-        Button("Back") {
-            manager.dispatch(.updateScreenStack(stack: []))
-        }
-        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-        .accessibilityIdentifier("onboardingBackButton")
-    }
 }
 
 struct AddDeviceScreen: View {
@@ -1163,10 +1143,6 @@ struct AddDeviceScreen: View {
 
     var body: some View {
         IrisScrollScreen {
-            if !awaitingApproval {
-                onboardingBackButton
-            }
-
             linkDeviceCard
                 .frame(maxWidth: 480)
                 .frame(maxWidth: .infinity)
@@ -1237,15 +1213,6 @@ struct AddDeviceScreen: View {
             }
         }
     }
-
-    private var onboardingBackButton: some View {
-        Button("Back") {
-            manager.dispatch(.updateScreenStack(stack: []))
-        }
-        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-        .accessibilityIdentifier("onboardingBackButton")
-    }
-
 }
 
 struct ChatListScreen: View {
