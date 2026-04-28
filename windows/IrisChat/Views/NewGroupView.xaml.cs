@@ -13,6 +13,7 @@ namespace IrisChat.Views;
 public partial class NewGroupView : UserControl
 {
     private readonly HashSet<string> _selectedOwners = new();
+    private string? _selectedPicturePath;
 
     public NewGroupView()
     {
@@ -23,7 +24,7 @@ public partial class NewGroupView : UserControl
             UpdateBusy();
             RebuildKnownUsers();
             RebuildSelected();
-            NameInput.Focus();
+            ShowMembersStep();
         };
         Unloaded += (_, _) => App.CurrentManager.PropertyChanged -= OnChanged;
     }
@@ -37,8 +38,12 @@ public partial class NewGroupView : UserControl
         }
     }
 
-    private void UpdateBusy() =>
+    private void UpdateBusy()
+    {
         CreateButton.IsEnabled = !App.CurrentManager.Busy.creatingGroup;
+        NextButton.IsEnabled = _selectedOwners.Count > 0;
+        NextButtonText.Text = $"Next ({_selectedOwners.Count})";
+    }
 
     private string LocalOwnerHex => App.CurrentManager.Account?.publicKeyHex ?? string.Empty;
 
@@ -79,6 +84,7 @@ public partial class NewGroupView : UserControl
             MemberSearchInput.Clear();
             RebuildSelected();
             RebuildKnownUsers();
+            UpdateBusy();
         }
     }
 
@@ -88,18 +94,21 @@ public partial class NewGroupView : UserControl
         {
             RebuildSelected();
             RebuildKnownUsers();
+            UpdateBusy();
         }
     }
 
     private void RebuildSelected()
     {
         SelectedMembersList.Items.Clear();
+        DetailsSelectedMembersList.Items.Clear();
         foreach (var owner in _selectedOwners.OrderBy(s => s))
         {
             var chat = KnownUsers.FirstOrDefault(c =>
                 string.Equals(c.chatId, owner, StringComparison.OrdinalIgnoreCase));
             var label = !string.IsNullOrWhiteSpace(chat?.displayName) ? chat!.displayName : "Iris user";
             SelectedMembersList.Items.Add(BuildSelectedRow(owner, label));
+            DetailsSelectedMembersList.Items.Add(BuildSelectedRow(owner, label));
         }
     }
 
@@ -224,6 +233,52 @@ public partial class NewGroupView : UserControl
         var name = NameInput.Text?.Trim();
         if (string.IsNullOrEmpty(name)) return;
         if (_selectedOwners.Count == 0) return;
-        App.CurrentManager.CreateGroup(name, _selectedOwners.ToArray());
+        App.CurrentManager.CreateGroup(name, _selectedOwners.ToArray(), _selectedPicturePath);
+    }
+
+    private void OnNext(object sender, RoutedEventArgs e)
+    {
+        if (_selectedOwners.Count == 0) return;
+        ShowDetailsStep();
+    }
+
+    private void OnBackToMembers(object sender, RoutedEventArgs e) => ShowMembersStep();
+
+    private void ShowMembersStep()
+    {
+        TitleText.Text = "Select members";
+        MembersStep.Visibility = Visibility.Visible;
+        DetailsStep.Visibility = Visibility.Collapsed;
+        MemberSearchInput.Focus();
+        UpdateBusy();
+    }
+
+    private void ShowDetailsStep()
+    {
+        TitleText.Text = "Group details";
+        MembersStep.Visibility = Visibility.Collapsed;
+        DetailsStep.Visibility = Visibility.Visible;
+        NameInput.Focus();
+        UpdateBusy();
+    }
+
+    private void OnPickPicture(object sender, RoutedEventArgs e)
+    {
+        var file = PlatformFilePicker.PickImage("Choose group photo");
+        if (string.IsNullOrWhiteSpace(file)) return;
+        _selectedPicturePath = file;
+        SelectedPhotoText.Text = System.IO.Path.GetFileName(file);
+        SelectedPhotoText.Visibility = Visibility.Visible;
+        PhotoButtonText.Text = "Change photo";
+        RemovePhotoButton.Visibility = Visibility.Visible;
+    }
+
+    private void OnRemovePicture(object sender, RoutedEventArgs e)
+    {
+        _selectedPicturePath = null;
+        SelectedPhotoText.Text = string.Empty;
+        SelectedPhotoText.Visibility = Visibility.Collapsed;
+        PhotoButtonText.Text = "Photo";
+        RemovePhotoButton.Visibility = Visibility.Collapsed;
     }
 }

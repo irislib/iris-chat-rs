@@ -263,11 +263,25 @@ public sealed class AppManager : INotifyPropertyChanged
         DispatchToRust(new AppAction.AcceptInvite(t));
     }
 
-    public void CreateGroup(string name, IList<string> memberInputs)
+    public void CreateGroup(string name, IList<string> memberInputs, string? sourcePicturePath = null)
     {
         var n = name.Trim();
         if (string.IsNullOrEmpty(n) || memberInputs == null || memberInputs.Count == 0) return;
-        DispatchToRust(new AppAction.CreateGroup(n, memberInputs.Select(s => s.Trim()).Where(s => s.Length > 0).ToArray()));
+        var members = memberInputs.Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
+        if (!string.IsNullOrWhiteSpace(sourcePicturePath))
+        {
+            try
+            {
+                var staged = _cache.StageOutgoing(sourcePicturePath);
+                DispatchToRust(new AppAction.CreateGroupWithPicture(n, members, staged.Path, staged.Filename));
+                return;
+            }
+            catch
+            {
+                ShowToast("Image could not be opened");
+            }
+        }
+        DispatchToRust(new AppAction.CreateGroup(n, members));
     }
 
     public void UpdateGroupName(string groupId, string name) =>

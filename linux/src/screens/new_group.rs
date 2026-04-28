@@ -10,35 +10,29 @@ use crate::screens::{entry, primary_button, screen_container};
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
 
-    let header = gtk::Label::new(Some("Create group"));
+    let header = gtk::Label::new(Some("Select members"));
     header.add_css_class("title-2");
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let name = entry("Group name");
-    container.append(&name);
-
-    let add_member_label = gtk::Label::new(Some("Add members"));
-    add_member_label.add_css_class("heading");
-    add_member_label.set_halign(gtk::Align::Start);
-    add_member_label.set_margin_top(8);
-    container.append(&add_member_label);
+    let members_step = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    let details_step = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    details_step.set_visible(false);
+    container.append(&members_step);
+    container.append(&details_step);
 
     let member_input = entry("Search or paste user ID");
-    container.append(&member_input);
+    members_step.append(&member_input);
 
-    let add_member_btn = gtk::Button::with_label("Add member");
+    let add_member_btn = gtk::Button::with_label("Add");
     add_member_btn.add_css_class("pill");
-    container.append(&add_member_btn);
+    members_step.append(&add_member_btn);
 
-    let chips = gtk::FlowBox::new();
-    chips.set_selection_mode(gtk::SelectionMode::None);
-    chips.set_max_children_per_line(20);
-    chips.set_row_spacing(6);
-    chips.set_column_spacing(6);
-    container.append(&chips);
+    let selected_list = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    members_step.append(&selected_list);
 
     let members: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
+    let selected_photo: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
 
     let known_users: Vec<ChatThreadSnapshot> = state
         .chat_list
@@ -54,71 +48,63 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         .cloned()
         .collect();
 
-    let chips_for_add = chips.clone();
-    let input_for_add = member_input.clone();
-    let members_for_add = members.clone();
-    let add_member = move |raw: String| {
-        let value = raw.trim().to_string();
-        if value.is_empty() {
-            return;
-        }
-        if members_for_add.borrow().iter().any(|v| v == &value) {
-            input_for_add.set_text("");
-            return;
-        }
-        members_for_add.borrow_mut().push(value.clone());
-        input_for_add.set_text("");
+    let next = primary_button("Next (0)");
+    next.set_sensitive(false);
 
-        let chip = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        chip.add_css_class("card");
-        chip.set_margin_top(2);
-        chip.set_margin_bottom(2);
-
-        let label = gtk::Label::new(Some(&shorten(&value)));
-        label.set_margin_start(8);
-        chip.append(&label);
-
-        let remove = gtk::Button::from_icon_name("window-close-symbolic");
-        remove.add_css_class("flat");
-        remove.add_css_class("circular");
-        chip.append(&remove);
-
-        let chip_for_remove = chip.clone();
-        let chips_for_remove = chips_for_add.clone();
-        let members_for_remove = members_for_add.clone();
-        let value_for_remove = value.clone();
-        remove.connect_clicked(move |_| {
-            members_for_remove
-                .borrow_mut()
-                .retain(|v| v != &value_for_remove);
-            if let Some(parent) = chip_for_remove.parent() {
-                if let Some(flow_child) = parent.downcast_ref::<gtk::FlowBoxChild>() {
-                    chips_for_remove.remove(flow_child);
-                }
+    let add_member = {
+        let selected_list = selected_list.clone();
+        let input = member_input.clone();
+        let members = members.clone();
+        let next = next.clone();
+        move |raw: String| {
+            let value = raw.trim().to_string();
+            if value.is_empty() {
+                return;
             }
-        });
+            if members.borrow().iter().any(|v| v == &value) {
+                input.set_text("");
+                return;
+            }
+            members.borrow_mut().push(value.clone());
+            input.set_text("");
+            next.set_sensitive(true);
+            next.set_label(&format!("Next ({})", members.borrow().len()));
 
-        chips_for_add.append(&chip);
+            let row = selected_member_row(&value, {
+                let members = members.clone();
+                let next = next.clone();
+                move |owner| {
+                    members.borrow_mut().retain(|v| v != owner);
+                    let count = members.borrow().len();
+                    next.set_sensitive(count > 0);
+                    next.set_label(&format!("Next ({count})"));
+                }
+            });
+            selected_list.append(&row);
+        }
     };
 
-    let add_member_for_btn = add_member.clone();
-    let input_for_btn = member_input.clone();
-    add_member_btn.connect_clicked(move |_| add_member_for_btn(input_for_btn.text().to_string()));
-    let add_member_for_enter = add_member.clone();
-    member_input.connect_activate(move |entry| add_member_for_enter(entry.text().to_string()));
+    {
+        let add_member = add_member.clone();
+        let input = member_input.clone();
+        add_member_btn.connect_clicked(move |_| add_member(input.text().to_string()));
+    }
+    {
+        let add_member = add_member.clone();
+        member_input.connect_activate(move |entry| add_member(entry.text().to_string()));
+    }
 
     if !known_users.is_empty() {
         let known_label = gtk::Label::new(Some("Known users"));
         known_label.add_css_class("heading");
         known_label.set_halign(gtk::Align::Start);
         known_label.set_margin_top(12);
-        container.append(&known_label);
+        members_step.append(&known_label);
 
         let list = gtk::ListBox::new();
         list.add_css_class("boxed-list");
         list.set_selection_mode(gtk::SelectionMode::None);
-        let list_widget: gtk::Widget = list.clone().upcast();
-        container.append(&list_widget);
+        members_step.append(&list);
 
         let mut row_widgets: Vec<adw::ActionRow> = Vec::with_capacity(known_users.len());
         for chat in &known_users {
@@ -145,26 +131,118 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         });
     }
 
-    let busy = state.busy.creating_group;
-    let create = primary_button(if busy { "Creating…" } else { "Create group" });
-    create.set_sensitive(!busy);
-    create.set_margin_top(8);
-    container.append(&create);
+    members_step.append(&next);
 
-    let manager_for_create = manager.clone();
-    let name_for_create = name.clone();
-    let members_for_create = members.clone();
-    create.connect_clicked(move |btn| {
-        let group_name = name_for_create.text().trim().to_string();
-        if group_name.is_empty() {
-            return;
-        }
-        btn.set_sensitive(false);
-        manager_for_create.dispatch(AppAction::CreateGroup {
-            name: group_name,
-            member_inputs: members_for_create.borrow().clone(),
+    let name = entry("Group name");
+    let photo_label = gtk::Label::new(None);
+    photo_label.add_css_class("dim-label");
+    photo_label.set_halign(gtk::Align::Start);
+
+    let photo = gtk::Button::with_label("Photo");
+    photo.add_css_class("pill");
+    {
+        let selected_photo = selected_photo.clone();
+        let photo_label = photo_label.clone();
+        photo.connect_clicked(move |btn| {
+            let parent = btn
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok());
+            let dialog = gtk::FileDialog::builder()
+                .title("Choose group photo")
+                .accept_label("Choose")
+                .build();
+            let selected_photo = selected_photo.clone();
+            let photo_label = photo_label.clone();
+            dialog.open(
+                parent.as_ref(),
+                gtk::gio::Cancellable::NONE,
+                move |result| {
+                    let Ok(file) = result else { return };
+                    let Some(path) = file.path() else { return };
+                    let filename = file
+                        .basename()
+                        .map(|name| name.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "group-photo".to_string());
+                    *selected_photo.borrow_mut() =
+                        Some((path.to_string_lossy().to_string(), filename.clone()));
+                    photo_label.set_label(&filename);
+                },
+            );
         });
-    });
+    }
+    details_step.append(&photo);
+    details_step.append(&photo_label);
+    details_step.append(&name);
+
+    let selected_count = gtk::Label::new(Some("Members (0)"));
+    selected_count.add_css_class("dim-label");
+    selected_count.set_halign(gtk::Align::Start);
+    details_step.append(&selected_count);
+
+    let busy = state.busy.creating_group;
+    let create = primary_button(if busy { "Creating..." } else { "Create group" });
+    create.set_sensitive(!busy);
+    details_step.append(&create);
+
+    {
+        let header = header.clone();
+        let members_step = members_step.clone();
+        let details_step = details_step.clone();
+        let name = name.clone();
+        let members = members.clone();
+        let selected_count = selected_count.clone();
+        next.connect_clicked(move |_| {
+            if members.borrow().is_empty() {
+                return;
+            }
+            header.set_label("Group details");
+            members_step.set_visible(false);
+            details_step.set_visible(true);
+            selected_count.set_label(&format!("Members ({})", members.borrow().len()));
+            name.grab_focus();
+        });
+    }
+
+    let back = gtk::Button::with_label("Back");
+    back.add_css_class("pill");
+    details_step.prepend(&back);
+    {
+        let header = header.clone();
+        let members_step = members_step.clone();
+        let details_step = details_step.clone();
+        back.connect_clicked(move |_| {
+            header.set_label("Select members");
+            details_step.set_visible(false);
+            members_step.set_visible(true);
+        });
+    }
+
+    {
+        let manager = manager.clone();
+        let name = name.clone();
+        let members = members.clone();
+        let selected_photo = selected_photo.clone();
+        create.connect_clicked(move |btn| {
+            let group_name = name.text().trim().to_string();
+            if group_name.is_empty() || members.borrow().is_empty() {
+                return;
+            }
+            btn.set_sensitive(false);
+            let action = match selected_photo.borrow().clone() {
+                Some((file_path, filename)) => AppAction::CreateGroupWithPicture {
+                    name: group_name,
+                    member_inputs: members.borrow().clone(),
+                    picture_file_path: file_path,
+                    picture_filename: filename,
+                },
+                None => AppAction::CreateGroup {
+                    name: group_name,
+                    member_inputs: members.borrow().clone(),
+                },
+            };
+            manager.dispatch(action);
+        });
+    }
 
     container.upcast()
 }
@@ -196,9 +274,39 @@ where
     row
 }
 
+fn selected_member_row<F>(value: &str, on_remove: F) -> gtk::Box
+where
+    F: Fn(&str) + 'static,
+{
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    row.add_css_class("card");
+    row.set_margin_top(2);
+    row.set_margin_bottom(2);
+
+    let label = gtk::Label::new(Some(&shorten(value)));
+    label.set_hexpand(true);
+    label.set_halign(gtk::Align::Start);
+    label.set_margin_start(8);
+    row.append(&label);
+
+    let remove = gtk::Button::from_icon_name("window-close-symbolic");
+    remove.add_css_class("flat");
+    remove.add_css_class("circular");
+    row.append(&remove);
+
+    let row_for_remove = row.clone();
+    let value = value.to_string();
+    remove.connect_clicked(move |_| {
+        on_remove(&value);
+        row_for_remove.unparent();
+    });
+
+    row
+}
+
 fn shorten(value: &str) -> String {
     if value.len() <= 18 {
         return value.to_string();
     }
-    format!("{}…{}", &value[..10], &value[value.len() - 6..])
+    format!("{}...{}", &value[..10], &value[value.len() - 6..])
 }

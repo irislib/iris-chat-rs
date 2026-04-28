@@ -3,49 +3,91 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="32" MaxWidth="640" HorizontalAlignment="Center">
-            <TextBlock Text="New group"
+            <TextBlock x:Name="TitleText"
+                       Text="Select members"
                        Style="{StaticResource HeadingText}"
                        Margin="0,0,0,12" />
 
-            <TextBlock Text="Group name" Margin="0,0,0,4" />
-            <TextBox x:Name="NameInput" />
+            <StackPanel x:Name="MembersStep">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="MemberSearchInput"
+                             Grid.Column="0"
+                             TextChanged="OnSearchTextChanged" />
+                    <Button x:Name="AddMemberButton"
+                            Style="{StaticResource SecondaryButton}"
+                            Grid.Column="1"
+                            Click="OnAddMemberClick"
+                            Margin="8,0,0,0">
+                        <TextBlock Text="Add" />
+                    </Button>
+                </Grid>
 
-            <TextBlock Text="Add members" Margin="0,16,0,4" />
-            <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
-                <TextBox x:Name="MemberSearchInput"
-                         Grid.Column="0"
-                         TextChanged="OnSearchTextChanged" />
-                <Button x:Name="AddMemberButton"
-                        Style="{StaticResource SecondaryButton}"
-                        Grid.Column="1"
-                        Click="OnAddMemberClick"
-                        Margin="8,0,0,0">
-                    <TextBlock Text="Add" />
+                <ItemsControl x:Name="SelectedMembersList" Margin="0,12,0,8" />
+
+                <TextBlock x:Name="KnownUsersHeader"
+                           Text="Known users"
+                           Style="{StaticResource SectionTitleText}"
+                           Margin="0,8,0,4"
+                           Visibility="Collapsed" />
+                <ItemsControl x:Name="KnownUsersList" />
+
+                <Button x:Name="NextButton"
+                        Style="{StaticResource PrimaryButton}"
+                        Click="OnNext"
+                        Margin="0,16,0,0">
+                    <TextBlock x:Name="NextButtonText" Text="Next (0)" />
                 </Button>
-            </Grid>
-            <TextBlock Style="{StaticResource MutedText}"
-                       Text="Search known users or paste a user ID."
-                       Margin="0,4,0,8" />
+            </StackPanel>
 
-            <ItemsControl x:Name="SelectedMembersList" Margin="0,0,0,8" />
+            <StackPanel x:Name="DetailsStep" Visibility="Collapsed">
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                    <Button Style="{StaticResource SecondaryButton}"
+                            Click="OnPickPicture">
+                        <TextBlock x:Name="PhotoButtonText" Text="Photo" />
+                    </Button>
+                    <Button x:Name="RemovePhotoButton"
+                            Style="{StaticResource SecondaryButton}"
+                            Click="OnRemovePicture"
+                            Margin="8,0,0,0"
+                            Visibility="Collapsed">
+                        <TextBlock Text="Remove" />
+                    </Button>
+                </StackPanel>
+                <TextBlock x:Name="SelectedPhotoText"
+                           Style="{StaticResource MutedText}"
+                           Margin="0,0,0,12"
+                           TextTrimming="CharacterEllipsis"
+                           Visibility="Collapsed" />
 
-            <TextBlock x:Name="KnownUsersHeader"
-                       Text="Known users"
-                       Style="{StaticResource SectionTitleText}"
-                       Margin="0,8,0,4"
-                       Visibility="Collapsed" />
-            <ItemsControl x:Name="KnownUsersList" />
+                <TextBlock Text="Group name" Margin="0,0,0,4" />
+                <TextBox x:Name="NameInput" />
 
-            <Button x:Name="CreateButton"
-                    Style="{StaticResource PrimaryButton}"
-                    Click="OnCreate"
-                    Margin="0,16,0,0">
-                <TextBlock Text="Create group" />
-            </Button>
+                <ItemsControl x:Name="DetailsSelectedMembersList" Margin="0,12,0,8" />
+
+                <Grid Margin="0,16,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <Button Grid.Column="0"
+                            Style="{StaticResource SecondaryButton}"
+                            Click="OnBackToMembers"
+                            Margin="0,0,6,0">
+                        <TextBlock Text="Back" />
+                    </Button>
+                    <Button x:Name="CreateButton"
+                            Grid.Column="1"
+                            Style="{StaticResource PrimaryButton}"
+                            Click="OnCreate"
+                            Margin="6,0,0,0">
+                        <TextBlock Text="Create group" />
+                    </Button>
+                </Grid>
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </UserControl>

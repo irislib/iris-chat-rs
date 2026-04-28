@@ -265,13 +265,28 @@ class AppManager(
     fun createGroup(
         name: String,
         memberInputs: List<String>,
+        pictureFilePath: String? = null,
+        pictureFilename: String? = null,
     ) {
         val trimmedName = name.trim()
         val trimmedMembers = memberInputs.map(String::trim).filter(String::isNotEmpty)
         if (trimmedName.isEmpty() || trimmedMembers.isEmpty()) {
             return
         }
-        dispatchToRust(AppAction.CreateGroup(trimmedName, trimmedMembers))
+        val trimmedPicturePath = pictureFilePath?.trim().orEmpty()
+        val trimmedPictureFilename = pictureFilename?.trim().orEmpty()
+        if (trimmedPicturePath.isNotEmpty() && trimmedPictureFilename.isNotEmpty()) {
+            dispatchToRust(
+                AppAction.CreateGroupWithPicture(
+                    trimmedName,
+                    trimmedMembers,
+                    trimmedPicturePath,
+                    trimmedPictureFilename,
+                ),
+            )
+        } else {
+            dispatchToRust(AppAction.CreateGroup(trimmedName, trimmedMembers))
+        }
     }
 
     fun updateGroupName(

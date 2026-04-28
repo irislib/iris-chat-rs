@@ -181,6 +181,17 @@ impl AppCore {
                 name,
                 member_inputs,
             } => self.create_group(&name, &member_inputs),
+            AppAction::CreateGroupWithPicture {
+                name,
+                member_inputs,
+                picture_file_path,
+                picture_filename,
+            } => self.create_group_with_picture(
+                &name,
+                &member_inputs,
+                &picture_file_path,
+                &picture_filename,
+            ),
             AppAction::CreatePublicInvite => self.create_public_invite(),
             AppAction::AcceptInvite { invite_input } => self.accept_invite(&invite_input),
             AppAction::OpenChat { chat_id } => self.open_chat(&chat_id),

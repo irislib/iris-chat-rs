@@ -1,5 +1,7 @@
 package to.iris.chat.ui.screens
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,17 +20,25 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
@@ -50,17 +60,40 @@ fun NewGroupScreen(
     appManager: AppManager,
     appState: AppState,
 ) {
+    var step by remember { mutableStateOf(NewGroupStep.MEMBERS) }
     val clipboard = rememberIrisClipboard()
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    val nameFocusRequester = remember { FocusRequester() }
     var name by remember { mutableStateOf("") }
     var memberInput by remember { mutableStateOf("") }
     var showScanner by remember { mutableStateOf(false) }
     var selectedOwners by remember { mutableStateOf(setOf<String>()) }
+    var groupPhoto by remember { mutableStateOf<PickedAttachment?>(null) }
     val localOwner = appState.account?.publicKeyHex
     val normalizedInput = normalizePeerInput(memberInput)
     val existingDirectChats =
         appState.chatList.filter { it.kind == ChatKind.DIRECT && it.chatId != localOwner }
     val filteredKnownChats = existingDirectChats.filterByQuery(memberInput)
-    val canCreate = name.isNotBlank() && !appState.busy.creatingGroup
+    val canCreate = name.isNotBlank() && selectedOwners.isNotEmpty() && !appState.busy.creatingGroup
+    val picturePicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri == null) {
+                return@rememberLauncherForActivityResult
+            }
+            coroutineScope.launch {
+                groupPhoto =
+                    withContext(Dispatchers.IO) {
+                        copyAttachmentToCache(context, uri)
+                    }
+            }
+        }
+
+    LaunchedEffect(step) {
+        if (step == NewGroupStep.DETAILS) {
+            runCatching { nameFocusRequester.requestFocus() }
+        }
+    }
 
     fun addOwner(ownerInput: String) {
         val normalized = normalizePeerInput(ownerInput)
@@ -75,7 +108,7 @@ fun NewGroupScreen(
     }
 
     ScaffoldScreen(
-        title = "New group",
+        title = if (step == NewGroupStep.MEMBERS) "Select members" else "Group details",
         appManager = appManager,
         appState = appState,
     ) {
@@ -87,99 +120,232 @@ fun NewGroupScreen(
                     .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            IrisSectionCard {
-                Text(
-                    text = "Group name",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                TextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .testTag("newGroupNameInput"),
-                    placeholder = {
-                        Text(
-                            text = "Group name",
-                            color = IrisTheme.palette.muted,
-                        )
-                    },
-                    singleLine = true,
-                    colors =
-                        TextFieldDefaults.colors(
-                            focusedContainerColor = IrisTheme.palette.panelAlt,
-                            unfocusedContainerColor = IrisTheme.palette.panelAlt,
-                            disabledContainerColor = IrisTheme.palette.panelAlt,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent,
-                        ),
-                )
-            }
+            if (step == NewGroupStep.MEMBERS) {
+                IrisSectionCard(modifier = Modifier.testTag("newGroupMemberStep")) {
+                    Text(
+                        text = "Select members",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    TextField(
+                        value = memberInput,
+                        onValueChange = { memberInput = it },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .testTag("newGroupMemberInput"),
+                        placeholder = {
+                            Text(
+                                text = "Search or paste user ID",
+                                color = IrisTheme.palette.muted,
+                            )
+                        },
+                        singleLine = true,
+                        colors =
+                            TextFieldDefaults.colors(
+                                focusedContainerColor = IrisTheme.palette.panelAlt,
+                                unfocusedContainerColor = IrisTheme.palette.panelAlt,
+                                disabledContainerColor = IrisTheme.palette.panelAlt,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                disabledIndicatorColor = Color.Transparent,
+                            ),
+                    )
 
-            IrisSectionCard {
-                Text(
-                    text = "Add members",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                TextField(
-                    value = memberInput,
-                    onValueChange = { memberInput = it },
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        IrisSecondaryButton(
+                            text = "Paste",
+                            onClick = {
+                                clipboard.getText { text ->
+                                    memberInput = normalizePeerInput(text)
+                                }
+                            },
+                            modifier = Modifier.testTag("newGroupPasteButton"),
+                            icon = {
+                                Icon(
+                                    imageVector = IrisIcons.Copy,
+                                    contentDescription = null,
+                                )
+                            },
+                        )
+                        IrisSecondaryButton(
+                            text = "Scan code",
+                            onClick = { showScanner = true },
+                            modifier = Modifier.testTag("newGroupScanQrButton"),
+                            icon = {
+                                Icon(
+                                    imageVector = IrisIcons.ScanQr,
+                                    contentDescription = null,
+                                )
+                            },
+                        )
+                        IrisPrimaryButton(
+                            text = "Add",
+                            onClick = { addOwner(normalizedInput) },
+                            enabled = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput),
+                            modifier = Modifier.testTag("newGroupAddMemberButton"),
+                            icon = {
+                                Icon(
+                                    imageVector = IrisIcons.NewGroup,
+                                    contentDescription = null,
+                                )
+                            },
+                        )
+                    }
+
+                    SelectedMemberChips(
+                        selectedOwners = selectedOwners,
+                        existingDirectChats = existingDirectChats,
+                        localOwner = localOwner,
+                        appState = appState,
+                        onRemove = { owner -> selectedOwners = selectedOwners - owner },
+                    )
+                }
+
+                if (filteredKnownChats.isNotEmpty()) {
+                    IrisSectionCard {
+                        Text(
+                            text = if (memberInput.isBlank()) "Known users" else "Search results",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        filteredKnownChats.forEach { chat ->
+                            val selected = chat.chatId in selectedOwners
+                            val presentation = ownerPresentation(
+                                owner = chat.chatId,
+                                existingDirectChats = existingDirectChats,
+                                localOwnerHex = localOwner,
+                                localOwnerDisplayName = appState.account?.displayName.orEmpty(),
+                                localOwnerNpub = appState.account?.npub,
+                            )
+                            ExistingMemberRow(
+                                title = presentation.primary,
+                                subtitle = presentation.secondary,
+                                selected = selected,
+                                onClick = {
+                                    selectedOwners =
+                                        if (selected) {
+                                            selectedOwners - chat.chatId
+                                        } else {
+                                            selectedOwners + chat.chatId
+                                        }
+                                    memberInput = ""
+                                },
+                            )
+                        }
+                    }
+                }
+
+                IrisPrimaryButton(
+                    text = "Next (${selectedOwners.size})",
+                    onClick = { step = NewGroupStep.DETAILS },
+                    enabled = selectedOwners.isNotEmpty(),
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .testTag("newGroupMemberInput"),
-                    placeholder = {
-                        Text(
-                            text = "Search or paste user ID",
-                            color = IrisTheme.palette.muted,
+                            .testTag("newGroupNextButton"),
+                    icon = {
+                        Icon(
+                            imageVector = IrisIcons.NewGroup,
+                            contentDescription = null,
                         )
                     },
-                    singleLine = true,
-                    colors =
-                        TextFieldDefaults.colors(
-                            focusedContainerColor = IrisTheme.palette.panelAlt,
-                            unfocusedContainerColor = IrisTheme.palette.panelAlt,
-                            disabledContainerColor = IrisTheme.palette.panelAlt,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent,
-                        ),
                 )
+            } else {
+                IrisSectionCard(modifier = Modifier.testTag("newGroupDetailsStep")) {
+                    Text(
+                        text = "Group details",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IrisAvatar(
+                            label = name.ifBlank { "Group" },
+                            size = 56.dp,
+                            emphasize = true,
+                        )
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            IrisSecondaryButton(
+                                text = if (groupPhoto == null) "Photo" else "Change photo",
+                                onClick = { picturePicker.launch(arrayOf("image/*")) },
+                                modifier = Modifier.testTag("newGroupPhotoButton"),
+                            )
+                            if (groupPhoto != null) {
+                                Text(
+                                    text = groupPhoto!!.filename,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = IrisTheme.palette.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                IrisSecondaryButton(
+                                    text = "Remove",
+                                    onClick = { groupPhoto = null },
+                                    modifier = Modifier.testTag("newGroupRemovePhotoButton"),
+                                )
+                            }
+                        }
+                    }
+
+                    TextField(
+                        value = name,
+                        onValueChange = { name = it },
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .focusRequester(nameFocusRequester)
+                                .testTag("newGroupNameInput"),
+                        placeholder = {
+                            Text(
+                                text = "Group name",
+                                color = IrisTheme.palette.muted,
+                            )
+                        },
+                        singleLine = true,
+                        colors =
+                            TextFieldDefaults.colors(
+                                focusedContainerColor = IrisTheme.palette.panelAlt,
+                                unfocusedContainerColor = IrisTheme.palette.panelAlt,
+                                disabledContainerColor = IrisTheme.palette.panelAlt,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                disabledIndicatorColor = Color.Transparent,
+                            ),
+                    )
+
+                    SelectedMemberChips(
+                        selectedOwners = selectedOwners,
+                        existingDirectChats = existingDirectChats,
+                        localOwner = localOwner,
+                        appState = appState,
+                        onRemove = { owner -> selectedOwners = selectedOwners - owner },
+                    )
+                }
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     IrisSecondaryButton(
-                        text = "Paste",
-                        onClick = {
-                            clipboard.getText { text ->
-                                memberInput = normalizePeerInput(text)
-                            }
-                        },
-                        modifier = Modifier.testTag("newGroupPasteButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.Copy,
-                                contentDescription = null,
-                            )
-                        },
-                    )
-                    IrisSecondaryButton(
-                        text = "Scan code",
-                        onClick = { showScanner = true },
-                        modifier = Modifier.testTag("newGroupScanQrButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.ScanQr,
-                                contentDescription = null,
-                            )
-                        },
+                        text = "Back",
+                        onClick = { step = NewGroupStep.MEMBERS },
+                        modifier = Modifier.weight(1f),
                     )
                     IrisPrimaryButton(
-                        text = "Add",
-                        onClick = { addOwner(normalizedInput) },
-                        enabled = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput),
-                        modifier = Modifier.testTag("newGroupAddMemberButton"),
+                        text = if (appState.busy.creatingGroup) "Creating…" else "Create group",
+                        onClick = {
+                            appManager.createGroup(
+                                name = name,
+                                memberInputs = selectedOwners.toList(),
+                                pictureFilePath = groupPhoto?.path,
+                                pictureFilename = groupPhoto?.filename,
+                            )
+                        },
+                        enabled = canCreate,
+                        modifier =
+                            Modifier
+                                .weight(1f)
+                                .testTag("newGroupCreateButton"),
                         icon = {
                             Icon(
                                 imageVector = IrisIcons.NewGroup,
@@ -188,75 +354,7 @@ fun NewGroupScreen(
                         },
                     )
                 }
-
-                if (selectedOwners.isNotEmpty()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        selectedOwners.toList().sorted().forEach { owner ->
-                            val presentation = ownerPresentation(
-                                owner = owner,
-                                existingDirectChats = existingDirectChats,
-                                localOwnerHex = localOwner,
-                                localOwnerDisplayName = appState.account?.displayName.orEmpty(),
-                                localOwnerNpub = appState.account?.npub,
-                            )
-                            MemberChip(
-                                title = presentation.primary,
-                                subtitle = presentation.secondary,
-                                onRemove = { selectedOwners = selectedOwners - owner },
-                            )
-                        }
-                    }
-                }
             }
-
-            if (filteredKnownChats.isNotEmpty()) {
-                IrisSectionCard {
-                    Text(
-                        text = if (memberInput.isBlank()) "Known users" else "Search results",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    filteredKnownChats.forEach { chat ->
-                        val selected = chat.chatId in selectedOwners
-                        val presentation = ownerPresentation(
-                            owner = chat.chatId,
-                            existingDirectChats = existingDirectChats,
-                            localOwnerHex = localOwner,
-                            localOwnerDisplayName = appState.account?.displayName.orEmpty(),
-                            localOwnerNpub = appState.account?.npub,
-                        )
-                        ExistingMemberRow(
-                            title = presentation.primary,
-                            subtitle = presentation.secondary,
-                            selected = selected,
-                            onClick = {
-                                selectedOwners =
-                                    if (selected) {
-                                        selectedOwners - chat.chatId
-                                    } else {
-                                        selectedOwners + chat.chatId
-                                    }
-                                memberInput = ""
-                            },
-                        )
-                    }
-                }
-            }
-
-            IrisPrimaryButton(
-                text = if (appState.busy.creatingGroup) "Creating…" else "Create group",
-                onClick = { appManager.createGroup(name, selectedOwners.toList()) },
-                enabled = canCreate,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("newGroupCreateButton"),
-                icon = {
-                    Icon(
-                        imageVector = IrisIcons.NewGroup,
-                        contentDescription = null,
-                    )
-                },
-            )
         }
     }
 
@@ -274,6 +372,40 @@ fun NewGroupScreen(
                 }
             },
         )
+    }
+}
+
+private enum class NewGroupStep {
+    MEMBERS,
+    DETAILS,
+}
+
+@Composable
+private fun SelectedMemberChips(
+    selectedOwners: Set<String>,
+    existingDirectChats: List<ChatThreadSnapshot>,
+    localOwner: String?,
+    appState: AppState,
+    onRemove: (String) -> Unit,
+) {
+    if (selectedOwners.isNotEmpty()) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            selectedOwners.toList().sorted().forEach { owner ->
+                val presentation =
+                    ownerPresentation(
+                        owner = owner,
+                        existingDirectChats = existingDirectChats,
+                        localOwnerHex = localOwner,
+                        localOwnerDisplayName = appState.account?.displayName.orEmpty(),
+                        localOwnerNpub = appState.account?.npub,
+                    )
+                MemberChip(
+                    title = presentation.primary,
+                    subtitle = presentation.secondary,
+                    onRemove = { onRemove(owner) },
+                )
+            }
+        }
     }
 }
 

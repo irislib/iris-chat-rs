@@ -679,6 +679,37 @@ final class AppManager: ObservableObject {
         }
     }
 
+    func stageGroupPicture(fileURL: URL) -> StagedAttachment? {
+        do {
+            let staged = try stageOutgoingAttachment(fileURL)
+            return StagedAttachment(path: staged.path, filename: staged.filename)
+        } catch {
+            showToast("Image could not be opened")
+            return nil
+        }
+    }
+
+    func createGroup(name: String, memberInputs: [String], picture: StagedAttachment?) {
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let members = memberInputs
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !trimmedName.isEmpty, !members.isEmpty else {
+            return
+        }
+
+        if let picture {
+            dispatchToRust(.createGroupWithPicture(
+                name: trimmedName,
+                memberInputs: members,
+                pictureFilePath: picture.path,
+                pictureFilename: picture.filename
+            ))
+        } else {
+            dispatchToRust(.createGroup(name: trimmedName, memberInputs: members))
+        }
+    }
+
     func setGroupAdmin(groupId: String, ownerPubkeyHex: String, isAdmin: Bool) {
         dispatchToRust(.setGroupAdmin(
             groupId: groupId,

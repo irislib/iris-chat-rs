@@ -1620,13 +1620,22 @@ struct JoinInviteScreen: View {
 }
 
 struct NewGroupScreen: View {
+    private enum Step: Equatable {
+        case members
+        case details
+    }
+
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
 
+    @State private var step: Step = .members
     @State private var name = ""
     @State private var memberInput = ""
     @State private var selectedOwners = Set<String>()
     @State private var showingScanner = false
+    @State private var showingGroupPicturePicker = false
+    @State private var groupPhoto: StagedAttachment?
+    @FocusState private var isNameFocused: Bool
 
     private var normalizedMemberInput: String {
         normalizePeerInput(input: memberInput)
@@ -1648,6 +1657,7 @@ struct NewGroupScreen: View {
 
     private var canCreate: Bool {
         !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+        !selectedOwners.isEmpty &&
         !manager.state.busy.creatingGroup
     }
 
@@ -1671,106 +1681,196 @@ struct NewGroupScreen: View {
 
     var body: some View {
         IrisScrollScreen {
-            IrisAdaptiveColumns {
-                IrisSectionCard(accent: true) {
-                    Color.clear
-                        .frame(height: 0)
-                        .accessibilityIdentifier("newGroupPrimaryCard")
+            Color.clear
+                .frame(height: 0)
+                .accessibilityIdentifier("newGroupPrimaryCard")
 
-                    CardHeader(title: "Create group")
-
-                    TextField("Group name", text: $name)
-                        .textFieldStyle(.plain)
-                        .irisInputField()
-                        .accessibilityIdentifier("newGroupNameInput")
-                }
-            } trailing: {
-                IrisSectionCard {
-                    CardHeader(title: "Add members")
-
-                    TextField("Search or paste user ID", text: $memberInput)
-                        .irisIdentifierInputModifiers()
-                        .textFieldStyle(.plain)
-                        .irisInputField()
-                        .accessibilityIdentifier("newGroupMemberInput")
-
-                    VStack(spacing: 10) {
-                        pasteMemberButton
-                        scanMemberButton
-                        addMemberButton
-                    }
-
-                    if !selectedOwners.isEmpty {
-                        FlowWrap(spacing: 8, lineSpacing: 8) {
-                            ForEach(selectedOwners.sorted(), id: \.self) { owner in
-                                let presentation = ownerPresentation(for: owner)
-                                SelectedMemberChip(
-                                    title: presentation.primary,
-                                    subtitle: presentation.secondary,
-                                    onRemove: { selectedOwners.remove(owner) }
-                                )
-                            }
-                        }
-                    }
-                }
+            if step == .members {
+                memberSelectionStep
+            } else {
+                groupDetailsStep
             }
-
-            if !filteredKnownChats.isEmpty {
-                IrisSectionCard {
-                    CardHeader(title: memberInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results")
-
-                    ForEach(Array(filteredKnownChats.enumerated()), id: \.element.chatId) { index, chat in
-                        Button {
-                            if selectedOwners.contains(chat.chatId) {
-                                selectedOwners.remove(chat.chatId)
-                            } else {
-                                selectedOwners.insert(chat.chatId)
-                            }
-                            memberInput = ""
-                        } label: {
-                            HStack(spacing: 12) {
-                                IrisAvatar(label: chat.displayName, size: 38, emphasize: selectedOwners.contains(chat.chatId))
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(chat.displayName)
-                                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                                        .foregroundStyle(palette.textPrimary)
-                                    if let subtitle = secondaryDisplayName(chat.subtitle, primary: chat.displayName) {
-                                        Text(subtitle)
-                                            .font(.system(.footnote, design: .rounded))
-                                            .foregroundStyle(palette.muted)
-                                    }
-                                }
-                                Spacer()
-                                Image(systemName: selectedOwners.contains(chat.chatId) ? "checkmark.circle.fill" : "circle")
-                                    .foregroundStyle(selectedOwners.contains(chat.chatId) ? palette.accent : palette.muted)
-                            }
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-
-                        if index < filteredKnownChats.count - 1 {
-                            Divider().overlay(palette.border)
-                        }
-                    }
-                }
-            }
-
-            Button(manager.state.busy.creatingGroup ? "Creating…" : "Create group") {
-                manager.dispatch(
-                    .createGroup(
-                        name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-                        memberInputs: selectedOwners.sorted()
-                    )
-                )
-            }
-            .buttonStyle(IrisPrimaryButtonStyle())
-            .disabled(!canCreate)
-            .accessibilityIdentifier("newGroupCreateButton")
         }
         .sheet(isPresented: $showingScanner) {
             QrScannerSheet { code in
                 addMember(code)
                 showingScanner = false
+            }
+        }
+        .fileImporter(
+            isPresented: $showingGroupPicturePicker,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: false
+        ) { result in
+            guard case let .success(urls) = result, let url = urls.first else {
+                return
+            }
+            groupPhoto = manager.stageGroupPicture(fileURL: url)
+        }
+        .irisOnChange(of: step) { nextStep in
+            if nextStep == .details {
+                DispatchQueue.main.async {
+                    isNameFocused = true
+                }
+            }
+        }
+    }
+
+    private var memberSelectionStep: some View {
+        Group {
+            IrisSectionCard(accent: true) {
+                Color.clear
+                    .frame(height: 0)
+                    .accessibilityIdentifier("newGroupMemberStep")
+
+                CardHeader(title: "Select members")
+
+                TextField("Search or paste user ID", text: $memberInput)
+                    .irisIdentifierInputModifiers()
+                    .textFieldStyle(.plain)
+                    .irisInputField()
+                    .accessibilityIdentifier("newGroupMemberInput")
+
+                VStack(spacing: 10) {
+                    pasteMemberButton
+                    scanMemberButton
+                    addMemberButton
+                }
+
+                selectedMembersChips
+            }
+
+            if !filteredKnownChats.isEmpty {
+                knownUsersCard
+            }
+
+            Button("Next (\(selectedOwners.count))") {
+                step = .details
+            }
+            .buttonStyle(IrisPrimaryButtonStyle())
+            .disabled(selectedOwners.isEmpty)
+            .accessibilityIdentifier("newGroupNextButton")
+        }
+    }
+
+    private var groupDetailsStep: some View {
+        Group {
+            IrisSectionCard(accent: true) {
+                Color.clear
+                    .frame(height: 0)
+                    .accessibilityIdentifier("newGroupDetailsStep")
+
+                CardHeader(title: "Group details")
+
+                HStack(spacing: 12) {
+                    IrisAvatar(label: name.isEmpty ? "Group" : name, size: 56, emphasize: true)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Button(groupPhoto == nil ? "Photo" : "Change photo") {
+                            showingGroupPicturePicker = true
+                        }
+                        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                        .accessibilityIdentifier("newGroupPhotoButton")
+
+                        if let groupPhoto {
+                            HStack(spacing: 8) {
+                                Text(groupPhoto.filename)
+                                    .font(.system(.footnote, design: .rounded))
+                                    .foregroundStyle(palette.muted)
+                                    .lineLimit(1)
+
+                                Button("Remove") {
+                                    self.groupPhoto = nil
+                                }
+                                .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                                .accessibilityIdentifier("newGroupRemovePhotoButton")
+                            }
+                        }
+                    }
+                }
+
+                TextField("Group name", text: $name)
+                    .textFieldStyle(.plain)
+                    .irisInputField()
+                    .focused($isNameFocused)
+                    .accessibilityIdentifier("newGroupNameInput")
+
+                selectedMembersChips
+            }
+
+            HStack(spacing: 10) {
+                Button("Back") {
+                    step = .members
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+
+                Button(manager.state.busy.creatingGroup ? "Creating…" : "Create group") {
+                    manager.createGroup(
+                        name: name,
+                        memberInputs: selectedOwners.sorted(),
+                        picture: groupPhoto
+                    )
+                }
+                .buttonStyle(IrisPrimaryButtonStyle())
+                .disabled(!canCreate)
+                .accessibilityIdentifier("newGroupCreateButton")
+            }
+        }
+    }
+
+    private var knownUsersCard: some View {
+        IrisSectionCard {
+            CardHeader(title: memberInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results")
+
+            ForEach(Array(filteredKnownChats.enumerated()), id: \.element.chatId) { index, chat in
+                Button {
+                    if selectedOwners.contains(chat.chatId) {
+                        selectedOwners.remove(chat.chatId)
+                    } else {
+                        selectedOwners.insert(chat.chatId)
+                    }
+                    memberInput = ""
+                } label: {
+                    HStack(spacing: 12) {
+                        IrisAvatar(label: chat.displayName, size: 38, emphasize: selectedOwners.contains(chat.chatId))
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(chat.displayName)
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(palette.textPrimary)
+                            if let subtitle = secondaryDisplayName(chat.subtitle, primary: chat.displayName) {
+                                Text(subtitle)
+                                    .font(.system(.footnote, design: .rounded))
+                                    .foregroundStyle(palette.muted)
+                            }
+                        }
+                        Spacer()
+                        Image(systemName: selectedOwners.contains(chat.chatId) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(selectedOwners.contains(chat.chatId) ? palette.accent : palette.muted)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if index < filteredKnownChats.count - 1 {
+                    Divider().overlay(palette.border)
+                }
+            }
+        }
+    }
+
+    private var selectedMembersChips: some View {
+        Group {
+            if !selectedOwners.isEmpty {
+                FlowWrap(spacing: 8, lineSpacing: 8) {
+                    ForEach(selectedOwners.sorted(), id: \.self) { owner in
+                        let presentation = ownerPresentation(for: owner)
+                        SelectedMemberChip(
+                            title: presentation.primary,
+                            subtitle: presentation.secondary,
+                            onRemove: { selectedOwners.remove(owner) }
+                        )
+                    }
+                }
             }
         }
     }

@@ -2,6 +2,33 @@ use super::*;
 
 impl AppCore {
     pub(super) fn create_group(&mut self, name: &str, member_inputs: &[String]) {
+        self.create_group_inner(name, member_inputs, None);
+    }
+
+    pub(super) fn create_group_with_picture(
+        &mut self,
+        name: &str,
+        member_inputs: &[String],
+        picture_file_path: &str,
+        picture_filename: &str,
+    ) {
+        let picture = (!picture_file_path.trim().is_empty())
+            .then(|| {
+                (
+                    picture_file_path.trim().to_string(),
+                    picture_filename.trim().to_string(),
+                )
+            })
+            .filter(|(_, filename)| !filename.is_empty());
+        self.create_group_inner(name, member_inputs, picture);
+    }
+
+    fn create_group_inner(
+        &mut self,
+        name: &str,
+        member_inputs: &[String],
+        picture: Option<(String, String)>,
+    ) {
         if self.logged_in.is_none() {
             self.state.toast = Some("Create or restore an account first.".to_string());
             self.emit_state();
@@ -67,6 +94,7 @@ impl AppCore {
                 })
         };
 
+        let mut created_group_id = None;
         match result {
             Ok(result) => {
                 for owner in member_owners {
@@ -76,6 +104,7 @@ impl AppCore {
                 }
                 let chat_id = group_chat_id(&result.group.id);
                 self.apply_group_snapshot_to_threads(&result.group, now.get());
+                created_group_id = Some(result.group.id.clone());
                 self.groups.insert(result.group.id.clone(), result.group);
                 self.sync_runtime_groups();
                 self.active_chat_id = Some(chat_id.clone());
@@ -93,6 +122,10 @@ impl AppCore {
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
+
+        if let (Some(group_id), Some((file_path, filename))) = (created_group_id, picture) {
+            self.update_group_picture(&group_id, &file_path, &filename);
+        }
     }
 
     pub(super) fn update_group_name(&mut self, group_id: &str, name: &str) {

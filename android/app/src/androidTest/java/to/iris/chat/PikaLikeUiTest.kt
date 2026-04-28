@@ -328,8 +328,8 @@ class PikaLikeUiTest {
         composeRule.waitForTag("newChatNewGroupButton")
         composeRule.onNodeWithTag("newChatNewGroupButton", useUnmergedTree = true).performClick()
 
-        composeRule.waitForTag("newGroupNameInput")
-        composeRule.onNodeWithTag("newGroupCreateButton", useUnmergedTree = true).assertIsNotEnabled()
+        composeRule.waitForTag("newGroupMemberStep")
+        composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).assertIsNotEnabled()
     }
 
     @Test
@@ -339,20 +339,25 @@ class PikaLikeUiTest {
         composeRule.waitForTag("newChatNewGroupButton")
         composeRule.onNodeWithTag("newChatNewGroupButton", useUnmergedTree = true).performClick()
 
-        composeRule.waitForTag("newGroupNameInput")
-        composeRule.onNodeWithTag("newGroupNameInput", useUnmergedTree = true)
-            .performTextInput("Trip crew")
+        composeRule.waitForTag("newGroupMemberStep")
         composeRule.onNodeWithTag("newGroupMemberInput", useUnmergedTree = true)
             .performTextInput(VALID_PEER_NPUB)
         composeRule.onNodeWithTag("newGroupAddMemberButton", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).assertIsEnabled()
+        composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("newGroupDetailsStep")
+        composeRule.onNodeWithTag("newGroupNameInput", useUnmergedTree = true)
+            .performTextInput("Trip crew")
         composeRule.onNodeWithTag("newGroupCreateButton", useUnmergedTree = true).assertIsEnabled()
         composeRule.onNodeWithTag("newGroupCreateButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("chatMessageInput")
-        composeRule.onNodeWithTag("chatGroupDetailsButton", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("chatHeaderTitleButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("groupDetailsScreen")
-        composeRule.onNodeWithTag("groupDetailsNameInput", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("groupDetailsNameInput", useUnmergedTree = true)
+            .performScrollTo()
+            .assertIsDisplayed()
         composeRule.onNodeWithTag("groupDetailsAddMembersButton", useUnmergedTree = true)
             .performScrollTo()
             .assertIsDisplayed()
@@ -390,6 +395,8 @@ class PikaLikeUiTest {
             hasTag("welcomeCreateAction") ||
                 hasTag("chatListNewChatButton") ||
                 hasTag("newChatPeerInput") ||
+                hasTag("newGroupMemberStep") ||
+                hasTag("newGroupDetailsStep") ||
                 hasTag("newGroupNameInput") ||
                 hasTag("chatMessageInput") ||
                 hasTag("myProfileSheet") ||
@@ -413,6 +420,8 @@ class PikaLikeUiTest {
             }
             if (
                 hasTag("newChatPeerInput") ||
+                hasTag("newGroupMemberStep") ||
+                hasTag("newGroupDetailsStep") ||
                 hasTag("newGroupNameInput") ||
                 hasTag("chatMessageInput") ||
                 hasTag("myProfileSheet") ||

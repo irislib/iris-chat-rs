@@ -29,6 +29,12 @@ pub enum AppAction {
         name: String,
         member_inputs: Vec<String>,
     },
+    CreateGroupWithPicture {
+        name: String,
+        member_inputs: Vec<String>,
+        picture_file_path: String,
+        picture_filename: String,
+    },
     CreatePublicInvite,
     AcceptInvite {
         invite_input: String,
