@@ -264,7 +264,10 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
         payload,
     );
 
-    assert!(!resolution.should_show, "typing rumors must not surface as standalone notifications");
+    assert!(
+        !resolution.should_show,
+        "typing rumors must not surface as standalone notifications"
+    );
 }
 
 #[test]
@@ -303,8 +306,12 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
         data_dir.to_string_lossy().to_string(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let invite = Invite::create_new(device.public_key(), Some(device.public_key().to_hex()), None)
-        .expect("invite");
+    let invite = Invite::create_new(
+        device.public_key(),
+        Some(device.public_key().to_hex()),
+        None,
+    )
+    .expect("invite");
     let runtime = NdrRuntime::new(
         device.public_key(),
         device.secret_key().to_secret_bytes(),
@@ -1145,8 +1152,12 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
             data_dir_str.clone(),
             Arc::new(RwLock::new(AppState::empty())),
         );
-        let invite = Invite::create_new(device.public_key(), Some(device.public_key().to_hex()), None)
-            .expect("local invite");
+        let invite = Invite::create_new(
+            device.public_key(),
+            Some(device.public_key().to_hex()),
+            None,
+        )
+        .expect("local invite");
         let runtime = NdrRuntime::new(
             device.public_key(),
             device.secret_key().to_secret_bytes(),
@@ -1211,7 +1222,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                         created_at_secs: 100,
                         expires_at_secs: None,
                         delivery: DeliveryState::Sent,
-                source_event_id: None,
+                        source_event_id: None,
                     },
                     ChatMessageSnapshot {
                         id: "m2".to_string(),
@@ -1226,7 +1237,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                         created_at_secs: 110,
                         expires_at_secs: None,
                         delivery: DeliveryState::Received,
-                source_event_id: None,
+                        source_event_id: None,
                     },
                 ],
             },
@@ -1250,7 +1261,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                     created_at_secs: 50,
                     expires_at_secs: None,
                     delivery: DeliveryState::Received,
-                source_event_id: None,
+                    source_event_id: None,
                 }],
             },
         );
@@ -1306,8 +1317,13 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
     ));
 
     // Assert nothing was persisted in the legacy JSON layout.
-    let legacy_meta = std::path::Path::new(&restarted.data_dir).join("core").join("meta.json");
-    assert!(!legacy_meta.exists(), "legacy core/meta.json must not be created");
+    let legacy_meta = std::path::Path::new(&restarted.data_dir)
+        .join("core")
+        .join("meta.json");
+    assert!(
+        !legacy_meta.exists(),
+        "legacy core/meta.json must not be created"
+    );
 }
 
 #[test]
@@ -1322,8 +1338,12 @@ fn appcore_clear_persistence_drops_sqlite_state() {
         data_dir_str.clone(),
         Arc::new(RwLock::new(AppState::empty())),
     );
-    let invite = Invite::create_new(device.public_key(), Some(device.public_key().to_hex()), None)
-        .expect("invite");
+    let invite = Invite::create_new(
+        device.public_key(),
+        Some(device.public_key().to_hex()),
+        None,
+    )
+    .expect("invite");
     let runtime = NdrRuntime::new(
         device.public_key(),
         device.secret_key().to_secret_bytes(),
@@ -1415,7 +1435,10 @@ fn delete_chat_removes_thread_and_navigates_back() {
     });
 
     assert!(!core.threads.contains_key(&chat_id), "thread removed");
-    assert!(!core.chat_message_ttl_seconds.contains_key(&chat_id), "ttl cleared");
+    assert!(
+        !core.chat_message_ttl_seconds.contains_key(&chat_id),
+        "ttl cleared"
+    );
     assert!(core.active_chat_id.is_none(), "active chat cleared");
     assert!(
         !core

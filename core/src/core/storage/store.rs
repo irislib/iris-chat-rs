@@ -14,6 +14,7 @@ use std::hash::{Hash, Hasher};
 const META_ACTIVE_CHAT_ID: &str = "active_chat_id";
 const META_NEXT_MESSAGE_ID: &str = "next_message_id";
 const META_AUTHORIZATION_STATE: &str = "authorization_state";
+const RESTORED_MESSAGES_PER_THREAD: usize = 80;
 
 /// Per-slice fingerprints from the last successful save. We hash the
 /// canonical wire form of each slice and skip writes when nothing has
@@ -148,6 +149,28 @@ impl AppStore {
         self.cache = PersistCache::default();
         Ok(())
     }
+
+    pub(crate) fn delete_message(&mut self, chat_id: &str, message_id: &str) -> anyhow::Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        conn.execute(
+            "DELETE FROM messages WHERE chat_id = ?1 AND id = ?2",
+            params![chat_id, message_id],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_thread(&mut self, chat_id: &str) -> anyhow::Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        conn.execute("DELETE FROM threads WHERE chat_id = ?1", [chat_id])?;
+        self.cache.threads.remove(chat_id);
+        Ok(())
+    }
 }
 
 const TABLES_TO_CLEAR: &[&str] = &[
@@ -276,15 +299,24 @@ impl SavePlan {
                     unread_count = excluded.unread_count,
                     updated_at_secs = excluded.updated_at_secs",
             )?;
-            let mut delete_messages = tx.prepare_cached(
-                "DELETE FROM messages WHERE chat_id = ?1",
-            )?;
             let mut message_stmt = tx.prepare_cached(
                 "INSERT INTO messages(
                     chat_id, id, kind, author, body, is_outgoing, created_at_secs,
                     expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
                     source_event_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+                 ON CONFLICT(chat_id, id) DO UPDATE SET
+                    kind = excluded.kind,
+                    author = excluded.author,
+                    body = excluded.body,
+                    is_outgoing = excluded.is_outgoing,
+                    created_at_secs = excluded.created_at_secs,
+                    expires_at_secs = excluded.expires_at_secs,
+                    delivery = excluded.delivery,
+                    attachments_json = excluded.attachments_json,
+                    reactions_json = excluded.reactions_json,
+                    reactors_json = excluded.reactors_json,
+                    source_event_id = excluded.source_event_id",
             )?;
             for chat_id in self.threads_to_write.keys() {
                 let thread = snapshot
@@ -296,7 +328,6 @@ impl SavePlan {
                     thread.unread_count as i64,
                     thread.updated_at_secs as i64,
                 ])?;
-                delete_messages.execute([chat_id])?;
                 for message in &thread.messages {
                     message_stmt.execute(params![
                         chat_id,
@@ -642,7 +673,10 @@ fn load_app_keys(conn: &rusqlite::Connection) -> anyhow::Result<Vec<KnownAppKeys
     Ok(entries)
 }
 
-fn write_app_keys(tx: &Transaction, app_keys: &BTreeMap<String, KnownAppKeys>) -> anyhow::Result<()> {
+fn write_app_keys(
+    tx: &Transaction,
+    app_keys: &BTreeMap<String, KnownAppKeys>,
+) -> anyhow::Result<()> {
     tx.execute("DELETE FROM app_keys", [])?;
     let mut stmt = tx.prepare_cached(
         "INSERT INTO app_keys(owner_pubkey_hex, created_at_secs, devices_json)
@@ -693,8 +727,8 @@ fn write_groups(tx: &Transaction, groups: &BTreeMap<String, GroupData>) -> anyho
 }
 
 /// Single-pass message load: one SELECT for thread metadata, one for
-/// every message in the database, then group in Rust. Avoids one
-/// round-trip per chat (the previous loop was N+1 prepared queries).
+/// the newest page of messages per thread, then group in Rust. This keeps
+/// restart bounded while still giving every chat row its latest preview.
 fn load_threads(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PersistedThread>> {
     let mut threads_stmt =
         conn.prepare("SELECT chat_id, unread_count, updated_at_secs FROM threads")?;
@@ -723,12 +757,31 @@ fn load_threads(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PersistedThre
     }
 
     let mut messages_stmt = conn.prepare(
-        "SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+        "WITH ranked AS (
+             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+                    CASE
+                        WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
+                        ELSE 9223372036854775807
+                    END AS numeric_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY chat_id
+                        ORDER BY created_at_secs DESC,
+                                 CASE
+                                     WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
+                                     ELSE 9223372036854775807
+                                 END DESC,
+                                 id DESC
+                    ) AS row_number
+             FROM messages
+         )
+         SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
                 delivery, attachments_json, reactions_json, reactors_json, source_event_id
-         FROM messages
-         ORDER BY chat_id ASC, created_at_secs ASC, id ASC",
+         FROM ranked
+         WHERE row_number <= ?1
+         ORDER BY chat_id ASC, created_at_secs ASC, numeric_id ASC, id ASC",
     )?;
-    let rows = messages_stmt.query_map([], |row| {
+    let rows = messages_stmt.query_map([RESTORED_MESSAGES_PER_THREAD as i64], |row| {
         let chat_id: String = row.get(0)?;
         Ok((
             chat_id.clone(),
@@ -757,7 +810,10 @@ fn load_threads(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PersistedThre
         }
     }
 
-    Ok(order.into_iter().filter_map(|chat_id| by_chat.remove(&chat_id)).collect())
+    Ok(order
+        .into_iter()
+        .filter_map(|chat_id| by_chat.remove(&chat_id))
+        .collect())
 }
 
 fn load_seen_events(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
@@ -871,10 +927,24 @@ mod tests {
         }
     }
 
+    fn thread_from_messages(chat_id: &str, messages: Vec<ChatMessageSnapshot>) -> ThreadRecord {
+        ThreadRecord {
+            chat_id: chat_id.to_string(),
+            unread_count: 0,
+            updated_at_secs: messages
+                .last()
+                .map(|message| message.created_at_secs)
+                .unwrap_or(0),
+            messages,
+        }
+    }
+
     fn count(conn: &SharedConnection, table: &str) -> i64 {
         conn.lock()
             .unwrap()
-            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
+            .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                row.get(0)
+            })
             .unwrap()
     }
 
@@ -936,6 +1006,109 @@ mod tests {
             loaded.authorization_state,
             Some(PersistedAuthorizationState::Authorized)
         ));
+    }
+
+    #[test]
+    fn load_state_restores_newest_message_page_per_thread() {
+        let (tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let messages = (1..=RESTORED_MESSAGES_PER_THREAD + 10)
+            .map(|idx| sample_message(&idx.to_string(), &format!("message {idx}"), idx as u64))
+            .collect::<Vec<_>>();
+        let mut threads = BTreeMap::new();
+        threads.insert("chat".to_string(), thread_from_messages("chat", messages));
+        let snapshot = empty_snapshot(
+            Some("chat"),
+            100,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        drop(store);
+        let conn = open_database(tmp.path()).unwrap();
+        let mut store = AppStore::new(conn);
+        let loaded = store.load_state().unwrap().expect("state present");
+        let loaded_messages = &loaded.threads[0].messages;
+        assert_eq!(loaded_messages.len(), RESTORED_MESSAGES_PER_THREAD);
+        assert_eq!(loaded_messages.first().unwrap().body, "message 11");
+        assert_eq!(loaded_messages.last().unwrap().body, "message 90");
+    }
+
+    #[test]
+    fn saving_partially_loaded_thread_preserves_older_message_rows() {
+        let (tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let total = RESTORED_MESSAGES_PER_THREAD + 10;
+        let messages = (1..=total)
+            .map(|idx| sample_message(&idx.to_string(), &format!("message {idx}"), idx as u64))
+            .collect::<Vec<_>>();
+        let mut threads = BTreeMap::new();
+        threads.insert("chat".to_string(), thread_from_messages("chat", messages));
+        let snapshot = empty_snapshot(
+            Some("chat"),
+            100,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+        drop(store);
+
+        let conn = open_database(tmp.path()).unwrap();
+        let mut store = AppStore::new(conn);
+        let conn_handle = store.shared();
+        let loaded = store.load_state().unwrap().expect("state present");
+        let loaded_messages = loaded.threads[0]
+            .messages
+            .iter()
+            .map(|message| {
+                let mut snapshot =
+                    sample_message(&message.id, &message.body, message.created_at_secs);
+                snapshot.delivery = message.delivery.clone().into();
+                snapshot
+            })
+            .collect::<Vec<_>>();
+        let mut threads = BTreeMap::new();
+        threads.insert(
+            "chat".to_string(),
+            thread_from_messages("chat", loaded_messages),
+        );
+        let snapshot = empty_snapshot(
+            Some("chat"),
+            loaded.next_message_id,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        assert_eq!(count(&conn_handle, "messages"), total as i64);
+        store.delete_message("chat", "1").unwrap();
+        assert_eq!(count(&conn_handle, "messages"), total as i64 - 1);
     }
 
     #[test]
@@ -1008,16 +1181,30 @@ mod tests {
         );
 
         let snapshot = empty_snapshot(
-            None, 1, &preferences, &owner_profiles, &chat_ttls,
-            &app_keys, &groups, &threads, &seen_events,
+            None,
+            1,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
         );
         store.save_state(&snapshot).unwrap();
 
         // Change only chat-a; chat-b unchanged.
         threads.get_mut("chat-a").unwrap().messages[0].body = "edited".to_string();
         let snapshot = empty_snapshot(
-            None, 1, &preferences, &owner_profiles, &chat_ttls,
-            &app_keys, &groups, &threads, &seen_events,
+            None,
+            1,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
         );
         let plan = SavePlan::compute(&store.cache, &snapshot);
         assert_eq!(plan.threads_to_write.len(), 1);
@@ -1059,8 +1246,15 @@ mod tests {
         );
 
         let snapshot = empty_snapshot(
-            None, 1, &preferences, &owner_profiles, &chat_ttls,
-            &app_keys, &groups, &threads, &seen_events,
+            None,
+            1,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
         );
         store.save_state(&snapshot).unwrap();
         assert_eq!(count(&conn_handle, "threads"), 2);
@@ -1068,8 +1262,15 @@ mod tests {
 
         threads.remove("chat-b");
         let snapshot = empty_snapshot(
-            None, 1, &preferences, &owner_profiles, &chat_ttls,
-            &app_keys, &groups, &threads, &seen_events,
+            None,
+            1,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
         );
         store.save_state(&snapshot).unwrap();
         assert_eq!(count(&conn_handle, "threads"), 1);
@@ -1087,8 +1288,15 @@ mod tests {
         let threads = BTreeMap::new();
         let seen_events = VecDeque::new();
         let snapshot = empty_snapshot(
-            None, 7, &preferences, &owner_profiles, &chat_ttls,
-            &app_keys, &groups, &threads, &seen_events,
+            None,
+            7,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
         );
         store.save_state(&snapshot).unwrap();
         assert!(store.load_state().unwrap().is_some());

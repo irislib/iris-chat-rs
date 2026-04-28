@@ -514,6 +514,12 @@ impl AppCore {
         if self.active_chat_id.as_deref() == Some(chat_id) {
             thread.unread_count = 0;
         }
+        if let Err(error) = self.app_store.delete_message(chat_id, message_id) {
+            self.push_debug_log(
+                "storage.message.delete.error",
+                format!("chat_id={chat_id} message_id={message_id} error={error}"),
+            );
+        }
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
@@ -523,8 +529,18 @@ impl AppCore {
         if chat_id.is_empty() {
             return;
         }
-        let normalized = self.normalize_chat_id(chat_id).unwrap_or_else(|| chat_id.to_string());
+        let normalized = self
+            .normalize_chat_id(chat_id)
+            .unwrap_or_else(|| chat_id.to_string());
         let removed_thread = self.threads.remove(&normalized).is_some();
+        if removed_thread {
+            if let Err(error) = self.app_store.delete_thread(&normalized) {
+                self.push_debug_log(
+                    "storage.thread.delete.error",
+                    format!("chat_id={normalized} error={error}"),
+                );
+            }
+        }
         self.chat_message_ttl_seconds.remove(&normalized);
         self.typing_indicators
             .retain(|_, indicator| indicator.chat_id != normalized);
