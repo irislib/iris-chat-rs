@@ -99,6 +99,18 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun dispatch_failure_shows_diagnostic_toast_instead_of_throwing() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        rust.dispatchError = IllegalStateException("ffi failed")
+
+        appManager.dispatch(AppAction.PushScreen(Screen.NewChat))
+
+        assertEquals("Action failed. Copy support bundle in Settings.", appManager.state.value.toast)
+        assertTrue(rust.dispatchedActions.isEmpty())
+    }
+
+    @Test
     fun restore_from_stored_bundle_dispatches_restore_account_bundle() {
         persistStoredSecret(
             StoredAccountBundle(
@@ -455,12 +467,14 @@ private class MockRustAppClient(
     var currentState: AppState,
 ) : RustAppClient {
     val dispatchedActions = mutableListOf<AppAction>()
+    var dispatchError: Throwable? = null
     var shutdownCount = 0
     private var reconciler: AppReconciler? = null
 
     override fun state(): AppState = currentState
 
     override fun dispatch(action: AppAction) {
+        dispatchError?.let { throw it }
         dispatchedActions += action
     }
 

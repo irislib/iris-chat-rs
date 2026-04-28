@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
@@ -17,6 +18,8 @@ namespace IrisChat;
 /// state, dispatch actions, persist secret side effects.
 public sealed class AppManager : INotifyPropertyChanged
 {
+    private const string DispatchFailureToast = "Action failed. Copy support bundle in Settings.";
+
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private readonly FfiApp _ffi;
@@ -79,11 +82,11 @@ public sealed class AppManager : INotifyPropertyChanged
         var stack = _state.router.screenStack ?? Array.Empty<Screen>();
         if (stack.Length == 0) return;
         var next = stack.Take(stack.Length - 1).ToArray();
-        _ffi.Dispatch(new AppAction.UpdateScreenStack(next));
+        DispatchToRust(new AppAction.UpdateScreenStack(next));
     }
 
     public void Push(Screen screen) =>
-        _ffi.Dispatch(new AppAction.PushScreen(screen));
+        DispatchToRust(new AppAction.PushScreen(screen));
 
     // ───────────────────────────── account ────────────────────────────────────
 
@@ -91,14 +94,14 @@ public sealed class AppManager : INotifyPropertyChanged
     {
         var t = name.Trim();
         if (string.IsNullOrEmpty(t)) return;
-        _ffi.Dispatch(new AppAction.CreateAccount(t));
+        DispatchToRust(new AppAction.CreateAccount(t));
     }
 
     public void RestoreSession(string ownerNsec)
     {
         var t = ownerNsec.Trim();
         if (string.IsNullOrEmpty(t)) return;
-        _ffi.Dispatch(new AppAction.RestoreSession(t));
+        DispatchToRust(new AppAction.RestoreSession(t));
     }
 
     public void UpdateProfileMetadata(string name, string? pictureUrl)
@@ -106,7 +109,7 @@ public sealed class AppManager : INotifyPropertyChanged
         var t = name.Trim();
         if (string.IsNullOrEmpty(t)) return;
         var p = pictureUrl?.Trim();
-        _ffi.Dispatch(new AppAction.UpdateProfileMetadata(t, string.IsNullOrEmpty(p) ? null : p));
+        DispatchToRust(new AppAction.UpdateProfileMetadata(t, string.IsNullOrEmpty(p) ? null : p));
     }
 
     public void UploadProfilePicture(string sourceFilePath)
@@ -114,7 +117,7 @@ public sealed class AppManager : INotifyPropertyChanged
         try
         {
             var staged = _cache.StageOutgoing(sourceFilePath);
-            _ffi.Dispatch(new AppAction.UploadProfilePicture(staged.Path));
+            DispatchToRust(new AppAction.UploadProfilePicture(staged.Path));
         }
         catch
         {
@@ -124,7 +127,7 @@ public sealed class AppManager : INotifyPropertyChanged
 
     public void Logout()
     {
-        _ffi.Dispatch(new AppAction.Logout());
+        DispatchToRust(new AppAction.Logout());
         _secretStore.Clear();
         try { Directory.Delete(_dataDir, recursive: true); } catch { }
         Directory.CreateDirectory(_dataDir);
@@ -135,7 +138,7 @@ public sealed class AppManager : INotifyPropertyChanged
         try { _ffi.Shutdown(); } catch { }
     }
 
-    public void AppForegrounded() => _ffi.Dispatch(new AppAction.AppForegrounded());
+    public void AppForegrounded() => DispatchToRust(new AppAction.AppForegrounded(), showToastOnFailure: false);
 
     // ───────────────────────── linked devices ─────────────────────────────────
 
@@ -143,25 +146,25 @@ public sealed class AppManager : INotifyPropertyChanged
     {
         var normalized = Native.NormalizePeerInput(ownerInput.Trim());
         if (string.IsNullOrEmpty(normalized) || !Native.IsValidPeerInput(normalized)) return;
-        _ffi.Dispatch(new AppAction.StartLinkedDevice(normalized));
+        DispatchToRust(new AppAction.StartLinkedDevice(normalized));
     }
 
     public void AddAuthorizedDevice(string deviceInput)
     {
         var t = deviceInput.Trim();
         if (string.IsNullOrEmpty(t)) return;
-        _ffi.Dispatch(new AppAction.AddAuthorizedDevice(t));
+        DispatchToRust(new AppAction.AddAuthorizedDevice(t));
     }
 
     public void RemoveAuthorizedDevice(string devicePubkeyHex)
     {
         var t = devicePubkeyHex.Trim();
         if (string.IsNullOrEmpty(t)) return;
-        _ffi.Dispatch(new AppAction.RemoveAuthorizedDevice(t));
+        DispatchToRust(new AppAction.RemoveAuthorizedDevice(t));
     }
 
     public void AcknowledgeRevokedDevice() =>
-        _ffi.Dispatch(new AppAction.AcknowledgeRevokedDevice());
+        DispatchToRust(new AppAction.AcknowledgeRevokedDevice());
 
     // ───────────────────────────── chats ──────────────────────────────────────
 
@@ -169,40 +172,40 @@ public sealed class AppManager : INotifyPropertyChanged
     {
         var t = peerInput.Trim();
         if (string.IsNullOrEmpty(t)) return;
-        _ffi.Dispatch(new AppAction.CreateChat(t));
+        DispatchToRust(new AppAction.CreateChat(t));
     }
 
     public void OpenChat(string chatId) =>
-        _ffi.Dispatch(new AppAction.OpenChat(chatId));
+        DispatchToRust(new AppAction.OpenChat(chatId));
 
     public void SendMessage(string chatId, string text)
     {
         var c = chatId.Trim();
         var t = text.Trim();
         if (string.IsNullOrEmpty(c) || string.IsNullOrEmpty(t)) return;
-        _ffi.Dispatch(new AppAction.SendMessage(c, t));
+        DispatchToRust(new AppAction.SendMessage(c, t));
     }
 
     public void SendDisappearing(string chatId, string text, ulong expiresAtSecs) =>
-        _ffi.Dispatch(new AppAction.SendDisappearingMessage(chatId, text, expiresAtSecs));
+        DispatchToRust(new AppAction.SendDisappearingMessage(chatId, text, expiresAtSecs));
 
     public void SetChatMessageTtl(string chatId, ulong? ttlSeconds) =>
-        _ffi.Dispatch(new AppAction.SetChatMessageTtl(chatId, ttlSeconds));
+        DispatchToRust(new AppAction.SetChatMessageTtl(chatId, ttlSeconds));
 
     public void ToggleReaction(string chatId, string messageId, string emoji) =>
-        _ffi.Dispatch(new AppAction.ToggleReaction(chatId, messageId, emoji));
+        DispatchToRust(new AppAction.ToggleReaction(chatId, messageId, emoji));
 
     public void DeleteLocalMessage(string chatId, string messageId) =>
-        _ffi.Dispatch(new AppAction.DeleteLocalMessage(chatId, messageId));
+        DispatchToRust(new AppAction.DeleteLocalMessage(chatId, messageId));
 
     public void MarkMessagesSeen(string chatId, string[] messageIds) =>
-        _ffi.Dispatch(new AppAction.MarkMessagesSeen(chatId, messageIds));
+        DispatchToRust(new AppAction.MarkMessagesSeen(chatId, messageIds));
 
     public void SendTyping(string chatId) =>
-        _ffi.Dispatch(new AppAction.SendTyping(chatId));
+        DispatchToRust(new AppAction.SendTyping(chatId));
 
     public void StopTyping(string chatId) =>
-        _ffi.Dispatch(new AppAction.StopTyping(chatId));
+        DispatchToRust(new AppAction.StopTyping(chatId));
 
     public void SendAttachments(string chatId, IList<string> sourceFilePaths, string caption)
     {
@@ -214,7 +217,7 @@ public sealed class AppManager : INotifyPropertyChanged
                 .Select(p => _cache.StageOutgoing(p))
                 .Select(s => new OutgoingAttachment(s.Path, s.Filename))
                 .ToArray();
-            _ffi.Dispatch(new AppAction.SendAttachments(c, staged, caption?.Trim() ?? string.Empty));
+            DispatchToRust(new AppAction.SendAttachments(c, staged, caption?.Trim() ?? string.Empty));
         }
         catch
         {
@@ -252,31 +255,31 @@ public sealed class AppManager : INotifyPropertyChanged
     // ─────────────────────────── invites / groups ─────────────────────────────
 
     public void CreatePublicInvite() =>
-        _ffi.Dispatch(new AppAction.CreatePublicInvite());
+        DispatchToRust(new AppAction.CreatePublicInvite());
 
     public void AcceptInvite(string inviteInput)
     {
         var t = inviteInput.Trim();
         if (string.IsNullOrEmpty(t)) return;
-        _ffi.Dispatch(new AppAction.AcceptInvite(t));
+        DispatchToRust(new AppAction.AcceptInvite(t));
     }
 
     public void CreateGroup(string name, IList<string> memberInputs)
     {
         var n = name.Trim();
         if (string.IsNullOrEmpty(n) || memberInputs == null || memberInputs.Count == 0) return;
-        _ffi.Dispatch(new AppAction.CreateGroup(n, memberInputs.Select(s => s.Trim()).Where(s => s.Length > 0).ToArray()));
+        DispatchToRust(new AppAction.CreateGroup(n, memberInputs.Select(s => s.Trim()).Where(s => s.Length > 0).ToArray()));
     }
 
     public void UpdateGroupName(string groupId, string name) =>
-        _ffi.Dispatch(new AppAction.UpdateGroupName(groupId, name.Trim()));
+        DispatchToRust(new AppAction.UpdateGroupName(groupId, name.Trim()));
 
     public void UpdateGroupPicture(string groupId, string sourceFilePath)
     {
         try
         {
             var staged = _cache.StageOutgoing(sourceFilePath);
-            _ffi.Dispatch(new AppAction.UpdateGroupPicture(groupId, staged.Path, staged.Filename));
+            DispatchToRust(new AppAction.UpdateGroupPicture(groupId, staged.Path, staged.Filename));
         }
         catch
         {
@@ -285,37 +288,37 @@ public sealed class AppManager : INotifyPropertyChanged
     }
 
     public void AddGroupMembers(string groupId, IList<string> memberInputs) =>
-        _ffi.Dispatch(new AppAction.AddGroupMembers(
+        DispatchToRust(new AppAction.AddGroupMembers(
             groupId,
             memberInputs.Select(s => s.Trim()).Where(s => s.Length > 0).ToArray()
         ));
 
     public void SetGroupAdmin(string groupId, string ownerPubkeyHex, bool isAdmin) =>
-        _ffi.Dispatch(new AppAction.SetGroupAdmin(groupId, ownerPubkeyHex, isAdmin));
+        DispatchToRust(new AppAction.SetGroupAdmin(groupId, ownerPubkeyHex, isAdmin));
 
     public void RemoveGroupMember(string groupId, string ownerPubkeyHex) =>
-        _ffi.Dispatch(new AppAction.RemoveGroupMember(groupId, ownerPubkeyHex));
+        DispatchToRust(new AppAction.RemoveGroupMember(groupId, ownerPubkeyHex));
 
     public void DeleteChat(string chatId) =>
-        _ffi.Dispatch(new AppAction.DeleteChat(chatId));
+        DispatchToRust(new AppAction.DeleteChat(chatId));
 
     // ─────────────────────────────── settings ─────────────────────────────────
 
     public void SetTypingIndicatorsEnabled(bool enabled) =>
-        _ffi.Dispatch(new AppAction.SetTypingIndicatorsEnabled(enabled));
+        DispatchToRust(new AppAction.SetTypingIndicatorsEnabled(enabled));
 
     public void SetReadReceiptsEnabled(bool enabled) =>
-        _ffi.Dispatch(new AppAction.SetReadReceiptsEnabled(enabled));
+        DispatchToRust(new AppAction.SetReadReceiptsEnabled(enabled));
 
     public void SetDesktopNotificationsEnabled(bool enabled) =>
-        _ffi.Dispatch(new AppAction.SetDesktopNotificationsEnabled(enabled));
+        DispatchToRust(new AppAction.SetDesktopNotificationsEnabled(enabled));
 
     public void SetStartupAtLoginEnabled(bool enabled)
     {
         try
         {
             PlatformStartupAtLogin.SetEnabled(enabled);
-            _ffi.Dispatch(new AppAction.SetStartupAtLoginEnabled(enabled));
+            DispatchToRust(new AppAction.SetStartupAtLoginEnabled(enabled));
         }
         catch
         {
@@ -324,31 +327,31 @@ public sealed class AppManager : INotifyPropertyChanged
     }
 
     public void AddNostrRelay(string url) =>
-        _ffi.Dispatch(new AppAction.AddNostrRelay(url.Trim()));
+        DispatchToRust(new AppAction.AddNostrRelay(url.Trim()));
 
     public void UpdateNostrRelay(string oldUrl, string newUrl) =>
-        _ffi.Dispatch(new AppAction.UpdateNostrRelay(oldUrl.Trim(), newUrl.Trim()));
+        DispatchToRust(new AppAction.UpdateNostrRelay(oldUrl.Trim(), newUrl.Trim()));
 
     public void RemoveNostrRelay(string url) =>
-        _ffi.Dispatch(new AppAction.RemoveNostrRelay(url.Trim()));
+        DispatchToRust(new AppAction.RemoveNostrRelay(url.Trim()));
 
     public void ResetNostrRelays() =>
-        _ffi.Dispatch(new AppAction.ResetNostrRelays());
+        DispatchToRust(new AppAction.ResetNostrRelays());
 
     public void SetImageProxyEnabled(bool enabled) =>
-        _ffi.Dispatch(new AppAction.SetImageProxyEnabled(enabled));
+        DispatchToRust(new AppAction.SetImageProxyEnabled(enabled));
 
     public void SetImageProxyUrl(string url) =>
-        _ffi.Dispatch(new AppAction.SetImageProxyUrl(url.Trim()));
+        DispatchToRust(new AppAction.SetImageProxyUrl(url.Trim()));
 
     public void SetImageProxyKeyHex(string keyHex) =>
-        _ffi.Dispatch(new AppAction.SetImageProxyKeyHex(keyHex.Trim()));
+        DispatchToRust(new AppAction.SetImageProxyKeyHex(keyHex.Trim()));
 
     public void SetImageProxySaltHex(string saltHex) =>
-        _ffi.Dispatch(new AppAction.SetImageProxySaltHex(saltHex.Trim()));
+        DispatchToRust(new AppAction.SetImageProxySaltHex(saltHex.Trim()));
 
     public void ResetImageProxySettings() =>
-        _ffi.Dispatch(new AppAction.ResetImageProxySettings());
+        DispatchToRust(new AppAction.ResetImageProxySettings());
 
     // ────────────────────── support / build metadata ─────────────────────────
 
@@ -376,11 +379,11 @@ public sealed class AppManager : INotifyPropertyChanged
             Notify(nameof(BootstrapInFlight));
             return;
         }
-        _ffi.Dispatch(new AppAction.RestoreAccountBundle(
+        DispatchToRust(new AppAction.RestoreAccountBundle(
             bundle.OwnerNsec,
             bundle.OwnerPubkeyHex,
             bundle.DeviceNsec
-        ));
+        ), showToastOnFailure: false);
     }
 
     private void Apply(AppUpdate update)
@@ -458,6 +461,29 @@ public sealed class AppManager : INotifyPropertyChanged
         Notify(nameof(Preferences));
         Notify(nameof(Busy));
     }
+
+    private bool DispatchToRust(AppAction action, bool showToastOnFailure = true)
+    {
+        try
+        {
+            _ffi.Dispatch(action);
+            return true;
+        }
+        catch (Exception error)
+        {
+            var message = $"Iris Chat FFI dispatch failed ({ActionLogName(action)}): {error}";
+            Trace.TraceError(message);
+            Debug.WriteLine(message);
+            if (showToastOnFailure)
+            {
+                ShowToast(DispatchFailureToast);
+            }
+            return false;
+        }
+    }
+
+    private static string ActionLogName(AppAction action) =>
+        action.GetType().Name;
 
     public void ShowToast(string text)
     {

@@ -181,6 +181,7 @@ enum AppPaths {
 @MainActor
 final class AppManager: ObservableObject {
     private static let downloadedAttachmentCacheLimitBytes = 128 * 1024 * 1024
+    private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
 
     @Published private(set) var state: AppState
     @Published private(set) var bootstrapInFlight = true
@@ -720,7 +721,7 @@ final class AppManager: ObservableObject {
         } catch {
             logDispatchFailure(action: action, error: error)
             if showsToastOnFailure {
-                showToast("Could not complete action")
+                showToast(Self.dispatchFailureToast)
             }
             return false
         }

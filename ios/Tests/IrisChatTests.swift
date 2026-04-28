@@ -637,7 +637,7 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.dispatch(.pushScreen(screen: .newChat))
 
-        XCTAssertEqual(manager.toastMessage, "Could not complete action")
+        XCTAssertEqual(manager.toastMessage, "Action failed. Copy support bundle in Settings.")
         XCTAssertTrue(rust.dispatchedActions.isEmpty)
     }
 

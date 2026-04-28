@@ -186,7 +186,7 @@ class AppManager(
     }
 
     fun createAccount(name: String) {
-        rust.dispatch(AppAction.CreateAccount(name.trim()))
+        dispatchToRust(AppAction.CreateAccount(name.trim()))
     }
 
     fun updateProfileMetadata(
@@ -197,7 +197,7 @@ class AppManager(
         if (trimmed.isEmpty()) {
             return
         }
-        rust.dispatch(
+        dispatchToRust(
             AppAction.UpdateProfileMetadata(
                 name = trimmed,
                 pictureUrl = pictureUrl?.trim()?.ifEmpty { null },
@@ -210,7 +210,7 @@ class AppManager(
         if (trimmedPath.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.UploadProfilePicture(trimmedPath))
+        dispatchToRust(AppAction.UploadProfilePicture(trimmedPath))
     }
 
     fun restoreSession(nsecOrHex: String) {
@@ -218,7 +218,7 @@ class AppManager(
         if (trimmed.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.RestoreSession(trimmed))
+        dispatchToRust(AppAction.RestoreSession(trimmed))
     }
 
     fun startLinkedDevice(ownerInput: String) {
@@ -226,7 +226,7 @@ class AppManager(
         if (trimmed.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.StartLinkedDevice(trimmed))
+        dispatchToRust(AppAction.StartLinkedDevice(trimmed))
     }
 
     fun addAuthorizedDevice(deviceInput: String) {
@@ -234,7 +234,7 @@ class AppManager(
         if (trimmed.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.AddAuthorizedDevice(trimmed))
+        dispatchToRust(AppAction.AddAuthorizedDevice(trimmed))
     }
 
     fun removeAuthorizedDevice(devicePubkeyHex: String) {
@@ -242,16 +242,16 @@ class AppManager(
         if (trimmed.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.RemoveAuthorizedDevice(trimmed))
+        dispatchToRust(AppAction.RemoveAuthorizedDevice(trimmed))
     }
 
     fun dispatch(action: AppAction) {
-        rust.dispatch(action)
+        dispatchToRust(action)
     }
 
     fun appForegrounded() {
         appInForeground = true
-        rust.dispatch(AppAction.AppForegrounded)
+        dispatchToRust(AppAction.AppForegrounded, showsToastOnFailure = false)
     }
 
     fun appBackgrounded() {
@@ -263,7 +263,7 @@ class AppManager(
         if (trimmed.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.CreateChat(trimmed))
+        dispatchToRust(AppAction.CreateChat(trimmed))
     }
 
     fun createGroup(
@@ -275,7 +275,7 @@ class AppManager(
         if (trimmedName.isEmpty() || trimmedMembers.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.CreateGroup(trimmedName, trimmedMembers))
+        dispatchToRust(AppAction.CreateGroup(trimmedName, trimmedMembers))
     }
 
     fun updateGroupName(
@@ -287,7 +287,7 @@ class AppManager(
         if (trimmedGroupId.isEmpty() || trimmedName.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.UpdateGroupName(trimmedGroupId, trimmedName))
+        dispatchToRust(AppAction.UpdateGroupName(trimmedGroupId, trimmedName))
     }
 
     fun updateGroupPicture(
@@ -301,7 +301,7 @@ class AppManager(
         if (trimmedGroupId.isEmpty() || trimmedPath.isEmpty() || trimmedFilename.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.UpdateGroupPicture(trimmedGroupId, trimmedPath, trimmedFilename))
+        dispatchToRust(AppAction.UpdateGroupPicture(trimmedGroupId, trimmedPath, trimmedFilename))
     }
 
     fun addGroupMembers(
@@ -313,7 +313,7 @@ class AppManager(
         if (trimmedGroupId.isEmpty() || trimmedMembers.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.AddGroupMembers(trimmedGroupId, trimmedMembers))
+        dispatchToRust(AppAction.AddGroupMembers(trimmedGroupId, trimmedMembers))
     }
 
     fun removeGroupMember(
@@ -325,7 +325,7 @@ class AppManager(
         if (trimmedGroupId.isEmpty() || trimmedOwner.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.RemoveGroupMember(trimmedGroupId, trimmedOwner))
+        dispatchToRust(AppAction.RemoveGroupMember(trimmedGroupId, trimmedOwner))
     }
 
     fun setGroupAdmin(
@@ -338,7 +338,7 @@ class AppManager(
         if (trimmedGroupId.isEmpty() || trimmedOwner.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.SetGroupAdmin(trimmedGroupId, trimmedOwner, isAdmin))
+        dispatchToRust(AppAction.SetGroupAdmin(trimmedGroupId, trimmedOwner, isAdmin))
     }
 
     fun openChat(chatId: String) {
@@ -346,11 +346,11 @@ class AppManager(
         if (trimmed.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.OpenChat(trimmed))
+        dispatchToRust(AppAction.OpenChat(trimmed))
     }
 
     fun pushScreen(screen: Screen) {
-        rust.dispatch(AppAction.PushScreen(screen))
+        dispatchToRust(AppAction.PushScreen(screen))
     }
 
     fun sendText(
@@ -362,7 +362,7 @@ class AppManager(
         if (trimmedChatId.isEmpty() || trimmedText.isEmpty()) {
             return
         }
-        rust.dispatch(AppAction.SendMessage(trimmedChatId, trimmedText))
+        dispatchToRust(AppAction.SendMessage(trimmedChatId, trimmedText))
     }
 
     fun sendAttachment(
@@ -377,7 +377,7 @@ class AppManager(
         if (trimmedChatId.isEmpty() || trimmedPath.isEmpty() || trimmedFilename.isEmpty()) {
             return
         }
-        rust.dispatch(
+        dispatchToRust(
             AppAction.SendAttachment(
                 trimmedChatId,
                 trimmedPath,
@@ -404,7 +404,7 @@ class AppManager(
         if (trimmedChatId.isEmpty() || outgoing.isEmpty()) {
             return
         }
-        rust.dispatch(
+        dispatchToRust(
             AppAction.SendAttachments(
                 trimmedChatId,
                 outgoing,
@@ -485,7 +485,7 @@ class AppManager(
                 stateBeforeLogout,
                 persistedBundle?.ownerNsec,
             )
-            rust.dispatch(AppAction.Logout)
+            dispatchToRust(AppAction.Logout)
             clearPersistedSecret()
             secureSecretStore.clear()
             replaceRustCoreAfterReset()
@@ -569,6 +569,35 @@ class AppManager(
         }
     }
 
+    private fun dispatchToRust(
+        action: AppAction,
+        showsToastOnFailure: Boolean = true,
+    ): Boolean =
+        runCatching {
+            rust.dispatch(action)
+        }.fold(
+            onSuccess = { true },
+            onFailure = { error ->
+                Log.e(TAG, "FFI dispatch failed (${actionLogName(action)})", error)
+                if (showsToastOnFailure) {
+                    publishShellToast(DISPATCH_FAILURE_TOAST)
+                }
+                false
+            },
+        )
+
+    private fun publishShellToast(message: String) {
+        val current = mutableState.value
+        if (current.toast == message) {
+            mutableState.value = current.copy(toast = null)
+        }
+        mutableState.value = mutableState.value.copy(toast = message)
+    }
+
+    private fun actionLogName(action: AppAction): String =
+        action::class.simpleName
+            ?: action::class.java.simpleName.ifEmpty { "unknown" }
+
     private suspend fun restoreSessionFromSecureStore() {
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.
         Log.d(TAG, "restoreSessionFromSecureStore start")
@@ -593,16 +622,17 @@ class AppManager(
         val bundle = StoredAccountBundle.fromJson(decrypted)
         if (bundle != null) {
             Log.d(TAG, "restoreSessionFromSecureStore dispatch bundle restore")
-            rust.dispatch(
+            dispatchToRust(
                 AppAction.RestoreAccountBundle(
                     ownerNsec = bundle.ownerNsec,
                     ownerPubkeyHex = bundle.ownerPubkeyHex,
                     deviceNsec = bundle.deviceNsec,
                 ),
+                showsToastOnFailure = false,
             )
         } else {
             Log.d(TAG, "restoreSessionFromSecureStore dispatch direct restore")
-            rust.dispatch(AppAction.RestoreSession(decrypted))
+            dispatchToRust(AppAction.RestoreSession(decrypted), showsToastOnFailure = false)
         }
     }
 
@@ -632,7 +662,7 @@ class AppManager(
     suspend fun decryptOrResolveNotificationPayload(
         payloadJson: String,
     ): to.iris.chat.rust.MobilePushNotificationResolution {
-        rust.dispatch(AppAction.IngestMobilePushPayload(payloadJson))
+        dispatchToRust(AppAction.IngestMobilePushPayload(payloadJson), showsToastOnFailure = false)
         val bundle = loadPersistedBundle()
         if (bundle == null) {
             return to.iris.chat.rust.resolveMobilePushNotificationPayload(payloadJson)
@@ -829,6 +859,7 @@ class AppManager(
     private companion object {
         const val TAG = "NdrDebug"
         const val DATASTORE_NAME = "iris_chat_secure_store.preferences_pb"
+        const val DISPATCH_FAILURE_TOAST = "Action failed. Copy support bundle in Settings."
         const val DOWNLOADED_ATTACHMENT_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
         val SECRET_CIPHERTEXT = stringPreferencesKey("secret_ciphertext")
         val SECRET_IV = stringPreferencesKey("secret_iv")
