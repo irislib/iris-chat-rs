@@ -55,8 +55,9 @@
         <ScrollViewer x:Name="ScrollHost" Grid.Row="1"
                       VerticalScrollBarVisibility="Auto"
                       Padding="14,10"
+                      VerticalContentAlignment="Bottom"
                       HorizontalContentAlignment="Stretch">
-            <ItemsControl x:Name="MessagesList" />
+            <ItemsControl x:Name="MessagesList" VerticalAlignment="Bottom" />
         </ScrollViewer>
 
         <TextBlock x:Name="TypingText"

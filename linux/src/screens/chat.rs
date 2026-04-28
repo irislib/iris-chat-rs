@@ -181,6 +181,8 @@ fn messages_view(
     scrolled.set_vexpand(true);
 
     let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    list.set_vexpand(true);
+    list.set_valign(gtk::Align::End);
     list.set_margin_top(8);
     list.set_margin_bottom(8);
     list.set_margin_start(10);
@@ -246,8 +248,13 @@ fn messages_view(
     scrolled.set_child(Some(&list));
 
     let adj = scrolled.vadjustment();
+    adj.connect_changed(|adj| {
+        let bottom = (adj.upper() - adj.page_size()).max(adj.lower());
+        adj.set_value(bottom);
+    });
     glib::idle_add_local_once(move || {
-        adj.set_value(adj.upper());
+        let bottom = (adj.upper() - adj.page_size()).max(adj.lower());
+        adj.set_value(bottom);
     });
 
     scrolled.upcast()

@@ -160,6 +160,8 @@ impl AppCore {
 
     pub(super) fn reset_nostr_relays(&mut self) {
         self.apply_nostr_relay_urls(configured_relays());
+        self.state.toast = Some("Relays reset to defaults.".to_string());
+        self.emit_state();
     }
 
     pub(super) fn set_image_proxy_enabled(&mut self, enabled: bool) {

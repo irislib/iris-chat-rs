@@ -14,6 +14,7 @@ public partial class ChatView : UserControl
     public string? ChatId { get; set; }
 
     private string? _focusedChatId;
+    private string? _renderedMessageSignature;
 
     public ChatView()
     {
@@ -44,9 +45,11 @@ public partial class ChatView : UserControl
         var chat = App.CurrentManager.CurrentChat;
         if (chat == null || (ChatId != null && chat.chatId != ChatId)) return;
 
-        if (_focusedChatId != chat.chatId)
+        var chatChanged = _focusedChatId != chat.chatId;
+        if (chatChanged)
         {
             _focusedChatId = chat.chatId;
+            _renderedMessageSignature = null;
             Dispatcher.BeginInvoke(new Action(() => Composer.FocusInput()));
         }
 
@@ -69,23 +72,35 @@ public partial class ChatView : UserControl
             TypingText.Visibility = Visibility.Collapsed;
         }
 
-        // Messages
-        MessagesList.Items.Clear();
-        var isGroup = chat.kind == ChatKind.Group;
-        ChatMessageSnapshot? prev = null;
-        foreach (var m in chat.messages ?? Array.Empty<ChatMessageSnapshot>())
+        var messages = chat.messages ?? Array.Empty<ChatMessageSnapshot>();
+        var messageSignature = string.Join("|", messages.Select(m =>
+            $"{m.id}:{m.delivery}:{m.body}:{m.reactions?.Length ?? 0}:{m.reactors?.Length ?? 0}"));
+        var shouldPinToBottom = chatChanged
+            || ScrollHost.ScrollableHeight <= 0
+            || ScrollHost.VerticalOffset >= ScrollHost.ScrollableHeight - 24;
+        if (_renderedMessageSignature != messageSignature)
         {
-            var bubble = new MessageBubble();
-            var showAuthor = isGroup && !m.isOutgoing && (prev == null || prev.author != m.author);
-            bubble.Bind(m, showAuthor, AuthorLabel(m.author));
-            MessagesList.Items.Add(bubble);
-            prev = m;
+            _renderedMessageSignature = messageSignature;
+            MessagesList.Items.Clear();
+            var isGroup = chat.kind == ChatKind.Group;
+            ChatMessageSnapshot? prev = null;
+            foreach (var m in messages)
+            {
+                var bubble = new MessageBubble();
+                var showAuthor = isGroup && !m.isOutgoing && (prev == null || prev.author != m.author);
+                bubble.Bind(m, showAuthor, AuthorLabel(m.author));
+                MessagesList.Items.Add(bubble);
+                prev = m;
+            }
+
+            if (shouldPinToBottom)
+            {
+                Dispatcher.BeginInvoke(new Action(() => ScrollHost.ScrollToBottom()));
+            }
         }
 
-        Dispatcher.BeginInvoke(new Action(() => ScrollHost.ScrollToBottom()));
-
         // Mark as seen
-        var unread = (chat.messages ?? Array.Empty<ChatMessageSnapshot>())
+        var unread = messages
             .Where(m => !m.isOutgoing)
             .Select(m => m.id)
             .ToArray();

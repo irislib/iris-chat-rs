@@ -189,11 +189,9 @@ struct RootView: View {
     private var topBarTrailingItem: AnyView {
         if case .chatList = manager.activeScreen {
             return AnyView(
-                Button(action: { manager.dispatch(.pushScreen(screen: .newChat)) }) {
-                    Label("New", systemImage: "square.and.pencil")
+                NewChatCircleButton {
+                    manager.dispatch(.pushScreen(screen: .newChat))
                 }
-                .buttonStyle(IrisPrimaryButtonStyle(compact: true))
-                .accessibilityIdentifier("chatListNewChatButton")
             )
         }
 
@@ -1285,6 +1283,24 @@ struct ChatListScreen: View {
             }
         }
         .background(palette.background)
+    }
+}
+
+private struct NewChatCircleButton: View {
+    @Environment(\.irisPalette) private var palette
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(palette.onAccent)
+                .frame(width: 36, height: 36)
+                .background(Circle().fill(palette.accent))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("New chat")
+        .accessibilityIdentifier("chatListNewChatButton")
     }
 }
 

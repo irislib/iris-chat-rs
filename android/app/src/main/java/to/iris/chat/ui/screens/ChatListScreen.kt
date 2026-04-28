@@ -7,8 +7,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +37,6 @@ import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisChatListRow
 import to.iris.chat.ui.components.IrisDivider
 import to.iris.chat.ui.components.IrisIcons
-import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
 import to.iris.chat.ui.theme.IrisTheme
@@ -93,17 +94,22 @@ fun ChatListScreen(
                     }
                 },
                 actions = {
-                    IrisPrimaryButton(
-                        text = "New",
-                        onClick = { appManager.pushScreen(Screen.NewChat) },
-                        modifier = Modifier.testTag("chatListNewChatButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.NewChat,
-                                contentDescription = null,
-                            )
-                        },
-                    )
+                    Box(
+                        modifier =
+                            Modifier
+                                .padding(end = 4.dp)
+                                .size(40.dp)
+                                .background(IrisTheme.palette.accent, CircleShape)
+                                .clickable { appManager.pushScreen(Screen.NewChat) }
+                                .testTag("chatListNewChatButton"),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = IrisIcons.NewChat,
+                            contentDescription = "New chat",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    }
                 },
             )
         },

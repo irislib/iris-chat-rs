@@ -330,7 +330,7 @@ fun ChatScreen(
                                 .fillMaxSize()
                                 .testTag("chatTimeline")
                                 .padding(horizontal = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.Bottom),
                     ) {
                         itemsIndexed(visibleMessages, key = { _, message -> message.id }) { index, message ->
                             val previous = visibleMessages.getOrNull(index - 1)

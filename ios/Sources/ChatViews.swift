@@ -33,106 +33,109 @@ struct ChatScreen: View {
                     VStack(spacing: 0) {
                         ScrollViewReader { proxy in
                             ZStack(alignment: .bottomTrailing) {
-                                ScrollView {
-                                    let visibleMessages = chat.messages
-                                    LazyVStack(spacing: 0) {
-                                        ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
-                                            let previous = index > 0 ? visibleMessages[index - 1] : nil
-                                            let next = index + 1 < visibleMessages.count ? visibleMessages[index + 1] : nil
-                                            let showDayChip = previous == nil || !irisSameTimelineDay(previous!.createdAtSecs, message.createdAtSecs)
-                                            let isFirstInCluster = irisStartsMessageCluster(
-                                                previous: previous,
-                                                message: message,
-                                                chatKind: chat.kind
-                                            )
-                                            let isLastInCluster = next.map {
-                                                irisStartsMessageCluster(
-                                                    previous: message,
-                                                    message: $0,
+                                GeometryReader { viewport in
+                                    ScrollView {
+                                        let visibleMessages = chat.messages
+                                        LazyVStack(spacing: 0) {
+                                            ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
+                                                let previous = index > 0 ? visibleMessages[index - 1] : nil
+                                                let next = index + 1 < visibleMessages.count ? visibleMessages[index + 1] : nil
+                                                let showDayChip = previous == nil || !irisSameTimelineDay(previous!.createdAtSecs, message.createdAtSecs)
+                                                let isFirstInCluster = irisStartsMessageCluster(
+                                                    previous: previous,
+                                                    message: message,
                                                     chatKind: chat.kind
                                                 )
-                                            } ?? true
+                                                let isLastInCluster = next.map {
+                                                    irisStartsMessageCluster(
+                                                        previous: message,
+                                                        message: $0,
+                                                        chatKind: chat.kind
+                                                    )
+                                                } ?? true
 
-                                            ChatMessageRow(
-                                                message: message,
-                                                chatKind: chat.kind,
-                                                showDayChip: showDayChip,
-                                                isFirstInCluster: isFirstInCluster,
-                                                isLastInCluster: isLastInCluster,
-                                                reactions: message.reactions,
-                                                activeActionDockMessageId: $activeActionDockMessageId,
-                                                onReply: {
-                                                    replyTarget = message
-                                                },
-                                                onReact: { emoji in
-                                                    manager.dispatch(
-                                                        .toggleReaction(
-                                                            chatId: chatId,
-                                                            messageId: message.id,
-                                                            emoji: emoji
+                                                ChatMessageRow(
+                                                    message: message,
+                                                    chatKind: chat.kind,
+                                                    showDayChip: showDayChip,
+                                                    isFirstInCluster: isFirstInCluster,
+                                                    isLastInCluster: isLastInCluster,
+                                                    reactions: message.reactions,
+                                                    activeActionDockMessageId: $activeActionDockMessageId,
+                                                    onReply: {
+                                                        replyTarget = message
+                                                    },
+                                                    onReact: { emoji in
+                                                        manager.dispatch(
+                                                            .toggleReaction(
+                                                                chatId: chatId,
+                                                                messageId: message.id,
+                                                                emoji: emoji
+                                                            )
                                                         )
-                                                    )
-                                                },
-                                                onDelete: {
-                                                    manager.dispatch(
-                                                        .deleteLocalMessage(chatId: chatId, messageId: message.id)
-                                                    )
-                                                    if replyTarget?.id == message.id {
-                                                        replyTarget = nil
+                                                    },
+                                                    onDelete: {
+                                                        manager.dispatch(
+                                                            .deleteLocalMessage(chatId: chatId, messageId: message.id)
+                                                        )
+                                                        if replyTarget?.id == message.id {
+                                                            replyTarget = nil
+                                                        }
+                                                    },
+                                                    downloadAttachment: { attachment in
+                                                        await manager.downloadAttachment(attachment)
+                                                    },
+                                                    openAttachment: { attachment in
+                                                        await manager.openAttachment(attachment)
+                                                    },
+                                                    onOpenImage: { data, filename in
+                                                        imageViewerItem = ImageViewerItem(data: data, filename: filename)
                                                     }
-                                                },
-                                                downloadAttachment: { attachment in
-                                                    await manager.downloadAttachment(attachment)
-                                                },
-                                                openAttachment: { attachment in
-                                                    await manager.openAttachment(attachment)
-                                                },
-                                                onOpenImage: { data, filename in
-                                                    imageViewerItem = ImageViewerItem(data: data, filename: filename)
-                                                }
-                                            )
-                                            .id(message.id)
-                                        }
-
-                                        Color.clear
-                                            .frame(height: 1)
-                                            .id(ChatTimelineAnchor.bottom)
-                                            .background(
-                                                GeometryReader { geometry in
-                                                    Color.clear.preference(
-                                                        key: ChatTimelineBottomMaxYPreferenceKey.self,
-                                                        value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).maxY
-                                                    )
-                                                }
-                                            )
-                                            .accessibilityHidden(true)
-                                    }
-                                    .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 14)
-                                    .padding(.vertical, 10)
-                                    .accessibilityIdentifier("chatTimeline")
-                                    .background(
-                                        Color.clear
-                                            .contentShape(Rectangle())
-                                            .onTapGesture {
-                                                activeActionDockMessageId = nil
+                                                )
+                                                .id(message.id)
                                             }
-                                    )
-                                }
-                                .simultaneousGesture(
-                                    TapGesture().onEnded {
-                                        isComposerFocused = false
-                                    }
-                                )
-                                .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
-                                .overlay {
-                                    GeometryReader { geometry in
-                                        Color.clear.preference(
-                                            key: ChatTimelineViewportMaxYPreferenceKey.self,
-                                            value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).maxY
+
+                                            Color.clear
+                                                .frame(height: 1)
+                                                .id(ChatTimelineAnchor.bottom)
+                                                .background(
+                                                    GeometryReader { geometry in
+                                                        Color.clear.preference(
+                                                            key: ChatTimelineBottomMaxYPreferenceKey.self,
+                                                            value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).maxY
+                                                        )
+                                                    }
+                                                )
+                                                .accessibilityHidden(true)
+                                        }
+                                        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 14)
+                                        .padding(.vertical, 10)
+                                        .frame(minHeight: viewport.size.height, alignment: .bottom)
+                                        .accessibilityIdentifier("chatTimeline")
+                                        .background(
+                                            Color.clear
+                                                .contentShape(Rectangle())
+                                                .onTapGesture {
+                                                    activeActionDockMessageId = nil
+                                                }
                                         )
                                     }
+                                    .simultaneousGesture(
+                                        TapGesture().onEnded {
+                                            isComposerFocused = false
+                                        }
+                                    )
+                                    .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
+                                    .overlay {
+                                        GeometryReader { geometry in
+                                            Color.clear.preference(
+                                                key: ChatTimelineViewportMaxYPreferenceKey.self,
+                                                value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).maxY
+                                            )
+                                        }
+                                    }
+                                    .irisInteractiveKeyboardDismiss()
                                 }
-                                .irisInteractiveKeyboardDismiss()
                                 .irisOnChange(of: isComposerFocused) { focused in
                                     if focused {
                                         activeActionDockMessageId = nil
