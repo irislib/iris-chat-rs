@@ -1,6 +1,24 @@
 use super::*;
 
 #[test]
+fn restoring_invalid_secret_key_shows_normie_error() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    core.handle_action(AppAction::RestoreSession {
+        owner_nsec: "not a secret key".to_string(),
+    });
+
+    assert_eq!(core.state.toast.as_deref(), Some("Invalid key."));
+    assert!(!core.state.busy.restoring_session);
+}
+
+#[test]
 fn ndr_runtime_invite_session_round_trips_text() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

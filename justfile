@@ -45,6 +45,12 @@ info:
     @echo "Checks"
     @echo "  just doctor-ios"
     @echo "  just qa"
+    @echo "  just test-android"
+    @echo "  just test-ios"
+    @echo "  just test-macos"
+    @echo "  just test-linux"
+    @echo "  just test-windows"
+    @echo "  just test-all-platforms"
     @echo "  just qa-native-contract"
     @echo "  just qa-interop"
 
@@ -152,6 +158,24 @@ doctor-ios:
 
 qa:
     ./scripts/test_fast.sh
+
+test-android:
+    ./scripts/test-android
+
+test-ios:
+    ./scripts/test-ios
+
+test-macos:
+    ./scripts/test-macos
+
+test-linux:
+    ./scripts/test-linux
+
+test-windows:
+    ./scripts/test-windows
+
+test-all-platforms:
+    ./scripts/test-all-platforms
 
 qa-native-contract:
     ./scripts/test_native_contract.sh

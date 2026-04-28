@@ -33,7 +33,10 @@ val cargoBinary = file("${System.getProperty("user.home")}/.cargo/bin/cargo")
 val cargoTargetDir =
     System.getenv("CARGO_TARGET_DIR")
         ?.takeIf { it.isNotBlank() }
-        ?.let { file(it) }
+        ?.let {
+            val candidate = file(it)
+            if (candidate.isAbsolute) candidate else rustAppDir.resolve(it)
+        }
         ?: rustAppDir.resolve("target")
 val publicRelayFallbackCsv = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to"
 

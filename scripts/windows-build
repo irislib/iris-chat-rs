@@ -189,6 +189,21 @@ PS
   printf '%s\n' "\$env:PATH = \$cargoBin + ';' + \$dotnetTools + ';' + \$shimBin + ';' + ${llvm_quoted} + ';' + \$env:PATH"
 }
 
+cargo_target_dir_block() {
+  cat <<'PS'
+function Get-CargoTargetDir([string]$CoreDir) {
+  $configured = $env:CARGO_TARGET_DIR
+  if ([string]::IsNullOrWhiteSpace($configured)) {
+    return (Join-Path $CoreDir 'target')
+  }
+  if ([System.IO.Path]::IsPathRooted($configured)) {
+    return $configured
+  }
+  return (Join-Path $CoreDir $configured)
+}
+PS
+}
+
 run_doctor() {
   require_macos
   local vm
@@ -321,14 +336,18 @@ run_rust() {
   ps_run "$vm" "$(cat <<PS
 \$ErrorActionPreference = 'Continue'
 $(path_setup_block)
-Set-Location $guest_repo
-Push-Location core
+\$repoRoot = $guest_repo
+\$coreDir = Join-Path \$repoRoot 'core'
+$(cargo_target_dir_block)
+Set-Location \$repoRoot
+Push-Location \$coreDir
 \$target = ${target_quoted}
 rustup target add \$target | Out-Null
 cargo build $profile_flag --target \$target
 if (\$LASTEXITCODE -ne 0) { throw "cargo build failed with exit code \$LASTEXITCODE" }
+\$targetDir = Get-CargoTargetDir \$coreDir
 Pop-Location
-Write-Output ("Built core for {0} ({1})" -f \$target, "$PROFILE")
+Write-Output ("Built core for {0} ({1}) in {2}" -f \$target, "$PROFILE", \$targetDir)
 PS
 )"
 }
@@ -351,6 +370,7 @@ run_gen_cs() {
 $(path_setup_block)
 \$repoRoot = $guest_repo
 \$coreDir = Join-Path \$repoRoot 'core'
+$(cargo_target_dir_block)
 Set-Location \$coreDir  # uniffi-bindgen-cs runs cargo metadata against cwd
 
 \$bindgen = Get-Command uniffi-bindgen-cs -ErrorAction SilentlyContinue
@@ -362,7 +382,8 @@ if (-not \$bindgen) {
 
 \$target = ${target_quoted}
 \$profile = ${profile_quoted}
-\$libPath = Join-Path \$coreDir ("target\\" + \$target + "\\" + \$profile + "\\iris_chat_core.dll")
+\$cargoTargetDir = Get-CargoTargetDir \$coreDir
+\$libPath = Join-Path (Join-Path (Join-Path \$cargoTargetDir \$target) \$profile) 'iris_chat_core.dll'
 if (-not (Test-Path \$libPath)) {
   throw "Missing \$libPath; did windows-rust succeed?"
 }

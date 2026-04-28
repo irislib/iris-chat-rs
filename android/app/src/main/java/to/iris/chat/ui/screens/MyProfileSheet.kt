@@ -127,6 +127,7 @@ fun MyProfileSheet(
         }
     var supportBusy by remember { mutableStateOf(false) }
     var pendingSecretExport by remember { mutableStateOf<SecretExportKind?>(null) }
+    var showLogoutConfirmation by remember { mutableStateOf(false) }
     var showDeleteAllConfirmation by remember { mutableStateOf(false) }
     var profileName by remember(displayName) { mutableStateOf(displayName) }
     var showProfilePicture by remember { mutableStateOf(false) }
@@ -705,7 +706,7 @@ fun MyProfileSheet(
                 )
                 IrisSecondaryButton(
                     text = "Logout",
-                    onClick = onLogout,
+                    onClick = { showLogoutConfirmation = true },
                     modifier = Modifier.testTag("myProfileLogoutButton"),
                     icon = {
                         Icon(
@@ -738,35 +739,27 @@ fun MyProfileSheet(
         )
     }
 
+    if (showLogoutConfirmation) {
+        DeleteAppDataConfirmationDialog(
+            onDismiss = { showLogoutConfirmation = false },
+            onConfirm = {
+                showLogoutConfirmation = false
+                onDismiss()
+                onLogout()
+            },
+            confirmTag = "myProfileConfirmLogoutButton",
+        )
+    }
+
     if (showDeleteAllConfirmation) {
-        AlertDialog(
-            onDismissRequest = { showDeleteAllConfirmation = false },
-            title = { Text("Delete All Data?") },
-            text = {
-                Text(
-                    "This permanently deletes your account, secret keys, messages, and cached files from this device. This action cannot be undone.",
-                )
+        DeleteAppDataConfirmationDialog(
+            onDismiss = { showDeleteAllConfirmation = false },
+            onConfirm = {
+                showDeleteAllConfirmation = false
+                onDismiss()
+                appManager.resetAppState()
             },
-            dismissButton = {
-                TextButton(onClick = { showDeleteAllConfirmation = false }) {
-                    Text("Cancel")
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showDeleteAllConfirmation = false
-                        onDismiss()
-                        appManager.resetAppState()
-                    },
-                    modifier = Modifier.testTag("myProfileConfirmDeleteAllDataButton"),
-                ) {
-                    Text(
-                        text = "Delete Everything",
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            },
+            confirmTag = "myProfileConfirmDeleteAllDataButton",
         )
     }
 

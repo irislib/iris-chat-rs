@@ -33,10 +33,12 @@ extension FfiApp {
     func dispatchSafely(action: AppAction) throws {
         uniffiEnsureIrisChatCoreInitialized()
 
-        let pointer = self.uniffiClonePointer()
-        let loweredAction = FfiConverterTypeAppAction_lower(action)
         var callStatus = makeRustCallStatus()
-        uniffi_iris_chat_core_fn_method_ffiapp_dispatch(pointer, loweredAction, &callStatus)
+        uniffi_iris_chat_core_fn_method_ffiapp_dispatch(
+            self.uniffiClonePointer(),
+            FfiConverterTypeAppAction_lower(action),
+            &callStatus
+        )
         try checkRustCallStatus(callStatus)
     }
 }

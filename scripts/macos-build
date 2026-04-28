@@ -21,7 +21,7 @@ MACOS_APP_NAME="${IRIS_MACOS_APP_NAME:-Iris Chat.app}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-app|macos-notarize|macos-dmg>
+usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-test|macos-app|macos-notarize|macos-dmg>
 
 Signing & notarization (login-keychain mode, recommended):
   MACOS_SIGNING_IDENTITY  e.g. "Developer ID Application: Your Name (TEAMID)"
@@ -46,12 +46,21 @@ host_dynamic_lib() {
     Linux) ext="so" ;;
     *) ext="dylib" ;;
   esac
-  printf '%s/target/%s/libiris_chat_core.%s\n' "$CORE_DIR" "$PROFILE" "$ext"
+  printf '%s/%s/libiris_chat_core.%s\n' "$(target_root)" "$PROFILE" "$ext"
 }
 
 target_static_lib() {
   local target="$1"
-  printf '%s/target/%s/%s/libiris_chat_core.a\n' "$CORE_DIR" "$target" "$PROFILE"
+  printf '%s/%s/%s/libiris_chat_core.a\n' "$(target_root)" "$target" "$PROFILE"
+}
+
+target_root() {
+  local dir="${CARGO_TARGET_DIR:-$CORE_DIR/target}"
+  if [[ "$dir" = /* ]]; then
+    printf '%s\n' "$dir"
+  else
+    printf '%s/%s\n' "$CORE_DIR" "$dir"
+  fi
 }
 
 build_host() {
@@ -210,6 +219,18 @@ run_macos_build() {
     -scheme IrisChatMac \
     -destination "platform=macOS,arch=$host_arch" \
     build
+}
+
+run_macos_test() {
+  local host_arch
+  host_arch="$(uname -m)"
+  run_macos_xcframework
+  run_macos_xcodeproj
+  xcodebuild \
+    -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
+    -scheme IrisChatMac \
+    -destination "platform=macOS,arch=$host_arch" \
+    test
 }
 
 run_macos_app() {
@@ -378,6 +399,7 @@ case "${1:-}" in
   macos-xcframework) run_macos_xcframework ;;
   macos-xcodeproj) run_macos_xcodeproj ;;
   macos-build) run_macos_build ;;
+  macos-test) run_macos_test ;;
   macos-app) run_macos_app ;;
   macos-notarize) run_macos_notarize ;;
   macos-dmg) run_macos_dmg ;;

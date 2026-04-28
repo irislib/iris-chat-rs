@@ -5,6 +5,7 @@ use iris_chat_core::{AppAction, AppState, PreferencesSnapshot, Screen};
 
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;
+use crate::screens::confirm_delete_app_data;
 use crate::widgets::{image_cache, qr};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
@@ -390,8 +391,9 @@ fn security_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
     logout.add_css_class("error");
     {
         let manager = manager.clone();
-        logout.connect_activated(move |_| {
-            manager.dispatch(AppAction::Logout);
+        logout.connect_activated(move |row| {
+            let parent = row.root().and_then(|root| root.downcast::<gtk::Window>().ok());
+            confirm_delete_app_data(parent.as_ref(), &manager);
         });
     }
     group.add(&logout);

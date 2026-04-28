@@ -25,7 +25,7 @@ public partial class RestoreAccountView : UserControl
 
     private void OnRestore(object sender, RoutedEventArgs e)
     {
-        var nsec = NsecInput.Text?.Trim();
+        var nsec = NsecInput.Password?.Trim();
         if (string.IsNullOrEmpty(nsec)) return;
         App.CurrentManager.RestoreSession(nsec);
     }

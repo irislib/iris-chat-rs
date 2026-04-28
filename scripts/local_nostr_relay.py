@@ -14,10 +14,21 @@ import sys
 from pathlib import Path
 
 
+def cargo_target_dir(core_dir: Path) -> Path:
+    configured = os.environ.get("CARGO_TARGET_DIR")
+    if not configured:
+        return core_dir / "target"
+    target_dir = Path(configured)
+    if target_dir.is_absolute():
+        return target_dir
+    return core_dir / target_dir
+
+
 def main() -> int:
     root_dir = Path(__file__).resolve().parent.parent
+    core_dir = root_dir / "core"
     bind_addr = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("IRIS_LOCAL_RELAY_BIND", "0.0.0.0:4848")
-    manifest = str(root_dir / "core" / "Cargo.toml")
+    manifest = str(core_dir / "Cargo.toml")
     build = subprocess.run([
         "cargo", "build",
         "--manifest-path", manifest,
@@ -25,7 +36,7 @@ def main() -> int:
     ])
     if build.returncode != 0:
         return build.returncode
-    binary = root_dir / "core" / "target" / "debug" / "local_nostr_relay"
+    binary = cargo_target_dir(core_dir) / "debug" / "local_nostr_relay"
     if not binary.exists():
         sys.stderr.write(f"local_nostr_relay binary not found at {binary}\n")
         return 1

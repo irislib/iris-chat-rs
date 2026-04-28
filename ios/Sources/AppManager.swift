@@ -17,6 +17,20 @@ struct StagedAttachment: Identifiable, Equatable {
     let filename: String
 }
 
+private struct ClientDebugLogEntry {
+    let timestampSecs: UInt64
+    let category: String
+    let detail: String
+
+    var jsonObject: [String: Any] {
+        [
+            "timestamp_secs": timestampSecs,
+            "category": category,
+            "detail": detail
+        ]
+    }
+}
+
 protocol AccountSecretStore {
     func load() -> StoredAccountBundle?
     func save(_ bundle: StoredAccountBundle)
@@ -84,6 +98,42 @@ final class KeychainSecretStore: AccountSecretStore {
     }
 }
 
+final class FileAccountSecretStore: AccountSecretStore {
+    private let url: URL
+    private let fileManager: FileManager
+
+    init(url: URL, fileManager: FileManager = .default) {
+        self.url = url
+        self.fileManager = fileManager
+    }
+
+    func load() -> StoredAccountBundle? {
+        guard let data = try? Data(contentsOf: url) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(StoredAccountBundle.self, from: data)
+    }
+
+    func save(_ bundle: StoredAccountBundle) {
+        guard let data = try? JSONEncoder().encode(bundle) else {
+            return
+        }
+        do {
+            try fileManager.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try data.write(to: url, options: .atomic)
+        } catch {
+            NSLog("Iris Chat file secret save failed: %@", "\(error)")
+        }
+    }
+
+    func clear() {
+        try? fileManager.removeItem(at: url)
+    }
+}
+
 protocol RustAppClient: AnyObject {
     func state() -> AppState
     func dispatch(action: AppAction) throws
@@ -122,16 +172,45 @@ enum AppPaths {
         bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
     }
 
+    static func testRunId(environment: [String: String]) -> String? {
+        if let runId = environment["IRIS_UI_TEST_RUN_ID"], !runId.isEmpty {
+            return runId
+        }
+        if let sessionId = environment["XCTestSessionIdentifier"], !sessionId.isEmpty {
+            return "xctest-\(sessionId)"
+        }
+        if let bundlePath = environment["XCTestBundlePath"], !bundlePath.isEmpty {
+            return "xctest"
+        }
+        return nil
+    }
+
     static func keychainService(environment: [String: String]) -> String {
         let base = "to.iris.chat"
-        guard let runId = environment["IRIS_UI_TEST_RUN_ID"], !runId.isEmpty else {
+        guard let runId = testRunId(environment: environment) else {
             return base
         }
         return "\(base).\(runId)"
     }
 
+    static func secretStore(
+        dataDir: URL,
+        fileManager: FileManager,
+        environment: [String: String]
+    ) -> AccountSecretStore {
+#if os(macOS)
+        if testRunId(environment: environment) != nil || environment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] == "1" {
+            return FileAccountSecretStore(
+                url: dataDir.appendingPathComponent("account-secret.json"),
+                fileManager: fileManager
+            )
+        }
+#endif
+        return KeychainSecretStore(service: keychainService(environment: environment))
+    }
+
     static func dataDir(fileManager: FileManager, environment: [String: String]) -> URL {
-        let suffix = environment["IRIS_UI_TEST_RUN_ID"].flatMap { $0.isEmpty ? nil : $0 } ?? "iris-chat"
+        let suffix = testRunId(environment: environment) ?? "iris-chat"
         let legacyBase = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let legacy = legacyBase.appendingPathComponent(suffix, isDirectory: true)
         #if os(iOS)
@@ -181,6 +260,7 @@ enum AppPaths {
 @MainActor
 final class AppManager: ObservableObject {
     private static let downloadedAttachmentCacheLimitBytes = 128 * 1024 * 1024
+    private static let maxClientDebugLogEntries = 50
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
 
     @Published private(set) var state: AppState
@@ -195,6 +275,7 @@ final class AppManager: ObservableObject {
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
 #endif
+    private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
     private lazy var reconciler = UpdateBridge(owner: self)
 
@@ -209,7 +290,11 @@ final class AppManager: ObservableObject {
     ) {
         self.fileManager = fileManager
         let resolvedDataDir = dataDir ?? AppPaths.dataDir(fileManager: fileManager, environment: environment)
-        let resolvedSecretStore = secretStore ?? KeychainSecretStore(service: AppPaths.keychainService(environment: environment))
+        let resolvedSecretStore = secretStore ?? AppPaths.secretStore(
+            dataDir: resolvedDataDir,
+            fileManager: fileManager,
+            environment: environment
+        )
 
         if environment["IRIS_UI_TEST_RESET"] == "1" {
             resolvedSecretStore.clear()
@@ -432,6 +517,7 @@ final class AppManager: ObservableObject {
     func restoreSession(ownerNsec: String) {
         let trimmed = ownerNsec.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
+            showToast("Invalid key.")
             return
         }
         dispatchToRust(.restoreSession(ownerNsec: trimmed))
@@ -625,7 +711,7 @@ final class AppManager: ObservableObject {
     }
 
     func supportBundleJson() -> String {
-        rust.exportSupportBundleJson()
+        supportBundleJsonWithClientLog(rust.exportSupportBundleJson())
     }
 
     func exportOwnerNsec() -> String? {
@@ -728,11 +814,43 @@ final class AppManager: ObservableObject {
     }
 
     private func logDispatchFailure(action: AppAction, error: Error) {
-        let message = "Iris Chat FFI dispatch failed (\(actionLogName(action))): \(error)"
+        let actionName = actionLogName(action)
+        let message = "Iris Chat FFI dispatch failed (\(actionName)): \(error)"
+        appendClientDebugLog(category: "ffi.dispatch.failed", detail: "\(actionName): \(error)")
         NSLog("%@", message)
 #if DEBUG
         print(message)
 #endif
+    }
+
+    private func appendClientDebugLog(category: String, detail: String) {
+        clientDebugLog.append(
+            ClientDebugLogEntry(
+                timestampSecs: UInt64(Date().timeIntervalSince1970),
+                category: category,
+                detail: detail
+            )
+        )
+        let excessCount = clientDebugLog.count - Self.maxClientDebugLogEntries
+        if excessCount > 0 {
+            clientDebugLog.removeFirst(excessCount)
+        }
+    }
+
+    private func supportBundleJsonWithClientLog(_ rustJson: String) -> String {
+        guard !clientDebugLog.isEmpty,
+              let data = rustJson.data(using: .utf8),
+              var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return rustJson
+        }
+        object["client_log"] = clientDebugLog.map(\.jsonObject)
+        guard let mergedData = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys]
+        ) else {
+            return rustJson
+        }
+        return String(data: mergedData, encoding: .utf8) ?? rustJson
     }
 
     private func actionLogName(_ action: AppAction) -> String {

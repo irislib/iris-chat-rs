@@ -18,7 +18,12 @@ EOF
 }
 
 target_root() {
-  printf '%s\n' "${CARGO_TARGET_DIR:-$CORE_DIR/target}"
+  local dir="${CARGO_TARGET_DIR:-$CORE_DIR/target}"
+  if [[ "$dir" = /* ]]; then
+    printf '%s\n' "$dir"
+  else
+    printf '%s/%s\n' "$CORE_DIR" "$dir"
+  fi
 }
 
 host_dynamic_lib() {

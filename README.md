@@ -45,6 +45,15 @@ just run-macos
   - one local-relay soak iteration
   - Android debug compile gates
   - iOS XCTest and UI tests
+- Platform app entrypoints:
+  - `just test-android`
+  - `just test-ios`
+  - `just test-macos`
+  - `just test-linux`
+  - `just test-windows`
+- `just test-all-platforms`
+  - Rust core tests
+  - every platform app test entrypoint above
 - `just qa-native-contract`
   - `just qa`
   - Android `AppManagerContractTest`

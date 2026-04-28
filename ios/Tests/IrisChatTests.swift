@@ -390,7 +390,10 @@ final class IrisChatTests: XCTestCase {
         XCTAssertEqual(resolved.errorMessage, "This code is for a different account.")
     }
 
-    func testKeychainSecretStoreRoundTrip() {
+    func testKeychainSecretStoreRoundTrip() throws {
+#if os(macOS)
+        throw XCTSkip("macOS test lane uses the file-backed test store to avoid Keychain permission UI")
+#else
         let service = "to.iris.chat.tests.\(UUID().uuidString)"
         let account = "stored-account-bundle"
         let store = KeychainSecretStore(service: service, account: account)
@@ -405,7 +408,49 @@ final class IrisChatTests: XCTestCase {
         XCTAssertEqual(store.load(), expected)
         store.clear()
         XCTAssertNil(store.load())
+#endif
     }
+
+    func testFileAccountSecretStoreRoundTrip() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let store = FileAccountSecretStore(
+            url: tempDir.appendingPathComponent("account-secret.json"),
+            fileManager: .default
+        )
+        let expected = StoredAccountBundle(
+            ownerNsec: "nsec1owner",
+            ownerPubkeyHex: "owner-hex",
+            deviceNsec: "nsec1device"
+        )
+
+        store.save(expected)
+        XCTAssertEqual(store.load(), expected)
+        store.clear()
+        XCTAssertNil(store.load())
+    }
+
+#if os(macOS)
+    func testMacUiTestSecretStoreUsesDataDirectoryFile() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let secretFile = tempDir.appendingPathComponent("account-secret.json")
+        let store = AppPaths.secretStore(
+            dataDir: tempDir,
+            fileManager: .default,
+            environment: ["IRIS_UI_TEST_RUN_ID": UUID().uuidString]
+        )
+        let expected = StoredAccountBundle(
+            ownerNsec: "nsec1owner",
+            ownerPubkeyHex: "owner-hex",
+            deviceNsec: "nsec1device"
+        )
+
+        store.save(expected)
+        XCTAssertEqual(store.load(), expected)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secretFile.path))
+    }
+#endif
 
     @MainActor
     func testAppManagerRestoresPersistedBundleOnLaunch() async {
@@ -639,6 +684,26 @@ final class IrisChatTests: XCTestCase {
 
         XCTAssertEqual(manager.toastMessage, "Action failed. Copy support bundle in Settings.")
         XCTAssertTrue(rust.dispatchedActions.isEmpty)
+        let supportBundle = manager.supportBundleJson()
+        XCTAssertTrue(supportBundle.contains("\"client_log\""))
+        XCTAssertTrue(supportBundle.contains("ffi.dispatch.failed"))
+        XCTAssertTrue(supportBundle.contains("pushScreen"))
+    }
+
+    @MainActor
+    func testLiveSafeDispatchPassesActionBufferToRust() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+
+        let app = FfiApp(dataDir: tempDir.path, keychainGroup: "", appVersion: "test")
+        defer { app.shutdown() }
+
+        XCTAssertNoThrow(try app.dispatchSafely(action: .pushScreen(screen: .createAccount)))
+        let reachedCreateAccount = await waitUntil {
+            app.state().router.screenStack == [.createAccount]
+        }
+        XCTAssertTrue(reachedCreateAccount)
     }
 
     @MainActor

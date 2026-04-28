@@ -1,6 +1,9 @@
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
+#if canImport(AppKit)
+import AppKit
+#endif
 #if canImport(PhotosUI)
 import PhotosUI
 #endif
@@ -1017,6 +1020,7 @@ struct WelcomeScreen: View {
 struct CreateAccountScreen: View {
     @ObservedObject var manager: AppManager
     @State private var displayName = ""
+    @FocusState private var isNameFocused: Bool
 
     var body: some View {
         IrisScrollScreen {
@@ -1034,6 +1038,7 @@ struct CreateAccountScreen: View {
                 TextField("Name", text: $displayName)
                     .textFieldStyle(.plain)
                     .irisInputField()
+                    .focused($isNameFocused)
                     .accessibilityIdentifier("signupNameField")
 
                 Button(manager.state.busy.creatingAccount ? "Creating…" : "Create account") {
@@ -1045,6 +1050,11 @@ struct CreateAccountScreen: View {
                     manager.state.busy.creatingAccount
                 )
                 .accessibilityIdentifier("generateKeyButton")
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.async {
+                isNameFocused = true
             }
         }
     }
@@ -1060,7 +1070,7 @@ struct CreateAccountScreen: View {
 
 struct RestoreAccountScreen: View {
     @ObservedObject var manager: AppManager
-    @State private var restoreInput = ""
+    @StateObject private var restoreSecret = SecretKeyDraft()
 
     var body: some View {
         IrisScrollScreen {
@@ -1076,20 +1086,17 @@ struct RestoreAccountScreen: View {
                     subtitle: "Paste your secret key."
                 )
 
-                TextField("Secret key", text: $restoreInput)
-                    .irisIdentifierInputModifiers()
-                    .textFieldStyle(.plain)
+                SecretKeyField(text: Binding(
+                    get: { restoreSecret.text },
+                    set: { restoreSecret.text = $0 }
+                ))
                     .irisInputField()
-                    .accessibilityIdentifier("importKeyField")
 
                 Button(manager.state.busy.restoringSession ? "Restoring…" : "Restore account") {
-                    manager.restoreSession(ownerNsec: restoreInput)
+                    manager.restoreSession(ownerNsec: restoreSecret.text)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
-                .disabled(
-                    restoreInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                    manager.state.busy.restoringSession
-                )
+                .disabled(manager.state.busy.restoringSession)
                 .accessibilityIdentifier("importKeyButton")
             }
         }
@@ -2412,6 +2419,7 @@ struct SettingsScreen: View {
     @ObservedObject var manager: AppManager
     @State private var shareText: String?
     @State private var pendingSecretExport: SecretExportKind?
+    @State private var showingLogoutConfirmation = false
     @State private var showingDeleteAllConfirmation = false
     @State private var profileName = ""
     @State private var profilePictureViewerURL: URL?
@@ -2612,7 +2620,7 @@ struct SettingsScreen: View {
                         )
 
                         Button("Logout", role: .destructive) {
-                            manager.logout()
+                            showingLogoutConfirmation = true
                         }
                         .buttonStyle(IrisSecondaryButtonStyle())
                         .accessibilityIdentifier("myProfileLogoutButton")
@@ -2658,14 +2666,23 @@ struct SettingsScreen: View {
                 }
             )
         }
-        .alert("Delete All Data?", isPresented: $showingDeleteAllConfirmation) {
+        .alert("Delete app data?", isPresented: $showingLogoutConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete Everything", role: .destructive) {
+            Button("Delete", role: .destructive) {
+                manager.logout()
+            }
+            .accessibilityIdentifier("myProfileConfirmLogoutButton")
+        } message: {
+            Text("This removes your secret keys, messages, and cached files from this device.")
+        }
+        .alert("Delete app data?", isPresented: $showingDeleteAllConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
                 manager.resetAppState()
             }
             .accessibilityIdentifier("myProfileConfirmDeleteAllDataButton")
         } message: {
-            Text("This permanently deletes your account, secret keys, messages, and cached files from this device. This action cannot be undone.")
+            Text("This removes your secret keys, messages, and cached files from this device.")
         }
     }
 
@@ -3186,6 +3203,118 @@ private struct ToastView: View {
                             .stroke(palette.border, lineWidth: 1)
                     )
             )
+    }
+}
+
+#if canImport(AppKit)
+private final class SecretKeyDraft: ObservableObject {
+    @Published var text = ""
+}
+
+private final class BindingSecureTextField: NSSecureTextField {
+    var onTextChange: ((String) -> Void)?
+
+    override func textDidChange(_ notification: Notification) {
+        super.textDidChange(notification)
+        onTextChange?(stringValue)
+    }
+
+    override func textDidEndEditing(_ notification: Notification) {
+        super.textDidEndEditing(notification)
+        onTextChange?(stringValue)
+    }
+}
+
+private struct MacSecretKeyField: NSViewRepresentable {
+    @Binding var text: String
+
+    func makeNSView(context: Context) -> NSSecureTextField {
+        let field = BindingSecureTextField()
+        field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.textFieldAction(_:))
+        field.isContinuous = true
+        field.onTextChange = { value in
+            context.coordinator.update(value)
+        }
+        field.identifier = NSUserInterfaceItemIdentifier("importKeyField")
+        field.placeholderString = "Secret key"
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = .systemFont(ofSize: NSFont.systemFontSize)
+        field.textColor = .labelColor
+        return field
+    }
+
+    func updateNSView(_ nsView: NSSecureTextField, context: Context) {
+        if let field = nsView as? BindingSecureTextField {
+            field.onTextChange = { value in
+                context.coordinator.update(value)
+            }
+        }
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        nsView.placeholderString = "Secret key"
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        private let text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        func update(_ value: String) {
+            text.wrappedValue = value
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else {
+                return
+            }
+            update(field.stringValue)
+        }
+
+        func controlTextDidEndEditing(_ notification: Notification) {
+            guard let field = notification.object as? NSTextField else {
+                return
+            }
+            update(field.stringValue)
+        }
+
+        @objc func textFieldAction(_ sender: NSTextField) {
+            update(sender.stringValue)
+        }
+    }
+}
+#endif
+
+#if !canImport(AppKit)
+private final class SecretKeyDraft: ObservableObject {
+    @Published var text = ""
+}
+#endif
+
+private struct SecretKeyField: View {
+    @Binding var text: String
+
+    var body: some View {
+        #if canImport(AppKit)
+        MacSecretKeyField(text: $text)
+            .frame(height: 22)
+        #else
+        SecureField("Secret key", text: $text)
+            .irisIdentifierInputModifiers()
+            .textContentType(.password)
+            .textFieldStyle(.plain)
+            .accessibilityIdentifier("importKeyField")
+        #endif
     }
 }
 

@@ -21,6 +21,8 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&hint);
 
     let nsec = entry("Secret key");
+    nsec.set_visibility(false);
+    nsec.set_input_purpose(gtk::InputPurpose::Password);
     container.append(&nsec);
 
     let busy = state.busy.restoring_session;

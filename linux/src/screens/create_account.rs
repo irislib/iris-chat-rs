@@ -15,6 +15,12 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&header);
 
     let name = entry("Display name");
+    {
+        let name = name.clone();
+        gtk::glib::idle_add_local_once(move || {
+            name.grab_focus();
+        });
+    }
     container.append(&name);
 
     let busy = state.busy.creating_account;

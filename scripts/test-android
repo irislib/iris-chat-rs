@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ANDROID_DIR="$ROOT/android"
+ANDROID_TEST_AVD="${IRIS_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
+
+resolve_serial() {
+  if [[ -n "${IRIS_ANDROID_SERIAL:-}" ]]; then
+    printf '%s\n' "$IRIS_ANDROID_SERIAL"
+    return 0
+  fi
+
+  "$ROOT/scripts/run_android_emulators.sh" --headless "$ANDROID_TEST_AVD" | awk 'END { print $2 }'
+}
+
+(
+  cd "$ANDROID_DIR"
+  ./gradlew :app:compileDebugKotlin :app:compileDebugAndroidTestKotlin
+)
+
+serial="$(resolve_serial)"
+if [[ -z "${serial:-}" ]]; then
+  echo "No Android device or emulator available." >&2
+  exit 1
+fi
+
+(
+  cd "$ANDROID_DIR"
+  ANDROID_SERIAL="$serial" ./gradlew :app:connectedDebugAndroidTest
+)

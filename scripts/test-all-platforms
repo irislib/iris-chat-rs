@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+"$ROOT/scripts/test_rust.sh"
+"$ROOT/scripts/test-android"
+"$ROOT/scripts/test-ios"
+"$ROOT/scripts/test-macos"
+"$ROOT/scripts/test-linux"
+"$ROOT/scripts/test-windows"

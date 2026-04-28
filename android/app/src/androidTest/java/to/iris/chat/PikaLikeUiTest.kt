@@ -315,6 +315,19 @@ class PikaLikeUiTest {
     }
 
     @Test
+    fun restore_invalid_secret_key_shows_invalid_key() {
+        composeRule.resetToWelcome()
+        composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true).performClick()
+
+        composeRule.waitForTag("restoreAccountScreen")
+        composeRule.onNodeWithTag("importKeyField", useUnmergedTree = true)
+            .performTextInput("not a secret key")
+        composeRule.onNodeWithTag("importKeyButton", useUnmergedTree = true).performClick()
+
+        composeRule.waitForText("Invalid key.")
+    }
+
+    @Test
     fun new_chat_view_opens_group_flow() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
@@ -394,6 +407,7 @@ class PikaLikeUiTest {
             onNodeWithTag("welcomeCreateAction", useUnmergedTree = true).performClick()
             waitForTag("createAccountScreen")
             onNodeWithTag("signupNameField", useUnmergedTree = true)
+                .assertIsFocused()
                 .performTextInput("android tester")
             onNodeWithTag("generateKeyButton", useUnmergedTree = true).performClick()
             waitForTag("chatListNewChatButton")

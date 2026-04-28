@@ -204,5 +204,21 @@ public partial class SettingsView : UserControl
         }
     }
 
-    private void OnLogout(object sender, RoutedEventArgs e) => App.CurrentManager.Logout();
+    private void OnLogout(object sender, RoutedEventArgs e)
+    {
+        if (ConfirmDeleteAppData())
+            App.CurrentManager.Logout();
+    }
+
+    private bool ConfirmDeleteAppData()
+    {
+        var result = MessageBox.Show(
+            Window.GetWindow(this),
+            "This removes your secret keys, messages, and cached files from this device.",
+            "Delete app data?",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Warning
+        );
+        return result == MessageBoxResult.OK;
+    }
 }

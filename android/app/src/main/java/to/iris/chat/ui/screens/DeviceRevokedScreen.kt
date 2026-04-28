@@ -8,6 +8,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -23,6 +27,8 @@ fun DeviceRevokedScreen(
     appManager: AppManager,
     appState: AppState,
 ) {
+    var showLogoutConfirmation by remember { mutableStateOf(false) }
+
     Column(
         modifier =
             Modifier
@@ -43,7 +49,7 @@ fun DeviceRevokedScreen(
             )
             IrisPrimaryButton(
                 text = "Sign out",
-                onClick = appManager::logout,
+                onClick = { showLogoutConfirmation = true },
                 modifier = Modifier.testTag("deviceRevokedLogoutButton"),
                 icon = {
                     Icon(
@@ -53,5 +59,16 @@ fun DeviceRevokedScreen(
                 },
             )
         }
+    }
+
+    if (showLogoutConfirmation) {
+        DeleteAppDataConfirmationDialog(
+            onDismiss = { showLogoutConfirmation = false },
+            onConfirm = {
+                showLogoutConfirmation = false
+                appManager.logout()
+            },
+            confirmTag = "deviceRevokedConfirmLogoutButton",
+        )
     }
 }

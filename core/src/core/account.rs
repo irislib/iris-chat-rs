@@ -46,14 +46,17 @@ impl AppCore {
         self.state.busy.restoring_session = true;
         self.emit_state();
 
-        let result = Keys::parse(owner_nsec.trim())
-            .map_err(|error| anyhow::anyhow!(error.to_string()))
-            .and_then(|owner_keys| {
-                self.start_primary_session(owner_keys, Keys::generate(), true, false)
-            });
-
-        if let Err(error) = result {
-            self.state.toast = Some(error.to_string());
+        match Keys::parse(owner_nsec.trim()) {
+            Ok(owner_keys) => {
+                if let Err(error) =
+                    self.start_primary_session(owner_keys, Keys::generate(), true, false)
+                {
+                    self.state.toast = Some(error.to_string());
+                }
+            }
+            Err(_) => {
+                self.state.toast = Some("Invalid key.".to_string());
+            }
         }
 
         self.state.busy.restoring_session = false;
@@ -85,8 +88,8 @@ impl AppCore {
             let owner_pubkey = parse_owner_input(owner_pubkey_hex)?;
             let owner_keys = match owner_nsec {
                 Some(secret) => {
-                    let keys = Keys::parse(secret.trim())
-                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                    let keys =
+                        Keys::parse(secret.trim()).map_err(|_| anyhow::anyhow!("Invalid key."))?;
                     if keys.public_key() != owner_pubkey {
                         return Err(anyhow::anyhow!(
                             "stored owner secret does not match stored owner pubkey"

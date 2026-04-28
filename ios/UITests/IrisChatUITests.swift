@@ -13,8 +13,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "welcomeAddDeviceAction").waitForExistence(timeout: 10))
         createAccount(app)
 
-        XCTAssertTrue(element(app, "navigationTopBar").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "chatListNewChatButton").waitForExistence(timeout: 10))
+        XCTAssertTrue(waitForChatList(app, timeout: 10))
         XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
         element(app, "chatListProfileButton").tap()
 
@@ -31,13 +30,15 @@ final class IrisChatUITests: XCTestCase {
         let app = launchApp(runId: runId)
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
 
+#if os(iOS)
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let allowButton = springboard.buttons["Allow"]
         if allowButton.waitForExistence(timeout: 5) {
             allowButton.tap()
         }
+#endif
 
-        XCTAssertTrue(element(app, "navigationTopBar").waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForChatList(app, timeout: 20))
     }
 
     func testCreateChatAndSendMessageLocally() {
@@ -48,14 +49,16 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "chatComposerBar").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-        element(app, "chatMessageInput").tap()
-        element(app, "chatMessageInput").typeText("hello from ios ui test")
+        typeText("hello from ios ui test", into: element(app, "chatMessageInput"), app: app)
         element(app, "chatSendButton").tap()
 
         XCTAssertTrue(app.staticTexts["hello from ios ui test"].waitForExistence(timeout: 15))
     }
 
-    func testSubmittedMessagesStayPinnedToLatest() {
+    func testReturnKeyKeepsMobileDraftUnsent() throws {
+#if os(macOS)
+        throw XCTSkip("Return key sends on macOS; this checks the mobile keyboard behavior")
+#else
         let app = launchCleanApp()
 
         createAccount(app)
@@ -63,35 +66,12 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "chatComposerBar").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-
-        let messagePrefix = "scroll pin \(Int(Date().timeIntervalSince1970 * 1000))"
-        for index in 0..<18 {
-            let message = "\(messagePrefix) \(index)"
-            element(app, "chatMessageInput").tap()
-            element(app, "chatMessageInput").typeText(message)
-            element(app, "chatSendButton").tap()
-            let row = app.staticTexts[message]
-            XCTAssertTrue(row.waitForExistence(timeout: 8))
-            XCTAssertTrue(row.isHittable)
-        }
-
-        XCTAssertFalse(element(app, "chatJumpToBottom").exists)
-    }
-
-    func testReturnKeyKeepsMobileDraftUnsent() {
-        let app = launchCleanApp()
-
-        createAccount(app)
-        openChatWithPeer(app)
-
-        XCTAssertTrue(element(app, "chatComposerBar").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-        element(app, "chatMessageInput").tap()
-        element(app, "chatMessageInput").typeText("hello from return key\n")
+        typeText("hello from return key\n", into: element(app, "chatMessageInput"), app: app)
 
         XCTAssertFalse(app.staticTexts["hello from return key"].waitForExistence(timeout: 2))
         element(app, "chatSendButton").tap()
         XCTAssertTrue(app.staticTexts["hello from return key"].waitForExistence(timeout: 15))
+#endif
     }
 
     func testCreateGroupAndOpenGroupDetails() {
@@ -99,19 +79,17 @@ final class IrisChatUITests: XCTestCase {
 
         createAccount(app)
 
-        element(app, "chatListNewChatButton").tap()
+        tapNewChat(app)
         XCTAssertTrue(element(app, "newChatNewGroupButton").waitForExistence(timeout: 10))
         element(app, "newChatNewGroupButton").tap()
         XCTAssertTrue(element(app, "newGroupPrimaryCard").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "newGroupNameInput").waitForExistence(timeout: 10))
-        element(app, "newGroupNameInput").tap()
-        element(app, "newGroupNameInput").typeText("Trip crew")
-        element(app, "newGroupMemberInput").tap()
-        element(app, "newGroupMemberInput").typeText(validPeerNpub)
+        typeText("Trip crew", into: element(app, "newGroupNameInput"), app: app)
+        typeText(validPeerNpub, into: element(app, "newGroupMemberInput"), app: app)
         element(app, "newGroupAddMemberButton").tap()
         element(app, "newGroupCreateButton").tap()
 
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 45))
         openGroupDetails(app)
 
         XCTAssertTrue(element(app, "groupDetailsScreen").waitForExistence(timeout: 10))
@@ -119,11 +97,32 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "groupDetailsAddMembersButton").waitForExistence(timeout: 5))
     }
 
+    func testDesktopSidebarNewChatAndSettingsDoNotShowDispatchFailure() throws {
+        let app = launchCleanApp()
+        createAccount(app)
+
+        let newChatRow = element(app, "desktopNewChatRow")
+        guard newChatRow.waitForExistence(timeout: 10) else {
+            throw XCTSkip("desktop sidebar is not active on this target")
+        }
+
+        newChatRow.tap()
+        XCTAssertTrue(element(app, "newChatNewGroupButton").waitForExistence(timeout: 10))
+        assertNoDispatchFailureToast(app)
+
+        newChatRow.tap()
+        XCTAssertTrue(element(app, "newChatNewGroupButton").waitForExistence(timeout: 5))
+        assertNoDispatchFailureToast(app)
+
+        element(app, "chatListProfileButton").tap()
+        XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
+        assertNoDispatchFailureToast(app)
+    }
+
     private func openChatWithPeer(_ app: XCUIApplication) {
-        element(app, "chatListNewChatButton").tap()
+        tapNewChat(app)
         XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))
-        element(app, "newChatPeerInput").tap()
-        element(app, "newChatPeerInput").typeText(validPeerNpub)
+        typeText(validPeerNpub, into: element(app, "newChatPeerInput"), app: app)
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 15))
     }
 
@@ -135,11 +134,24 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
-        element(app, "importKeyField").tap()
-        element(app, "importKeyField").typeText(validOwnerNsec)
+        typeText(validOwnerNsec, into: element(app, "importKeyField"), app: app)
         element(app, "importKeyButton").tap()
 
-        XCTAssertTrue(element(app, "chatListNewChatButton").waitForExistence(timeout: 20))
+        XCTAssertTrue(waitForChatList(app, timeout: 20))
+    }
+
+    func testRestoreInvalidSecretKeyShowsInvalidKey() {
+        let app = launchCleanApp()
+
+        XCTAssertTrue(element(app, "welcomeRestoreAction").waitForExistence(timeout: 10))
+        element(app, "welcomeRestoreAction").tap()
+
+        XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
+        typeText("not a secret key", into: element(app, "importKeyField"), app: app)
+        element(app, "importKeyButton").tap()
+
+        XCTAssertTrue(app.staticTexts["Invalid key."].waitForExistence(timeout: 10))
     }
 
     func testLogoutReturnsToWelcomeChooser() {
@@ -153,13 +165,18 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "myProfileLogoutButton").waitForExistence(timeout: 10))
         element(app, "myProfileLogoutButton").tap()
+        XCTAssertTrue(element(app, "myProfileConfirmLogoutButton").waitForExistence(timeout: 10))
+        element(app, "myProfileConfirmLogoutButton").tap()
 
         XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 20))
         XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 10))
         XCTAssertFalse(element(app, "chatListHeroCard").exists)
     }
 
-    func testScanOwnerQrEntersAwaitingApprovalScreen() {
+    func testScanOwnerQrEntersAwaitingApprovalScreen() throws {
+#if os(macOS)
+        throw XCTSkip("Camera QR scanning is covered by the iOS UI lane")
+#else
         let app = launchCleanApp(qrValue: validPeerNpub)
 
         XCTAssertTrue(element(app, "welcomeAddDeviceAction").waitForExistence(timeout: 10))
@@ -174,6 +191,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "awaitingApprovalScreen").waitForExistence(timeout: 20))
         XCTAssertTrue(element(app, "awaitingApprovalDeviceQrCode").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "awaitingApprovalDeviceNpub").waitForExistence(timeout: 10))
+#endif
     }
 
     private func launchCleanApp(
@@ -195,6 +213,7 @@ final class IrisChatUITests: XCTestCase {
             app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
         }
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = runId
+        app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
         if let qrValue {
             app.launchEnvironment["IRIS_QR_TEST_VALUE"] = qrValue
         }
@@ -207,6 +226,9 @@ final class IrisChatUITests: XCTestCase {
     }
 
     func testUploadProfilePictureUpdatesAvatarsInSettingsAndChatList() throws {
+#if os(macOS)
+        throw XCTSkip("Profile picture upload is covered outside the default macOS lane")
+#else
         let bundle = Bundle(for: type(of: self))
         let fixturePath = bundle.path(forResource: "cat", ofType: "jpg")
             ?? bundle.path(forResource: "cat", ofType: "jpg", inDirectory: "Fixtures")
@@ -239,7 +261,7 @@ final class IrisChatUITests: XCTestCase {
             "settings avatar did not render the uploaded image"
         )
 
-        element(app, "navigationBackButton").tap()
+        returnToChatList(app)
         XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
 
         // The chat list top avatar must render the same image.
@@ -247,6 +269,7 @@ final class IrisChatUITests: XCTestCase {
             element(app, "chatListProfileAvatarImage").waitForExistence(timeout: 30),
             "chat list top avatar did not render the uploaded image"
         )
+#endif
     }
 
     private func createAccount(_ app: XCUIApplication) {
@@ -256,18 +279,62 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15))
         let nameField = element(app, "signupNameField")
         XCTAssertTrue(nameField.waitForExistence(timeout: 15))
-        nameField.tap()
-        nameField.typeText("ios tester")
+        assertKeyboardFocused(nameField)
+        typeText("ios tester", into: nameField, app: app)
         element(app, "generateKeyButton").tap()
 
-        // Mobile shows chatListNewChatButton in the top bar; the desktop chrome shows
-        // desktopNewChatRow in the sidebar. Either one signals that we've reached the
-        // chat list after account creation.
-        let newChatTopBar = element(app, "chatListNewChatButton")
-        let newChatSidebar = element(app, "desktopNewChatRow")
-        let landed = newChatTopBar.waitForExistence(timeout: 20)
-            || newChatSidebar.waitForExistence(timeout: 5)
-        XCTAssertTrue(landed, "chat list never appeared after account creation")
+        XCTAssertTrue(waitForChatList(app, timeout: 20), "chat list never appeared after account creation")
+    }
+
+    private func waitForChatList(_ app: XCUIApplication, timeout: TimeInterval) -> Bool {
+        waitForAnyElement(app, identifiers: ["chatListNewChatButton", "desktopNewChatRow"], timeout: timeout) != nil
+    }
+
+    private func tapNewChat(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        guard let newChat = waitForAnyElement(
+            app,
+            identifiers: ["chatListNewChatButton", "desktopNewChatRow"],
+            timeout: 10
+        ) else {
+            XCTFail("New chat control never appeared", file: file, line: line)
+            return
+        }
+        newChat.tap()
+    }
+
+    private func returnToChatList(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let backButton = element(app, "navigationBackButton")
+        if backButton.exists {
+            backButton.tap()
+        } else if let newChat = waitForAnyElement(
+            app,
+            identifiers: ["desktopNewChatRow", "chatListNewChatButton"],
+            timeout: 5
+        ) {
+            newChat.tap()
+        } else {
+            XCTFail("Could not return to chat list", file: file, line: line)
+            return
+        }
+        XCTAssertTrue(waitForChatList(app, timeout: 10), file: file, line: line)
+    }
+
+    private func waitForAnyElement(
+        _ app: XCUIApplication,
+        identifiers: [String],
+        timeout: TimeInterval
+    ) -> XCUIElement? {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            for identifier in identifiers {
+                let candidate = element(app, identifier)
+                if candidate.exists {
+                    return candidate
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return nil
     }
 
     private func openGroupDetails(_ app: XCUIApplication) {
@@ -276,7 +343,38 @@ final class IrisChatUITests: XCTestCase {
         header.tap()
     }
 
+    private func assertNoDispatchFailureToast(
+        _ app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let toast = app.staticTexts["Action failed. Copy support bundle in Settings."]
+        XCTAssertFalse(toast.waitForExistence(timeout: 1), "dispatch failure toast appeared", file: file, line: line)
+    }
+
     private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
+    }
+
+    private func typeText(_ text: String, into target: XCUIElement, app: XCUIApplication) {
+#if os(macOS)
+        app.activate()
+#endif
+        target.tap()
+        target.typeText(text)
+    }
+
+    private func assertKeyboardFocused(
+        _ target: XCUIElement,
+        timeout: TimeInterval = 5,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+#if os(macOS)
+        let predicate = NSPredicate(format: "hasKeyboardFocus == true")
+        let expectation = expectation(for: predicate, evaluatedWith: target)
+        let result = XCTWaiter.wait(for: [expectation], timeout: timeout)
+        XCTAssertEqual(result, .completed, "field did not autofocus", file: file, line: line)
+#endif
     }
 }

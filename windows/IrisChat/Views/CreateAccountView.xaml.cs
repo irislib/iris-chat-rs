@@ -1,6 +1,8 @@
+using System;
 using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 
 namespace IrisChat.Views;
 
@@ -13,7 +15,11 @@ public partial class CreateAccountView : UserControl
         {
             App.CurrentManager.PropertyChanged += OnChanged;
             UpdateBusy();
-            NameInput.Focus();
+            Dispatcher.BeginInvoke(new Action(() =>
+            {
+                NameInput.Focus();
+                Keyboard.Focus(NameInput);
+            }));
         };
         Unloaded += (_, _) => App.CurrentManager.PropertyChanged -= OnChanged;
     }

@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IMAGE="${IRIS_LINUX_BUILD_IMAGE:-iris-chat-linux-dev:latest}"
+DOCKER_PLATFORM="${IRIS_LINUX_DOCKER_PLATFORM:-linux/amd64}"
+
+if [[ "$(uname -s)" == "Linux" ]]; then
+  cargo test --manifest-path "$ROOT/linux/Cargo.toml"
+  exit 0
+fi
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "Docker is required to test the Linux app from $(uname -s)." >&2
+  exit 1
+fi
+
+docker build \
+  --platform "$DOCKER_PLATFORM" \
+  -f "$ROOT/linux/Dockerfile" \
+  -t "$IMAGE" \
+  "$ROOT/.."
+
+docker run \
+  --platform "$DOCKER_PLATFORM" \
+  --rm \
+  -v "$ROOT/..:/workspace:cached" \
+  -w /workspace/iris-chat-rs/linux \
+  --entrypoint /bin/bash \
+  "$IMAGE" -lc 'set -Eeuo pipefail; cargo test'
