@@ -23,8 +23,12 @@ final class IrisChatUITests: XCTestCase {
     }
 
     func testLaunchExistingAccountAndAcceptNotificationPermission() {
-        let app = XCUIApplication()
-        app.launch()
+        let runId = UUID().uuidString
+        let setupApp = launchCleanApp(runId: runId)
+        createAccount(setupApp)
+        setupApp.terminate()
+
+        let app = launchApp(runId: runId)
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
 
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
@@ -173,12 +177,24 @@ final class IrisChatUITests: XCTestCase {
     }
 
     private func launchCleanApp(
+        runId: String = UUID().uuidString,
+        qrValue: String? = nil,
+        profilePicturePath: String? = nil
+    ) -> XCUIApplication {
+        launchApp(runId: runId, reset: true, qrValue: qrValue, profilePicturePath: profilePicturePath)
+    }
+
+    private func launchApp(
+        runId: String,
+        reset: Bool = false,
         qrValue: String? = nil,
         profilePicturePath: String? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
-        app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
-        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = UUID().uuidString
+        if reset {
+            app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
+        }
+        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = runId
         if let qrValue {
             app.launchEnvironment["IRIS_QR_TEST_VALUE"] = qrValue
         }
