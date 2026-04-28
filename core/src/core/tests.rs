@@ -190,6 +190,114 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
 }
 
 #[test]
+fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+
+    let mut invite = Invite::create_new(
+        alice_keys.public_key(),
+        Some(alice_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("invite");
+    invite.owner_public_key = Some(alice_keys.public_key());
+
+    let alice = NdrRuntime::new(
+        alice_keys.public_key(),
+        alice_keys.secret_key().to_secret_bytes(),
+        alice_keys.public_key().to_hex(),
+        alice_keys.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    alice.init().expect("alice init");
+
+    let bob_runtime = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        None,
+        None,
+    );
+    bob_runtime.init().expect("bob init");
+    bob_runtime
+        .accept_invite(&invite, Some(alice_keys.public_key()))
+        .expect("bob accepts alice invite");
+    deliver_published_events(&bob_runtime, &bob_keys, &alice);
+
+    let message = "push-only event";
+    alice
+        .send_text(bob_keys.public_key(), message.to_string(), None)
+        .expect("alice sends");
+    let bob_message_authors = bob_runtime
+        .session_manager()
+        .get_all_message_push_author_pubkeys();
+    let message_event = drain_signed_events(&alice, &alice_keys)
+        .into_iter()
+        .find(|event| {
+            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
+                && bob_message_authors.contains(&event.pubkey)
+        })
+        .expect("message event for Bob");
+    let payload = serde_json::json!({
+        "event": message_event.clone(),
+        "title": "New message",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let local_invite = Invite::create_new(
+        bob_keys.public_key(),
+        Some(bob_keys.public_key().to_hex()),
+        None,
+    )
+    .expect("local invite");
+    core.handle_action(AppAction::IngestMobilePushPayload {
+        payload_json: payload.clone(),
+    });
+    let chat_id = alice_keys.public_key().to_hex();
+    assert!(
+        !core.threads.contains_key(&chat_id),
+        "push event waits for session restore"
+    );
+
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: bob_keys.public_key(),
+        owner_keys: Some(bob_keys.clone()),
+        device_keys: bob_keys.clone(),
+        client: Client::new(bob_keys.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: bob_runtime,
+        local_invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+
+    core.drain_pending_mobile_push_events();
+    let thread = core.threads.get(&chat_id).expect("sender thread");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].body, message);
+    let event_id = message_event.id.to_string();
+    assert_eq!(
+        thread.messages[0].source_event_id.as_deref(),
+        Some(event_id.as_str())
+    );
+
+    core.handle_action(AppAction::IngestMobilePushPayload {
+        payload_json: payload,
+    });
+    let thread = core.threads.get(&chat_id).expect("sender thread after dup");
+    assert_eq!(thread.messages.len(), 1, "duplicate push event is ignored");
+}
+
+#[test]
 fn mobile_push_decrypt_suppresses_typing_rumors() {
     // Even with valid keys and a working ratchet, the notification
     // extension should suppress non-chat-message rumors. Typing/seen/

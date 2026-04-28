@@ -30,6 +30,11 @@ val androidSdkDir =
 val androidAppId = "to.iris.chat"
 val androidNdkDir = file("$androidSdkDir/ndk/$ndkVersionValue")
 val cargoBinary = file("${System.getProperty("user.home")}/.cargo/bin/cargo")
+val cargoTargetDir =
+    System.getenv("CARGO_TARGET_DIR")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { file(it) }
+        ?: rustAppDir.resolve("target")
 val publicRelayFallbackCsv = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to"
 
 fun configValue(propertyName: String, envName: String): String? =
@@ -111,11 +116,11 @@ val hasReleaseSigning =
         !releaseSigningKeyAlias.isNullOrBlank() &&
         !releaseSigningKeyPassword.isNullOrBlank()
 val hostLibraryFile =
-    rustAppDir.resolve(
+    cargoTargetDir.resolve(
         when {
-            System.getProperty("os.name").startsWith("Mac", ignoreCase = true) -> "target/debug/libiris_chat_core.dylib"
-            System.getProperty("os.name").startsWith("Windows", ignoreCase = true) -> "target/debug/iris_chat_core.dll"
-            else -> "target/debug/libiris_chat_core.so"
+            System.getProperty("os.name").startsWith("Mac", ignoreCase = true) -> "debug/libiris_chat_core.dylib"
+            System.getProperty("os.name").startsWith("Windows", ignoreCase = true) -> "debug/iris_chat_core.dll"
+            else -> "debug/libiris_chat_core.so"
         },
     )
 

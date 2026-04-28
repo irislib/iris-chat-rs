@@ -48,6 +48,7 @@ impl AppCore {
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
             relay_status_watch_urls: HashSet::new(),
+            pending_mobile_push_events: VecDeque::new(),
             debug_log: VecDeque::new(),
             debug_event_counters: DebugEventCounters::default(),
             batch_depth: 0,
@@ -235,6 +236,9 @@ impl AppCore {
             AppAction::ResetImageProxySettings => self.reset_image_proxy_settings(),
             AppAction::SetMobilePushServerUrl { url } => self.set_mobile_push_server_url(&url),
             AppAction::ResetMobilePushServerUrl => self.reset_mobile_push_server_url(),
+            AppAction::IngestMobilePushPayload { payload_json } => {
+                self.ingest_mobile_push_payload(&payload_json)
+            }
             AppAction::MarkMessagesSeen {
                 chat_id,
                 message_ids,

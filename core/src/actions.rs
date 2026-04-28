@@ -111,6 +111,9 @@ pub enum AppAction {
         url: String,
     },
     ResetMobilePushServerUrl,
+    IngestMobilePushPayload {
+        payload_json: String,
+    },
     MarkMessagesSeen {
         chat_id: String,
         message_ids: Vec<String>,

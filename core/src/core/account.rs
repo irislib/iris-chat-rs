@@ -500,6 +500,7 @@ impl AppCore {
         self.schedule_session_connect();
         self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
         self.republish_local_identity_artifacts();
+        self.drain_pending_mobile_push_events();
         self.process_runtime_events();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();

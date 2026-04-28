@@ -632,6 +632,7 @@ class AppManager(
     suspend fun decryptOrResolveNotificationPayload(
         payloadJson: String,
     ): to.iris.chat.rust.MobilePushNotificationResolution {
+        rust.dispatch(AppAction.IngestMobilePushPayload(payloadJson))
         val bundle = loadPersistedBundle()
         if (bundle == null) {
             return to.iris.chat.rust.resolveMobilePushNotificationPayload(payloadJson)

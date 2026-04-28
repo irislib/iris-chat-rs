@@ -11,6 +11,7 @@ const MOBILE_PUSH_CHAT_MESSAGE_KIND: u64 = CHAT_MESSAGE_KIND as u64;
 const MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND: u64 = MESSAGE_EVENT_KIND as u64;
 const MOBILE_PUSH_PRODUCTION_SERVER_URL: &str = "https://notifications.iris.to";
 const MOBILE_PUSH_SANDBOX_SERVER_URL: &str = "https://notifications-sandbox.iris.to";
+const MAX_PENDING_MOBILE_PUSH_EVENTS: usize = 32;
 
 impl AppCore {
     pub(super) fn build_mobile_push_sync_snapshot(&self) -> MobilePushSyncSnapshot {
@@ -36,6 +37,65 @@ impl AppCore {
             sessions: Vec::new(),
         }
     }
+
+    pub(super) fn ingest_mobile_push_payload(&mut self, raw_payload_json: &str) {
+        let Some(event) = mobile_push_event_from_payload(raw_payload_json) else {
+            return;
+        };
+        let event_id = event.id.to_string();
+        if self.logged_in.is_none() {
+            if !self.has_seen_event(&event_id)
+                && !self
+                    .pending_mobile_push_events
+                    .iter()
+                    .any(|pending| pending.id.to_string() == event_id)
+            {
+                self.pending_mobile_push_events.push_back(event);
+                while self.pending_mobile_push_events.len() > MAX_PENDING_MOBILE_PUSH_EVENTS {
+                    self.pending_mobile_push_events.pop_front();
+                }
+            }
+            return;
+        }
+        self.push_debug_log("push.event.ingest", format!("id={event_id}"));
+        self.handle_relay_event(event);
+    }
+
+    pub(super) fn drain_pending_mobile_push_events(&mut self) {
+        if self.logged_in.is_none() || self.pending_mobile_push_events.is_empty() {
+            return;
+        }
+        self.enter_batch();
+        while let Some(event) = self.pending_mobile_push_events.pop_front() {
+            self.push_debug_log("push.event.ingest", format!("id={}", event.id));
+            self.handle_relay_event(event);
+        }
+        self.exit_batch();
+    }
+}
+
+fn mobile_push_event_from_payload(raw_payload_json: &str) -> Option<Event> {
+    let payload_value: serde_json::Value = serde_json::from_str(raw_payload_json).ok()?;
+    let payload_object = payload_value.as_object()?;
+    for key in [
+        "event",
+        "outer_event",
+        "outer_event_json",
+        "nostr_event",
+        "nostr_event_json",
+        "inner_event_json",
+    ] {
+        let Some(value) = payload_object.get(key) else {
+            continue;
+        };
+        let Some(event_json) = payload_event_json(value) else {
+            continue;
+        };
+        if let Ok(event) = serde_json::from_str::<Event>(&event_json) {
+            return Some(event);
+        }
+    }
+    None
 }
 
 /// Decrypt the encrypted Nostr event the notification server forwarded

@@ -356,6 +356,7 @@ final class AppManager: ObservableObject {
     }
 
     private func resolvePushNotification(payloadJson: String) -> MobilePushNotificationResolution? {
+        rust.dispatch(action: .ingestMobilePushPayload(payloadJson: payloadJson))
         if let bundle = secretStore.load() {
             return decryptMobilePushNotificationPayload(
                 dataDir: dataDir.path,
