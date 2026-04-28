@@ -144,6 +144,9 @@ fun ChatListScreen(
                                     nearbySnapshot.status
                                 },
                             timeLabel = null,
+                            leadingContent = {
+                                NearbyChatIcon(visible = nearbySnapshot.visible)
+                            },
                             unreadCount = 0,
                             lastMessageMine = false,
                             lastDelivery = null,
@@ -220,6 +223,25 @@ fun ChatListScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NearbyChatIcon(visible: Boolean) {
+    val palette = IrisTheme.palette
+    Box(
+        modifier =
+            Modifier
+                .size(42.dp)
+                .background(if (visible) palette.accent else palette.panelAlt, CircleShape),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = IrisIcons.Nearby,
+            contentDescription = null,
+            tint = if (visible) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(24.dp),
+        )
     }
 }
 

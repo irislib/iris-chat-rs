@@ -49,6 +49,7 @@ import androidx.compose.material.icons.rounded.PersonRemove
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
+import androidx.compose.material.icons.rounded.Sensors
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -351,6 +352,7 @@ fun IrisChatListRow(
     timeLabel: String?,
     imageUrl: String? = null,
     imageData: ByteArray? = null,
+    leadingContent: (@Composable () -> Unit)? = null,
     unreadCount: Long,
     lastMessageMine: Boolean,
     lastDelivery: DeliveryState?,
@@ -367,7 +369,11 @@ fun IrisChatListRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        IrisAvatar(label = title, size = 42.dp, imageUrl = imageUrl, imageData = imageData)
+        if (leadingContent != null) {
+            leadingContent()
+        } else {
+            IrisAvatar(label = title, size = 42.dp, imageUrl = imageUrl, imageData = imageData)
+        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -556,4 +562,5 @@ object IrisIcons {
     val Refresh = Icons.Rounded.Refresh
     val Share = Icons.Rounded.IosShare
     val ChevronRight = Icons.AutoMirrored.Rounded.KeyboardArrowRight
+    val Nearby = Icons.Rounded.Sensors
 }
