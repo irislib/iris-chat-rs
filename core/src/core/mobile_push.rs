@@ -3,6 +3,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use nostr::Tag;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
 const MOBILE_PUSH_AUTH_KIND: u16 = 27_235;
@@ -51,10 +52,10 @@ impl AppCore {
 /// one-shot `NdrRuntime` against it, then drop everything. Writes stay
 /// in the overlay so a notification preview cannot advance or
 /// otherwise mutate the chat runtime's persisted ratchet state before
-/// the foreground app processes the same relay event. If anything
-/// fails (no keys, foreign event, storage unavailable) we fall through
-/// to the vanilla `resolve_mobile_push_notification` so the user still
-/// gets *some* notification — just the generic kind.
+/// the foreground app processes the same relay event. Once we've
+/// identified an encrypted outer event, later failures use the SQLite
+/// preview or suppress the notification; they never fall back to the
+/// server's generic placeholder text.
 ///
 /// `data_dir` is the `app_data_dir` the FFI was constructed with;
 /// `owner_pubkey_hex` and `device_nsec` come from the same secure
@@ -90,6 +91,12 @@ pub(crate) fn decrypt_mobile_push_notification(
 
     let outer_event: nostr::Event = match serde_json::from_str(&outer_event_json) {
         Ok(event) => event,
+        Err(_)
+            if payload_value_event_kind(payload_object.get("event"))
+                == Some(MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND) =>
+        {
+            return suppressed_resolution();
+        }
         Err(_) => return fallback(),
     };
 
@@ -101,7 +108,7 @@ pub(crate) fn decrypt_mobile_push_notification(
     // saw the wrapper as a non-message rumor (typing, receipt,
     // reaction, settings) and there's nothing useful to show.
     let cached_fallback = || {
-        lookup_mobile_push_preview(&data_dir, &outer_event_id)
+        lookup_mobile_push_preview_after_short_wait(&data_dir, &outer_event_id)
             .unwrap_or_else(suppressed_resolution)
     };
 
@@ -142,7 +149,7 @@ pub(crate) fn decrypt_mobile_push_notification(
         None,
     );
     if runtime.init().is_err() {
-        return fallback();
+        return cached_fallback();
     }
     runtime.process_received_event(outer_event);
 
@@ -164,7 +171,7 @@ pub(crate) fn decrypt_mobile_push_notification(
     };
     let inner_value: serde_json::Value = match serde_json::from_str(&inner_json) {
         Ok(value) => value,
-        Err(_) => return fallback(),
+        Err(_) => return cached_fallback(),
     };
     let inner_kind = inner_value
         .get("kind")
@@ -341,8 +348,8 @@ fn lookup_mobile_push_preview(
             serde_json::Value::String(group_id.to_string()),
         );
     }
-    let payload_json =
-        serde_json::to_string(&serde_json::Value::Object(payload)).unwrap_or_else(|_| "{}".to_string());
+    let payload_json = serde_json::to_string(&serde_json::Value::Object(payload))
+        .unwrap_or_else(|_| "{}".to_string());
 
     Some(MobilePushNotificationResolution {
         should_show: true,
@@ -350,6 +357,21 @@ fn lookup_mobile_push_preview(
         body: body_text,
         payload_json,
     })
+}
+
+fn lookup_mobile_push_preview_after_short_wait(
+    data_dir: &str,
+    outer_event_id: &str,
+) -> Option<MobilePushNotificationResolution> {
+    for delay_ms in [0_u64, 25, 75, 150] {
+        if delay_ms > 0 {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+        }
+        if let Some(resolution) = lookup_mobile_push_preview(data_dir, outer_event_id) {
+            return Some(resolution);
+        }
+    }
+    None
 }
 
 fn looks_like_hex_pubkey(value: &str) -> bool {
@@ -484,7 +506,9 @@ fn lookup_direct_thread_sender_name(data_dir: &str, sender: &nostr::PublicKey) -
              ORDER BY created_at_secs DESC, id DESC",
         )
         .ok()?;
-    let rows = stmt.query_map([sender.to_hex()], |row| row.get::<_, String>(0)).ok()?;
+    let rows = stmt
+        .query_map([sender.to_hex()], |row| row.get::<_, String>(0))
+        .ok()?;
     for row in rows.flatten() {
         let author = row.trim().to_string();
         if !author.is_empty() && !is_generic_sender_title(&author) {
@@ -818,6 +842,16 @@ fn payload_event_json(value: &serde_json::Value) -> Option<String> {
         return serde_json::to_string(value).ok();
     }
     None
+}
+
+fn payload_value_event_kind(value: Option<&serde_json::Value>) -> Option<u64> {
+    let value = value?;
+    if let Some(kind) = value.get("kind").and_then(|kind| kind.as_u64()) {
+        return Some(kind);
+    }
+    let raw = value.as_str()?;
+    let decoded = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    decoded.get("kind")?.as_u64()
 }
 
 fn resolved_title(payload: &BTreeMap<String, String>) -> String {

@@ -8,7 +8,8 @@ import UserNotifications
 /// (or "<sender> in <group>") as the title and the plaintext message
 /// as the body. If decryption fails for any reason — no logged-in
 /// account, missing storage, ratchet already advanced by the foreground
-/// app — the original (generic) notification is delivered as-is.
+/// app — encrypted Iris placeholders are cleared instead of surfacing
+/// generic "New activity" text.
 final class NotificationService: UNNotificationServiceExtension {
     private static let appGroupIdentifier = "group.to.iris.chat"
     private static let keychainService = "to.iris.chat"
@@ -25,6 +26,10 @@ final class NotificationService: UNNotificationServiceExtension {
         let bestAttempt = (request.content.mutableCopy() as? UNMutableNotificationContent)
             ?? UNMutableNotificationContent()
         self.bestAttempt = bestAttempt
+        let shouldClearFallback = isLikelyEncryptedIrisPush(request.content)
+        if shouldClearFallback {
+            clearVisibleFallback(bestAttempt)
+        }
 
         guard let payloadJson = serializedPayload(from: request.content) else {
             contentHandler(bestAttempt)
@@ -45,11 +50,6 @@ final class NotificationService: UNNotificationServiceExtension {
 
         let hasPreview = !resolution.title.isEmpty || !resolution.body.isEmpty
         if !resolution.shouldShow && !hasPreview {
-            // No preview at all (foreground saw the wrapper as a
-            // non-message rumor we can't render). iOS can't suppress
-            // without the filtering entitlement, so the original
-            // server payload — usually "New activity" — is the
-            // best we can offer.
             contentHandler(bestAttempt)
             return
         }
@@ -62,9 +62,8 @@ final class NotificationService: UNNotificationServiceExtension {
         if !resolution.shouldShow {
             // Non-message kinds (typing, reactions, settings) on
             // platforms that can really suppress would never reach
-            // here. iOS can't, so we still surface the kind-specific
-            // text Rust rendered ("is typing", "Reacted 👍") rather
-            // than the generic placeholder.
+            // here. iOS can't, so clear sound/badge for previews that
+            // are informative but not chat messages.
             bestAttempt.sound = nil
             bestAttempt.badge = nil
         }
@@ -100,6 +99,52 @@ final class NotificationService: UNNotificationServiceExtension {
             return nil
         }
         return json
+    }
+
+    private func isLikelyEncryptedIrisPush(_ content: UNNotificationContent) -> Bool {
+        eventKind(content.userInfo["event"]) == 1060 || isGenericIrisFallback(content)
+    }
+
+    private func eventKind(_ value: Any?) -> Int? {
+        if let dict = value as? [String: Any] {
+            return normalizedInt(dict["kind"])
+        }
+        if let dict = value as? [AnyHashable: Any] {
+            return normalizedInt(dict["kind"])
+        }
+        if let string = value as? String,
+           let data = string.data(using: .utf8),
+           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            return normalizedInt(object["kind"])
+        }
+        return nil
+    }
+
+    private func normalizedInt(_ value: Any?) -> Int? {
+        if let intValue = value as? Int {
+            return intValue
+        }
+        if let number = value as? NSNumber {
+            return number.intValue
+        }
+        if let string = value as? String {
+            return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        return nil
+    }
+
+    private func isGenericIrisFallback(_ content: UNNotificationContent) -> Bool {
+        let title = content.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let body = content.body.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return title == "iris chat" && (body.isEmpty || body == "new activity" || body == "new message")
+    }
+
+    private func clearVisibleFallback(_ content: UNMutableNotificationContent) {
+        content.title = ""
+        content.subtitle = ""
+        content.body = ""
+        content.sound = nil
+        content.badge = nil
     }
 
     private func sharedDataDir() -> URL? {

@@ -208,6 +208,78 @@ private func waitUntil(
 }
 
 final class IrisChatTests: XCTestCase {
+#if os(iOS)
+    @MainActor
+    func testForegroundEncryptedPushWithUnserializablePayloadIsSuppressed() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let manager = AppManager(
+            rust: MockRustApp(),
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+        let content = UNMutableNotificationContent()
+        content.title = "Iris Chat"
+        content.body = "New activity"
+        content.userInfo = [
+            "event": ["kind": 1060],
+            "non_json_value": Date(),
+        ]
+
+        let options = await manager.foregroundPushPresentationOptions(content: content)
+
+        XCTAssertTrue(options.isEmpty, "opaque encrypted pushes must not show the APNS fallback")
+    }
+
+    @MainActor
+    func testForegroundNonPushWithUnserializablePayloadUsesSystemPresentation() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let manager = AppManager(
+            rust: MockRustApp(),
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+        let content = UNMutableNotificationContent()
+        content.title = "Calendar"
+        content.body = "Meeting soon"
+        content.userInfo = ["non_json_value": Date()]
+
+        let options = await manager.foregroundPushPresentationOptions(content: content)
+
+        XCTAssertTrue(options.contains(.banner))
+        XCTAssertTrue(options.contains(.sound))
+        XCTAssertTrue(options.contains(.list))
+    }
+
+    @MainActor
+    func testForegroundGenericIrisFallbackWithoutEventIsSuppressed() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let manager = AppManager(
+            rust: MockRustApp(),
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+        let content = UNMutableNotificationContent()
+        content.title = "Iris Chat"
+        content.body = "New activity"
+        content.userInfo = [
+            "aps": ["alert": ["title": "Iris Chat", "body": "New activity"]],
+        ]
+
+        let options = await manager.foregroundPushPresentationOptions(content: content)
+
+        XCTAssertTrue(options.isEmpty, "generic Iris APNS fallback should not be presented in foreground")
+    }
+#endif
+
     @MainActor
     func testDesktopNotificationPostedForNewUnreadIncomingMessage() async {
         let rust = MockRustApp(

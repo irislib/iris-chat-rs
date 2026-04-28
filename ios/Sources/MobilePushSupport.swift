@@ -36,7 +36,7 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
             return [.banner, .sound, .list]
         }
         return await manager.foregroundPushPresentationOptions(
-            userInfo: notification.request.content.userInfo
+            content: notification.request.content
         )
     }
 

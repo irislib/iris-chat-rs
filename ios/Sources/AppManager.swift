@@ -276,13 +276,37 @@ final class AppManager: ObservableObject {
 
 #if os(iOS)
     func foregroundPushPresentationOptions(
+        content: UNNotificationContent
+    ) async -> UNNotificationPresentationOptions {
+        let userInfo = content.userInfo
+        if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
+            return [.banner, .sound, .list]
+        }
+        if isGenericIrisFallback(content: content) && !hasPushEventPayload(userInfo: userInfo) {
+            return []
+        }
+        guard let resolution = resolvePushNotification(content: content) else {
+            return fallbackForegroundPushPresentationOptions(content: content)
+        }
+        guard resolution.shouldShow else {
+            return []
+        }
+        if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
+           state.currentChat?.chatId.caseInsensitiveCompare(chatID) == .orderedSame {
+            return []
+        }
+        await postForegroundDecryptedPush(resolution: resolution)
+        return []
+    }
+
+    func foregroundPushPresentationOptions(
         userInfo: [AnyHashable: Any]
     ) async -> UNNotificationPresentationOptions {
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
             return [.banner, .sound, .list]
         }
         guard let resolution = resolvePushNotification(userInfo: userInfo) else {
-            return [.banner, .sound, .list]
+            return fallbackForegroundPushPresentationOptions(userInfo: userInfo)
         }
         guard resolution.shouldShow else {
             return []
@@ -321,6 +345,17 @@ final class AppManager: ObservableObject {
         guard let payloadJson = serializedPushPayload(userInfo: userInfo) else {
             return nil
         }
+        return resolvePushNotification(payloadJson: payloadJson)
+    }
+
+    private func resolvePushNotification(content: UNNotificationContent) -> MobilePushNotificationResolution? {
+        guard let payloadJson = serializedPushPayload(content: content) else {
+            return nil
+        }
+        return resolvePushNotification(payloadJson: payloadJson)
+    }
+
+    private func resolvePushNotification(payloadJson: String) -> MobilePushNotificationResolution? {
         if let bundle = secretStore.load() {
             return decryptMobilePushNotificationPayload(
                 dataDir: dataDir.path,
@@ -330,6 +365,20 @@ final class AppManager: ObservableObject {
             )
         }
         return resolveMobilePushNotificationPayload(rawPayloadJson: payloadJson)
+    }
+
+    private func fallbackForegroundPushPresentationOptions(
+        userInfo: [AnyHashable: Any]
+    ) -> UNNotificationPresentationOptions {
+        isOpaqueEncryptedPush(userInfo: userInfo) ? [] : [.banner, .sound, .list]
+    }
+
+    private func fallbackForegroundPushPresentationOptions(
+        content: UNNotificationContent
+    ) -> UNNotificationPresentationOptions {
+        isOpaqueEncryptedPush(userInfo: content.userInfo) || isGenericIrisFallback(content: content)
+            ? []
+            : [.banner, .sound, .list]
     }
 
     private func postForegroundDecryptedPush(
@@ -849,8 +898,24 @@ private func chatLinkFragmentComponents(_ url: URL) -> [String] {
 
 #if os(iOS)
 private let foregroundDecryptedPushMarkerKey = "iris_foreground_decrypted_push"
+private let encryptedMobilePushOuterKind = 1060
 
 private func serializedPushPayload(userInfo: [AnyHashable: Any]) -> String? {
+    serializedPushPayload(dictionary: pushPayloadDictionary(userInfo: userInfo))
+}
+
+private func serializedPushPayload(content: UNNotificationContent) -> String? {
+    var dict = pushPayloadDictionary(userInfo: content.userInfo)
+    if !dict.keys.contains("title") {
+        dict["title"] = content.title
+    }
+    if !dict.keys.contains("body") {
+        dict["body"] = content.body
+    }
+    return serializedPushPayload(dictionary: dict)
+}
+
+private func pushPayloadDictionary(userInfo: [AnyHashable: Any]) -> [String: Any] {
     var dict: [String: Any] = [:]
     for (key, value) in userInfo {
         guard let key = key as? String else {
@@ -858,12 +923,59 @@ private func serializedPushPayload(userInfo: [AnyHashable: Any]) -> String? {
         }
         dict[key] = value
     }
+    return dict
+}
+
+private func serializedPushPayload(dictionary dict: [String: Any]) -> String? {
     guard JSONSerialization.isValidJSONObject(dict),
           let data = try? JSONSerialization.data(withJSONObject: dict),
           let json = String(data: data, encoding: .utf8) else {
         return nil
     }
     return json
+}
+
+private func isOpaqueEncryptedPush(userInfo: [AnyHashable: Any]) -> Bool {
+    pushEventKind(userInfo["event"]) == encryptedMobilePushOuterKind
+        || pushEventKind(userInfo["inner_event_json"]) == encryptedMobilePushOuterKind
+}
+
+private func hasPushEventPayload(userInfo: [AnyHashable: Any]) -> Bool {
+    userInfo["event"] != nil || userInfo["inner_event_json"] != nil || userInfo["inner_event"] != nil
+}
+
+private func isGenericIrisFallback(content: UNNotificationContent) -> Bool {
+    let title = content.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    let body = content.body.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return title == "iris chat" && (body.isEmpty || body == "new activity" || body == "new message")
+}
+
+private func pushEventKind(_ value: Any?) -> Int? {
+    if let dict = value as? [String: Any] {
+        return normalizedPushInt(dict["kind"])
+    }
+    if let dict = value as? [AnyHashable: Any] {
+        return normalizedPushInt(dict["kind"])
+    }
+    if let string = value as? String,
+       let data = string.data(using: .utf8),
+       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+        return normalizedPushInt(object["kind"])
+    }
+    return nil
+}
+
+private func normalizedPushInt(_ value: Any?) -> Int? {
+    if let intValue = value as? Int {
+        return intValue
+    }
+    if let number = value as? NSNumber {
+        return number.intValue
+    }
+    if let string = value as? String {
+        return Int(string.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+    return nil
 }
 
 private func foregroundDecryptedPushUserInfo(from payloadJson: String) -> [AnyHashable: Any] {
