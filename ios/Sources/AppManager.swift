@@ -132,18 +132,25 @@ enum AppPaths {
 
     static func dataDir(fileManager: FileManager, environment: [String: String]) -> URL {
         let suffix = environment["IRIS_UI_TEST_RUN_ID"].flatMap { $0.isEmpty ? nil : $0 } ?? "iris-chat"
-        // Prefer the App Group container so the Notification Service
-        // Extension reads the *same* persisted ratchet state. Older
-        // installs lived in the per-app `applicationSupportDirectory`,
-        // so on first launch with this version migrate the legacy tree
-        // into the shared container.
         let legacyBase = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let legacy = legacyBase.appendingPathComponent(suffix, isDirectory: true)
-        if let shared = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
-            let target = shared.appendingPathComponent(suffix, isDirectory: true)
-            migrateLegacyDataDir(from: legacy, to: target, fileManager: fileManager)
-            return target
-        }
+        #if os(iOS)
+            // Prefer the App Group container so the Notification
+            // Service Extension reads the *same* persisted ratchet
+            // state. Older installs lived in the per-app
+            // `applicationSupportDirectory`, so on first launch with
+            // this version migrate the legacy tree into the shared
+            // container.
+            if let shared = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+                let target = shared.appendingPathComponent(suffix, isDirectory: true)
+                migrateLegacyDataDir(from: legacy, to: target, fileManager: fileManager)
+                return target
+            }
+        #endif
+        // macOS has no Notification Service Extension, so the App
+        // Group adds nothing and triggers a "would like to access
+        // data from other apps" privacy prompt at first launch.
+        // Stay in `Application Support`.
         return legacy
     }
 
