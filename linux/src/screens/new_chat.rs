@@ -15,13 +15,13 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let hint = gtk::Label::new(Some("Paste an npub or invite link."));
+    let hint = gtk::Label::new(Some("Paste a user ID or invite link."));
     hint.add_css_class("dim-label");
     hint.set_halign(gtk::Align::Start);
     hint.set_wrap(true);
     container.append(&hint);
 
-    let peer = entry("npub or invite link");
+    let peer = entry("User ID or invite link");
     container.append(&peer);
 
     let paste = pill_button("Paste");

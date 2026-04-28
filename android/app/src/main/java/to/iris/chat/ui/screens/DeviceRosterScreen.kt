@@ -88,7 +88,7 @@ fun DeviceRosterScreen(
                         .padding(20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Loading roster…")
+                Text("Loading devices…")
             }
             return@Scaffold
         }
@@ -103,11 +103,11 @@ fun DeviceRosterScreen(
         ) {
             IrisSectionCard {
                 Text(
-                    text = "Account devices",
+                    text = "Linked devices",
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Text(
-                    text = "Primary devices publish the owner-signed roster. Linked devices can view it, publish their own invite, and send messages once authorized.",
+                    text = "These devices can use your account.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
                 )
@@ -133,17 +133,17 @@ fun DeviceRosterScreen(
 
             IrisSectionCard {
                 Text(
-                    text = "Approve a new device",
+                    text = "Link another device",
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
                     text =
                         if (roster.canManageDevices) {
-                            "Scan a link invite from the new device, or paste a device ID as fallback."
+                            "Scan the QR from the device you want to link, or paste its code."
                         } else if (isCurrentDeviceRegistered) {
-                            "Read-only on this device. Use a session with your main Secret Key to add or remove devices."
+                            "This device can view the list but cannot change it."
                         } else {
-                            "This linked-device session is read-only and is not registered. Sign in here with your main Secret Key if you want to register this device."
+                            "Sign in with your secret key before changing devices."
                         },
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
@@ -159,7 +159,7 @@ fun DeviceRosterScreen(
                                 .testTag("deviceRosterAddInput"),
                         placeholder = {
                             Text(
-                                text = "Device ID or approval code",
+                                text = "Device code",
                                 color = IrisTheme.palette.muted,
                             )
                         },
@@ -198,7 +198,7 @@ fun DeviceRosterScreen(
                         )
 
                         IrisPrimaryButton(
-                            text = if (appState.busy.updatingRoster) "Authorizing…" else "Authorize",
+                            text = if (appState.busy.updatingRoster) "Linking…" else "Link device",
                             onClick = {
                                 appManager.addAuthorizedDevice(normalizedInput)
                                 deviceInput = ""
@@ -217,7 +217,7 @@ fun DeviceRosterScreen(
             }
 
             Text(
-                text = "Device Access",
+                text = "Devices",
                 style = MaterialTheme.typography.titleMedium,
             )
 
@@ -234,11 +234,11 @@ fun DeviceRosterScreen(
                             modifier = Modifier.testTag("deviceRosterEmptyState"),
                         ) {
                             Text(
-                                text = "No registered devices",
+                                text = "No linked devices",
                                 style = MaterialTheme.typography.titleMedium,
                             )
                             Text(
-                                text = "Authorized device keys will appear here after the roster is published.",
+                                text = "Linked devices will appear here.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = IrisTheme.palette.muted,
                             )
@@ -315,11 +315,11 @@ private fun DeviceRosterRow(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     DeviceStateChip(
-                        text = if (device.isAuthorized) "Authorized" else "Pending",
+                        text = if (device.isAuthorized) "Linked" else "Pending",
                     )
                     if (device.isStale) {
                         DeviceStateChip(
-                            text = "Stale",
+                            text = "Needs attention",
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
                             contentColor = MaterialTheme.colorScheme.error,
                         )
@@ -332,7 +332,7 @@ private fun DeviceRosterRow(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!device.isAuthorized) {
                     IrisPrimaryButton(
-                        text = if (isUpdatingRoster) "Approving…" else "Approve",
+                        text = if (isUpdatingRoster) "Linking…" else "Link",
                         onClick = onApprove,
                         enabled = !isUpdatingRoster,
                         modifier =
@@ -358,9 +358,9 @@ private fun DeviceRosterRow(
     if (confirmRemoval) {
         AlertDialog(
             onDismissRequest = { confirmRemoval = false },
-            title = { Text("Delete Device?") },
+            title = { Text("Remove device?") },
             text = {
-                Text("This device will no longer be authorized for encrypted messaging.")
+                Text("This device will no longer use your account.")
             },
             dismissButton = {
                 TextButton(onClick = { confirmRemoval = false }) {
@@ -455,7 +455,7 @@ private fun resolveDeviceAuthorizationInput(
         if (normalizedOwner !in acceptedOwnerInputs) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput = "",
-                errorMessage = "This approval QR belongs to a different owner.",
+                errorMessage = "This QR is for a different account.",
             )
         }
 
@@ -463,7 +463,7 @@ private fun resolveDeviceAuthorizationInput(
         if (!isValidPeerInput(normalizedDevice)) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput = "",
-                errorMessage = "The approval QR did not contain a valid device key.",
+                errorMessage = "That QR does not contain a valid device code.",
             )
         }
         return ResolvedDeviceAuthorizationInput(deviceInput = normalizedDevice, errorMessage = null)
@@ -475,7 +475,7 @@ private fun resolveDeviceAuthorizationInput(
     } else {
         ResolvedDeviceAuthorizationInput(
             deviceInput = "",
-            errorMessage = "Not a valid device ID or approval code.",
+            errorMessage = "Not a valid device code.",
         )
     }
 }

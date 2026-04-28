@@ -139,7 +139,7 @@ public partial class RootView : UserControl
         Screen.Welcome => "Welcome",
         Screen.CreateAccount => "Create Account",
         Screen.RestoreAccount => "Restore Account",
-        Screen.AddDevice => "Add Device",
+        Screen.AddDevice => "Link Device",
         Screen.ChatList => "Chats",
         Screen.NewChat => "New Chat",
         Screen.NewGroup => "New Group",
@@ -150,7 +150,7 @@ public partial class RootView : UserControl
         Screen.GroupDetails => "Group",
         Screen.DeviceRoster => "Manage Devices",
         Screen.AwaitingDeviceApproval => "Finish Linking",
-        Screen.DeviceRevoked => "Device Revoked",
+        Screen.DeviceRevoked => "Device Removed",
         _ => "Iris Chat",
     };
 

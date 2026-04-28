@@ -387,7 +387,7 @@ final class IrisChatTests: XCTestCase {
         )
 
         XCTAssertEqual(resolved.deviceInput, "")
-        XCTAssertEqual(resolved.errorMessage, "This approval QR belongs to a different owner.")
+        XCTAssertEqual(resolved.errorMessage, "This QR is for a different account.")
     }
 
     func testKeychainSecretStoreRoundTrip() {

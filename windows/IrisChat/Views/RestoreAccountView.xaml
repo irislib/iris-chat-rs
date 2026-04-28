@@ -3,22 +3,22 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="32" MaxWidth="520" HorizontalAlignment="Center">
-            <TextBlock Text="Restore from key"
+            <TextBlock Text="Restore account"
                        Style="{StaticResource HeadingText}"
                        Margin="0,0,0,12" />
             <TextBlock Style="{StaticResource MutedText}"
-                       Text="Paste your nsec to restore an existing account on this device."
+                       Text="Paste your secret key."
                        TextWrapping="Wrap"
                        Margin="0,0,0,16" />
 
-            <TextBlock Text="nsec" Margin="0,0,0,4" />
+            <TextBlock Text="Secret key" Margin="0,0,0,4" />
             <TextBox x:Name="NsecInput" />
 
             <Button x:Name="RestoreButton"
                     Style="{StaticResource PrimaryButton}"
                     Click="OnRestore"
                     Margin="0,16,0,0">
-                <TextBlock Text="Restore" />
+                <TextBlock Text="Restore account" />
             </Button>
         </StackPanel>
     </ScrollViewer>

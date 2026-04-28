@@ -8,29 +8,22 @@
                        FontSize="36"
                        FontWeight="SemiBold"
                        HorizontalAlignment="Center"
-                       Margin="0,0,0,8" />
-            <TextBlock Text="Encrypted, decentralized chat over Nostr."
-                       Foreground="{StaticResource TextMuted}"
-                       FontSize="13"
-                       HorizontalAlignment="Center"
                        Margin="0,0,0,28" />
-
             <Button Style="{StaticResource PrimaryButton}"
                     Click="OnCreate"
                     Margin="0,0,0,10">
-                <TextBlock Text="Create new account" />
+                <TextBlock Text="Create account" />
             </Button>
 
             <Button Style="{StaticResource SecondaryButton}"
                     Click="OnRestore"
                     Margin="0,0,0,10">
-                <TextBlock Text="Restore from key" />
+                <TextBlock Text="Restore account" />
             </Button>
 
-            <Button Style="{StaticResource GhostButton}"
+            <Button Style="{StaticResource SecondaryButton}"
                     Click="OnLink">
-                <TextBlock Text="Link to an existing account"
-                           Foreground="{StaticResource TextMuted}" />
+                <TextBlock Text="Link this device" />
             </Button>
         </StackPanel>
     </Grid>

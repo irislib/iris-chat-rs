@@ -245,7 +245,7 @@ struct RootView: View {
         case .welcome: return "Welcome"
         case .createAccount: return "Create Account"
         case .restoreAccount: return "Restore Account"
-        case .addDevice: return "Add Device"
+        case .addDevice: return "Link Device"
         case .chatList: return "Chats"
         case .newChat: return "New Chat"
         case .newGroup: return "New Group"
@@ -261,7 +261,7 @@ struct RootView: View {
         case .awaitingDeviceApproval:
             return "Finish Linking"
         case .deviceRevoked:
-            return "Device Revoked"
+            return "Device Removed"
         }
     }
 }
@@ -972,7 +972,7 @@ struct WelcomeScreen: View {
                             .buttonStyle(IrisSecondaryButtonStyle())
                             .accessibilityIdentifier("welcomeRestoreAction")
 
-                            Button("Add this device") {
+                            Button("Link this device") {
                                 manager.dispatch(.pushScreen(screen: .addDevice))
                             }
                             .buttonStyle(IrisSecondaryButtonStyle())
@@ -987,11 +987,7 @@ struct WelcomeScreen: View {
                             .frame(height: 0)
                             .accessibilityIdentifier("welcomeSecondaryCard")
 
-                        CardHeader(title: "Trusted test build")
-
-                        Text(manager.buildSummaryText())
-                            .font(.system(.footnote, design: .monospaced))
-                            .foregroundStyle(palette.muted)
+                        CardHeader(title: "Test build")
                     }
                 }
             }
@@ -1018,7 +1014,7 @@ struct CreateAccountScreen: View {
                     title: "Create account"
                 )
 
-                TextField("Display name", text: $displayName)
+                TextField("Name", text: $displayName)
                     .textFieldStyle(.plain)
                     .irisInputField()
                     .accessibilityIdentifier("signupNameField")
@@ -1060,10 +1056,10 @@ struct RestoreAccountScreen: View {
 
                 CardHeader(
                     title: "Restore account",
-                    subtitle: "Use your owner secret key to recover your account on this device."
+                    subtitle: "Paste your secret key."
                 )
 
-                TextField("Owner nsec", text: $restoreInput)
+                TextField("Secret key", text: $restoreInput)
                     .irisIdentifierInputModifiers()
                     .textFieldStyle(.plain)
                     .irisInputField()
@@ -1113,77 +1109,87 @@ struct AddDeviceScreen: View {
                 onboardingBackButton
             }
 
-            IrisAdaptiveColumns {
-                IrisSectionCard {
-                    Color.clear
-                        .frame(height: 0)
-                        .accessibilityIdentifier("addDeviceScreen")
-
-                    CardHeader(
-                        title: awaitingApproval ? "Finish linking" : "Add this device",
-                        subtitle: awaitingApproval
-                            ? "Approve this device on the owner device. If it does not appear there yet, use the approval QR as a fallback."
-                            : "Scan or paste the owner code from your primary device. This device will create its own invite and then wait for approval there."
-                    )
-
-                    if awaitingApproval, let account = manager.state.account {
-                        MonoValue(label: "User ID", value: account.npub, identifier: "awaitingApprovalOwnerNpub")
-                        MonoValue(label: "Device ID", value: account.deviceNpub, identifier: "awaitingApprovalDeviceNpub")
-
-                        HStack(spacing: 10) {
-                            Button("Copy device ID") {
-                                manager.copyToClipboard(account.deviceNpub)
-                            }
-                            .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-                        }
-
-                        Button("Logout") {
-                            manager.logout()
-                        }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                    } else {
-                        TextField("User ID", text: $ownerInput)
-                            .irisIdentifierInputModifiers()
-                            .textFieldStyle(.plain)
-                            .irisInputField()
-                            .accessibilityIdentifier("linkOwnerInput")
-
-                        if !ownerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !validOwnerInput {
-                            Text("Scanned or pasted owner key is not valid.")
-                                .font(.system(.footnote, design: .rounded))
-                                .foregroundStyle(.red)
-                        }
-
-                        VStack(spacing: 10) {
-                            Button("Paste") {
-                                ownerInput = normalizePeerInput(input: PlatformClipboard.string() ?? "")
-                            }
-                            .buttonStyle(IrisSecondaryButtonStyle())
-                            .accessibilityIdentifier("linkOwnerPasteButton")
-
-                            if irisSupportsQrScanning {
-                                Button("Scan owner QR") { showingScanner = true }
-                                    .buttonStyle(IrisSecondaryButtonStyle())
-                                    .accessibilityIdentifier("linkOwnerScanQrButton")
-                            }
-
-                            Button(manager.state.busy.linkingDevice ? "Continuing…" : "Continue") {
-                                manager.startLinkedDevice(ownerInput: normalizedOwnerInput)
-                            }
-                            .buttonStyle(IrisPrimaryButtonStyle())
-                            .disabled(!validOwnerInput || manager.state.busy.linkingDevice)
-                            .accessibilityIdentifier("linkExistingAccountButton")
-                        }
-                    }
+            if awaitingApproval {
+                IrisAdaptiveColumns {
+                    linkDeviceCard
+                } trailing: {
+                    addDeviceQrPanel
                 }
-            } trailing: {
-                addDeviceQrPanel
+            } else {
+                linkDeviceCard
+                    .frame(maxWidth: 480)
+                    .frame(maxWidth: .infinity)
             }
         }
         .sheet(isPresented: $showingScanner) {
             QrScannerSheet { code in
                 ownerInput = normalizePeerInput(input: code)
                 showingScanner = false
+            }
+        }
+    }
+
+    private var linkDeviceCard: some View {
+        IrisSectionCard {
+            Color.clear
+                .frame(height: 0)
+                .accessibilityIdentifier("addDeviceScreen")
+
+            CardHeader(
+                title: awaitingApproval ? "Finish linking" : "Link this device",
+                subtitle: awaitingApproval
+                    ? "Use your signed-in device to approve this one. If it asks for a code, scan the QR below."
+                    : "Scan the account QR from your signed-in device, or paste its user ID."
+            )
+
+            if awaitingApproval, let account = manager.state.account {
+                MonoValue(label: "User ID", value: account.npub, identifier: "awaitingApprovalOwnerNpub")
+                MonoValue(label: "This device", value: account.deviceNpub, identifier: "awaitingApprovalDeviceNpub")
+
+                HStack(spacing: 10) {
+                    Button("Copy device code") {
+                        manager.copyToClipboard(account.deviceNpub)
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                }
+
+                Button("Sign out") {
+                    manager.logout()
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+            } else {
+                TextField("User ID", text: $ownerInput)
+                    .irisIdentifierInputModifiers()
+                    .textFieldStyle(.plain)
+                    .irisInputField()
+                    .accessibilityIdentifier("linkOwnerInput")
+
+                if !ownerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !validOwnerInput {
+                    Text("That QR or user ID is not valid.")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.red)
+                }
+
+                VStack(spacing: 10) {
+                    Button("Paste") {
+                        ownerInput = normalizePeerInput(input: PlatformClipboard.string() ?? "")
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("linkOwnerPasteButton")
+
+                    if irisSupportsQrScanning {
+                        Button("Scan account QR") { showingScanner = true }
+                            .buttonStyle(IrisSecondaryButtonStyle())
+                            .accessibilityIdentifier("linkOwnerScanQrButton")
+                    }
+
+                    Button(manager.state.busy.linkingDevice ? "Continuing…" : "Continue") {
+                        manager.startLinkedDevice(ownerInput: normalizedOwnerInput)
+                    }
+                    .buttonStyle(IrisPrimaryButtonStyle())
+                    .disabled(!validOwnerInput || manager.state.busy.linkingDevice)
+                    .accessibilityIdentifier("linkExistingAccountButton")
+                }
             }
         }
     }
@@ -1208,7 +1214,7 @@ struct AddDeviceScreen: View {
 
                 CardHeader(
                     title: "Approval QR",
-                    subtitle: "Approve this device from Manage Devices on the owner device, or scan this QR there as a fallback."
+                    subtitle: "Scan this from Manage devices on your signed-in device."
                 )
 
                 ZStack {
@@ -1219,32 +1225,11 @@ struct AddDeviceScreen: View {
                 }
                 .frame(maxWidth: .infinity)
 
-                Button("Copy approval QR") {
+                Button("Copy approval code") {
                     manager.copyToClipboard(qr)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
                 .accessibilityIdentifier("awaitingApprovalCopyDeviceButton")
-            }
-        } else {
-            IrisSectionCard {
-                Color.clear
-                    .frame(height: 0)
-                    .accessibilityIdentifier("addDeviceQrPlaceholder")
-
-                CardHeader(
-                    title: "Approval QR",
-                    subtitle: "After you continue, the approval QR for this device will appear here so the owner can authorize it."
-                )
-
-                VStack(spacing: 10) {
-                    Image(systemName: "qrcode")
-                        .font(.system(size: 56, weight: .medium))
-                        .foregroundStyle(palette.muted)
-                    Text("QR placeholder")
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(palette.muted)
-                }
-                .frame(maxWidth: .infinity, minHeight: 240)
             }
         }
     }
@@ -2179,12 +2164,12 @@ struct DeviceRosterScreen: View {
             return ""
         }
         if roster.canManageDevices {
-            return "Scan a link invite from the new device, or paste a device ID as fallback."
+            return "Scan the QR from the device you want to link, or paste its code."
         }
         if isCurrentDeviceRegistered {
-            return "Read-only on this device. Use a session with your main Secret Key to add or remove devices."
+            return "This device can view the list but cannot change it."
         }
-        return "This linked-device session is read-only and is not registered. Sign in here with your main Secret Key if you want to register this device."
+        return "Sign in with your secret key before changing devices."
     }
 
     var body: some View {
@@ -2192,8 +2177,8 @@ struct DeviceRosterScreen: View {
             if let roster = manager.state.deviceRoster {
                 IrisSectionCard(accent: true) {
                     CardHeader(
-                        title: "Owner devices",
-                        subtitle: roster.canManageDevices ? "This device can approve and remove linked devices." : "This device can view linked devices only."
+                        title: "Linked devices",
+                        subtitle: "These devices can use your account."
                     )
 
                     MonoValue(label: "User ID", value: roster.ownerNpub, identifier: "deviceRosterOwnerNpub")
@@ -2202,11 +2187,11 @@ struct DeviceRosterScreen: View {
 
                 IrisSectionCard {
                     CardHeader(
-                        title: "Approve a new device",
+                        title: "Link another device",
                         subtitle: deviceAccessSubtitle
                     )
 
-                    TextField("Device ID or approval code", text: $deviceInput)
+                    TextField("Device code", text: $deviceInput)
                         .irisIdentifierInputModifiers()
                         .textFieldStyle(.plain)
                         .irisInputField()
@@ -2224,7 +2209,7 @@ struct DeviceRosterScreen: View {
                                 .buttonStyle(IrisSecondaryButtonStyle())
                                 .accessibilityIdentifier("deviceRosterScanButton")
                         }
-                        Button(manager.state.busy.updatingRoster ? "Authorizing…" : "Authorize") {
+                        Button(manager.state.busy.updatingRoster ? "Linking…" : "Link device") {
                             let normalized = resolvedInput?.deviceInput ?? ""
                             manager.addAuthorizedDevice(deviceInput: normalized)
                             deviceInput = ""
@@ -2241,16 +2226,16 @@ struct DeviceRosterScreen: View {
 
                 IrisSectionCard {
                     CardHeader(
-                        title: "Device Access",
-                        subtitle: "\(roster.devices.count) linked device(s)."
+                        title: "Devices",
+                        subtitle: "\(roster.devices.count) linked"
                     )
 
                     if roster.devices.isEmpty {
-                        Text("No registered devices")
+                        Text("No linked devices")
                             .font(.system(.headline, design: .rounded, weight: .semibold))
                             .foregroundStyle(palette.textPrimary)
                             .accessibilityIdentifier("deviceRosterEmptyState")
-                        Text("Authorized device keys will appear here after the roster is published.")
+                        Text("Linked devices will appear here.")
                             .font(.system(.body, design: .rounded))
                             .foregroundStyle(palette.muted)
                     } else {
@@ -2264,7 +2249,7 @@ struct DeviceRosterScreen: View {
                 }
             } else {
                 IrisSectionCard {
-                    Text("No roster available.")
+                    Text("Devices unavailable.")
                         .font(.system(.headline, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.textPrimary)
                 }
@@ -2311,9 +2296,9 @@ private struct DeviceRosterRow: View {
             }
 
             HStack(spacing: 8) {
-                IrisInfoPill(device.isAuthorized ? "Authorized" : "Pending", tint: device.isAuthorized ? .green : .orange)
+                IrisInfoPill(device.isAuthorized ? "Linked" : "Pending", tint: device.isAuthorized ? .green : .orange)
                 if device.isStale {
-                    IrisInfoPill("Stale", tint: .red)
+                    IrisInfoPill("Needs attention", tint: .red)
                 }
             }
 
@@ -2338,7 +2323,7 @@ private struct DeviceRosterRow: View {
     }
 
     private var approveButton: some View {
-        Button(manager.state.busy.updatingRoster ? "Approving…" : "Approve") {
+        Button(manager.state.busy.updatingRoster ? "Linking…" : "Link") {
             manager.addAuthorizedDevice(deviceInput: device.devicePubkeyHex)
         }
         .buttonStyle(IrisPrimaryButtonStyle())
@@ -2353,14 +2338,14 @@ private struct DeviceRosterRow: View {
         .buttonStyle(IrisSecondaryButtonStyle())
         .disabled(manager.state.busy.updatingRoster)
         .accessibilityIdentifier("deviceRosterRemove-\(String(device.devicePubkeyHex.prefix(12)))")
-        .alert("Delete Device?", isPresented: $showingRemoveConfirmation) {
+        .alert("Remove device?", isPresented: $showingRemoveConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
+            Button("Remove", role: .destructive) {
                 manager.removeAuthorizedDevice(devicePubkeyHex: device.devicePubkeyHex)
             }
             .accessibilityIdentifier("deviceRosterConfirmRemove-\(String(device.devicePubkeyHex.prefix(12)))")
         } message: {
-            Text("This device will no longer be authorized for encrypted messaging.")
+            Text("This device will no longer use your account.")
         }
     }
 }
@@ -2371,17 +2356,17 @@ struct DeviceRevokedScreen: View {
     var body: some View {
         IrisScrollScreen {
             IrisSectionCard(accent: true) {
-                Text("This device has been removed from the roster.")
+                Text("Device removed")
                     .font(.system(.title3, design: .rounded, weight: .bold))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
 
-                Text("Acknowledge this state to return to a fresh shell.")
+                Text("This device no longer has access. Sign in again to keep using Iris Chat here.")
                     .font(.system(.body, design: .rounded))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
 
-                Button("Acknowledge") {
+                Button("Sign in again") {
                     manager.dispatch(.acknowledgeRevokedDevice)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
@@ -2425,8 +2410,8 @@ struct SettingsScreen: View {
                     if manager.trustedTestBuildEnabled() {
                         IrisSectionCard {
                             CardHeader(
-                                title: "Trusted test build",
-                                subtitle: "This build uses a controlled relay set and is intended for trusted testing only."
+                                title: "Test build",
+                                subtitle: "For trusted testing only."
                             )
                         }
                     }

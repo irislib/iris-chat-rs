@@ -37,12 +37,12 @@ fun DeviceRevokedScreen(
                 style = MaterialTheme.typography.headlineSmall,
             )
             Text(
-                text = "This device is no longer in the owner-signed roster. Messaging is blocked until you log out and re-link it from a primary device.",
+                text = "This device no longer has access. Sign in again to keep using Iris Chat here.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = IrisTheme.palette.muted,
             )
             IrisPrimaryButton(
-                text = "Logout",
+                text = "Sign out",
                 onClick = appManager::logout,
                 modifier = Modifier.testTag("deviceRevokedLogoutButton"),
                 icon = {

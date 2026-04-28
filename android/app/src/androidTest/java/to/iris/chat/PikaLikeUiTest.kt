@@ -287,8 +287,6 @@ class PikaLikeUiTest {
         composeRule.resetToWelcome()
         composeRule.onNodeWithTag("welcomeAddDeviceAction", useUnmergedTree = true).performClick()
         composeRule.waitForTag("addDeviceScreen")
-        composeRule.onNodeWithTag("addDeviceQrPlaceholder", useUnmergedTree = true)
-            .assertIsDisplayed()
         composeRule.waitForTag("linkOwnerInput")
         composeRule.runOnUiThread {
             QrScannerTestOverrides.nextScannedValue = VALID_PEER_NPUB

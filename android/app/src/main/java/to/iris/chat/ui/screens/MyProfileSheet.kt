@@ -251,7 +251,7 @@ fun MyProfileSheet(
                     modifier = Modifier.testTag("myProfileSaveProfileButton"),
                 )
                 Text(
-                    text = "Scan this owner QR from a fresh device to start linking it. The primary device still controls roster approval.",
+                    text = "Scan this QR on another device to link it.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
                 )
@@ -470,11 +470,11 @@ fun MyProfileSheet(
             if (appManager.isTrustedTestBuild()) {
                 IrisSectionCard {
                     Text(
-                        text = "Trusted test build",
+                        text = "Test build",
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = "This beta uses a controlled relay set and is not for sensitive conversations. Expect occasional resets and export a support bundle before reporting issues.",
+                        text = "For trusted testing only.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = IrisTheme.palette.muted,
                     )

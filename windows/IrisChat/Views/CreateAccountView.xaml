@@ -3,14 +3,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="32" MaxWidth="520" HorizontalAlignment="Center">
-            <TextBlock Text="Create your account"
+            <TextBlock Text="Create account"
                        Style="{StaticResource HeadingText}"
                        Margin="0,0,0,12" />
-            <TextBlock Style="{StaticResource MutedText}"
-                       Text="Pick a display name. We'll generate the keys for you and you can update your profile later."
-                       TextWrapping="Wrap"
-                       Margin="0,0,0,16" />
-
             <TextBlock Text="Name" Margin="0,0,0,4" />
             <TextBox x:Name="NameInput" />
 

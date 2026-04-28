@@ -37,8 +37,8 @@ public partial class DeviceRosterView : UserControl
         AddBlock.Visibility = roster.canManageDevices ? Visibility.Visible : Visibility.Collapsed;
 
         HeaderHint.Text = roster.canManageDevices
-            ? "Authorize new devices, revoke old ones, and see when each device last synced."
-            : "Only the device that owns the signing key can change this list.";
+            ? "These devices can use your account."
+            : "This device can view the list but cannot change it.";
 
         foreach (var d in roster.devices)
         {
@@ -93,7 +93,7 @@ public partial class DeviceRosterView : UserControl
             var revoke = new Button
             {
                 Style = (Style)FindResource("DangerButton"),
-                Content = new TextBlock { Text = "Revoke" },
+                Content = new TextBlock { Text = "Remove" },
                 Padding = new Thickness(10, 6, 10, 6),
             };
             revoke.Click += (_, _) => App.CurrentManager.RemoveAuthorizedDevice(d.devicePubkeyHex);
@@ -124,7 +124,7 @@ public partial class DeviceRosterView : UserControl
 
     private static string StatusText(DeviceEntrySnapshot d)
     {
-        var status = d.isAuthorized ? (d.isStale ? "stale" : "active") : "revoked";
+        var status = d.isAuthorized ? (d.isStale ? "needs attention" : "linked") : "removed";
         if (d.lastActivitySecs is { } secs && secs > 0)
         {
             var t = DateTimeOffset.FromUnixTimeSeconds((long)secs).LocalDateTime;

@@ -30,8 +30,8 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
 fn trusted_build_group() -> adw::PreferencesGroup {
     adw::PreferencesGroup::builder()
-        .title("Trusted test build")
-        .description("This build uses a controlled relay set. Intended for trusted testing only.")
+        .title("Test build")
+        .description("For trusted testing only.")
         .build()
 }
 
@@ -199,7 +199,7 @@ fn profile_group(
 
     let qr_row = adw::ActionRow::builder()
         .title("Show my QR")
-        .subtitle("Share your npub for someone else to start a chat")
+        .subtitle("Show this QR to link another device or start a chat")
         .activatable(true)
         .build();
     let qr_icon = gtk::Image::from_icon_name("preferences-other-symbolic");

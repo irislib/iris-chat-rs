@@ -14,13 +14,13 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let hint = gtk::Label::new(Some("Use your owner secret key to recover your account on this device."));
+    let hint = gtk::Label::new(Some("Paste your secret key."));
     hint.add_css_class("dim-label");
     hint.set_halign(gtk::Align::Start);
     hint.set_wrap(true);
     container.append(&hint);
 
-    let nsec = entry("Owner nsec");
+    let nsec = entry("Secret key");
     container.append(&nsec);
 
     let busy = state.busy.restoring_session;

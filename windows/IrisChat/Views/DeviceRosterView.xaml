@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="32" MaxWidth="640" HorizontalAlignment="Stretch">
-            <TextBlock Text="Authorized devices"
+            <TextBlock Text="Linked devices"
                        Style="{StaticResource HeadingText}"
                        Margin="0,0,0,8" />
             <TextBlock x:Name="HeaderHint"
@@ -22,17 +22,17 @@
                     Visibility="Collapsed">
                 <StackPanel>
                     <TextBlock Style="{StaticResource SectionTitleText}"
-                               Text="Add a new device"
+                               Text="Link another device"
                                Margin="0,0,0,8" />
                     <TextBlock Style="{StaticResource MutedText}"
-                               Text="Paste the new device's npub or scan its QR. The other device must be on the Add Device screen."
+                               Text="Paste the code from the device you want to link."
                                TextWrapping="Wrap"
                                Margin="0,0,0,8" />
                     <TextBox x:Name="DeviceInput" />
                     <Button Style="{StaticResource PrimaryButton}"
                             Click="OnAdd"
                             Margin="0,12,0,0">
-                        <TextBlock Text="Authorize device" />
+                        <TextBlock Text="Link device" />
                     </Button>
                 </StackPanel>
             </Border>

@@ -46,7 +46,7 @@ pub fn title(screen: &Screen) -> &'static str {
         Screen::Welcome => "Welcome",
         Screen::CreateAccount => "Create account",
         Screen::RestoreAccount => "Restore account",
-        Screen::AddDevice => "Add device",
+        Screen::AddDevice => "Link device",
         Screen::ChatList => "Chats",
         Screen::NewChat => "New chat",
         Screen::NewGroup => "New group",
@@ -57,7 +57,7 @@ pub fn title(screen: &Screen) -> &'static str {
         Screen::GroupDetails { .. } => "Group",
         Screen::DeviceRoster => "Devices",
         Screen::AwaitingDeviceApproval => "Awaiting approval",
-        Screen::DeviceRevoked => "Device revoked",
+        Screen::DeviceRevoked => "Device removed",
     }
 }
 

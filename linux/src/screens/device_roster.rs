@@ -17,7 +17,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     inner.set_margin_end(16);
 
     let Some(roster) = state.device_roster.as_ref() else {
-        let empty = gtk::Label::new(Some("No roster available."));
+        let empty = gtk::Label::new(Some("Devices unavailable."));
         empty.add_css_class("dim-label");
         empty.set_vexpand(true);
         empty.set_valign(gtk::Align::Center);
@@ -37,7 +37,10 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 }
 
 fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {
-    let group = adw::PreferencesGroup::builder().title("Owner devices").build();
+    let group = adw::PreferencesGroup::builder()
+        .title("Linked devices")
+        .description("These devices can use your account.")
+        .build();
 
     let device = adw::ActionRow::builder().title("This device").build();
     group.add(&device);
@@ -46,13 +49,13 @@ fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {
 }
 
 fn authorize_card(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
-    let group = adw::PreferencesGroup::builder().title("Authorize a new device").build();
+    let group = adw::PreferencesGroup::builder().title("Link another device").build();
 
     let entry = adw::EntryRow::builder()
-        .title("Device ID or approval code")
+        .title("Device code")
         .build();
     let busy = state.busy.updating_roster;
-    let submit = gtk::Button::with_label(if busy { "Authorizing…" } else { "Authorize" });
+    let submit = gtk::Button::with_label(if busy { "Linking…" } else { "Link device" });
     submit.add_css_class("suggested-action");
     submit.set_valign(gtk::Align::Center);
     submit.set_sensitive(!busy);
@@ -100,8 +103,8 @@ fn devices_card(
 
     if roster.devices.is_empty() {
         let row = adw::ActionRow::builder()
-            .title("No registered devices")
-            .subtitle("Authorized devices will appear here.")
+            .title("No linked devices")
+            .subtitle("Linked devices will appear here.")
             .build();
         group.add(&row);
         return group.upcast();
@@ -127,7 +130,7 @@ fn device_row(
     let row = adw::ActionRow::builder().title(title).build();
 
     let status = gtk::Label::new(Some(if device.is_authorized {
-        "Authorized"
+        "Linked"
     } else {
         "Pending"
     }));
@@ -142,7 +145,7 @@ fn device_row(
 
     if roster.can_manage_devices && !device.is_current_device {
         if !device.is_authorized {
-            let approve = gtk::Button::with_label("Approve");
+            let approve = gtk::Button::with_label("Link");
             approve.add_css_class("suggested-action");
             approve.set_valign(gtk::Align::Center);
             approve.set_sensitive(!state.busy.updating_roster);

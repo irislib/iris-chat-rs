@@ -16,13 +16,8 @@ pub fn render(manager: &Rc<AppManager>) -> gtk::Widget {
     title.set_margin_bottom(12);
     container.append(&title);
 
-    let tagline = gtk::Label::new(Some("End-to-end encrypted chat over Nostr"));
-    tagline.add_css_class("dim-label");
-    tagline.set_margin_bottom(12);
-    container.append(&tagline);
-
     if iris_chat_core::is_trusted_test_build() {
-        let banner = gtk::Label::new(Some("Trusted test build"));
+        let banner = gtk::Label::new(Some("Test build"));
         banner.add_css_class("caption");
         banner.add_css_class("warning");
         banner.set_margin_bottom(8);
@@ -41,7 +36,7 @@ pub fn render(manager: &Rc<AppManager>) -> gtk::Widget {
     });
     container.append(&restore);
 
-    let add_device = pill_button("Add this device");
+    let add_device = pill_button("Link this device");
     dispatch_on_click(&add_device, manager, || AppAction::PushScreen {
         screen: Screen::AddDevice,
     });

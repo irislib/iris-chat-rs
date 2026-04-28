@@ -82,7 +82,7 @@
                     <TextBox x:Name="PeerInput"
                              TextChanged="OnPeerInputChanged" />
                     <TextBlock Style="{StaticResource MutedText}"
-                               Text="Paste an npub, nprofile or invite link."
+                               Text="Paste a user ID or invite link."
                                Margin="2,8,2,0" />
                 </StackPanel>
             </Border>

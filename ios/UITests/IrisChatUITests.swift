@@ -14,7 +14,7 @@ final class IrisChatUITests: XCTestCase {
         createAccount(app)
 
         XCTAssertTrue(element(app, "navigationTopBar").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "chatListHeroCard").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "chatListNewChatButton").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
         element(app, "chatListProfileButton").tap()
 
@@ -95,7 +95,9 @@ final class IrisChatUITests: XCTestCase {
 
         createAccount(app)
 
-        element(app, "chatListNewGroupButton").tap()
+        element(app, "chatListNewChatButton").tap()
+        XCTAssertTrue(element(app, "newChatNewGroupButton").waitForExistence(timeout: 10))
+        element(app, "newChatNewGroupButton").tap()
         XCTAssertTrue(element(app, "newGroupPrimaryCard").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "newGroupNameInput").waitForExistence(timeout: 10))
         element(app, "newGroupNameInput").tap()
@@ -115,7 +117,6 @@ final class IrisChatUITests: XCTestCase {
 
     private func openChatWithPeer(_ app: XCUIApplication) {
         element(app, "chatListNewChatButton").tap()
-        XCTAssertTrue(element(app, "newChatPrimaryCard").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))
         element(app, "newChatPeerInput").tap()
         element(app, "newChatPeerInput").typeText(validPeerNpub)
@@ -161,7 +162,6 @@ final class IrisChatUITests: XCTestCase {
         element(app, "welcomeAddDeviceAction").tap()
 
         XCTAssertTrue(element(app, "addDeviceScreen").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "addDeviceQrPlaceholder").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "linkOwnerScanQrButton").waitForExistence(timeout: 10))
         element(app, "linkOwnerScanQrButton").tap()
         XCTAssertTrue(element(app, "linkExistingAccountButton").waitForExistence(timeout: 10))
@@ -223,9 +223,10 @@ final class IrisChatUITests: XCTestCase {
             "settings avatar did not render the uploaded image"
         )
 
-        // The chat list top avatar must render the same image. On the desktop layout
-        // the sidebar stays visible while settings is shown, so we don't need to
-        // navigate back first.
+        element(app, "navigationBackButton").tap()
+        XCTAssertTrue(element(app, "chatListProfileButton").waitForExistence(timeout: 15))
+
+        // The chat list top avatar must render the same image.
         XCTAssertTrue(
             element(app, "chatListProfileAvatarImage").waitForExistence(timeout: 30),
             "chat list top avatar did not render the uploaded image"
@@ -254,10 +255,9 @@ final class IrisChatUITests: XCTestCase {
     }
 
     private func openGroupDetails(_ app: XCUIApplication) {
-        element(app, "chatOverflowButton").tap()
-        let item = app.buttons["Group details"]
-        XCTAssertTrue(item.waitForExistence(timeout: 5))
-        item.tap()
+        let header = element(app, "chatHeaderTitleButton")
+        XCTAssertTrue(header.waitForExistence(timeout: 5))
+        header.tap()
     }
 
     private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {

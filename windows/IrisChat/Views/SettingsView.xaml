@@ -116,12 +116,12 @@
                             Click="OnExportOwner"
                             Margin="0,0,0,8"
                             HorizontalAlignment="Left">
-                        <TextBlock Text="Copy owner key (nsec)" />
+                        <TextBlock Text="Copy secret key" />
                     </Button>
                     <Button Style="{StaticResource SecondaryButton}"
                             Click="OnExportDevice"
                             HorizontalAlignment="Left">
-                        <TextBlock Text="Copy device key (nsec)" />
+                        <TextBlock Text="Copy device key" />
                     </Button>
                 </StackPanel>
             </Border>

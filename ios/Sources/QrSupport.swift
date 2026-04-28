@@ -47,7 +47,7 @@ func resolveDeviceAuthorizationInput(
         if !acceptedOwnerInputs.contains(normalizedOwner) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput: "",
-                errorMessage: "This approval QR belongs to a different owner."
+                errorMessage: "This QR is for a different account."
             )
         }
 
@@ -55,7 +55,7 @@ func resolveDeviceAuthorizationInput(
         if !isValidPeerInput(input: normalizedDevice) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput: "",
-                errorMessage: "The approval QR did not contain a valid device key."
+                errorMessage: "That QR does not contain a valid device code."
             )
         }
         return ResolvedDeviceAuthorizationInput(deviceInput: normalizedDevice, errorMessage: nil)
@@ -68,7 +68,7 @@ func resolveDeviceAuthorizationInput(
 
     return ResolvedDeviceAuthorizationInput(
         deviceInput: "",
-        errorMessage: "Not a valid device ID or approval code."
+        errorMessage: "Not a valid device code."
     )
 }
 
@@ -209,7 +209,7 @@ struct QrScannerSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("QR scanning is not wired for macOS yet.")
                 .font(.system(.title3, design: .rounded, weight: .bold))
-            Text("Paste the owner, member, or device code instead.")
+            Text("Paste the code instead.")
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(.secondary)
 

@@ -3,12 +3,12 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <Grid Background="{StaticResource Background}">
         <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Width="420" Margin="20">
-            <TextBlock Text="This device was revoked"
+            <TextBlock Text="Device removed"
                        Style="{StaticResource HeadingText}"
                        HorizontalAlignment="Center"
                        Margin="0,0,0,12" />
             <TextBlock Foreground="{StaticResource TextMuted}"
-                       Text="The owner of this account revoked this device's access. To continue, you can sign back in or reset this device."
+                       Text="This device no longer has access. Sign in again to keep using Iris Chat here."
                        TextWrapping="Wrap"
                        HorizontalAlignment="Center"
                        TextAlignment="Center"
@@ -16,7 +16,7 @@
             <Button Style="{StaticResource PrimaryButton}"
                     Click="OnAcknowledge"
                     Margin="0,0,0,10">
-                <TextBlock Text="Acknowledge" />
+                <TextBlock Text="Sign in again" />
             </Button>
             <Button Style="{StaticResource DangerButton}"
                     Click="OnReset">

@@ -8,7 +8,7 @@ use crate::app_manager::AppManager;
 pub fn render(_state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let status = adw::StatusPage::builder()
         .icon_name("dialog-warning-symbolic")
-        .title("Device revoked")
+        .title("Device removed")
         .description("This device's access was removed. Sign in again to use Iris Chat here.")
         .build();
     status.set_vexpand(true);

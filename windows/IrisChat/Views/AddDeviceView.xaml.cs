@@ -18,13 +18,13 @@ public partial class AddDeviceView : UserControl
         if (_awaitingApproval)
         {
             TitleText.Text = "Finish linking";
-            SubtitleText.Text = "Approve the new device from your existing one to complete the handshake.";
+            SubtitleText.Text = "Use your signed-in device to approve this one.";
             LinkInputBlock.Visibility = Visibility.Collapsed;
             WaitingBlock.Visibility = Visibility.Visible;
         }
         else
         {
-            SubtitleText.Text = "Enter the npub of the existing account you want to link this device to.";
+            SubtitleText.Text = "Paste the user ID from your signed-in device.";
         }
 
         Loaded += (_, _) =>

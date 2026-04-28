@@ -9,24 +9,24 @@ use crate::screens::{entry, primary_button, scan_qr_button, screen_container};
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
 
-    let header = gtk::Label::new(Some("Add this device"));
+    let header = gtk::Label::new(Some("Link this device"));
     header.add_css_class("title-2");
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
     let hint = gtk::Label::new(Some(
-        "Paste your owner npub from another signed-in device. The owner will be asked to approve this device.",
+        "Scan the account QR from your signed-in device, or paste its user ID.",
     ));
     hint.add_css_class("dim-label");
     hint.set_halign(gtk::Align::Start);
     hint.set_wrap(true);
     container.append(&hint);
 
-    let owner = entry("Owner npub");
+    let owner = entry("User ID");
     container.append(&owner);
 
     let owner_for_scan = owner.clone();
-    let scan = scan_qr_button("Scan QR", move |text| {
+    let scan = scan_qr_button("Scan account QR", move |text| {
         owner_for_scan.set_text(&text);
     });
     container.append(&scan);

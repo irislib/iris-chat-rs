@@ -9,7 +9,7 @@ pub fn render(_state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let status = adw::StatusPage::builder()
         .icon_name("emblem-synchronizing-symbolic")
         .title("Waiting for approval")
-        .description("Approve this device from another signed-in device with owner authority.")
+        .description("Use your signed-in device to approve this one.")
         .build();
     status.set_vexpand(true);
 

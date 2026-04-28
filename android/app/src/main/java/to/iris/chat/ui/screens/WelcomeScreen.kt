@@ -105,7 +105,7 @@ private fun WelcomeHeroCard(
                         .testTag("welcomeRestoreAction"),
             )
             IrisSecondaryButton(
-                text = "Add this device",
+                text = "Link this device",
                 onClick = { appManager.pushScreen(Screen.AddDevice) },
                 modifier =
                     Modifier
@@ -120,17 +120,11 @@ private fun WelcomeHeroCard(
 private fun WelcomeTrustedBuildCard(
     modifier: Modifier = Modifier,
 ) {
-    val palette = IrisTheme.palette
     IrisSectionCard(modifier = modifier) {
         Text(
-            text = "Trusted test build",
+            text = "Test build",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
-        )
-        Text(
-            text = "Build ${BuildConfig.VERSION_NAME} (${BuildConfig.BUILD_GIT_SHA})",
-            style = MaterialTheme.typography.bodyMedium,
-            color = palette.muted,
         )
     }
 }
@@ -150,11 +144,6 @@ fun CreateAccountScreen(
                 text = "Create account",
                 style = MaterialTheme.typography.headlineSmall,
             )
-            Text(
-                text = "Generate a fresh owner account on this device and jump straight into chats.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = IrisTheme.palette.muted,
-            )
             TextField(
                 value = displayName,
                 onValueChange = { displayName = it },
@@ -164,7 +153,7 @@ fun CreateAccountScreen(
                         .testTag("signupNameField"),
                 placeholder = {
                     Text(
-                        text = "Display name",
+                        text = "Name",
                         color = IrisTheme.palette.muted,
                     )
                 },
@@ -205,7 +194,7 @@ fun RestoreAccountScreen(
                 style = MaterialTheme.typography.headlineSmall,
             )
             Text(
-                text = "Use your owner secret key to recover your account on this device.",
+                text = "Paste your secret key.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = IrisTheme.palette.muted,
             )
@@ -218,7 +207,7 @@ fun RestoreAccountScreen(
                         .testTag("importKeyField"),
                 placeholder = {
                     Text(
-                        text = "Owner nsec",
+                        text = "Secret key",
                         color = IrisTheme.palette.muted,
                     )
                 },
@@ -263,15 +252,15 @@ fun AddDeviceScreen(
 
         IrisSectionCard(modifier = Modifier.testTag("addDeviceScreen")) {
             Text(
-                text = if (awaitingApproval) "Finish linking" else "Add this device",
+                text = if (awaitingApproval) "Finish linking" else "Link this device",
                 style = MaterialTheme.typography.headlineSmall,
             )
             Text(
                 text =
                     if (awaitingApproval) {
-                        "Approve this device on the owner device. If it does not appear in the roster yet, scan the QR below as a fallback."
+                        "Use your signed-in device to approve this one. If it asks for a code, scan the QR below."
                     } else {
-                        "Scan or paste the owner code from your primary device. This device will create its own invite and then wait for approval there."
+                        "Scan the account QR from your signed-in device, or paste its user ID."
                     },
                 style = MaterialTheme.typography.bodyMedium,
                 color = IrisTheme.palette.muted,
@@ -298,7 +287,7 @@ fun AddDeviceScreen(
 
                 if (ownerInput.isNotBlank() && !isValidOwnerInput) {
                     Text(
-                        text = "Scanned or pasted owner key is not valid.",
+                        text = "That QR or user ID is not valid.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -319,7 +308,7 @@ fun AddDeviceScreen(
                                 .testTag("linkOwnerPasteButton"),
                     )
                     IrisSecondaryButton(
-                        text = "Scan owner QR",
+                        text = "Scan account QR",
                         onClick = { showScanner = true },
                         enabled = !appState.busy.linkingDevice,
                         modifier =
@@ -340,12 +329,12 @@ fun AddDeviceScreen(
             } else {
                 appState.account?.let { account ->
                     MonoValue(
-                        label = "Owner",
+                        label = "User ID",
                         value = account.npub,
                         identifier = "awaitingApprovalOwnerNpub",
                     )
                     MonoValue(
-                        label = "Device ID",
+                        label = "This device",
                         value = account.deviceNpub,
                         identifier = "awaitingApprovalDeviceNpub",
                     )
@@ -362,7 +351,7 @@ fun AddDeviceScreen(
         if (awaitingApproval) {
             IrisSectionCard {
                 IrisSecondaryButton(
-                    text = "Logout",
+                    text = "Sign out",
                     onClick = appManager::logout,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -378,7 +367,7 @@ fun AddDeviceScreen(
             onScanned = { scanned ->
                 val normalized = normalizePeerInput(scanned)
                 if (!isValidPeerInput(normalized)) {
-                    "Scanned QR did not contain a valid owner public key."
+                    "That QR or user ID is not valid."
                 } else {
                     ownerInput = normalized
                     showScanner = false
@@ -399,30 +388,6 @@ private fun AddDeviceQrPanel(
     val account = appState.account
 
     if (!awaitingApproval || account == null) {
-        IrisSectionCard(modifier = Modifier.testTag("addDeviceQrPlaceholder")) {
-            Text(
-                text = "Approval QR",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                text = "After you continue, the approval QR for this device will appear here so the owner can authorize it.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = IrisTheme.palette.muted,
-            )
-            Box(
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(
-                    text = "QR placeholder",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                )
-            }
-        }
         return
     }
 
@@ -444,7 +409,7 @@ private fun AddDeviceQrPanel(
             style = MaterialTheme.typography.titleMedium,
         )
         Text(
-            text = "Approve this device from Manage devices on the owner device, or scan the QR below there as a fallback.",
+            text = "Scan this from Manage devices on your signed-in device.",
             style = MaterialTheme.typography.bodyMedium,
             color = IrisTheme.palette.muted,
         )
@@ -455,7 +420,7 @@ private fun AddDeviceQrPanel(
             if (qrBitmap != null) {
                 Image(
                     bitmap = qrBitmap.asImageBitmap(),
-                    contentDescription = "Device approval QR code",
+                    contentDescription = "Approval QR code",
                     modifier =
                         Modifier
                             .size(260.dp)
@@ -464,7 +429,7 @@ private fun AddDeviceQrPanel(
             }
         }
         IrisSecondaryButton(
-            text = "Copy approval QR",
+            text = "Copy approval code",
             onClick = { clipboard.setText("Approval QR", approvalQrValue) },
             modifier =
                 Modifier

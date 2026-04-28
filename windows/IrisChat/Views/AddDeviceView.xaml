@@ -13,24 +13,24 @@
                        Margin="0,0,0,16" />
 
             <StackPanel x:Name="LinkInputBlock">
-                <TextBlock Text="Owner npub or nprofile" Margin="0,0,0,4" />
+                <TextBlock Text="User ID from your signed-in device" Margin="0,0,0,4" />
                 <TextBox x:Name="OwnerInput" />
                 <Button x:Name="LinkButton"
                         Style="{StaticResource PrimaryButton}"
                         Click="OnLink"
                         Margin="0,16,0,0">
-                    <TextBlock Text="Send approval request" />
+                    <TextBlock Text="Continue" />
                 </Button>
             </StackPanel>
 
             <StackPanel x:Name="WaitingBlock" Visibility="Collapsed">
-                <TextBlock Text="Approve this device on the existing one to finish linking. Keep both devices online."
+                <TextBlock Text="Use your signed-in device to approve this one."
                            Foreground="{StaticResource TextMuted}"
                            TextWrapping="Wrap"
                            Margin="0,0,0,16" />
                 <Button Style="{StaticResource SecondaryButton}"
                         Click="OnCancel">
-                    <TextBlock Text="Cancel" />
+                    <TextBlock Text="Back" />
                 </Button>
             </StackPanel>
         </StackPanel>

@@ -118,18 +118,29 @@ detect_shared_repo_path() {
   printf 'C:\\Mac\\Home\\%s\n' "$rel"
 }
 
-# Encode a PowerShell script block as UTF-16LE base64 and run it inside the VM.
-# Mirrors the approach used by ~/src/nostr-vpn (which works reliably from
-# arbitrary parent contexts): plain `-NoProfile` (no `-NonInteractive`) and no
-# stdin redirect. The combination of `-NonInteractive` + closed stdin appears
-# to cause prlctl's host channel to stall indefinitely on the powershell.exe
-# spawn when the EncodedCommand is large.
+# Write a PowerShell script under target/ and run it through the Parallels
+# shared folder. Large EncodedCommand payloads can stall prlctl on this VM.
 ps_run() {
   local vm="$1"
   local script="$2"
-  local encoded
-  encoded="$(printf '%s' "$script" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')"
-  prlctl exec "$vm" --current-user powershell.exe -NoProfile -EncodedCommand "$encoded"
+  local shared_repo
+  shared_repo="$(detect_shared_repo_path)"
+  local ps_tmp_dir
+  ps_tmp_dir="$ROOT/target/windows-build-ps"
+  mkdir -p "$ps_tmp_dir"
+  local host_script
+  host_script="$(mktemp "$ps_tmp_dir/prlctl.XXXXXX")"
+  mv "$host_script" "$host_script.ps1"
+  host_script="$host_script.ps1"
+  printf '%s\n' "$script" >"$host_script"
+  local rel_script
+  rel_script="${host_script#"$ROOT"/}"
+  rel_script="${rel_script//\//\\}"
+  local guest_script="${shared_repo}\\${rel_script}"
+  prlctl exec "$vm" --current-user powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$guest_script"
+  local status=$?
+  rm -f "$host_script"
+  return "$status"
 }
 
 # Same, but used when the caller wants to capture stdout. Identical body now;
@@ -155,10 +166,25 @@ guest_repo_expr() {
 path_setup_block() {
   local llvm_quoted
   llvm_quoted="$(ps_quote "$LLVM_BIN")"
-  printf '%s\n' \
-    "\$cargoBin = Join-Path \$env:USERPROFILE '.cargo\\bin'" \
-    "\$shimBin = Join-Path \$env:USERPROFILE 'bin'" \
-    "\$env:PATH = \$cargoBin + ';' + \$shimBin + ';' + ${llvm_quoted} + ';' + \$env:PATH"
+  cat <<'PS'
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+if (Test-Path $vswhere) {
+  $vsInstall = (& $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null | Select-Object -First 1)
+  if ($vsInstall) {
+    $vcvars64 = Join-Path $vsInstall 'VC\Auxiliary\Build\vcvars64.bat'
+    if (Test-Path $vcvars64) {
+      $devCmd = 'call "' + $vcvars64 + '" >nul && set'
+      $envLines = cmd /d /s /c $devCmd
+      foreach ($line in $envLines) {
+        if ($line -match '^(.*?)=(.*)$') { Set-Item -Path ("Env:\" + $matches[1]) -Value $matches[2] }
+      }
+    }
+  }
+}
+$cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
+$shimBin = Join-Path $env:USERPROFILE 'bin'
+PS
+  printf '%s\n' "\$env:PATH = \$cargoBin + ';' + \$shimBin + ';' + ${llvm_quoted} + ';' + \$env:PATH"
 }
 
 run_doctor() {
@@ -181,23 +207,28 @@ run_doctor() {
   ps_run "$vm" "$(cat <<PS
 \$ErrorActionPreference = 'Continue'
 $(path_setup_block)
-function Probe(\$label, \$cmd) {
-  try {
-    \$out = (& \$cmd) 2>&1 | Out-String
-    \$out = \$out.Trim()
-    if (-not \$out) { \$out = 'ok' }
-    Write-Output ("[ok] {0}: {1}" -f \$label, (\$out -split "\`n")[0])
-  } catch {
-    Write-Output ("[missing] {0}: {1}" -f \$label, \$_.Exception.Message)
-  }
-}
-Probe 'rustc' { rustc --version }
-Probe 'cargo' { cargo --version }
-Probe ('rust target ' + ${target_quoted}) { rustup target list --installed | Select-String -Pattern ([regex]::Escape(${target_quoted})) }
-Probe 'uniffi-bindgen-cs' { uniffi-bindgen-cs --version }
-Probe 'dotnet' { dotnet --info | Select-String -Pattern 'Version:' | Select-Object -First 1 }
-Probe 'msbuild link.exe (x64 host -> x64 target)' { Get-Command link.exe -ErrorAction Stop }
-Probe 'clang.exe' { Get-Command clang.exe -ErrorAction SilentlyContinue }
+try { Write-Output ("[ok] rustc: {0}" -f ((rustc --version 2>&1 | Out-String).Trim())) }
+catch { Write-Output ("[missing] rustc: {0}" -f \$_.Exception.Message) }
+try { Write-Output ("[ok] cargo: {0}" -f ((cargo --version 2>&1 | Out-String).Trim())) }
+catch { Write-Output ("[missing] cargo: {0}" -f \$_.Exception.Message) }
+try {
+  \$installedTarget = rustup target list --installed | Select-String -Pattern ([regex]::Escape(${target_quoted})) | Select-Object -First 1
+  if (\$installedTarget) { Write-Output ("[ok] rust target {0}: {1}" -f ${target_quoted}, \$installedTarget.Line) }
+  else { Write-Output ("[missing] rust target {0}: not installed" -f ${target_quoted}) }
+} catch { Write-Output ("[missing] rust target {0}: {1}" -f ${target_quoted}, \$_.Exception.Message) }
+try { Write-Output ("[ok] uniffi-bindgen-cs: {0}" -f ((uniffi-bindgen-cs --version 2>&1 | Out-String).Trim())) }
+catch { Write-Output ("[missing] uniffi-bindgen-cs: {0}" -f \$_.Exception.Message) }
+try {
+  \$dotnetVersion = (dotnet --info | Select-String -Pattern 'Version:' | Select-Object -First 1).Line.Trim()
+  Write-Output ("[ok] dotnet: {0}" -f \$dotnetVersion)
+} catch { Write-Output ("[missing] dotnet: {0}" -f \$_.Exception.Message) }
+try { Write-Output ("[ok] msbuild link.exe (x64 host -> x64 target): {0}" -f (Get-Command link.exe -ErrorAction Stop).Source) }
+catch { Write-Output ("[missing] msbuild link.exe (x64 host -> x64 target): {0}" -f \$_.Exception.Message) }
+try {
+  \$clang = Get-Command clang.exe -ErrorAction SilentlyContinue
+  if (\$clang) { Write-Output ("[ok] clang.exe: {0}" -f \$clang.Source) }
+  else { Write-Output "[missing] clang.exe: not found" }
+} catch { Write-Output ("[missing] clang.exe: {0}" -f \$_.Exception.Message) }
 \$sharedRepo = $(ps_quote "$shared_repo")
 if (Test-Path \$sharedRepo) { Write-Output "[ok] shared repo path: \$sharedRepo" }
 else { Write-Output "[missing] shared repo path: \$sharedRepo" }
@@ -225,28 +256,33 @@ run_sync() {
 \$guestRoot = Split-Path \$guestRepo
 New-Item -ItemType Directory -Force -Path \$guestRoot | Out-Null
 
-\$skipDirs = @(
-  (Join-Path \$guestRepo 'target'),
-  (Join-Path \$guestRepo 'dist'),
-  (Join-Path \$guestRepo '.git'),
-  (Join-Path \$guestRepo 'node_modules'),
-  (Join-Path \$guestRepo '.relay-venv'),
-  (Join-Path \$guestRepo '.gradle'),
-  (Join-Path \$guestRepo '.kotlin'),
-  (Join-Path \$guestRepo '.idea'),
-  (Join-Path \$guestRepo 'ios\\Bindings'),
-  (Join-Path \$guestRepo 'ios\\.build'),
-  (Join-Path \$guestRepo 'ios\\Frameworks'),
-  (Join-Path \$guestRepo 'macos\\.build'),
-  (Join-Path \$guestRepo 'macos\\Frameworks'),
-  (Join-Path \$guestRepo 'android\\build'),
-  (Join-Path \$guestRepo 'android\\app\\build'),
-  (Join-Path \$guestRepo 'android\\.gradle'),
-  (Join-Path \$guestRepo 'windows\\IrisChat\\bin'),
-  (Join-Path \$guestRepo 'windows\\IrisChat\\obj'),
-  (Join-Path \$guestRepo 'windows\\IrisChat\\Bindings'),
-  (Join-Path \$guestRepo 'windows\\IrisChat\\Frameworks')
+\$skipRelDirs = @(
+  'target',
+  'dist',
+  '.git',
+  'node_modules',
+  '.relay-venv',
+  '.gradle',
+  '.kotlin',
+  '.idea',
+  'ios\\Bindings',
+  'ios\\.build',
+  'ios\\Frameworks',
+  'macos\\.build',
+  'macos\\Frameworks',
+  'android\\build',
+  'android\\app\\build',
+  'android\\.gradle',
+  'windows\\IrisChat\\bin',
+  'windows\\IrisChat\\obj',
+  'windows\\IrisChat\\Bindings',
+  'windows\\IrisChat\\Frameworks'
 )
+\$skipDirs = @()
+foreach (\$relDir in \$skipRelDirs) {
+  \$skipDirs += (Join-Path \$sharedRepo \$relDir)
+  \$skipDirs += (Join-Path \$guestRepo \$relDir)
+}
 robocopy \$sharedRepo \$guestRepo /MIR /NFL /NDL /NJH /NJS /NC /NS /NP /XD @skipDirs /XF .DS_Store | Out-Null
 \$rc = \$LASTEXITCODE
 if (\$rc -ge 8) { throw "robocopy iris-chat-rs failed with code \$rc" }

@@ -1,0 +1,1 @@
+UI copy must be concise and normie/granny-friendly: use everyday labels like "Link this device", avoid filler explainers and protocol jargon such as npub, nsec, owner, roster, or relay unless essential.
