@@ -1,4 +1,5 @@
 import Foundation
+import SQLite3
 import UserNotifications
 import XCTest
 #if os(macOS)
@@ -670,16 +671,18 @@ final class InteropHarnessTests: XCTestCase {
 
     private func summarizeSplitPersistedPeer(dataDir: URL, manager: AppManager, peerOwnerHex: String) -> String {
         guard let account = manager.state.account else { return "" }
-        let userPath = dataDir
-            .appendingPathComponent("ndr_runtime")
-            .appendingPathComponent(account.publicKeyHex)
-            .appendingPathComponent(account.devicePublicKeyHex)
-            .appendingPathComponent("user_\(peerOwnerHex).json")
-        let user = readJsonObject(at: userPath)
-        let appKeys = readJsonArray(at: dataDir.appendingPathComponent("core/app_keys.json"))
-        let rosterDevices = arrayValue(appKeys).compactMap(dictValue).first(where: {
-            sameIdentifier(stringValue($0["owner_pubkey_hex"]), peerOwnerHex)
-        }).map { arrayValue($0["devices"]).count } ?? 0
+        let user = ndrKvUser(
+            dataDir: dataDir,
+            ownerPubkeyHex: account.publicKeyHex,
+            devicePubkeyHex: account.devicePublicKeyHex,
+            peerOwnerHex: peerOwnerHex
+        )
+        let rosterDevices = ndrKvAppKeysDeviceCount(
+            dataDir: dataDir,
+            ownerPubkeyHex: account.publicKeyHex,
+            devicePubkeyHex: account.devicePublicKeyHex,
+            peerOwnerHex: peerOwnerHex
+        )
         let devices = arrayValue(user?["devices"])
         let activeSessions = devices.reduce(into: 0) { count, entry in
             guard let device = dictValue(entry) else { return }
@@ -703,12 +706,12 @@ final class InteropHarnessTests: XCTestCase {
 
     private func splitPersistenceHasPeerSession(dataDir: URL, manager: AppManager, peerOwnerHex: String) -> Bool {
         guard let account = manager.state.account else { return false }
-        let userPath = dataDir
-            .appendingPathComponent("ndr_runtime")
-            .appendingPathComponent(account.publicKeyHex)
-            .appendingPathComponent(account.devicePublicKeyHex)
-            .appendingPathComponent("user_\(peerOwnerHex).json")
-        guard let user = readJsonObject(at: userPath) else {
+        guard let user = ndrKvUser(
+            dataDir: dataDir,
+            ownerPubkeyHex: account.publicKeyHex,
+            devicePubkeyHex: account.devicePublicKeyHex,
+            peerOwnerHex: peerOwnerHex
+        ) else {
             return false
         }
         return arrayValue(user["devices"]).contains { entry in
@@ -716,6 +719,81 @@ final class InteropHarnessTests: XCTestCase {
             return dictValue(device["active_session"]) != nil ||
                 !arrayValue(device["inactive_sessions"]).isEmpty
         }
+    }
+
+    /// Read a `user/{peer}` value out of the SQLite-backed `ndr_kv` store.
+    /// The pre-SQLite harness read JSON files at
+    /// `{dataDir}/ndr_runtime/{owner}/{device}/user_{peer}.json`; that
+    /// tree no longer exists.
+    private func ndrKvUser(
+        dataDir: URL,
+        ownerPubkeyHex: String,
+        devicePubkeyHex: String,
+        peerOwnerHex: String
+    ) -> JsonObject? {
+        ndrKvJson(
+            dataDir: dataDir,
+            ownerPubkeyHex: ownerPubkeyHex,
+            devicePubkeyHex: devicePubkeyHex,
+            key: "user/\(peerOwnerHex)"
+        ) as? JsonObject
+    }
+
+    private func ndrKvAppKeysDeviceCount(
+        dataDir: URL,
+        ownerPubkeyHex: String,
+        devicePubkeyHex: String,
+        peerOwnerHex: String
+    ) -> Int {
+        // Pre-SQLite harness counted devices in `core/app_keys.json`
+        // entries with matching `owner_pubkey_hex`. App-keys live in
+        // `app_keys` table now keyed by owner; the per-peer device
+        // count is whatever the user record knows about.
+        guard let user = ndrKvUser(
+            dataDir: dataDir,
+            ownerPubkeyHex: ownerPubkeyHex,
+            devicePubkeyHex: devicePubkeyHex,
+            peerOwnerHex: peerOwnerHex
+        ) else {
+            return 0
+        }
+        return arrayValue(user["known_device_identities"]).count
+    }
+
+    private func ndrKvJson(
+        dataDir: URL,
+        ownerPubkeyHex: String,
+        devicePubkeyHex: String,
+        key: String
+    ) -> Any? {
+        let dbPath = dataDir.appendingPathComponent("core.sqlite3").path
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return nil
+        }
+        defer { sqlite3_close(db) }
+        var stmt: OpaquePointer?
+        let sql = "SELECT value FROM ndr_kv WHERE owner_pubkey_hex = ? AND device_pubkey_hex = ? AND key = ?"
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            return nil
+        }
+        defer { sqlite3_finalize(stmt) }
+        let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+        sqlite3_bind_text(stmt, 1, ownerPubkeyHex, -1, transient)
+        sqlite3_bind_text(stmt, 2, devicePubkeyHex, -1, transient)
+        sqlite3_bind_text(stmt, 3, key, -1, transient)
+        guard sqlite3_step(stmt) == SQLITE_ROW else {
+            return nil
+        }
+        guard let cString = sqlite3_column_text(stmt, 0) else {
+            return nil
+        }
+        let raw = String(cString: cString)
+        guard let data = raw.data(using: .utf8) else {
+            return nil
+        }
+        return try? JSONSerialization.jsonObject(with: data, options: [])
     }
 
     private func reportIdentity(_ snapshot: AccountSnapshot) {

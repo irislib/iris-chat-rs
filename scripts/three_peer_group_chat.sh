@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
 
-# Three-peer group chat interop, end-to-end through real iris.to relays.
+# Three-peer group chat interop, end-to-end through a local Rust relay.
 # Verifies that an iOS, an Android, and a third Apple peer (iOS sim 2,
 # which compiles from the same Swift sources as the macOS app, so the
 # protocol-level guarantees apply transitively) all see each other's
 # messages in a single group.
 #
 # Each peer:
-#   * builds against the production-relay-set Rust core
+#   * builds against the local relay set
 #   * creates a fresh account
 #   * is added to a group created by the iOS peer
 #   * sends one message and waits for the others' messages to arrive
 #
 # No mocks, no harness shortcuts, no relayed-via-test-hooks. The harness
-# is the same one the mixed-platform matrix uses; the only thing this
-# script changes is the device count (3 instead of 4) and the use of a
-# second iOS simulator to stand in for the macOS app while the macOS
-# XCTest harness is still WIP.
+# is the same one the mixed-platform matrix uses; the difference is the
+# device count (3 instead of 4) and the use of a second iOS simulator to
+# stand in for the macOS app while the macOS XCTest harness is still WIP.
+#
+# Why a local relay (not iris.to): production relay propagation can drop
+# the handshake into a >180s wait that's outside the test's control.
+# The local relay removes propagation timing from the loop while still
+# exercising the real ratchet, group, and transport code paths.
 
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${ROOT_DIR}/scripts/mobile_relay_common.sh"
 
 LOCAL_PROPERTIES="${ROOT_DIR}/android/local.properties"
 SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
@@ -38,7 +43,13 @@ ANDROID_HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 IOS_HARNESS="${ROOT_DIR}/scripts/run_ios_harness.py"
 ANDROID_RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
 ANDROID_CLASS="to.iris.chat.RealRelayHarnessTest"
-ANDROID_APP_PACKAGE="to.iris.chat"
+# Debug builds of the Android app live under `to.iris.chat.debug`
+# (the gradle debug variant adds an applicationIdSuffix of ".debug").
+# The test APK's instrumentation target also points at that suffixed
+# id; clearing `to.iris.chat` would wipe an entirely different app
+# the user might have installed from zapstore — and would leave the
+# debug app's stale data in place across runs.
+ANDROID_APP_PACKAGE="to.iris.chat.debug"
 ANDROID_TEST_PACKAGE="to.iris.chat.test"
 
 ANDROID_SERIAL="${ANDROID_SERIAL:-R58TB02242W}"
@@ -47,6 +58,7 @@ IOS_MEMBER_UDID="${IOS_MEMBER_UDID:-541D813E-FA77-4F12-AE69-ED78734644B6}"
 IOS_PRIMARY_RUN_ID="${IOS_PRIMARY_RUN_ID:-three-peer-ios}"
 IOS_MEMBER_RUN_ID="${IOS_MEMBER_RUN_ID:-three-peer-mac}"
 GROUP_NAME="${GROUP_NAME:-ThreePeerGroup}"
+RELAY_LOG="${RELAY_LOG:-/tmp/iris-three-peer-relay.log}"
 
 extract_status() {
   awk -F= -v want="$1" '$0 ~ /^INSTRUMENTATION_STATUS: / {
@@ -128,6 +140,22 @@ require_value() {
   fi
 }
 
+cleanup() {
+  local exit_code=$?
+  if [[ -n "${RELAY_PID:-}" ]]; then
+    stop_local_rust_relay "${RELAY_PID}"
+  fi
+  if [[ -n "${ANDROID_REVERSE_PORT:-}" ]]; then
+    "${ADB}" -s "${ANDROID_SERIAL}" reverse --remove "tcp:${ANDROID_REVERSE_PORT}" >/dev/null 2>&1 || true
+  fi
+  if [[ ${exit_code} -ne 0 ]]; then
+    echo "Three-peer group chat failed (exit ${exit_code})." >&2
+    echo "Relay log: ${RELAY_LOG}" >&2
+  fi
+  exit "${exit_code}"
+}
+trap cleanup EXIT
+
 echo "==> Verifying devices are reachable"
 "${ADB}" -s "${ANDROID_SERIAL}" get-state >/dev/null || {
   echo "Android device ${ANDROID_SERIAL} unreachable" >&2
@@ -136,9 +164,26 @@ echo "==> Verifying devices are reachable"
 xcrun simctl list devices | grep -q "${IOS_PRIMARY_UDID}.*Booted" || xcrun simctl boot "${IOS_PRIMARY_UDID}"
 xcrun simctl list devices | grep -q "${IOS_MEMBER_UDID}.*Booted" || xcrun simctl boot "${IOS_MEMBER_UDID}"
 
-echo "==> Building Android app + test APK"
+echo "==> Starting local Rust relay"
+RELAY_PID="$(start_local_rust_relay "${RELAY_LOG}")"
+assert_local_relay_healthy
+RELAY_PORT="$(local_relay_port)"
+RELAY_SET_ID="$(local_relay_set_id)"
+IOS_RELAY_URL="$(local_ios_relay_url)"
+
+echo "==> Reverse-forwarding tcp:${RELAY_PORT} from Android device to host"
+"${ADB}" -s "${ANDROID_SERIAL}" reverse "tcp:${RELAY_PORT}" "tcp:${RELAY_PORT}" >/dev/null
+ANDROID_REVERSE_PORT="${RELAY_PORT}"
+# Physical Android devices can't reach the host's loopback via 10.0.2.2,
+# so we use adb reverse + 127.0.0.1 instead. Same scheme works for
+# emulators if anyone ever swaps the device for an AVD.
+ANDROID_RELAY_URL="ws://127.0.0.1:${RELAY_PORT}"
+
+echo "==> Building Android app + test APK against ${ANDROID_RELAY_URL} (${RELAY_SET_ID})"
 (
   cd "${ROOT_DIR}/android" &&
+    IRIS_DEBUG_RELAYS="${ANDROID_RELAY_URL}" \
+    IRIS_DEBUG_RELAY_SET_ID="${RELAY_SET_ID}" \
     ./gradlew :app:installDebug :app:installDebugAndroidTest
 )
 
@@ -146,9 +191,12 @@ echo "==> Clearing Android app state"
 "${ADB}" -s "${ANDROID_SERIAL}" shell pm clear "${ANDROID_APP_PACKAGE}" >/dev/null || true
 "${ADB}" -s "${ANDROID_SERIAL}" shell pm clear "${ANDROID_TEST_PACKAGE}" >/dev/null || true
 
-echo "==> Building iOS XCFramework against production relays"
+echo "==> Building iOS XCFramework against ${IOS_RELAY_URL} (${RELAY_SET_ID})"
 (
   cd "${ROOT_DIR}" &&
+    IRIS_DEFAULT_RELAYS="${IOS_RELAY_URL}" \
+    IRIS_RELAY_SET_ID="${RELAY_SET_ID}" \
+    IRIS_TRUSTED_TEST_BUILD=true \
     ./scripts/ios-build ios-xcframework
 )
 
@@ -175,11 +223,17 @@ require_value ios_member_hex "${IOS_MEMBER_HEX}"
 echo "    Apple/macOS-equivalent peer: ${IOS_MEMBER_NPUB}"
 
 echo "==> Stabilising direct chat transports between all peers"
+echo "    [stabilise 1/6] iOS primary -> Android create_chat"
 run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" create_chat_from_args peer_input "${ANDROID_NPUB}" >/dev/null
+echo "    [stabilise 2/6] iOS primary -> iOS member create_chat"
 run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" create_chat_from_args peer_input "${IOS_MEMBER_NPUB}" >/dev/null
+echo "    [stabilise 3/6] Android -> iOS primary create_chat"
 run_android_test create_chat_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
+echo "    [stabilise 4/6] iOS member -> iOS primary create_chat"
 run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" create_chat_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
+echo "    [stabilise 5/6] iOS primary wait_for_peer_transport_ready Android"
 run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_peer_transport_ready_from_args peer_input "${ANDROID_NPUB}" >/dev/null
+echo "    [stabilise 6/6] iOS primary wait_for_peer_transport_ready iOS member"
 run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_peer_transport_ready_from_args peer_input "${IOS_MEMBER_NPUB}" >/dev/null
 
 echo "==> Seeding direct messages so each peer's protocol state has a session"
@@ -214,3 +268,8 @@ run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_message_from
 run_android_test wait_for_message_from_args chat_id "${GROUP_CHAT_ID}" message "hello_from_mac" direction incoming >/dev/null
 
 echo "==> All three peers exchanged messages successfully."
+echo "relay_log=${RELAY_LOG}"
+echo "android_serial=${ANDROID_SERIAL}"
+echo "ios_primary_udid=${IOS_PRIMARY_UDID}"
+echo "ios_member_udid=${IOS_MEMBER_UDID}"
+echo "group_chat_id=${GROUP_CHAT_ID}"
