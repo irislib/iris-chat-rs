@@ -279,7 +279,9 @@ final class AppManager: ObservableObject {
     private let fileManager: FileManager
 #if os(macOS)
     let nearbyBitchat = MacBitchatNearbyService()
-    let nearbyIris = MacIrisNearbyService()
+#endif
+#if os(iOS) || os(macOS)
+    let nearbyIris = IrisNearbyService()
 #endif
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
@@ -323,7 +325,7 @@ final class AppManager: ObservableObject {
 
         resolvedRust.listenForUpdates(reconciler: reconciler)
 
-#if os(macOS)
+#if os(iOS) || os(macOS)
         nearbyIris.ingestEventJson = { [weak self] eventJson in
             self?.rust.ingestNearbyEventJson(eventJson: eventJson) ?? false
         }
@@ -338,6 +340,8 @@ final class AppManager: ObservableObject {
         if environment["IRIS_BITCHAT_NEARBY_AUTOSTART"] == "1" {
             nearbyBitchat.setVisible(true)
         }
+#endif
+#if os(iOS) || os(macOS)
         if environment["IRIS_NEARBY_AUTOSTART"] == "1" {
             nearbyIris.setVisible(true)
         }
@@ -814,7 +818,7 @@ final class AppManager: ObservableObject {
                 )
             )
         case .nearbyPublishedEvent(let eventID, let kind, let createdAtSecs, let eventJson):
-#if os(macOS)
+#if os(iOS) || os(macOS)
             nearbyIris.publish(
                 eventID: eventID,
                 kind: kind,

@@ -1,17 +1,21 @@
+import Combine
 import CoreBluetooth
 import Compression
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
-struct MacNearbyIrisPeer: Identifiable, Equatable {
+struct IrisNearbyPeer: Identifiable, Equatable {
     let id: String
     var name: String
     var lastSeen: Date
 }
 
-final class MacIrisNearbyService: NSObject, ObservableObject {
+final class IrisNearbyService: NSObject, ObservableObject {
     @Published private(set) var isVisible = false
     @Published private(set) var status = "Off"
-    @Published private(set) var peers: [MacNearbyIrisPeer] = []
+    @Published private(set) var peers: [IrisNearbyPeer] = []
 
     private static let serviceUUID = CBUUID(string: "8A0DAE01-D8E5-4F27-9F20-A616F1FBA6D0")
     private static let characteristicUUID = CBUUID(string: "8A0DAE02-D8E5-4F27-9F20-A616F1FBA6D0")
@@ -31,9 +35,9 @@ final class MacIrisNearbyService: NSObject, ObservableObject {
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var writableCharacteristics: [UUID: CBCharacteristic] = [:]
     private var peripheralAssemblers: [UUID: IrisNearbyFrameAssembler] = [:]
-    private var subscribedCentrals: [UUID: MacIrisNearbyCentralChannel] = [:]
+    private var subscribedCentrals: [UUID: IrisNearbyCentralChannel] = [:]
     private var centralAssemblers: [UUID: IrisNearbyFrameAssembler] = [:]
-    private var pendingNotifications: [(data: Data, channel: MacIrisNearbyCentralChannel?)] = []
+    private var pendingNotifications: [(data: Data, channel: IrisNearbyCentralChannel?)] = []
     private var peerIDByPeripheral: [UUID: String] = [:]
     private var peerIDByCentral: [UUID: String] = [:]
     private var ownOutbound: [String: IrisNearbyStoredEvent] = [:]
@@ -190,16 +194,27 @@ final class MacIrisNearbyService: NSObject, ObservableObject {
     }
 
     private func sendHello(excludingPeerID: String?) {
-        let name = Host.current().localizedName ?? "Iris"
         sendEnvelope(
             [
                 "v": 1,
                 "type": "hello",
                 "peer_id": peerID,
-                "name": name
+                "name": localDeviceName
             ],
             excludingPeerID: excludingPeerID
         )
+    }
+
+    private var localDeviceName: String {
+#if os(iOS)
+        let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name.isEmpty ? "Iris" : name
+#elseif os(macOS)
+        let name = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return name?.isEmpty == false ? name! : "Iris"
+#else
+        return "Iris"
+#endif
     }
 
     private func sendInventory(excludingPeerID: String?) {
@@ -310,7 +325,7 @@ final class MacIrisNearbyService: NSObject, ObservableObject {
         }
     }
 
-    private func notify(_ data: Data, to channel: MacIrisNearbyCentralChannel?) {
+    private func notify(_ data: Data, to channel: IrisNearbyCentralChannel?) {
         guard let peripheralManager else { return }
         guard let characteristic = channel?.characteristic ?? localCharacteristic else { return }
         let maxLength = max(20, channel?.central.maximumUpdateValueLength ?? 180)
@@ -456,7 +471,7 @@ final class MacIrisNearbyService: NSObject, ObservableObject {
         case .central(let central):
             peerIDByCentral[central.identifier] = peerID
         }
-        let peer = MacNearbyIrisPeer(
+        let peer = IrisNearbyPeer(
             id: peerID,
             name: name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? name! : "Iris",
             lastSeen: Date()
@@ -468,6 +483,7 @@ final class MacIrisNearbyService: NSObject, ObservableObject {
             peers.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         }
         status = sidebarSubtitle
+        NSLog("Iris nearby: saw peer")
     }
 
     private func mailbagEvents() -> [IrisNearbyStoredEvent] {
@@ -504,7 +520,7 @@ final class MacIrisNearbyService: NSObject, ObservableObject {
     }
 }
 
-extension MacIrisNearbyService: CBCentralManagerDelegate {
+extension IrisNearbyService: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         if central.state == .poweredOn {
             startScanningIfReady()
@@ -546,7 +562,7 @@ extension MacIrisNearbyService: CBCentralManagerDelegate {
     }
 }
 
-extension MacIrisNearbyService: CBPeripheralDelegate {
+extension IrisNearbyService: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard error == nil, let services = peripheral.services else { return }
         for service in services where service.uuid == Self.serviceUUID {
@@ -579,7 +595,7 @@ extension MacIrisNearbyService: CBPeripheralDelegate {
     }
 }
 
-extension MacIrisNearbyService: CBPeripheralManagerDelegate {
+extension IrisNearbyService: CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         if peripheral.state == .poweredOn {
             startAdvertisingIfReady()
@@ -606,7 +622,7 @@ extension MacIrisNearbyService: CBPeripheralManagerDelegate {
         didSubscribeTo characteristic: CBCharacteristic
     ) {
         guard let mutableCharacteristic = characteristic as? CBMutableCharacteristic else { return }
-        let channel = MacIrisNearbyCentralChannel(central: central, characteristic: mutableCharacteristic)
+        let channel = IrisNearbyCentralChannel(central: central, characteristic: mutableCharacteristic)
         subscribedCentrals[central.identifier] = channel
         centralAssemblers[central.identifier] = IrisNearbyFrameAssembler()
         sendHello(excludingPeerID: nil)
@@ -653,7 +669,7 @@ extension MacIrisNearbyService: CBPeripheralManagerDelegate {
     }
 }
 
-private struct MacIrisNearbyCentralChannel {
+private struct IrisNearbyCentralChannel {
     let central: CBCentral
     let characteristic: CBMutableCharacteristic
 }
@@ -702,11 +718,11 @@ private enum IrisNearbyFrame {
     static func encode(_ object: [String: Any]) -> Data? {
         guard JSONSerialization.isValidJSONObject(object),
               let payload = try? JSONSerialization.data(withJSONObject: object),
-              payload.count <= MacIrisNearbyService.maxFrameBytes else { return nil }
+              payload.count <= IrisNearbyService.maxFrameBytes else { return nil }
         let compressed = compressIfBeneficial(payload)
         let body = compressed ?? payload
         let flags: UInt8 = compressed == nil ? 0 : compressedFlag
-        guard body.count <= MacIrisNearbyService.maxFrameBytes else { return nil }
+        guard body.count <= IrisNearbyService.maxFrameBytes else { return nil }
         var data = Data()
         data.append(magic)
         data.append(flags)
@@ -752,7 +768,7 @@ private enum IrisNearbyFrame {
     }
 
     private static func decompress(_ data: Data, originalSize: Int) -> Data? {
-        guard originalSize > 0, originalSize <= MacIrisNearbyService.maxFrameBytes else { return nil }
+        guard originalSize > 0, originalSize <= IrisNearbyService.maxFrameBytes else { return nil }
         let destination = UnsafeMutablePointer<UInt8>.allocate(capacity: originalSize)
         defer { destination.deallocate() }
         let decodedSize = data.withUnsafeBytes { sourceBuffer -> Int in
@@ -784,7 +800,7 @@ private struct IrisNearbyFrameAssembler {
             }
             let header = Array(buffer.prefix(13))
             let length = Int(UInt32(bigEndianBytes: header[5..<9]))
-            if length <= 0 || length > MacIrisNearbyService.maxFrameBytes {
+            if length <= 0 || length > IrisNearbyService.maxFrameBytes {
                 buffer.removeFirst()
                 continue
             }

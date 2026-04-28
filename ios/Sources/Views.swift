@@ -72,7 +72,7 @@ private enum SecretExportKind: Identifiable {
 struct RootView: View {
     @ObservedObject var manager: AppManager
     @State private var directChatInfoChatId: String?
-#if os(macOS)
+#if os(iOS) || os(macOS)
     @State private var showingNearbyIris = false
 #endif
 
@@ -124,10 +124,12 @@ struct RootView: View {
                     .presentationDragIndicator(.visible)
             }
         }
-#if os(macOS)
+#if os(iOS) || os(macOS)
         .sheet(isPresented: $showingNearbyIris) {
             NearbyIrisScreen(manager: manager, service: manager.nearbyIris)
+#if os(macOS)
                 .frame(minWidth: 420, minHeight: 520)
+#endif
         }
 #endif
     }
@@ -281,10 +283,10 @@ struct RootView: View {
     }
 
     private func openNearbyIris() {
-        #if os(macOS)
+#if os(iOS) || os(macOS)
         manager.nearbyIris.setVisible(true)
         showingNearbyIris = true
-        #endif
+#endif
     }
 }
 
@@ -711,7 +713,7 @@ private struct DesktopSidebarActionRow: View {
 
 #if os(macOS)
 private struct DesktopNearbyIrisRow: View {
-    @ObservedObject var service: MacIrisNearbyService
+    @ObservedObject var service: IrisNearbyService
     let onOpen: () -> Void
 
     var body: some View {
@@ -1227,13 +1229,13 @@ struct ChatListScreen: View {
 
     var body: some View {
         ScrollView {
-            #if os(macOS)
-            MacNearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
+#if os(iOS) || os(macOS)
+            NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
             if !manager.state.chatList.isEmpty {
                 Divider()
                     .overlay(palette.border)
             }
-            #endif
+#endif
 
             if manager.state.chatList.isEmpty {
                 Text("No chats yet")
@@ -1305,10 +1307,10 @@ private struct ChatListRowContainer: View {
     }
 }
 
-#if os(macOS)
-private struct MacNearbyChatListRow: View {
+#if os(iOS) || os(macOS)
+private struct NearbyChatListRow: View {
     @ObservedObject var manager: AppManager
-    @ObservedObject var service: MacIrisNearbyService
+    @ObservedObject var service: IrisNearbyService
     let onOpen: () -> Void
 
     var body: some View {
@@ -1333,7 +1335,7 @@ private struct MacNearbyChatListRow: View {
 private struct NearbyIrisScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
-    @ObservedObject var service: MacIrisNearbyService
+    @ObservedObject var service: IrisNearbyService
 
     var body: some View {
         VStack(spacing: 0) {
