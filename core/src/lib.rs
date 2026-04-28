@@ -91,6 +91,21 @@ impl FfiApp {
         let _ = self.core_tx.send(CoreMsg::Action(action));
     }
 
+    pub fn ingest_nearby_event_json(&self, event_json: String) -> bool {
+        let event = match serde_json::from_str::<nostr_sdk::prelude::Event>(&event_json) {
+            Ok(event) => event,
+            Err(_) => return false,
+        };
+        if event.verify().is_err() {
+            return false;
+        }
+        self.core_tx
+            .send(CoreMsg::Internal(Box::new(InternalEvent::NearbyEvent(
+                event,
+            ))))
+            .is_ok()
+    }
+
     pub fn export_support_bundle_json(&self) -> String {
         let (reply_tx, reply_rx) = flume::bounded(1);
         if self
@@ -155,6 +170,7 @@ impl FfiApp {
                     let kind = match &update {
                         AppUpdate::FullState(_) => "FullState",
                         AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
+                        AppUpdate::NearbyPublishedEvent { .. } => "NearbyPublishedEvent",
                     };
                     let t0 = crate::perflog::now_ms();
                     crate::perflog!("reconcile.start kind={kind}");

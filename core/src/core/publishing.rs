@@ -1,6 +1,22 @@
 use super::*;
 
+fn send_nearby_published_event(update_tx: &Sender<AppUpdate>, event: &Event) {
+    let Ok(event_json) = serde_json::to_string(event) else {
+        return;
+    };
+    let _ = update_tx.send(AppUpdate::NearbyPublishedEvent {
+        event_id: event.id.to_string(),
+        kind: event.kind.as_u16() as u32,
+        created_at_secs: event.created_at.as_secs(),
+        event_json,
+    });
+}
+
 impl AppCore {
+    pub(super) fn emit_nearby_published_event(&self, event: &Event) {
+        send_nearby_published_event(&self.update_tx, event);
+    }
+
     pub(super) fn publish_runtime_event(
         &mut self,
         event: Event,
@@ -8,6 +24,7 @@ impl AppCore {
         completion: Option<(String, String)>,
     ) {
         self.remember_event(event.id.to_string());
+        self.emit_nearby_published_event(&event);
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -69,7 +86,7 @@ impl AppCore {
         None
     }
 
-    pub(super) fn publish_local_identity_artifacts(&self) {
+    pub(super) fn publish_local_identity_artifacts(&mut self) {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
@@ -83,38 +100,46 @@ impl AppCore {
         let client = logged_in.client.clone();
         let relay_urls = logged_in.relay_urls.clone();
         let tx = self.core_sender.clone();
+        let update_tx = self.update_tx.clone();
+
+        let mut events: Vec<(&'static str, Event)> = Vec::new();
+
+        if let (Some(keys), Some(profile)) = (owner_keys.clone(), local_profile) {
+            if profile.preferred_label().is_some() {
+                if let Ok(event) =
+                    EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile))
+                        .sign_with_keys(&keys)
+                {
+                    events.push(("metadata", event));
+                }
+            }
+        }
+
+        if let (Some(keys), Some(app_keys)) = (owner_keys, local_app_keys) {
+            if let Some(ndr_app_keys) = known_app_keys_to_ndr(&app_keys) {
+                if let Ok(unsigned) = ndr_app_keys.get_encrypted_event(&keys) {
+                    if let Ok(event) = unsigned.sign_with_keys(&keys) {
+                        events.push(("app-keys", event));
+                    }
+                }
+            }
+        }
+
+        if let Ok(unsigned) = local_invite.get_event() {
+            if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
+                events.push(("invite", event));
+            }
+        }
+
+        for (_, event) in &events {
+            self.remember_event(event.id.to_string());
+            send_nearby_published_event(&update_tx, event);
+        }
 
         self.runtime.spawn(async move {
-            if let (Some(keys), Some(profile)) = (owner_keys.clone(), local_profile) {
-                if profile.preferred_label().is_some() {
-                    if let Ok(event) =
-                        EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile))
-                            .sign_with_keys(&keys)
-                    {
-                        let _ =
-                            publish_event_with_retry(&client, &relay_urls, event, "metadata").await;
-                    }
-                }
+            for (label, event) in events {
+                let _ = publish_event_with_retry(&client, &relay_urls, event, label).await;
             }
-
-            if let (Some(keys), Some(app_keys)) = (owner_keys, local_app_keys) {
-                if let Some(ndr_app_keys) = known_app_keys_to_ndr(&app_keys) {
-                    if let Ok(unsigned) = ndr_app_keys.get_encrypted_event(&keys) {
-                        if let Ok(event) = unsigned.sign_with_keys(&keys) {
-                            let _ =
-                                publish_event_with_retry(&client, &relay_urls, event, "app-keys")
-                                    .await;
-                        }
-                    }
-                }
-            }
-
-            if let Ok(unsigned) = local_invite.get_event() {
-                if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
-                    let _ = publish_event_with_retry(&client, &relay_urls, event, "invite").await;
-                }
-            }
-
             let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
         });
     }
@@ -145,7 +170,7 @@ impl AppCore {
         self.process_runtime_events();
     }
 
-    pub(super) fn republish_local_identity_artifacts(&self) {
+    pub(super) fn republish_local_identity_artifacts(&mut self) {
         self.publish_local_identity_artifacts();
     }
 }

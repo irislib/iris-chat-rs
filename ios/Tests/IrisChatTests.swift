@@ -96,6 +96,10 @@ private final class MockRustApp: RustAppClient {
         onDispatch?(action)
     }
 
+    func ingestNearbyEventJson(eventJson: String) -> Bool {
+        true
+    }
+
     func exportSupportBundleJson() -> String {
         supportBundleJson
     }

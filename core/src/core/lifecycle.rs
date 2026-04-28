@@ -79,6 +79,7 @@ impl AppCore {
             },
             CoreMsg::Internal(event) => match event.as_ref() {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
+                InternalEvent::NearbyEvent(_) => "NearbyEvent",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::FetchTrackedPeerCatchUp => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
@@ -302,6 +303,12 @@ impl AppCore {
     pub(super) fn handle_internal(&mut self, event: InternalEvent) {
         match event {
             InternalEvent::RelayEvent(event) => {
+                self.handle_relay_event(event);
+            }
+            InternalEvent::NearbyEvent(event) => {
+                let event_id = event.id.to_string();
+                let kind = event.kind.as_u16() as u32;
+                self.push_debug_log("nearby.event", format!("kind_raw={kind} id={event_id}"));
                 self.handle_relay_event(event);
             }
             InternalEvent::FetchTrackedPeerCatchUp => {

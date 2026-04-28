@@ -61,6 +61,8 @@ interface RustAppClient {
 
     fun dispatch(action: AppAction)
 
+    fun ingestNearbyEventJson(eventJson: String): Boolean
+
     fun exportSupportBundleJson(): String
 
     fun listenForUpdates(reconciler: AppReconciler)
@@ -80,6 +82,8 @@ private class LiveRustAppClient(
         ffi.dispatch(action)
     }
 
+    override fun ingestNearbyEventJson(eventJson: String): Boolean = ffi.ingestNearbyEventJson(eventJson)
+
     override fun exportSupportBundleJson(): String = ffi.exportSupportBundleJson()
 
     override fun listenForUpdates(reconciler: AppReconciler) {
@@ -90,6 +94,13 @@ private class LiveRustAppClient(
         ffi.shutdown()
     }
 }
+
+data class NearbyPublishedEvent(
+    val eventId: String,
+    val kind: UInt,
+    val createdAtSecs: ULong,
+    val eventJson: String,
+)
 
 class AppManager(
     context: Context,
@@ -111,6 +122,8 @@ class AppManager(
 
     private var rust = createRustApp()
     private var rustGeneration: Long = 0
+    @Volatile
+    private var nearbyEventPublisher: ((NearbyPublishedEvent) -> Unit)? = null
     @Volatile
     private var appInForeground: Boolean = false
 
@@ -244,6 +257,13 @@ class AppManager(
     fun dispatch(action: AppAction) {
         dispatchToRust(action)
     }
+
+    fun setNearbyEventPublisher(publisher: ((NearbyPublishedEvent) -> Unit)?) {
+        nearbyEventPublisher = publisher
+    }
+
+    fun ingestNearbyEventJson(eventJson: String): Boolean =
+        runCatching { rust.ingestNearbyEventJson(eventJson) }.getOrDefault(false)
 
     fun appForegrounded() {
         appInForeground = true
@@ -559,6 +579,16 @@ class AppManager(
                         bundle.ownerNsec,
                     )
                 }
+            }
+            is AppUpdate.NearbyPublishedEvent -> {
+                nearbyEventPublisher?.invoke(
+                    NearbyPublishedEvent(
+                        eventId = update.eventId,
+                        kind = update.kind,
+                        createdAtSecs = update.createdAtSecs,
+                        eventJson = update.eventJson,
+                    ),
+                )
             }
             is AppUpdate.FullState -> {
                 // Rust owns authoritative state. The shell only accepts the newest full snapshot.

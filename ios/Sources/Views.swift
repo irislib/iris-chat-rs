@@ -72,9 +72,9 @@ private enum SecretExportKind: Identifiable {
 struct RootView: View {
     @ObservedObject var manager: AppManager
     @State private var directChatInfoChatId: String?
-    #if os(macOS)
-    @State private var showingNearbyBitchat = false
-    #endif
+#if os(macOS)
+    @State private var showingNearbyIris = false
+#endif
 
     var body: some View {
         IrisTheme {
@@ -85,7 +85,7 @@ struct RootView: View {
                     DesktopChatShell(
                         manager: manager,
                         directChatInfoChatId: $directChatInfoChatId,
-                        onOpenNearby: openNearbyBitchat
+                        onOpenNearby: openNearbyIris
                     )
                 } else if case .welcome = manager.activeScreen {
                     WelcomeScreen(manager: manager)
@@ -124,12 +124,12 @@ struct RootView: View {
                     .presentationDragIndicator(.visible)
             }
         }
-        #if os(macOS)
-        .sheet(isPresented: $showingNearbyBitchat) {
-            NearbyBitchatScreen(manager: manager, service: manager.nearbyBitchat)
+#if os(macOS)
+        .sheet(isPresented: $showingNearbyIris) {
+            NearbyIrisScreen(manager: manager, service: manager.nearbyIris)
                 .frame(minWidth: 420, minHeight: 520)
         }
-        #endif
+#endif
     }
 
     private var usesDesktopChatShell: Bool {
@@ -156,7 +156,7 @@ struct RootView: View {
         case .addDevice:
             AddDeviceScreen(manager: manager, awaitingApproval: false)
         case .chatList:
-            ChatListScreen(manager: manager, onOpenNearby: openNearbyBitchat)
+            ChatListScreen(manager: manager, onOpenNearby: openNearbyIris)
         case .newChat:
             NewChatScreen(manager: manager)
         case .newGroup:
@@ -280,10 +280,10 @@ struct RootView: View {
         }
     }
 
-    private func openNearbyBitchat() {
+    private func openNearbyIris() {
         #if os(macOS)
-        manager.nearbyBitchat.setVisible(true)
-        showingNearbyBitchat = true
+        manager.nearbyIris.setVisible(true)
+        showingNearbyIris = true
         #endif
     }
 }
@@ -589,7 +589,7 @@ private struct DesktopChatSidebar: View {
                     .accessibilityIdentifier("desktopNewChatRow")
 
                     #if os(macOS)
-                    DesktopNearbyBitchatRow(service: manager.nearbyBitchat, onOpen: onOpenNearby)
+                    DesktopNearbyIrisRow(service: manager.nearbyIris, onOpen: onOpenNearby)
                         .accessibilityIdentifier("desktopNearbyRow")
                     #endif
 
@@ -710,8 +710,8 @@ private struct DesktopSidebarActionRow: View {
 }
 
 #if os(macOS)
-private struct DesktopNearbyBitchatRow: View {
-    @ObservedObject var service: MacBitchatNearbyService
+private struct DesktopNearbyIrisRow: View {
+    @ObservedObject var service: MacIrisNearbyService
     let onOpen: () -> Void
 
     var body: some View {
@@ -1261,7 +1261,7 @@ struct ChatListScreen: View {
     var body: some View {
         ScrollView {
             #if os(macOS)
-            MacNearbyChatListRow(manager: manager, service: manager.nearbyBitchat, onOpen: onOpenNearby)
+            MacNearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
             if !manager.state.chatList.isEmpty {
                 Divider()
                     .overlay(palette.border)
@@ -1341,7 +1341,7 @@ private struct ChatListRowContainer: View {
 #if os(macOS)
 private struct MacNearbyChatListRow: View {
     @ObservedObject var manager: AppManager
-    @ObservedObject var service: MacBitchatNearbyService
+    @ObservedObject var service: MacIrisNearbyService
     let onOpen: () -> Void
 
     var body: some View {
@@ -1363,16 +1363,10 @@ private struct MacNearbyChatListRow: View {
     }
 }
 
-private struct NearbyBitchatScreen: View {
+private struct NearbyIrisScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
-    @ObservedObject var service: MacBitchatNearbyService
-    @State private var draft = ""
-    @FocusState private var isDraftFocused: Bool
-
-    private var canSend: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
+    @ObservedObject var service: MacIrisNearbyService
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1385,16 +1379,12 @@ private struct NearbyBitchatScreen: View {
 
             ScrollView {
                 LazyVStack(spacing: 8) {
-                    if service.messages.isEmpty {
-                        Text("No messages yet")
+                    if service.peers.isEmpty {
+                        Text("No one nearby")
                             .font(.system(.body, design: .rounded, weight: .semibold))
                             .foregroundStyle(palette.muted)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 28)
-                    } else {
-                        ForEach(service.messages) { message in
-                            NearbyBitchatMessageRow(message: message)
-                        }
                     }
                 }
                 .padding(.horizontal, 16)
@@ -1402,7 +1392,6 @@ private struct NearbyBitchatScreen: View {
             }
             .background(palette.background)
 
-            composer
         }
         .background(palette.background)
         .onAppear {
@@ -1445,12 +1434,12 @@ private struct NearbyBitchatScreen: View {
                     ForEach(service.peers) { peer in
                         VStack(spacing: 6) {
                             IrisAvatar(
-                                label: peer.nickname,
+                                label: peer.name,
                                 size: 42,
                                 preferences: manager.state.preferences,
                                 manager: manager
                             )
-                            Text(peer.nickname)
+                            Text(peer.name)
                                 .font(.system(.caption, design: .rounded, weight: .semibold))
                                 .foregroundStyle(palette.textPrimary)
                                 .lineLimit(1)
@@ -1463,77 +1452,6 @@ private struct NearbyBitchatScreen: View {
             }
             .background(palette.panel)
         }
-    }
-
-    private var composer: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message", text: $draft)
-                .textFieldStyle(.plain)
-                .irisInputField()
-                .focused($isDraftFocused)
-                .irisDesktopSubmit(send)
-                .accessibilityIdentifier("nearbyMessageInput")
-
-            Button(action: send) {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(palette.onAccent)
-                    .frame(width: 46, height: 46)
-                    .background(Circle().fill(canSend ? palette.accent : palette.muted.opacity(0.28)))
-            }
-            .buttonStyle(.plain)
-            .disabled(!canSend)
-            .accessibilityIdentifier("nearbySendButton")
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-        .background(palette.toolbar)
-    }
-
-    private func send() {
-        let outgoing = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !outgoing.isEmpty else { return }
-        draft = ""
-        service.sendPublicMessage(outgoing)
-    }
-}
-
-private struct NearbyBitchatMessageRow: View {
-    @Environment(\.irisPalette) private var palette
-    let message: MacNearbyBitchatMessage
-
-    var body: some View {
-        HStack {
-            if message.isLocal {
-                Spacer(minLength: 48)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                if !message.isLocal {
-                    Text(message.sender)
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.muted)
-                        .lineLimit(1)
-                }
-
-                Text(message.text)
-                    .font(.system(.body, design: .rounded))
-                    .foregroundStyle(message.isLocal ? palette.onAccent : palette.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(message.isLocal ? palette.accent : palette.panelAlt)
-            )
-            .frame(maxWidth: 340, alignment: message.isLocal ? .trailing : .leading)
-
-            if !message.isLocal {
-                Spacer(minLength: 48)
-            }
-        }
-        .frame(maxWidth: .infinity)
     }
 }
 #endif

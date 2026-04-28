@@ -137,6 +137,7 @@ final class FileAccountSecretStore: AccountSecretStore {
 protocol RustAppClient: AnyObject {
     func state() -> AppState
     func dispatch(action: AppAction) throws
+    func ingestNearbyEventJson(eventJson: String) -> Bool
     func exportSupportBundleJson() -> String
     func listenForUpdates(reconciler: AppReconciler)
 }
@@ -154,6 +155,10 @@ final class LiveRustAppClient: RustAppClient {
 
     func dispatch(action: AppAction) throws {
         try ffi.dispatchSafely(action: action)
+    }
+
+    func ingestNearbyEventJson(eventJson: String) -> Bool {
+        ffi.ingestNearbyEventJson(eventJson: eventJson)
     }
 
     func exportSupportBundleJson() -> String {
@@ -274,6 +279,7 @@ final class AppManager: ObservableObject {
     private let fileManager: FileManager
 #if os(macOS)
     let nearbyBitchat = MacBitchatNearbyService()
+    let nearbyIris = MacIrisNearbyService()
 #endif
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
@@ -317,6 +323,12 @@ final class AppManager: ObservableObject {
 
         resolvedRust.listenForUpdates(reconciler: reconciler)
 
+#if os(macOS)
+        nearbyIris.ingestEventJson = { [weak self] eventJson in
+            self?.rust.ingestNearbyEventJson(eventJson: eventJson) ?? false
+        }
+#endif
+
         Task {
             restorePersistedSession()
         }
@@ -325,6 +337,9 @@ final class AppManager: ObservableObject {
         nearbyBitchat.configureDebugMessageToSendOnFirstPeer(environment["IRIS_BITCHAT_NEARBY_TEST_MESSAGE"])
         if environment["IRIS_BITCHAT_NEARBY_AUTOSTART"] == "1" {
             nearbyBitchat.setVisible(true)
+        }
+        if environment["IRIS_NEARBY_AUTOSTART"] == "1" {
+            nearbyIris.setVisible(true)
         }
 #endif
     }
@@ -798,6 +813,20 @@ final class AppManager: ObservableObject {
                     deviceNsec: deviceNsec
                 )
             )
+        case .nearbyPublishedEvent(let eventID, let kind, let createdAtSecs, let eventJson):
+#if os(macOS)
+            nearbyIris.publish(
+                eventID: eventID,
+                kind: kind,
+                createdAtSecs: createdAtSecs,
+                eventJson: eventJson
+            )
+#else
+            _ = eventID
+            _ = kind
+            _ = createdAtSecs
+            _ = eventJson
+#endif
         case .fullState(let nextState):
             // Rust owns authoritative state. The shell only accepts the newest full snapshot.
             guard nextState.rev > lastRevApplied else {

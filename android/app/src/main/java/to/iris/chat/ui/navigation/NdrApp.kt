@@ -90,7 +90,11 @@ fun NdrApp(container: AppContainer) {
                     }
 
                     Screen.ChatList -> {
-                        ChatListScreen(appManager = appManager, appState = appState)
+                        ChatListScreen(
+                            appManager = appManager,
+                            appState = appState,
+                            nearbyService = container.nearbyIrisService,
+                        )
                     }
 
                     Screen.NewChat -> {
@@ -112,7 +116,11 @@ fun NdrApp(container: AppContainer) {
                     Screen.Settings -> {
                         val account = appState.account
                         if (account == null) {
-                            ChatListScreen(appManager = appManager, appState = appState)
+                            ChatListScreen(
+                                appManager = appManager,
+                                appState = appState,
+                                nearbyService = container.nearbyIrisService,
+                            )
                         } else {
                             MyProfileSheet(
                                 appManager = appManager,

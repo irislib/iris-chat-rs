@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         Log.d(TAG, "onStart")
         requestNotificationPermissionIfNeeded()
+        requestNearbyPermissionIfNeeded()
         container.appManager.appForegrounded()
     }
 
@@ -57,6 +58,7 @@ class MainActivity : ComponentActivity() {
         const val TAG = "NdrDebug"
         const val ACTION_OPEN_CHAT_LIST = "to.iris.chat.OPEN_CHAT_LIST"
         const val NOTIFICATION_PERMISSION_REQUEST = 1001
+        const val NEARBY_PERMISSION_REQUEST = 1002
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
@@ -152,6 +154,31 @@ class MainActivity : ComponentActivity() {
             this,
             arrayOf(Manifest.permission.POST_NOTIFICATIONS),
             NOTIFICATION_PERMISSION_REQUEST,
+        )
+    }
+
+    private fun requestNearbyPermissionIfNeeded() {
+        val permissions =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                arrayOf(
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_ADVERTISE,
+                )
+            } else {
+                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        val missing =
+            permissions.filter {
+                ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+            }
+        if (missing.isEmpty()) {
+            return
+        }
+        ActivityCompat.requestPermissions(
+            this,
+            missing.toTypedArray(),
+            NEARBY_PERMISSION_REQUEST,
         )
     }
 }

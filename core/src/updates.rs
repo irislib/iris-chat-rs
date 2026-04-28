@@ -13,6 +13,12 @@ pub enum AppUpdate {
         owner_pubkey_hex: String,
         device_nsec: String,
     },
+    NearbyPublishedEvent {
+        event_id: String,
+        kind: u32,
+        created_at_secs: u64,
+        event_json: String,
+    },
 }
 
 #[derive(Debug)]
@@ -26,6 +32,7 @@ pub(crate) enum CoreMsg {
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
     RelayEvent(Event),
+    NearbyEvent(Event),
     FetchTrackedPeerCatchUp,
     ProtocolSubscriptionLivenessCheck {
         token: u64,

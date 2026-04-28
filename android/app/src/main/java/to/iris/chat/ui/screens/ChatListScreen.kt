@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import to.iris.chat.core.AppManager
+import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.Screen
@@ -46,14 +47,23 @@ import to.iris.chat.ui.theme.IrisTheme
 fun ChatListScreen(
     appManager: AppManager,
     appState: AppState,
+    nearbyService: IrisNearbyService? = null,
 ) {
     var relativeNowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var nearbyTick by remember { mutableStateOf(0) }
     val account = appState.account
 
     LaunchedEffect(Unit) {
         while (true) {
             delay(15_000L)
             relativeNowMillis = System.currentTimeMillis()
+        }
+    }
+
+    LaunchedEffect(nearbyService) {
+        while (nearbyService != null) {
+            delay(1_000L)
+            nearbyTick += 1
         }
     }
 
@@ -114,6 +124,7 @@ fun ChatListScreen(
             )
         },
     ) { padding ->
+        val nearbySnapshot = nearbyTick.let { nearbyService?.snapshot }
         LazyColumn(
             modifier =
                 Modifier
@@ -121,6 +132,31 @@ fun ChatListScreen(
                     .padding(padding)
                     .background(MaterialTheme.colorScheme.background),
         ) {
+            if (nearbyService != null && nearbySnapshot != null) {
+                item(key = "nearby") {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        IrisChatListRow(
+                            title = "Nearby",
+                            preview =
+                                if (nearbySnapshot.visible && nearbySnapshot.peerCount > 0) {
+                                    if (nearbySnapshot.peerCount == 1) "1 nearby" else "${nearbySnapshot.peerCount} nearby"
+                                } else {
+                                    nearbySnapshot.status
+                                },
+                            timeLabel = null,
+                            unreadCount = 0,
+                            lastMessageMine = false,
+                            lastDelivery = null,
+                            onClick = {
+                                nearbyService.toggleVisible()
+                                nearbyTick += 1
+                            },
+                            modifier = Modifier.testTag("nearbyChatRow"),
+                        )
+                        IrisDivider(modifier = Modifier.padding(start = 70.dp))
+                    }
+                }
+            }
             if (appState.chatList.isEmpty()) {
                 item {
                     Box(

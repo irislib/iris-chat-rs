@@ -5,6 +5,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import to.iris.chat.account.AndroidKeystoreSecretStore
+import to.iris.chat.nearby.IrisNearbyService
 
 class AppContainer(context: Context) {
     private val appContext = context.applicationContext
@@ -12,6 +13,7 @@ class AppContainer(context: Context) {
 
     val secureSecretStore: AndroidKeystoreSecretStore = AndroidKeystoreSecretStore()
     val appManager: AppManager
+    val nearbyIrisService: IrisNearbyService
 
     init {
         appManager =
@@ -20,5 +22,9 @@ class AppContainer(context: Context) {
                 applicationScope = applicationScope,
                 secureSecretStore = secureSecretStore,
             )
+        nearbyIrisService = IrisNearbyService(appContext, applicationScope, appManager)
+        appManager.setNearbyEventPublisher { event ->
+            nearbyIrisService.publish(event)
+        }
     }
 }
