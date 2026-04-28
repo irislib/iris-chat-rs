@@ -51,6 +51,7 @@ mod lifecycle;
 mod message_expiry;
 mod mobile_push;
 mod model;
+mod nearby;
 mod payloads;
 mod persistence;
 mod profile;

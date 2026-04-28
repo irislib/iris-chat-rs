@@ -272,6 +272,9 @@ final class AppManager: ObservableObject {
     private let desktopNotifications: DesktopNotificationPosting
     private let dataDir: URL
     private let fileManager: FileManager
+#if os(macOS)
+    let nearbyBitchat = MacBitchatNearbyService()
+#endif
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
 #endif
@@ -317,6 +320,13 @@ final class AppManager: ObservableObject {
         Task {
             restorePersistedSession()
         }
+
+#if os(macOS)
+        nearbyBitchat.configureDebugMessageToSendOnFirstPeer(environment["IRIS_BITCHAT_NEARBY_TEST_MESSAGE"])
+        if environment["IRIS_BITCHAT_NEARBY_AUTOSTART"] == "1" {
+            nearbyBitchat.setVisible(true)
+        }
+#endif
     }
 
     var activeScreen: Screen {

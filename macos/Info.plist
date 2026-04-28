@@ -20,6 +20,10 @@
   <string>$(CURRENT_PROJECT_VERSION)</string>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.social-networking</string>
+  <key>NSBluetoothAlwaysUsageDescription</key>
+  <string>Find nearby people.</string>
+  <key>NSBluetoothPeripheralUsageDescription</key>
+  <string>Find nearby people.</string>
   <key>NSHighResolutionCapable</key>
   <true/>
 </dict>
