@@ -99,7 +99,7 @@ fn parse_public_invite_or_direct_chat_input(input: &str) -> anyhow::Result<Publi
     Ok(PublicInviteInput::DirectChat)
 }
 
-fn parse_public_invite_input(input: &str) -> anyhow::Result<Invite> {
+pub(super) fn parse_public_invite_input(input: &str) -> anyhow::Result<Invite> {
     if let Ok(invite) = Invite::from_url(input) {
         return Ok(invite);
     }

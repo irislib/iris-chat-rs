@@ -5,12 +5,19 @@ impl AppCore {
         if self.state.account.is_none() {
             match screen {
                 Screen::Welcome => {
+                    self.stop_pending_linked_device();
                     self.screen_stack.clear();
                     self.active_chat_id = None;
                 }
                 Screen::CreateAccount | Screen::RestoreAccount | Screen::AddDevice => {
                     self.screen_stack = vec![screen];
                     self.active_chat_id = None;
+                    if matches!(self.screen_stack.last(), Some(Screen::AddDevice))
+                        && self.pending_linked_device.is_none()
+                    {
+                        self.start_linked_device("");
+                        return;
+                    }
                 }
                 _ => return,
             }
@@ -116,6 +123,13 @@ impl AppCore {
                     )
                 })
                 .collect();
+            if !self
+                .screen_stack
+                .iter()
+                .any(|screen| matches!(screen, Screen::AddDevice))
+            {
+                self.stop_pending_linked_device();
+            }
             self.active_chat_id = None;
             self.rebuild_state();
             self.persist_best_effort();

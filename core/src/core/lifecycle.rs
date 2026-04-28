@@ -29,6 +29,7 @@ impl AppCore {
             data_dir,
             state: state.clone(),
             logged_in: None,
+            pending_linked_device: None,
             threads: BTreeMap::new(),
             active_chat_id: None,
             screen_stack: Vec::new(),
@@ -147,6 +148,7 @@ impl AppCore {
 
     pub(super) fn shutdown(&mut self) {
         self.push_debug_log("app.shutdown", "stopping core");
+        self.stop_pending_linked_device();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.relay_status_watch_urls.clear();

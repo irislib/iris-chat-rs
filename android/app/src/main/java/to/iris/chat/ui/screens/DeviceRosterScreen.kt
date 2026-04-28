@@ -1,5 +1,6 @@
 package to.iris.chat.ui.screens
 
+import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -463,6 +464,10 @@ private fun resolveDeviceAuthorizationInput(
         return ResolvedDeviceAuthorizationInput(deviceInput = normalizedDevice, errorMessage = null)
     }
 
+    if (isLikelyLinkInvite(trimmed)) {
+        return ResolvedDeviceAuthorizationInput(deviceInput = trimmed, errorMessage = null)
+    }
+
     val normalized = normalizePeerInput(trimmed)
     return if (isValidPeerInput(normalized)) {
         ResolvedDeviceAuthorizationInput(deviceInput = normalized, errorMessage = null)
@@ -472,4 +477,18 @@ private fun resolveDeviceAuthorizationInput(
             errorMessage = "Not a valid link code.",
         )
     }
+}
+
+private fun isLikelyLinkInvite(input: String): Boolean {
+    val uri = runCatching { Uri.parse(input) }.getOrNull() ?: return false
+    if (uri.scheme?.lowercase() != "https" || uri.host?.lowercase() != "chat.iris.to") {
+        return false
+    }
+    if (uri.fragment.isNullOrBlank()) {
+        return false
+    }
+    val decoded = Uri.decode(input)
+    return decoded.contains("\"purpose\":\"link\"") &&
+        decoded.contains("\"ephemeralKey\"") &&
+        decoded.contains("\"sharedSecret\"")
 }

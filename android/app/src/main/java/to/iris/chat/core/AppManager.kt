@@ -222,11 +222,7 @@ class AppManager(
     }
 
     fun startLinkedDevice(ownerInput: String) {
-        val trimmed = ownerInput.trim()
-        if (trimmed.isEmpty()) {
-            return
-        }
-        dispatchToRust(AppAction.StartLinkedDevice(trimmed))
+        dispatchToRust(AppAction.StartLinkedDevice(ownerInput.trim()))
     }
 
     fun addAuthorizedDevice(deviceInput: String) {

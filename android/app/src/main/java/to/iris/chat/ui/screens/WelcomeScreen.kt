@@ -19,6 +19,7 @@ import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -47,12 +48,9 @@ import androidx.compose.ui.unit.dp
 import to.iris.chat.BuildConfig
 import to.iris.chat.R
 import to.iris.chat.core.AppManager
-import to.iris.chat.qr.DeviceApprovalQr
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.Screen
-import to.iris.chat.rust.isValidPeerInput
-import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
@@ -316,13 +314,14 @@ fun AddDeviceScreen(
     appState: AppState,
     awaitingApproval: Boolean,
 ) {
-    var ownerInput by rememberSaveable { mutableStateOf("") }
-    var showScanner by remember { mutableStateOf(false) }
     var showLogoutConfirmation by remember { mutableStateOf(false) }
     val clipboard = rememberIrisClipboard()
-    val normalizedOwnerInput = normalizePeerInput(ownerInput)
-    val isValidOwnerInput =
-        normalizedOwnerInput.isNotBlank() && isValidPeerInput(normalizedOwnerInput)
+
+    LaunchedEffect(awaitingApproval, appState.linkDevice, appState.busy.linkingDevice) {
+        if (!awaitingApproval && appState.linkDevice == null && !appState.busy.linkingDevice) {
+            appManager.startLinkedDevice("")
+        }
+    }
 
     OnboardingColumn {
         if (!awaitingApproval) {
@@ -337,101 +336,65 @@ fun AddDeviceScreen(
             Text(
                 text =
                     if (awaitingApproval) {
-                        "Use your signed-in device to approve this one. If it asks for a code, scan the code below."
+                        "Waiting for approval from your signed-in device."
                     } else {
-                        "Scan the account code from your signed-in device, or paste its user ID."
+                        "Scan this code with your signed-in device."
                     },
                 style = MaterialTheme.typography.bodyMedium,
                 color = IrisTheme.palette.muted,
             )
 
             if (!awaitingApproval) {
-                TextField(
-                    value = ownerInput,
-                    onValueChange = { ownerInput = it },
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .testTag("linkOwnerInput"),
-                    placeholder = {
-                        Text(
-                            text = "User ID",
-                            color = IrisTheme.palette.muted,
+                val linkDevice = appState.linkDevice
+                if (linkDevice == null) {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.testTag("linkDeviceCreating"))
+                    }
+                } else {
+                    val qrBitmap =
+                        remember(linkDevice.url) {
+                            createQrBitmap(linkDevice.url, size = 768)
+                        }
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        if (qrBitmap != null) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "Link code",
+                                modifier =
+                                    Modifier
+                                        .size(260.dp)
+                                        .testTag("linkDeviceQrCode"),
+                            )
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        IrisSecondaryButton(
+                            text = "Copy link code",
+                            onClick = { clipboard.setText("Link code", linkDevice.url) },
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .testTag("linkDeviceCopyButton"),
                         )
-                    },
-                    isError = ownerInput.isNotBlank() && !isValidOwnerInput,
-                    enabled = !appState.busy.linkingDevice,
-                    colors = irisTextFieldColors(),
-                )
-
-                if (ownerInput.isNotBlank() && !isValidOwnerInput) {
-                    Text(
-                        text = "That code or user ID is not valid.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    IrisSecondaryButton(
-                        text = "Paste",
-                        onClick = {
-                            clipboard.getText { text ->
-                                ownerInput = normalizePeerInput(text)
-                            }
-                        },
-                        enabled = !appState.busy.linkingDevice,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("linkOwnerPasteButton"),
-                    )
-                    IrisSecondaryButton(
-                        text = "Scan account code",
-                        onClick = { showScanner = true },
-                        enabled = !appState.busy.linkingDevice,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("linkOwnerScanQrButton"),
-                    )
-                    IrisPrimaryButton(
-                        text = if (appState.busy.linkingDevice) "Continuing…" else "Continue",
-                        onClick = { appManager.startLinkedDevice(normalizedOwnerInput) },
-                        enabled = isValidOwnerInput && !appState.busy.linkingDevice,
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("linkExistingAccountButton"),
-                    )
-                }
-            } else {
-                appState.account?.let { account ->
-                    IrisSecondaryButton(
-                        text = "Copy user ID",
-                        onClick = { clipboard.setText("User ID", account.npub) },
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("awaitingApprovalOwnerNpub"),
-                    )
-                    IrisSecondaryButton(
-                        text = "Copy this device code",
-                        onClick = { clipboard.setText("Link code", account.deviceNpub) },
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("awaitingApprovalDeviceNpub"),
-                    )
+                        IrisSecondaryButton(
+                            text = if (appState.busy.linkingDevice) "Creating…" else "New code",
+                            onClick = { appManager.startLinkedDevice("") },
+                            enabled = !appState.busy.linkingDevice,
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .testTag("linkDeviceRefreshButton"),
+                        )
+                    }
                 }
             }
         }
-
-        AddDeviceQrPanel(
-            appManager = appManager,
-            appState = appState,
-            awaitingApproval = awaitingApproval,
-        )
 
         if (awaitingApproval) {
             IrisSectionCard {
@@ -448,22 +411,6 @@ fun AddDeviceScreen(
         }
     }
 
-    if (showScanner) {
-        QrScannerDialog(
-            onDismiss = { showScanner = false },
-            onScanned = { scanned ->
-                val normalized = normalizePeerInput(scanned)
-                if (!isValidPeerInput(normalized)) {
-                    "That code or user ID is not valid."
-                } else {
-                    ownerInput = normalized
-                    showScanner = false
-                    null
-                }
-            },
-        )
-    }
-
     if (showLogoutConfirmation) {
         DeleteAppDataConfirmationDialog(
             onDismiss = { showLogoutConfirmation = false },
@@ -472,67 +419,6 @@ fun AddDeviceScreen(
                 appManager.logout()
             },
             confirmTag = "awaitingApprovalConfirmLogoutButton",
-        )
-    }
-}
-
-@Composable
-private fun AddDeviceQrPanel(
-    appManager: AppManager,
-    appState: AppState,
-    awaitingApproval: Boolean,
-) {
-    val clipboard = rememberIrisClipboard()
-    val account = appState.account
-
-    if (!awaitingApproval || account == null) {
-        return
-    }
-
-    val approvalQrValue =
-        remember(account.npub, account.deviceNpub) {
-            DeviceApprovalQr.encode(
-                ownerInput = account.npub,
-                deviceInput = account.deviceNpub,
-            )
-        }
-    val qrBitmap =
-        remember(approvalQrValue) {
-            createQrBitmap(approvalQrValue, size = 768)
-        }
-
-    IrisSectionCard(modifier = Modifier.testTag("awaitingApprovalScreen")) {
-        Text(
-            text = "Approval code",
-            style = MaterialTheme.typography.titleMedium,
-        )
-        Text(
-            text = "Scan this from Manage devices on your signed-in device.",
-            style = MaterialTheme.typography.bodyMedium,
-            color = IrisTheme.palette.muted,
-        )
-        Box(
-            modifier = Modifier.fillMaxWidth(),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (qrBitmap != null) {
-                Image(
-                    bitmap = qrBitmap.asImageBitmap(),
-                    contentDescription = "Approval code",
-                    modifier =
-                        Modifier
-                            .size(260.dp)
-                            .testTag("awaitingApprovalDeviceQrCode"),
-                )
-            }
-        }
-        IrisSecondaryButton(
-            text = "Copy approval code",
-            onClick = { clipboard.setText("Approval code", approvalQrValue) },
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .testTag("awaitingApprovalCopyDeviceButton"),
         )
     }
 }

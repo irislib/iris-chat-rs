@@ -17,11 +17,18 @@ impl AppCore {
 
     pub(super) fn handle_relay_event(&mut self, event: Event) {
         let event_id = event.id.to_string();
-        if self.has_seen_event(&event_id) || self.logged_in.is_none() {
+        if self.has_seen_event(&event_id) {
             return;
         }
 
         let kind = event.kind.as_u16() as u32;
+        if self.logged_in.is_none() {
+            if self.handle_pending_link_device_response(event) {
+                self.remember_event(event_id);
+            }
+            return;
+        }
+
         self.push_debug_log("relay.event", format!("kind_raw={} id={event_id}", kind));
         let protocol_inputs_changed = matches!(kind, INVITE_EVENT_KIND | INVITE_RESPONSE_KIND)
             || (kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event));
@@ -84,6 +91,61 @@ impl AppCore {
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
+    }
+
+    fn handle_pending_link_device_response(&mut self, event: Event) -> bool {
+        if event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND {
+            return false;
+        }
+        let Some(pending) = self.pending_linked_device.as_ref() else {
+            return false;
+        };
+
+        self.debug_event_counters.invite_response_events += 1;
+        let event_id = event.id.to_string();
+        let response = match pending
+            .invite
+            .process_invite_response(&event, pending.device_keys.secret_key().to_secret_bytes())
+        {
+            Ok(Some(response)) => response,
+            Ok(None) => return false,
+            Err(error) => {
+                self.push_debug_log(
+                    "session.link_response.error",
+                    format!("event_id={event_id} error={error}"),
+                );
+                return false;
+            }
+        };
+
+        let owner_pubkey = response
+            .owner_public_key
+            .unwrap_or(response.invitee_identity);
+        let peer_device_id = response
+            .device_id
+            .clone()
+            .unwrap_or_else(|| response.invitee_identity.to_hex());
+        let session_state = response.session.state;
+        let device_keys = pending.device_keys.clone();
+        self.push_debug_log(
+            "session.link_response",
+            format!(
+                "event_id={event_id} owner={} peer_device={peer_device_id}",
+                owner_pubkey.to_hex()
+            ),
+        );
+
+        if let Err(error) = self.complete_pending_linked_device(
+            owner_pubkey,
+            peer_device_id,
+            session_state,
+            device_keys,
+        ) {
+            self.state.toast = Some(error.to_string());
+            self.rebuild_state();
+            self.emit_state();
+        }
+        true
     }
 
     pub(super) fn process_runtime_events(&mut self) {

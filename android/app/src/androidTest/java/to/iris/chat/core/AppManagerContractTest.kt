@@ -392,6 +392,7 @@ class AppManagerContractTest {
             currentChat = null,
             groupDetails = null,
             publicInvite = null,
+            linkDevice = null,
             networkStatus = null,
             mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList()),
             preferences =
@@ -519,6 +520,7 @@ private object AppManagerContractDefaults {
             currentChat = null,
             groupDetails = null,
             publicInvite = null,
+            linkDevice = null,
             networkStatus = null,
             mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList()),
             preferences =

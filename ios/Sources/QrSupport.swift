@@ -61,6 +61,10 @@ func resolveDeviceAuthorizationInput(
         return ResolvedDeviceAuthorizationInput(deviceInput: normalizedDevice, errorMessage: nil)
     }
 
+    if isLikelyLinkInvite(trimmed) {
+        return ResolvedDeviceAuthorizationInput(deviceInput: trimmed, errorMessage: nil)
+    }
+
     let normalized = normalizePeerInput(input: trimmed)
     if isValidPeerInput(input: normalized) {
         return ResolvedDeviceAuthorizationInput(deviceInput: normalized, errorMessage: nil)
@@ -70,6 +74,19 @@ func resolveDeviceAuthorizationInput(
         deviceInput: "",
         errorMessage: "Not a valid link code."
     )
+}
+
+private func isLikelyLinkInvite(_ input: String) -> Bool {
+    guard let url = URL(string: input),
+          url.scheme?.lowercased() == "https",
+          url.host?.lowercased() == "chat.iris.to",
+          url.fragment?.isEmpty == false else {
+        return false
+    }
+    let decoded = input.removingPercentEncoding ?? input
+    return decoded.contains("\"purpose\":\"link\"")
+        && decoded.contains("\"ephemeralKey\"")
+        && decoded.contains("\"sharedSecret\"")
 }
 
 struct QrCodeImage: View {

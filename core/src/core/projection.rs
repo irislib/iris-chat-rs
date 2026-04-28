@@ -11,6 +11,7 @@ fn state_content_eq(a: &AppState, b: &AppState) -> bool {
         && a.current_chat == b.current_chat
         && a.group_details == b.group_details
         && a.public_invite == b.public_invite
+        && a.link_device == b.link_device
         && a.network_status == b.network_status
         && a.mobile_push == b.mobile_push
         && a.preferences == b.preferences
@@ -32,6 +33,7 @@ impl AppCore {
         self.state.device_roster = self.build_device_roster_snapshot();
         self.state.network_status = Some(self.build_network_status_snapshot());
         self.state.public_invite = self.build_public_invite_snapshot();
+        self.state.link_device = self.build_link_device_snapshot();
         // Mobile push snapshot drives the FCM/APNs push subscription
         // author list. Recompute every rebuild so newly tracked DM
         // peers / group senders (which the tracker exposes lazily via
@@ -345,6 +347,14 @@ impl AppCore {
         let invite = &self.logged_in.as_ref()?.local_invite;
         let url = invite.get_url(CHAT_INVITE_ROOT_URL).ok()?;
         Some(PublicInviteSnapshot { url })
+    }
+
+    pub(super) fn build_link_device_snapshot(&self) -> Option<LinkDeviceSnapshot> {
+        let pending = self.pending_linked_device.as_ref()?;
+        Some(LinkDeviceSnapshot {
+            url: pending.url.clone(),
+            device_input: pending.device_keys.public_key().to_bech32().ok()?,
+        })
     }
 
     pub(super) fn group_snapshot_for_chat_id(&self, chat_id: &str) -> Option<GroupData> {

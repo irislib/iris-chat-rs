@@ -11,6 +11,13 @@ pub(super) struct LoggedInState {
     pub(super) authorization_state: LocalAuthorizationState,
 }
 
+pub(super) struct PendingLinkedDeviceState {
+    pub(super) device_keys: Keys,
+    pub(super) client: Client,
+    pub(super) invite: Invite,
+    pub(super) url: String,
+}
+
 #[derive(Clone)]
 pub(super) struct ThreadRecord {
     pub(super) chat_id: String,

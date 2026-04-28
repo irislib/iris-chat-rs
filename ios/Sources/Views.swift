@@ -1116,16 +1116,7 @@ struct AddDeviceScreen: View {
     @ObservedObject var manager: AppManager
     let awaitingApproval: Bool
 
-    @State private var ownerInput = ""
-    @State private var showingScanner = false
-
-    private var normalizedOwnerInput: String {
-        normalizePeerInput(input: ownerInput)
-    }
-
-    private var validOwnerInput: Bool {
-        !normalizedOwnerInput.isEmpty && isValidPeerInput(input: normalizedOwnerInput)
-    }
+    @State private var showingLogoutConfirmation = false
 
     var body: some View {
         IrisScrollScreen {
@@ -1133,23 +1124,25 @@ struct AddDeviceScreen: View {
                 onboardingBackButton
             }
 
-            if awaitingApproval {
-                IrisAdaptiveColumns {
-                    linkDeviceCard
-                } trailing: {
-                    addDeviceQrPanel
-                }
-            } else {
-                linkDeviceCard
-                    .frame(maxWidth: 480)
-                    .frame(maxWidth: .infinity)
+            linkDeviceCard
+                .frame(maxWidth: 480)
+                .frame(maxWidth: .infinity)
+        }
+        .onAppear {
+            if !awaitingApproval,
+               manager.state.linkDevice == nil,
+               !manager.state.busy.linkingDevice {
+                manager.startLinkedDevice(ownerInput: "")
             }
         }
-        .sheet(isPresented: $showingScanner) {
-            QrScannerSheet { code in
-                ownerInput = normalizePeerInput(input: code)
-                showingScanner = false
+        .alert("Delete app data?", isPresented: $showingLogoutConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                manager.logout()
             }
+            .accessibilityIdentifier("awaitingApprovalConfirmLogoutButton")
+        } message: {
+            Text("This removes your secret keys, messages, and cached files from this device.")
         }
     }
 
@@ -1162,62 +1155,42 @@ struct AddDeviceScreen: View {
             CardHeader(
                 title: awaitingApproval ? "Finish linking" : "Link this device",
                 subtitle: awaitingApproval
-                    ? "Use your signed-in device to approve this one. If it asks for a code, scan the code below."
-                    : "Scan the account code from your signed-in device, or paste its user ID."
+                    ? "Waiting for approval from your signed-in device."
+                    : "Scan this code with your signed-in device."
             )
 
-            if awaitingApproval, let account = manager.state.account {
-                HStack(spacing: 10) {
-                    Button("Copy user ID") {
-                        manager.copyToClipboard(account.npub)
-                    }
-                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-                    .accessibilityIdentifier("awaitingApprovalOwnerNpub")
-
-                    Button("Copy device code") {
-                        manager.copyToClipboard(account.deviceNpub)
-                    }
-                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-                    .accessibilityIdentifier("awaitingApprovalDeviceNpub")
-                }
-
+            if awaitingApproval {
                 Button("Sign out") {
-                    manager.logout()
+                    showingLogoutConfirmation = true
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
-            } else {
-                TextField("User ID", text: $ownerInput)
-                    .irisIdentifierInputModifiers()
-                    .textFieldStyle(.plain)
-                    .irisInputField()
-                    .accessibilityIdentifier("linkOwnerInput")
-
-                if !ownerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !validOwnerInput {
-                    Text("That code or user ID is not valid.")
-                        .font(.system(.footnote, design: .rounded))
-                        .foregroundStyle(.red)
+                .accessibilityIdentifier("awaitingApprovalLogoutButton")
+            } else if let linkDevice = manager.state.linkDevice {
+                ZStack {
+                    QrCodeImage(text: linkDevice.url)
+                        .frame(width: 240, height: 240)
+                    Color.clear
+                        .accessibilityIdentifier("linkDeviceQrCode")
                 }
+                .frame(maxWidth: .infinity)
 
                 VStack(spacing: 10) {
-                    Button("Paste") {
-                        ownerInput = normalizePeerInput(input: PlatformClipboard.string() ?? "")
-                    }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .accessibilityIdentifier("linkOwnerPasteButton")
-
-                    if irisSupportsQrScanning {
-                        Button("Scan account code") { showingScanner = true }
-                            .buttonStyle(IrisSecondaryButtonStyle())
-                            .accessibilityIdentifier("linkOwnerScanQrButton")
-                    }
-
-                    Button(manager.state.busy.linkingDevice ? "Continuing…" : "Continue") {
-                        manager.startLinkedDevice(ownerInput: normalizedOwnerInput)
+                    Button("Copy link code") {
+                        manager.copyToClipboard(linkDevice.url)
                     }
                     .buttonStyle(IrisPrimaryButtonStyle())
-                    .disabled(!validOwnerInput || manager.state.busy.linkingDevice)
-                    .accessibilityIdentifier("linkExistingAccountButton")
+                    .accessibilityIdentifier("linkDeviceCopyButton")
+
+                    Button(manager.state.busy.linkingDevice ? "Creating…" : "New code") {
+                        manager.startLinkedDevice(ownerInput: "")
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .disabled(manager.state.busy.linkingDevice)
+                    .accessibilityIdentifier("linkDeviceRefreshButton")
                 }
+            } else {
+                ProgressView()
+                    .accessibilityIdentifier("linkDeviceCreating")
             }
         }
     }
@@ -1230,37 +1203,6 @@ struct AddDeviceScreen: View {
         .accessibilityIdentifier("onboardingBackButton")
     }
 
-    @ViewBuilder
-    private var addDeviceQrPanel: some View {
-        if awaitingApproval, let account = manager.state.account {
-            let qr = DeviceApprovalQr.encode(ownerInput: account.npub, deviceInput: account.deviceNpub)
-
-            IrisSectionCard(accent: true) {
-                Color.clear
-                    .frame(height: 0)
-                    .accessibilityIdentifier("awaitingApprovalScreen")
-
-                CardHeader(
-                    title: "Approval code",
-                    subtitle: "Scan this from Manage devices on your signed-in device."
-                )
-
-                ZStack {
-                    QrCodeImage(text: qr)
-                        .frame(width: 240, height: 240)
-                    Color.clear
-                        .accessibilityIdentifier("awaitingApprovalDeviceQrCode")
-                }
-                .frame(maxWidth: .infinity)
-
-                Button("Copy approval code") {
-                    manager.copyToClipboard(qr)
-                }
-                .buttonStyle(IrisPrimaryButtonStyle())
-                .accessibilityIdentifier("awaitingApprovalCopyDeviceButton")
-            }
-        }
-    }
 }
 
 struct ChatListScreen: View {

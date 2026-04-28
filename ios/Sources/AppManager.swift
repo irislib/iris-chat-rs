@@ -524,11 +524,7 @@ final class AppManager: ObservableObject {
     }
 
     func startLinkedDevice(ownerInput: String) {
-        let normalized = normalizePeerInput(input: ownerInput.trimmingCharacters(in: .whitespacesAndNewlines))
-        guard !normalized.isEmpty, isValidPeerInput(input: normalized) else {
-            return
-        }
-        dispatchToRust(.startLinkedDevice(ownerInput: normalized))
+        dispatchToRust(.startLinkedDevice(ownerInput: ownerInput.trimmingCharacters(in: .whitespacesAndNewlines)))
     }
 
     func addAuthorizedDevice(deviceInput: String) {

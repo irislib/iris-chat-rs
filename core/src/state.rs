@@ -310,6 +310,12 @@ pub struct PublicInviteSnapshot {
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct LinkDeviceSnapshot {
+    pub url: String,
+    pub device_input: String,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct AppState {
     pub rev: u64,
     pub router: Router,
@@ -320,6 +326,7 @@ pub struct AppState {
     pub current_chat: Option<CurrentChatSnapshot>,
     pub group_details: Option<GroupDetailsSnapshot>,
     pub public_invite: Option<PublicInviteSnapshot>,
+    pub link_device: Option<LinkDeviceSnapshot>,
     pub network_status: Option<NetworkStatusSnapshot>,
     pub mobile_push: MobilePushSyncSnapshot,
     pub preferences: PreferencesSnapshot,
@@ -341,6 +348,7 @@ impl AppState {
             current_chat: None,
             group_details: None,
             public_invite: None,
+            link_device: None,
             network_status: None,
             mobile_push: MobilePushSyncSnapshot::default(),
             preferences: PreferencesSnapshot::default(),

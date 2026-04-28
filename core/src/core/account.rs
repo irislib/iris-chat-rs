@@ -1,3 +1,4 @@
+use super::invites::parse_public_invite_input;
 use super::*;
 
 impl AppCore {
@@ -113,29 +114,104 @@ impl AppCore {
         self.emit_state();
     }
 
-    pub(super) fn start_linked_device(&mut self, owner_input: &str) {
-        self.push_debug_log(
-            "session.start_linked",
-            format!("owner_input={}", owner_input.trim()),
-        );
+    pub(super) fn start_linked_device(&mut self, _owner_input: &str) {
+        self.push_debug_log("session.start_linked", "create ownerless link invite");
         self.state.busy.linking_device = true;
         self.emit_state();
 
-        let result = parse_owner_input(owner_input).and_then(|owner_pubkey| {
-            self.start_session(owner_pubkey, None, Keys::generate(), false, false)
-        });
+        let result = self.create_pending_linked_device();
         if let Err(error) = result {
             self.state.toast = Some(error.to_string());
         }
 
         self.state.busy.linking_device = false;
+        self.screen_stack = vec![Screen::AddDevice];
         self.rebuild_state();
         self.emit_state();
+    }
+
+    fn create_pending_linked_device(&mut self) -> anyhow::Result<()> {
+        self.stop_pending_linked_device();
+
+        let device_keys = Keys::generate();
+        let device_pubkey = device_keys.public_key();
+        let device_id = device_pubkey.to_hex();
+        let mut invite = Invite::create_new(device_pubkey, Some(device_id), Some(1))?;
+        invite.purpose = Some("link".to_string());
+        let url = invite.get_url(CHAT_INVITE_ROOT_URL)?;
+
+        let client = Client::new(device_keys.clone());
+        let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
+        self.runtime
+            .block_on(ensure_session_relays_configured(&client, &relay_urls));
+        self.start_notifications_loop(client.clone());
+
+        let filter = Filter::new()
+            .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
+            .pubkeys(vec![invite.inviter_ephemeral_public_key]);
+        let client_for_subscription = client.clone();
+        self.runtime.spawn(async move {
+            connect_client_with_timeout(
+                &client_for_subscription,
+                Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
+            )
+            .await;
+            let _ = client_for_subscription
+                .subscribe_with_id(SubscriptionId::new("link-device-response"), filter, None)
+                .await;
+        });
+
+        self.pending_linked_device = Some(PendingLinkedDeviceState {
+            device_keys,
+            client,
+            invite,
+            url,
+        });
+        Ok(())
+    }
+
+    pub(super) fn stop_pending_linked_device(&mut self) {
+        let Some(pending) = self.pending_linked_device.take() else {
+            return;
+        };
+        let client = pending.client;
+        self.runtime.spawn(async move {
+            client.unsubscribe_all().await;
+            let _ = client.shutdown().await;
+        });
+    }
+
+    pub(super) fn complete_pending_linked_device(
+        &mut self,
+        owner_pubkey: PublicKey,
+        peer_device_id: String,
+        session_state: SessionState,
+        device_keys: Keys,
+    ) -> anyhow::Result<()> {
+        self.stop_pending_linked_device();
+        self.start_session(owner_pubkey, None, device_keys, false, false)?;
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return Err(anyhow::anyhow!("Link failed."));
+        };
+        logged_in.ndr_runtime.import_session_state(
+            owner_pubkey,
+            Some(peer_device_id),
+            session_state,
+        )?;
+        self.mark_mobile_push_dirty();
+        self.process_runtime_events();
+        self.request_protocol_subscription_refresh_forced();
+        self.fetch_recent_protocol_state();
+        self.persist_best_effort();
+        self.rebuild_state();
+        self.emit_state();
+        Ok(())
     }
 
     pub(super) fn logout(&mut self) {
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
+        self.stop_pending_linked_device();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
@@ -184,18 +260,55 @@ impl AppCore {
             return;
         }
 
+        let owner_pubkey = logged_in.owner_pubkey;
+        if let Ok(invite) = parse_link_device_invite_input(device_input, owner_pubkey) {
+            self.state.busy.updating_roster = true;
+            self.emit_state();
+
+            let result = self.accept_link_device_invite(invite);
+            if let Err(error) = result {
+                self.state.toast = Some(error.to_string());
+            }
+
+            self.state.busy.updating_roster = false;
+            self.rebuild_state();
+            self.persist_best_effort();
+            self.emit_state();
+            return;
+        }
+
         let Ok(device_pubkey) = parse_device_input(device_input) else {
             self.state.toast = Some("Invalid device key.".to_string());
             self.emit_state();
             return;
         };
 
-        let owner_pubkey = logged_in.owner_pubkey;
         self.upsert_local_app_key_device(owner_pubkey, device_pubkey);
         self.publish_local_app_keys();
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
+    }
+
+    fn accept_link_device_invite(&mut self, invite: Invite) -> anyhow::Result<()> {
+        let logged_in = self
+            .logged_in
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Create or restore an account first."))?;
+        if logged_in.owner_keys.is_none() {
+            return Err(anyhow::anyhow!(
+                "Only the primary device can manage devices."
+            ));
+        }
+        let owner_pubkey = logged_in.owner_pubkey;
+        let result = logged_in
+            .ndr_runtime
+            .accept_invite(&invite, Some(owner_pubkey))?;
+        self.upsert_local_app_key_device(owner_pubkey, result.inviter_device_pubkey);
+        self.publish_local_app_keys();
+        self.mark_mobile_push_dirty();
+        self.process_runtime_events();
+        Ok(())
     }
 
     pub(super) fn remove_authorized_device(&mut self, device_pubkey_hex: &str) {
@@ -284,6 +397,7 @@ impl AppCore {
                 allow_restore,
             ),
         );
+        self.stop_pending_linked_device();
         if let Some(existing) = self.logged_in.take() {
             let client = existing.client;
             self.runtime.spawn(async move {
@@ -645,6 +759,20 @@ fn load_or_create_local_invite(
     let mut invite = Invite::create_new(device_pubkey, Some(device_id.to_string()), None)?;
     invite.owner_public_key = Some(owner_pubkey);
     storage.put(&storage_key, invite.serialize()?)?;
+    Ok(invite)
+}
+
+fn parse_link_device_invite_input(input: &str, owner_pubkey: PublicKey) -> anyhow::Result<Invite> {
+    let invite = parse_public_invite_input(input)?;
+    if invite.purpose.as_deref() != Some("link") {
+        return Err(anyhow::anyhow!("Invalid link code."));
+    }
+    if invite
+        .owner_public_key
+        .is_some_and(|invite_owner| invite_owner != owner_pubkey)
+    {
+        return Err(anyhow::anyhow!("This code is for a different account."));
+    }
     Ok(invite)
 }
 

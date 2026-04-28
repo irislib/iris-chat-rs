@@ -2,11 +2,11 @@ use crate::actions::AppAction;
 use crate::state::{
     AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, ChatThreadSnapshot,
     CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, DeviceEntrySnapshot,
-    DeviceRosterSnapshot, GroupDetailsSnapshot, GroupMemberSnapshot, MessageAttachmentSnapshot,
-    MessageReactionSnapshot, MessageReactor, MobilePushNotificationResolution,
-    MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
-    OutgoingAttachment, PreferencesSnapshot, PublicInviteSnapshot, Router, Screen,
-    TypingIndicatorSnapshot,
+    DeviceRosterSnapshot, GroupDetailsSnapshot, GroupMemberSnapshot, LinkDeviceSnapshot,
+    MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
+    MobilePushNotificationResolution, MobilePushSubscriptionRequest, MobilePushSyncSnapshot,
+    NetworkStatusSnapshot, OutgoingAttachment, PreferencesSnapshot, PublicInviteSnapshot, Router,
+    Screen, TypingIndicatorSnapshot,
 };
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;
@@ -17,10 +17,10 @@ use nostr_double_ratchet::{
     update_group_data, validate_metadata_creation, validate_metadata_update, AppKeys,
     CreateGroupOptions, DeviceEntry, DirectMessageSubscriptionTracker, FanoutGroupMetadataOptions,
     GroupData, GroupDecryptedEvent, GroupSendEvent, GroupUpdate, Invite, MetadataValidation,
-    NdrRuntime, SendOptions, SessionManagerEvent, StorageAdapter, APP_KEYS_EVENT_KIND,
-    CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_METADATA_KIND, GROUP_SENDER_KEY_DISTRIBUTION_KIND,
-    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
-    TYPING_KIND,
+    NdrRuntime, SendOptions, SessionManagerEvent, SessionState, StorageAdapter,
+    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_METADATA_KIND,
+    GROUP_SENDER_KEY_DISTRIBUTION_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
+    MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
 use nostr_sdk::prelude::{
     Client, ClientMessage, Event, Filter, Keys, Kind, PublicKey, RelayNotification,
@@ -110,6 +110,7 @@ pub struct AppCore {
     data_dir: PathBuf,
     state: AppState,
     logged_in: Option<LoggedInState>,
+    pending_linked_device: Option<PendingLinkedDeviceState>,
     threads: BTreeMap<String, ThreadRecord>,
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,

@@ -821,6 +821,120 @@ fn linked_device_authorization_follows_app_keys() {
 }
 
 #[test]
+fn start_linked_device_creates_ownerless_link_invite() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+
+    core.handle_action(AppAction::StartLinkedDevice {
+        owner_input: String::new(),
+    });
+
+    let snapshot = core
+        .state
+        .link_device
+        .as_ref()
+        .expect("link-device snapshot");
+    let invite = Invite::from_url(&snapshot.url).expect("parse link invite");
+    assert_eq!(invite.purpose.as_deref(), Some("link"));
+    assert!(invite.owner_public_key.is_none());
+    assert_eq!(
+        invite.inviter.to_bech32().ok().as_deref(),
+        Some(snapshot.device_input.as_str())
+    );
+    assert!(matches!(core.screen_stack.as_slice(), [Screen::AddDevice]));
+}
+
+#[test]
+fn owner_device_accepts_link_invite_and_registers_new_device() {
+    let owner = Keys::generate();
+    let new_device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.start_primary_session(owner.clone(), owner.clone(), false, false)
+        .expect("primary session");
+
+    let mut invite = Invite::create_new(
+        new_device.public_key(),
+        Some(new_device.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("link invite");
+    invite.purpose = Some("link".to_string());
+    let invite_url = invite.get_url(CHAT_INVITE_ROOT_URL).expect("invite url");
+
+    core.handle_action(AppAction::AddAuthorizedDevice {
+        device_input: invite_url,
+    });
+
+    let known = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("owner app keys");
+    assert!(known
+        .devices
+        .iter()
+        .any(|device| device.identity_pubkey_hex == new_device.public_key().to_hex()));
+    assert_eq!(core.state.toast, None);
+}
+
+#[test]
+fn pending_linked_device_finishes_when_owner_accepts_invite() {
+    let owner = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.handle_action(AppAction::StartLinkedDevice {
+        owner_input: String::new(),
+    });
+
+    let pending = core
+        .pending_linked_device
+        .as_ref()
+        .expect("pending link invite");
+    let (_owner_session, response_event) = pending
+        .invite
+        .accept_with_owner(
+            owner.public_key(),
+            owner.secret_key().to_secret_bytes(),
+            Some(owner.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .expect("owner accepts");
+
+    core.handle_relay_event(response_event);
+
+    let logged_in = core.logged_in.as_ref().expect("linked session");
+    assert_eq!(logged_in.owner_pubkey, owner.public_key());
+    assert_eq!(
+        logged_in.authorization_state,
+        LocalAuthorizationState::AwaitingApproval
+    );
+    assert!(core.pending_linked_device.is_none());
+    assert!(logged_in
+        .ndr_runtime
+        .export_active_sessions()
+        .iter()
+        .any(|(peer, _, _)| *peer == owner.public_key()));
+}
+
+#[test]
 fn queued_runtime_publish_completion_uses_inner_message_id() {
     let owner = Keys::generate();
     let peer = Keys::generate();

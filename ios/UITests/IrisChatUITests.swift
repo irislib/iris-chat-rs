@@ -173,25 +173,15 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertFalse(element(app, "chatListHeroCard").exists)
     }
 
-    func testScanOwnerQrEntersAwaitingApprovalScreen() throws {
-#if os(macOS)
-        throw XCTSkip("Camera QR scanning is covered by the iOS UI lane")
-#else
-        let app = launchCleanApp(qrValue: validPeerNpub)
+    func testLinkDeviceShowsScannableCode() throws {
+        let app = launchCleanApp()
 
         XCTAssertTrue(element(app, "welcomeAddDeviceAction").waitForExistence(timeout: 10))
         element(app, "welcomeAddDeviceAction").tap()
 
         XCTAssertTrue(element(app, "addDeviceScreen").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "linkOwnerScanQrButton").waitForExistence(timeout: 10))
-        element(app, "linkOwnerScanQrButton").tap()
-        XCTAssertTrue(element(app, "linkExistingAccountButton").waitForExistence(timeout: 10))
-        element(app, "linkExistingAccountButton").tap()
-
-        XCTAssertTrue(element(app, "awaitingApprovalScreen").waitForExistence(timeout: 20))
-        XCTAssertTrue(element(app, "awaitingApprovalDeviceQrCode").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "awaitingApprovalDeviceNpub").waitForExistence(timeout: 10))
-#endif
+        XCTAssertTrue(element(app, "linkDeviceQrCode").waitForExistence(timeout: 20))
+        XCTAssertTrue(element(app, "linkDeviceCopyButton").waitForExistence(timeout: 10))
     }
 
     private func launchCleanApp(

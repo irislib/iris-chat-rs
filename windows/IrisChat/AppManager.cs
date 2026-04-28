@@ -69,6 +69,7 @@ public sealed class AppManager : INotifyPropertyChanged
     public CurrentChatSnapshot? CurrentChat => _state.currentChat;
     public GroupDetailsSnapshot? GroupDetails => _state.groupDetails;
     public PublicInviteSnapshot? PublicInvite => _state.publicInvite;
+    public LinkDeviceSnapshot? LinkDevice => _state.linkDevice;
     public NetworkStatusSnapshot? NetworkStatus => _state.networkStatus;
     public PreferencesSnapshot Preferences => _state.preferences;
     public BusyState Busy => _state.busy;
@@ -144,9 +145,7 @@ public sealed class AppManager : INotifyPropertyChanged
 
     public void StartLinkedDevice(string ownerInput)
     {
-        var normalized = Native.NormalizePeerInput(ownerInput.Trim());
-        if (string.IsNullOrEmpty(normalized) || !Native.IsValidPeerInput(normalized)) return;
-        DispatchToRust(new AppAction.StartLinkedDevice(normalized));
+        DispatchToRust(new AppAction.StartLinkedDevice(ownerInput.Trim()));
     }
 
     public void AddAuthorizedDevice(string deviceInput)

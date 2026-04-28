@@ -283,21 +283,14 @@ class PikaLikeUiTest {
     }
 
     @Test
-    fun scan_owner_qr_enters_awaiting_approval_screen() {
+    fun link_device_shows_scannable_code() {
         composeRule.resetToWelcome()
         composeRule.onNodeWithTag("welcomeAddDeviceAction", useUnmergedTree = true).performClick()
         composeRule.waitForTag("addDeviceScreen")
-        composeRule.waitForTag("linkOwnerInput")
-        composeRule.runOnUiThread {
-            QrScannerTestOverrides.nextScannedValue = VALID_PEER_NPUB
-        }
-        composeRule.onNodeWithTag("linkOwnerScanQrButton", useUnmergedTree = true).performClick()
-        composeRule.onNodeWithTag("linkExistingAccountButton", useUnmergedTree = true).performClick()
-
-        composeRule.waitForTag("awaitingApprovalScreen")
-        composeRule.onNodeWithTag("awaitingApprovalDeviceQrCode", useUnmergedTree = true)
+        composeRule.waitForTag("linkDeviceQrCode")
+        composeRule.onNodeWithTag("linkDeviceQrCode", useUnmergedTree = true)
             .assertIsDisplayed()
-        composeRule.onNodeWithTag("awaitingApprovalDeviceNpub", useUnmergedTree = true)
+        composeRule.onNodeWithTag("linkDeviceCopyButton", useUnmergedTree = true)
             .assertIsDisplayed()
     }
 
