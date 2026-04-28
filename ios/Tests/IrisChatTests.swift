@@ -37,6 +37,7 @@ private final class MockRustApp: RustAppClient {
     var currentState: AppState
     var dispatchedActions: [AppAction] = []
     var supportBundleJson = "{\"ok\":true}"
+    var dispatchError: Error?
     var onDispatch: ((AppAction) -> Void)?
     private var reconciler: AppReconciler?
 
@@ -86,7 +87,10 @@ private final class MockRustApp: RustAppClient {
         currentState
     }
 
-    func dispatch(action: AppAction) {
+    func dispatch(action: AppAction) throws {
+        if let dispatchError {
+            throw dispatchError
+        }
         dispatchedActions.append(action)
         onDispatch?(action)
     }
@@ -102,6 +106,10 @@ private final class MockRustApp: RustAppClient {
     func emit(_ update: AppUpdate) {
         reconciler?.reconcile(update: update)
     }
+}
+
+private enum MockRustAppError: Error {
+    case dispatchFailed
 }
 
 private func makeBusyState() -> BusyState {
@@ -610,6 +618,27 @@ final class IrisChatTests: XCTestCase {
             return XCTFail("expected navigation action")
         }
         XCTAssertEqual(first, .updateScreenStack(stack: [.chatList]))
+    }
+
+    @MainActor
+    func testDispatchFailureShowsToastInsteadOfEscaping() async {
+        let rust = MockRustApp()
+        rust.dispatchError = MockRustAppError.dispatchFailed
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.dispatch(.pushScreen(screen: .newChat))
+
+        XCTAssertEqual(manager.toastMessage, "Could not complete action")
+        XCTAssertTrue(rust.dispatchedActions.isEmpty)
     }
 
     @MainActor

@@ -86,7 +86,7 @@ final class KeychainSecretStore: AccountSecretStore {
 
 protocol RustAppClient: AnyObject {
     func state() -> AppState
-    func dispatch(action: AppAction)
+    func dispatch(action: AppAction) throws
     func exportSupportBundleJson() -> String
     func listenForUpdates(reconciler: AppReconciler)
 }
@@ -102,8 +102,8 @@ final class LiveRustAppClient: RustAppClient {
         ffi.state()
     }
 
-    func dispatch(action: AppAction) {
-        ffi.dispatch(action: action)
+    func dispatch(action: AppAction) throws {
+        try ffi.dispatchSafely(action: action)
     }
 
     func exportSupportBundleJson() -> String {
@@ -247,11 +247,11 @@ final class AppManager: ObservableObject {
         }
         var stack = state.router.screenStack
         _ = stack.removeLast()
-        rust.dispatch(action: .updateScreenStack(stack: stack))
+        dispatchToRust(.updateScreenStack(stack: stack))
     }
 
     func dispatch(_ action: AppAction) {
-        rust.dispatch(action: action)
+        dispatchToRust(action)
     }
 
     func handleChatLink(_ url: URL) {
@@ -261,14 +261,14 @@ final class AppManager: ObservableObject {
         }
 
         if isInviteChatLink(url) {
-            rust.dispatch(action: .acceptInvite(inviteInput: url.absoluteString))
+            dispatchToRust(.acceptInvite(inviteInput: url.absoluteString))
             return
         }
 
         for candidate in chatLinkPeerCandidates(url) {
             let normalized = normalizePeerInput(input: candidate)
             if !normalized.isEmpty, isValidPeerInput(input: normalized) {
-                rust.dispatch(action: .createChat(peerInput: normalized))
+                dispatchToRust(.createChat(peerInput: normalized))
                 return
             }
         }
@@ -338,7 +338,7 @@ final class AppManager: ObservableObject {
               !chatID.isEmpty else {
             return
         }
-        rust.dispatch(action: .openChat(chatId: chatID))
+        dispatchToRust(.openChat(chatId: chatID))
     }
 
     private func resolvePushNotification(userInfo: [AnyHashable: Any]) -> MobilePushNotificationResolution? {
@@ -356,7 +356,7 @@ final class AppManager: ObservableObject {
     }
 
     private func resolvePushNotification(payloadJson: String) -> MobilePushNotificationResolution? {
-        rust.dispatch(action: .ingestMobilePushPayload(payloadJson: payloadJson))
+        dispatchToRust(.ingestMobilePushPayload(payloadJson: payloadJson), showsToastOnFailure: false)
         if let bundle = secretStore.load() {
             return decryptMobilePushNotificationPayload(
                 dataDir: dataDir.path,
@@ -402,7 +402,7 @@ final class AppManager: ObservableObject {
     func setStartupAtLoginEnabled(_ enabled: Bool) {
         do {
             try PlatformStartupAtLogin.setEnabled(enabled)
-            rust.dispatch(action: .setStartupAtLoginEnabled(enabled: enabled))
+            dispatchToRust(.setStartupAtLoginEnabled(enabled: enabled))
         } catch {
             showToast("Startup setting unavailable")
         }
@@ -413,7 +413,7 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
-        rust.dispatch(action: .createAccount(name: trimmed))
+        dispatchToRust(.createAccount(name: trimmed))
     }
 
     func updateProfileMetadata(name: String, pictureURL: String?) {
@@ -422,7 +422,7 @@ final class AppManager: ObservableObject {
             return
         }
         let trimmedPictureURL = pictureURL?.trimmingCharacters(in: .whitespacesAndNewlines)
-        rust.dispatch(action: .updateProfileMetadata(
+        dispatchToRust(.updateProfileMetadata(
             name: trimmed,
             pictureUrl: trimmedPictureURL?.isEmpty == false ? trimmedPictureURL : nil
         ))
@@ -433,7 +433,7 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
-        rust.dispatch(action: .restoreSession(ownerNsec: trimmed))
+        dispatchToRust(.restoreSession(ownerNsec: trimmed))
     }
 
     func startLinkedDevice(ownerInput: String) {
@@ -441,7 +441,7 @@ final class AppManager: ObservableObject {
         guard !normalized.isEmpty, isValidPeerInput(input: normalized) else {
             return
         }
-        rust.dispatch(action: .startLinkedDevice(ownerInput: normalized))
+        dispatchToRust(.startLinkedDevice(ownerInput: normalized))
     }
 
     func addAuthorizedDevice(deviceInput: String) {
@@ -449,7 +449,7 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
-        rust.dispatch(action: .addAuthorizedDevice(deviceInput: trimmed))
+        dispatchToRust(.addAuthorizedDevice(deviceInput: trimmed))
     }
 
     func removeAuthorizedDevice(devicePubkeyHex: String) {
@@ -457,7 +457,7 @@ final class AppManager: ObservableObject {
         guard !trimmed.isEmpty else {
             return
         }
-        rust.dispatch(action: .removeAuthorizedDevice(devicePubkeyHex: trimmed))
+        dispatchToRust(.removeAuthorizedDevice(devicePubkeyHex: trimmed))
     }
 
     func copyToClipboard(_ value: String) {
@@ -554,8 +554,8 @@ final class AppManager: ObservableObject {
 
         do {
             let staged = try stageOutgoingAttachment(fileURL)
-            rust.dispatch(
-                action: .sendAttachment(
+            dispatchToRust(
+                .sendAttachment(
                     chatId: trimmedChatId,
                     filePath: staged.path,
                     filename: staged.filename,
@@ -572,8 +572,8 @@ final class AppManager: ObservableObject {
         guard !trimmedChatId.isEmpty, !attachments.isEmpty else {
             return
         }
-        rust.dispatch(
-            action: .sendAttachments(
+        dispatchToRust(
+            .sendAttachments(
                 chatId: trimmedChatId,
                 attachments: attachments.map {
                     OutgoingAttachment(filePath: $0.path, filename: $0.filename)
@@ -586,7 +586,7 @@ final class AppManager: ObservableObject {
     func updateGroupPicture(groupId: String, fileURL: URL) {
         do {
             let staged = try stageOutgoingAttachment(fileURL)
-            rust.dispatch(action: .updateGroupPicture(
+            dispatchToRust(.updateGroupPicture(
                 groupId: groupId,
                 filePath: staged.path,
                 filename: staged.filename
@@ -597,7 +597,7 @@ final class AppManager: ObservableObject {
     }
 
     func setGroupAdmin(groupId: String, ownerPubkeyHex: String, isAdmin: Bool) {
-        rust.dispatch(action: .setGroupAdmin(
+        dispatchToRust(.setGroupAdmin(
             groupId: groupId,
             ownerPubkeyHex: ownerPubkeyHex,
             isAdmin: isAdmin
@@ -609,7 +609,7 @@ final class AppManager: ObservableObject {
         do {
             let staged = try stageOutgoingAttachment(fileURL)
             print("[upload-profile-picture] staged: \(staged.path)")
-            rust.dispatch(action: .uploadProfilePicture(filePath: staged.path))
+            dispatchToRust(.uploadProfilePicture(filePath: staged.path))
         } catch {
             print("[upload-profile-picture] stage failed: \(error)")
             showToast("Image could not be opened: \(error.localizedDescription)")
@@ -656,7 +656,7 @@ final class AppManager: ObservableObject {
 #if os(iOS)
         mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: secretStore.load()?.ownerNsec)
 #endif
-        rust.dispatch(action: .logout)
+        dispatchToRust(.logout)
         secretStore.clear()
         try? fileManager.removeItem(at: dataDir)
         try? fileManager.createDirectory(at: dataDir, withIntermediateDirectories: true)
@@ -700,13 +700,49 @@ final class AppManager: ObservableObject {
         guard let bundle = secretStore.load() else {
             return
         }
-        rust.dispatch(
-            action: .restoreAccountBundle(
+        dispatchToRust(
+            .restoreAccountBundle(
                 ownerNsec: bundle.ownerNsec,
                 ownerPubkeyHex: bundle.ownerPubkeyHex,
                 deviceNsec: bundle.deviceNsec
             )
         )
+    }
+
+    @discardableResult
+    private func dispatchToRust(
+        _ action: AppAction,
+        showsToastOnFailure: Bool = true
+    ) -> Bool {
+        do {
+            try rust.dispatch(action: action)
+            return true
+        } catch {
+            logDispatchFailure(action: action, error: error)
+            if showsToastOnFailure {
+                showToast("Could not complete action")
+            }
+            return false
+        }
+    }
+
+    private func logDispatchFailure(action: AppAction, error: Error) {
+        let message = "Iris Chat FFI dispatch failed (\(actionLogName(action))): \(error)"
+        NSLog("%@", message)
+#if DEBUG
+        print(message)
+#endif
+    }
+
+    private func actionLogName(_ action: AppAction) -> String {
+        if let label = Mirror(reflecting: action).children.first?.label {
+            return label
+        }
+        let description = String(describing: action)
+        if let payloadStart = description.firstIndex(of: "(") {
+            return String(description[..<payloadStart])
+        }
+        return description
     }
 
     private func showToast(_ text: String) {
