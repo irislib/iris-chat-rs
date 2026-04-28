@@ -63,6 +63,7 @@ ARTIFACT_BASENAME="iris-chat-${TAG}-linux-${LINUX_ARCH_LABEL}"
 if [[ "$SKIP_DOCKER_BUILD" -ne 1 ]]; then
   docker build \
     --platform "$DOCKER_PLATFORM" \
+    --build-arg INSTALL_CARGO_WATCH=0 \
     -f "$LINUX_DIR/Dockerfile" \
     -t "$IMAGE" \
     "$ROOT/.."

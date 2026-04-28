@@ -293,6 +293,7 @@ New-Item -ItemType Directory -Force -Path \$guestRoot | Out-Null
 
 \$skipRelDirs = @(
   'target',
+  'core\\target',
   'dist',
   '.git',
   'node_modules',
