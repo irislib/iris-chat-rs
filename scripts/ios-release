@@ -24,6 +24,14 @@ IOS_UPLOAD_LOG_PATH="${IRIS_IOS_UPLOAD_LOG_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BAS
 
 AUTH_ARGS=()
 
+run_xcodebuild() {
+  if [[ "${#AUTH_ARGS[@]}" -gt 0 ]]; then
+    xcodebuild "${AUTH_ARGS[@]}" "$@"
+  else
+    xcodebuild "$@"
+  fi
+}
+
 usage() {
   cat <<'EOF'
 usage: ./scripts/ios-release <print-config|prepare|archive|export|upload>
@@ -143,13 +151,12 @@ archive_app() {
   # CLI build settings apply to all targets, which would clobber the
   # NotificationService extension's per-target ID (`to.iris.chat.NotificationService`)
   # and produce a CFBundleIdentifier collision rejected by App Store Connect.
-  xcodebuild \
+  run_xcodebuild \
     -project "$IOS_PROJECT" \
     -scheme "$IOS_SCHEME" \
     -configuration Release \
     -destination generic/platform=iOS \
     -archivePath "$IOS_ARCHIVE_PATH" \
-    "${AUTH_ARGS[@]}" \
     MARKETING_VERSION="$IRIS_APP_VERSION_NAME" \
     CURRENT_PROJECT_VERSION="$IRIS_APP_VERSION_CODE" \
     DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
@@ -237,17 +244,16 @@ export_archive() {
   export_options_plist="$(mktemp "${TMPDIR:-/tmp}/ndr-ios-export-options.XXXXXX")"
   mv "$export_options_plist" "${export_options_plist}.plist"
   export_options_plist="${export_options_plist}.plist"
-  trap 'rm -f "$export_options_plist"' EXIT
+  trap 'rm -f "${export_options_plist:-}"' EXIT
   write_export_options export "$export_options_plist"
 
   rm -rf "$IOS_EXPORT_PATH"
   ensure_dir "$IOS_EXPORT_PATH"
-  xcodebuild \
+  run_xcodebuild \
     -exportArchive \
     -archivePath "$IOS_ARCHIVE_PATH" \
     -exportPath "$IOS_EXPORT_PATH" \
-    -exportOptionsPlist "$export_options_plist" \
-    "${AUTH_ARGS[@]}"
+    -exportOptionsPlist "$export_options_plist" >&2
 
   ipa_path="$(find "$IOS_EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' | sort | head -n 1)"
   if [[ -z "${ipa_path:-}" ]]; then
@@ -263,6 +269,9 @@ export_archive() {
     app_version_code "$IRIS_APP_VERSION_CODE" \
     build_git_sha "$IRIS_BUILD_GIT_SHA" \
     build_timestamp_utc "$IRIS_BUILD_TIMESTAMP_UTC"
+
+  rm -f "$export_options_plist"
+  trap - EXIT
 
   printf '%s\n' "$ipa_path"
 }
