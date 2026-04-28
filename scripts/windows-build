@@ -204,6 +204,22 @@ function Get-CargoTargetDir([string]$CoreDir) {
 PS
 }
 
+dotnet_publish_dir_block() {
+  cat <<'PS'
+function Get-IrisDotnetPublishDir([string]$RepoRoot, [string]$Config) {
+  $projectDir = Join-Path $RepoRoot 'windows\IrisChat'
+  $candidates = @(
+    (Join-Path $projectDir "bin\x64\$Config\net8.0-windows\win-x64\publish"),
+    (Join-Path $projectDir "bin\$Config\net8.0-windows\win-x64\publish")
+  )
+  foreach ($candidate in $candidates) {
+    if (Test-Path $candidate) { return $candidate }
+  }
+  return $candidates[0]
+}
+PS
+}
+
 run_doctor() {
   require_macos
   local vm
@@ -419,12 +435,14 @@ run_dotnet() {
   ps_run "$vm" "$(cat <<PS
 \$ErrorActionPreference = 'Continue'
 $(path_setup_block)
+$(dotnet_publish_dir_block)
 Set-Location $guest_repo
 \$config = ${config_quoted}
 \$proj = Join-Path $guest_repo 'windows\\IrisChat\\IrisChat.csproj'
 dotnet publish \$proj -c \$config -r win-x64 --self-contained true -p:WindowsPackageType=None
 if (\$LASTEXITCODE -ne 0) { throw "dotnet publish failed (\$LASTEXITCODE)" }
-\$publishDir = Join-Path $guest_repo "windows\\IrisChat\\bin\\\$config\\net8.0-windows\\win-x64\\publish"
+\$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
+if (-not (Test-Path \$publishDir)) { throw "Missing \$publishDir after dotnet publish." }
 Write-Output ("Published to {0}" -f \$publishDir)
 PS
 )"
@@ -449,8 +467,9 @@ run_app() {
 
   ps_run "$vm" "$(cat <<PS
 \$ErrorActionPreference = 'Stop'
+$(dotnet_publish_dir_block)
 \$config = ${config_quoted}
-\$publishDir = Join-Path $guest_repo "windows\\IrisChat\\bin\\\$config\\net8.0-windows\\win-x64\\publish"
+\$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
 \$exe = Join-Path \$publishDir 'IrisChat.exe'
 if (-not (Test-Path \$exe)) { throw "Missing \$exe; build first." }
 Start-Process \$exe
@@ -532,8 +551,9 @@ run_zip() {
 
   ps_run "$vm" "$(cat <<PS
 \$ErrorActionPreference = 'Continue'
+$(dotnet_publish_dir_block)
 \$config = ${config_quoted}
-\$publishDir = Join-Path $guest_repo "windows\\IrisChat\\bin\\\$config\\net8.0-windows\\win-x64\\publish"
+\$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
 if (-not (Test-Path \$publishDir)) { throw "Missing \$publishDir; run windows-dotnet first." }
 \$sharedDist = ${shared_dist_quoted}
 New-Item -ItemType Directory -Force -Path \$sharedDist | Out-Null
@@ -579,8 +599,9 @@ run_installer() {
   ps_run "$vm" "$(cat <<PS
 \$ErrorActionPreference = 'Continue'
 $(path_setup_block)
+$(dotnet_publish_dir_block)
 \$config = ${config_quoted}
-\$publishDir = Join-Path $guest_repo "windows\\IrisChat\\bin\\\$config\\net8.0-windows\\win-x64\\publish"
+\$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
 if (-not (Test-Path \$publishDir)) { throw "Missing \$publishDir; run windows-dotnet first." }
 
 \$makensis = (Get-Command makensis.exe -ErrorAction SilentlyContinue)

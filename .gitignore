@@ -4,6 +4,7 @@
 .relay-venv/
 android/local.properties
 build/
+target/
 android/app/build/
 core/target/
 core/uniffi-bindgen/target/
