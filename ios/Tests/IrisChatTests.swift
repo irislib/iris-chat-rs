@@ -1,5 +1,9 @@
 import XCTest
+#if os(macOS)
+@testable import IrisChatMac
+#else
 @testable import IrisChat
+#endif
 
 private final class InMemorySecretStore: AccountSecretStore {
     var bundle: StoredAccountBundle?

@@ -1,7 +1,11 @@
 import Foundation
 import UserNotifications
 import XCTest
+#if os(macOS)
+@testable import IrisChatMac
+#else
 @testable import IrisChat
+#endif
 
 private typealias JsonArray = [Any]
 private typealias JsonObject = [String: Any]

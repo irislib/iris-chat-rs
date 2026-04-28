@@ -31,6 +31,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Iris Chat
+        PRODUCT_MODULE_NAME: IrisChatMac
         DEFINES_MODULE: YES
         INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Iris Chat
@@ -54,5 +55,27 @@ targets:
       - path: ../ios/UITests/Fixtures
         buildPhase: resources
         type: folder
+    dependencies:
+      - target: IrisChatMac
+
+  # macOS unit-test bundle that re-uses the iOS Tests target source —
+  # primarily so the InteropHarnessTests harness can drive a macOS
+  # peer in the cross-platform group chat matrix without a separate
+  # codebase. The harness stays platform-agnostic; the only macOS-
+  # vs-iOS difference (UNUserNotificationCenter is more limited on
+  # the Mac) is gated inside the harness itself.
+  IrisChatMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    settings:
+      base:
+        PRODUCT_NAME: "$(TARGET_NAME)"
+        PRODUCT_MODULE_NAME: "$(TARGET_NAME)"
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: IrisChatMac
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Iris Chat.app/Contents/MacOS/Iris Chat"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    sources:
+      - path: ../ios/Tests
     dependencies:
       - target: IrisChatMac
