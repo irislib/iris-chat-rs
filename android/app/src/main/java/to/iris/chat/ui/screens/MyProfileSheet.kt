@@ -105,6 +105,7 @@ fun MyProfileSheet(
 ) {
     val clipboard = rememberIrisClipboard()
     val context = LocalContext.current
+    val canShareSupport = remember(context) { canShareText(context, "application/json") }
     val coroutineScope = rememberCoroutineScope()
     val profilePicturePicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -649,33 +650,33 @@ fun MyProfileSheet(
                         )
                     }
                 }
-                IrisPrimaryButton(
-                    text = if (supportBusy) "Preparing…" else "Share support bundle",
-                    onClick = {
-                        coroutineScope.launch {
-                            supportBusy = true
-                            val bundle = appManager.exportSupportBundleJson()
-                            supportBusy = false
-                            val intent =
-                                Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/json"
-                                    putExtra(Intent.EXTRA_SUBJECT, "Iris Chat support bundle")
-                                    putExtra(Intent.EXTRA_TEXT, bundle)
-                                }
-                            context.startActivity(
-                                Intent.createChooser(intent, "Share support bundle"),
+                if (canShareSupport) {
+                    IrisPrimaryButton(
+                        text = if (supportBusy) "Preparing…" else "Share support bundle",
+                        onClick = {
+                            coroutineScope.launch {
+                                supportBusy = true
+                                val bundle = appManager.exportSupportBundleJson()
+                                supportBusy = false
+                                shareText(
+                                    context = context,
+                                    text = bundle,
+                                    title = "Share support bundle",
+                                    mimeType = "application/json",
+                                    subject = "Iris Chat support bundle",
+                                )
+                            }
+                        },
+                        enabled = !supportBusy,
+                        modifier = Modifier.testTag("myProfileShareSupportBundleButton"),
+                        icon = {
+                            Icon(
+                                imageVector = IrisIcons.Share,
+                                contentDescription = null,
                             )
-                        }
-                    },
-                    enabled = !supportBusy,
-                    modifier = Modifier.testTag("myProfileShareSupportBundleButton"),
-                    icon = {
-                        Icon(
-                            imageVector = IrisIcons.Copy,
-                            contentDescription = null,
-                        )
-                    },
-                )
+                        },
+                    )
+                }
                 IrisSecondaryButton(
                     text = "Copy support bundle",
                     onClick = {

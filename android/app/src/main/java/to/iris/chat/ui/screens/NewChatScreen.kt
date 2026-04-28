@@ -1,6 +1,5 @@
 package to.iris.chat.ui.screens
 
-import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -75,6 +74,7 @@ fun NewChatScreen(
         trimmedInput.lowercase().let { it.contains("://") && it.contains("#") }
 
     val inviteUrl = appState.publicInvite?.url
+    val canShareInvite = remember(context) { canShareText(context) }
     val qrBitmap = remember(inviteUrl) {
         inviteUrl?.let { createQrBitmap(it, size = 768) }
     }
@@ -164,10 +164,20 @@ fun NewChatScreen(
                                 Icon(imageVector = IrisIcons.Copy, contentDescription = null)
                             },
                         )
+                        if (canShareInvite) {
+                            IrisSecondaryButton(
+                                text = "Share",
+                                onClick = { shareText(context, inviteUrl, "Share invite") },
+                                modifier = Modifier.weight(1f).testTag("newChatInviteShareButton"),
+                                icon = {
+                                    Icon(imageVector = IrisIcons.Share, contentDescription = null)
+                                },
+                            )
+                        }
                         IrisSecondaryButton(
                             text = "Show",
                             onClick = { showInviteQr = true },
-                            modifier = Modifier.testTag("newChatInviteQrButton"),
+                            modifier = Modifier.weight(1f).testTag("newChatInviteQrButton"),
                             icon = {
                                 Icon(imageVector = IrisIcons.ScanQr, contentDescription = null)
                             },

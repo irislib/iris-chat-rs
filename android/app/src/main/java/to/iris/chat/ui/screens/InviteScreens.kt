@@ -1,6 +1,5 @@
 package to.iris.chat.ui.screens
 
-import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -49,6 +48,7 @@ fun CreateInviteScreen(
 ) {
     val clipboard = rememberIrisClipboard()
     val context = LocalContext.current
+    val canShareInvite = remember(context) { canShareText(context) }
     val inviteUrl = appState.publicInvite?.url
     val qrBitmap = remember(inviteUrl) {
         inviteUrl?.let { createQrBitmap(it, size = 768) }
@@ -103,20 +103,16 @@ fun CreateInviteScreen(
                             Icon(imageVector = IrisIcons.Copy, contentDescription = null)
                         },
                     )
-                    IrisPrimaryButton(
-                        text = "Share",
-                        onClick = {
-                            val intent =
-                                Intent(Intent.ACTION_SEND)
-                                    .setType("text/plain")
-                                    .putExtra(Intent.EXTRA_TEXT, inviteUrl)
-                            context.startActivity(Intent.createChooser(intent, "Share invite"))
-                        },
-                        modifier = Modifier.weight(1f).testTag("createInviteShareButton"),
-                        icon = {
-                            Icon(imageVector = IrisIcons.Share, contentDescription = null)
-                        },
-                    )
+                    if (canShareInvite) {
+                        IrisPrimaryButton(
+                            text = "Share",
+                            onClick = { shareText(context, inviteUrl, "Share invite") },
+                            modifier = Modifier.weight(1f).testTag("createInviteShareButton"),
+                            icon = {
+                                Icon(imageVector = IrisIcons.Share, contentDescription = null)
+                            },
+                        )
+                    }
                 }
             }
 

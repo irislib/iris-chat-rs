@@ -80,6 +80,7 @@ final class IrisChatUITests: XCTestCase {
         createAccount(app)
 
         tapNewChat(app)
+        XCTAssertTrue(element(app, "newChatInviteShareButton").waitForExistence(timeout: 15))
         XCTAssertTrue(element(app, "newChatNewGroupButton").waitForExistence(timeout: 10))
         element(app, "newChatNewGroupButton").tap()
         XCTAssertTrue(element(app, "newGroupMemberStep").waitForExistence(timeout: 10))

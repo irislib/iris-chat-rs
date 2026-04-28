@@ -30,7 +30,6 @@ import androidx.compose.material.icons.rounded.Audiotrack
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Movie
-import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -534,7 +533,7 @@ internal fun ImageViewerDialog(
                 modifier = Modifier.align(Alignment.TopStart),
             ) {
                 Icon(
-                    imageVector = Icons.Rounded.Share,
+                    imageVector = IrisIcons.Share,
                     contentDescription = "Share image",
                     tint = Color.White,
                 )

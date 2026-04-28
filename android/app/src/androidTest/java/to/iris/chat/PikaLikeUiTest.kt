@@ -146,6 +146,9 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newChatPeerInput")
+        composeRule.waitForTag("newChatInviteShareButton")
+        composeRule.onNodeWithTag("newChatInviteShareButton", useUnmergedTree = true)
+            .assertIsDisplayed()
         composeRule.onNodeWithTag("newChatScanQrButton", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
             .performTextInput(VALID_PEER_NPUB)

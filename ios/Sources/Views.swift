@@ -1384,6 +1384,16 @@ struct NewChatScreen: View {
                     .buttonStyle(IrisSecondaryButtonStyle())
                     .accessibilityIdentifier("newChatInviteCopyButton")
 
+                    ShareLink(item: invite.url) {
+                        HStack(spacing: 8) {
+                            Image(systemName: "square.and.arrow.up")
+                            Text("Share")
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("newChatInviteShareButton")
+
                     Button(action: { showingInviteQr = true }) {
                         HStack(spacing: 8) {
                             Image(systemName: "qrcode")
@@ -1518,7 +1528,6 @@ struct NewChatScreen: View {
 
 struct CreateInviteScreen: View {
     @ObservedObject var manager: AppManager
-    @State private var shareText: String?
 
     var body: some View {
         IrisScrollScreen {
@@ -1539,8 +1548,12 @@ struct CreateInviteScreen: View {
                         .buttonStyle(IrisSecondaryButtonStyle())
                         .accessibilityIdentifier("createInviteCopyButton")
 
-                        Button("Share") {
-                            shareText = invite.url
+                        ShareLink(item: invite.url) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("Share")
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(IrisPrimaryButtonStyle())
                         .accessibilityIdentifier("createInviteShareButton")
@@ -1559,12 +1572,6 @@ struct CreateInviteScreen: View {
             if manager.state.publicInvite == nil {
                 manager.dispatch(.createPublicInvite)
             }
-        }
-        .sheet(item: Binding(
-            get: { shareText.map(SharePayload.init(text:)) },
-            set: { shareText = $0?.text }
-        )) { payload in
-            ShareSheet(text: payload.text)
         }
     }
 }
@@ -2459,7 +2466,6 @@ struct DeviceRevokedScreen: View {
 struct SettingsScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
-    @State private var shareText: String?
     @State private var pendingSecretExport: SecretExportKind?
     @State private var showingLogoutConfirmation = false
     @State private var showingDeleteAllConfirmation = false
@@ -2641,8 +2647,12 @@ struct SettingsScreen: View {
                             }
                         }
 
-                        Button("Share support bundle") {
-                            shareText = manager.supportBundleJson()
+                        ShareLink(item: manager.supportBundleJson()) {
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("Share support bundle")
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(IrisPrimaryButtonStyle())
                         .accessibilityIdentifier("myProfileShareSupportBundleButton")
@@ -2684,12 +2694,6 @@ struct SettingsScreen: View {
             }
         }
         .accessibilityIdentifier("settingsScreen")
-        .sheet(item: Binding(
-            get: { shareText.map(SharePayload.init(text:)) },
-            set: { shareText = $0?.text }
-        )) { payload in
-            ShareSheet(text: payload.text)
-        }
         .alert(item: $pendingSecretExport) { exportKind in
             let isDeviceExport = exportKind == .device
             return Alert(
@@ -3506,68 +3510,3 @@ private struct FlowWrap<Content: View>: View {
         }
     }
 }
-
-private struct SharePayload: Identifiable {
-    let id = UUID()
-    let text: String
-}
-
-#if canImport(UIKit)
-private struct ShareSheet: UIViewControllerRepresentable {
-    let text: String
-
-    func makeUIViewController(context: Context) -> UIActivityViewController {
-        UIActivityViewController(activityItems: [text], applicationActivities: nil)
-    }
-
-    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
-}
-#else
-private struct ShareSheet: View {
-    let text: String
-
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Share")
-                .font(.system(.title3, design: .rounded, weight: .bold))
-
-            Text("Use the system share panel or copy the payload to the clipboard.")
-                .font(.system(.body, design: .rounded))
-                .foregroundStyle(.secondary)
-
-            ScrollView {
-                Text(text)
-                    .font(.system(.footnote, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(minHeight: 180, maxHeight: 280)
-            .padding(12)
-            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            HStack(spacing: 12) {
-                ShareLink(item: text) {
-                    Label("Share", systemImage: "square.and.arrow.up")
-                }
-                .buttonStyle(IrisPrimaryButtonStyle())
-
-                Button("Copy") {
-                    PlatformClipboard.setString(text)
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
-
-                Spacer()
-
-                Button("Close") {
-                    dismiss()
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
-            }
-        }
-        .padding(20)
-        .frame(minWidth: 460)
-    }
-}
-#endif
