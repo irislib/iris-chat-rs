@@ -462,21 +462,8 @@ impl AppCore {
         }
         let author = author.unwrap_or_else(|| self.owner_display_label(chat_id));
         let should_count_unread = !self.is_chat_visible(chat_id);
-        let thread = self
-            .threads
-            .entry(chat_id.to_string())
-            .or_insert_with(|| ThreadRecord {
-                chat_id: chat_id.to_string(),
-                unread_count: 0,
-                updated_at_secs: created_at_secs,
-                messages: Vec::new(),
-            });
-        if should_count_unread {
-            thread.unread_count = thread.unread_count.saturating_add(1);
-        }
-        thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         let (body, attachments) = extract_message_attachments(&body);
-        thread.insert_message_sorted(ChatMessageSnapshot {
+        let message = ChatMessageSnapshot {
             id: message_id,
             chat_id: chat_id.to_string(),
             kind: ChatMessageKind::User,
@@ -490,7 +477,37 @@ impl AppCore {
             expires_at_secs,
             delivery: DeliveryState::Received,
             source_event_id,
-        });
+        };
+        let (thread_unread_count, thread_updated_at_secs) = {
+            let thread = self
+                .threads
+                .entry(chat_id.to_string())
+                .or_insert_with(|| ThreadRecord {
+                    chat_id: chat_id.to_string(),
+                    unread_count: 0,
+                    updated_at_secs: created_at_secs,
+                    messages: Vec::new(),
+                });
+            if should_count_unread {
+                thread.unread_count = thread.unread_count.saturating_add(1);
+            }
+            thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
+            thread.insert_message_sorted(message.clone());
+            (thread.unread_count, thread.updated_at_secs)
+        };
+        if message.source_event_id.is_some() {
+            if let Err(error) = self.app_store.upsert_thread_message(
+                chat_id,
+                thread_unread_count,
+                thread_updated_at_secs,
+                &message,
+            ) {
+                self.push_debug_log(
+                    "storage.message.preview_upsert.error",
+                    format!("chat_id={chat_id} message_id={} error={error}", message.id),
+                );
+            }
+        }
         self.bump_typing_floor(chat_id, created_at_secs);
     }
 

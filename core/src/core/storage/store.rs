@@ -183,6 +183,32 @@ impl AppStore {
         self.cache.threads.remove(chat_id);
         Ok(())
     }
+
+    pub(crate) fn upsert_thread_message(
+        &mut self,
+        chat_id: &str,
+        unread_count: u64,
+        updated_at_secs: u64,
+        message: &ChatMessageSnapshot,
+    ) -> anyhow::Result<()> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let tx = conn.transaction()?;
+        tx.execute(
+            "INSERT INTO threads(chat_id, unread_count, updated_at_secs)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(chat_id) DO UPDATE SET
+                unread_count = excluded.unread_count,
+                updated_at_secs = MAX(threads.updated_at_secs, excluded.updated_at_secs)",
+            params![chat_id, unread_count as i64, updated_at_secs as i64],
+        )?;
+        upsert_message_row(&tx, chat_id, message)?;
+        tx.commit()?;
+        self.cache.threads.remove(chat_id);
+        Ok(())
+    }
 }
 
 const TABLES_TO_CLEAR: &[&str] = &[

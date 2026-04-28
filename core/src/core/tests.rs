@@ -401,6 +401,147 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
 }
 
 #[test]
+fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_path_buf();
+    let bob_shared_conn = crate::core::storage::open_database(&data_dir).expect("bob db");
+    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        bob_shared_conn.clone(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+
+    let mut alice_invite = Invite::create_new(
+        alice_keys.public_key(),
+        Some(alice_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("alice invite");
+    alice_invite.owner_public_key = Some(alice_keys.public_key());
+
+    let alice = NdrRuntime::new(
+        alice_keys.public_key(),
+        alice_keys.secret_key().to_secret_bytes(),
+        alice_keys.public_key().to_hex(),
+        alice_keys.public_key(),
+        None,
+        Some(alice_invite.clone()),
+    );
+    alice.init().expect("alice init");
+
+    let bob_runtime = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        Some(bob_storage.clone()),
+        None,
+    );
+    bob_runtime.init().expect("bob init");
+    bob_runtime
+        .accept_invite(&alice_invite, Some(alice_keys.public_key()))
+        .expect("bob accepts alice invite");
+    deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    let bob_message_authors = bob_runtime
+        .session_manager()
+        .get_all_message_push_author_pubkeys();
+    let user_record_key = format!("user/{}", alice_keys.public_key().to_hex());
+    let ratchet_before = bob_storage
+        .get(&user_record_key)
+        .expect("read bob ratchet before message")
+        .expect("bob ratchet before message");
+
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir.to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let bob_local_invite = Invite::create_new(
+        bob_keys.public_key(),
+        Some(bob_keys.public_key().to_hex()),
+        None,
+    )
+    .expect("bob local invite");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: bob_keys.public_key(),
+        owner_keys: Some(bob_keys.clone()),
+        device_keys: bob_keys.clone(),
+        client: Client::new(bob_keys.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: bob_runtime,
+        local_invite: bob_local_invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    core.owner_profiles.insert(
+        alice_keys.public_key().to_hex(),
+        OwnerProfileRecord {
+            name: Some("alice".to_string()),
+            display_name: Some("Alice".to_string()),
+            picture: None,
+            updated_at_secs: 1,
+        },
+    );
+
+    let message = "foreground batch preview";
+    alice
+        .send_text(bob_keys.public_key(), message.to_string(), None)
+        .expect("alice sends");
+    let published_events = drain_signed_events(&alice, &alice_keys);
+    let message_event = published_events
+        .iter()
+        .find(|event| {
+            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
+                && bob_message_authors.contains(&event.pubkey)
+        })
+        .cloned()
+        .unwrap_or_else(|| {
+            panic!(
+                "message event for Bob; published={}",
+                serde_json::to_string(&published_events).unwrap_or_default()
+            )
+        });
+    let payload = serde_json::json!({
+        "event": message_event,
+        "title": "Iris Chat",
+        "body": "New activity",
+    })
+    .to_string();
+
+    core.enter_batch();
+    core.handle_relay_event(message_event);
+    assert!(
+        core.batch_dirty_persist,
+        "full state save should still be deferred inside the core batch"
+    );
+    let ratchet_after = bob_storage
+        .get(&user_record_key)
+        .expect("read bob ratchet after message")
+        .expect("bob ratchet after message");
+    assert_ne!(
+        ratchet_before, ratchet_after,
+        "foreground runtime should have consumed the relay event before the push handler runs"
+    );
+
+    let resolution = decrypt_mobile_push_notification(
+        data_dir.to_string_lossy().to_string(),
+        bob_keys.public_key().to_hex(),
+        bob_keys
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
+        payload,
+    );
+    core.exit_batch();
+
+    assert!(resolution.should_show);
+    assert_eq!(resolution.title, "Alice");
+    assert_eq!(resolution.body, message);
+}
+
+#[test]
 fn mobile_push_fallback_suppresses_decrypted_non_message_kinds() {
     for kind in [
         0_u64,
