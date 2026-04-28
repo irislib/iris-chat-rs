@@ -502,7 +502,7 @@ impl AppCore {
             (thread.unread_count, thread.updated_at_secs)
         };
         if message.source_event_id.is_some() {
-            if let Err(error) = self.app_store.upsert_thread_message(
+            if let Err(error) = self.app_store.upsert_notification_preview_message(
                 chat_id,
                 thread_unread_count,
                 thread_updated_at_secs,

@@ -235,7 +235,7 @@ impl AppStore {
         Ok(())
     }
 
-    pub(crate) fn upsert_thread_message(
+    pub(crate) fn upsert_notification_preview_message(
         &mut self,
         chat_id: &str,
         unread_count: u64,
@@ -247,15 +247,25 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO threads(chat_id, unread_count, updated_at_secs)
-             VALUES (?1, ?2, ?3)
-             ON CONFLICT(chat_id) DO UPDATE SET
-                unread_count = excluded.unread_count,
-                updated_at_secs = MAX(threads.updated_at_secs, excluded.updated_at_secs)",
-            params![chat_id, unread_count as i64, updated_at_secs as i64],
-        )?;
-        upsert_message_row(&tx, chat_id, message)?;
+        let message_exists = tx
+            .query_row(
+                "SELECT 1 FROM messages WHERE chat_id = ?1 AND id = ?2 LIMIT 1",
+                params![chat_id, message.id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !message_exists {
+            tx.execute(
+                "INSERT INTO threads(chat_id, unread_count, updated_at_secs)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(chat_id) DO UPDATE SET
+                    unread_count = excluded.unread_count,
+                    updated_at_secs = MAX(threads.updated_at_secs, excluded.updated_at_secs)",
+                params![chat_id, unread_count as i64, updated_at_secs as i64],
+            )?;
+        }
+        upsert_notification_preview_message_row(&tx, chat_id, message)?;
         tx.commit()?;
         self.cache.threads.remove(chat_id);
         Ok(())
@@ -595,6 +605,38 @@ fn upsert_message_row(
             reactions_json = excluded.reactions_json,
             reactors_json = excluded.reactors_json,
             source_event_id = excluded.source_event_id",
+        params![
+            chat_id,
+            message.id,
+            serialize_message_kind(&message.kind),
+            message.author,
+            message.body,
+            message.is_outgoing as i64,
+            message.created_at_secs as i64,
+            message.expires_at_secs.map(|secs| secs as i64),
+            serialize_delivery(&message.delivery),
+            serde_json::to_string(&message.attachments)?,
+            serde_json::to_string(&message.reactions)?,
+            serde_json::to_string(&message.reactors)?,
+            message.source_event_id,
+        ],
+    )?;
+    Ok(())
+}
+
+fn upsert_notification_preview_message_row(
+    tx: &Transaction,
+    chat_id: &str,
+    message: &ChatMessageSnapshot,
+) -> anyhow::Result<()> {
+    tx.execute(
+        "INSERT INTO messages(
+            chat_id, id, kind, author, body, is_outgoing, created_at_secs,
+            expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
+            source_event_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(chat_id, id) DO UPDATE SET
+            source_event_id = COALESCE(NULLIF(messages.source_event_id, ''), excluded.source_event_id)",
         params![
             chat_id,
             message.id,
@@ -1016,7 +1058,9 @@ fn serialize_delivery(state: &DeliveryState) -> &'static str {
 mod tests {
     use super::super::open_database;
     use super::*;
-    use crate::state::ChatMessageSnapshot;
+    use crate::state::{
+        ChatMessageSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
+    };
 
     fn fresh_store() -> (tempfile::TempDir, AppStore) {
         let tmp = tempfile::TempDir::new().unwrap();
@@ -1305,6 +1349,80 @@ mod tests {
         assert_eq!(count(&conn_handle, "messages"), total as i64);
         store.delete_message("chat", "1").unwrap();
         assert_eq!(count(&conn_handle, "messages"), total as i64 - 1);
+    }
+
+    #[test]
+    fn notification_preview_upsert_preserves_existing_message_decorations() {
+        let (_tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+
+        let mut existing = sample_message("m1", "original", 10);
+        existing.delivery = DeliveryState::Seen;
+        existing.attachments.push(MessageAttachmentSnapshot {
+            nhash: "nhash1abc".to_string(),
+            filename: "photo.jpg".to_string(),
+            filename_encoded: "photo.jpg".to_string(),
+            htree_url: "htree://example".to_string(),
+            is_image: true,
+            is_video: false,
+            is_audio: false,
+        });
+        existing.reactions.push(MessageReactionSnapshot {
+            emoji: "+1".to_string(),
+            count: 2,
+            reacted_by_me: true,
+        });
+        existing.reactors.push(MessageReactor {
+            author: "alice".to_string(),
+            emoji: "+1".to_string(),
+        });
+        let mut threads = BTreeMap::new();
+        threads.insert(
+            "chat".to_string(),
+            ThreadRecord {
+                chat_id: "chat".to_string(),
+                unread_count: 7,
+                updated_at_secs: 10,
+                messages: vec![existing],
+            },
+        );
+        let snapshot = empty_snapshot(
+            Some("chat"),
+            100,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        let mut duplicate_preview = sample_message("m1", "replacement", 99);
+        duplicate_preview.author = "mallory".to_string();
+        duplicate_preview.delivery = DeliveryState::Received;
+        duplicate_preview.source_event_id = Some("outer-event-id".to_string());
+        store
+            .upsert_notification_preview_message("chat", 99, 99, &duplicate_preview)
+            .unwrap();
+
+        let loaded = store.load_state().unwrap().expect("state present");
+        assert_eq!(loaded.threads[0].unread_count, 7);
+        assert_eq!(loaded.threads[0].updated_at_secs, 10);
+        let message = &loaded.threads[0].messages[0];
+        assert_eq!(message.body, "original");
+        assert_eq!(message.author, "alice");
+        assert!(matches!(message.delivery, PersistedDeliveryState::Seen));
+        assert_eq!(message.attachments.len(), 1);
+        assert_eq!(message.reactions.len(), 1);
+        assert_eq!(message.reactors.len(), 1);
+        assert_eq!(message.source_event_id.as_deref(), Some("outer-event-id"));
     }
 
     #[test]
