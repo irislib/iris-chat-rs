@@ -49,6 +49,15 @@ normalize_signing_style() {
 
 configure_auth_args() {
   AUTH_ARGS=()
+  # Passing -authenticationKey* + -allowProvisioningUpdates to xcodebuild forces
+  # Apple's "cloud signing" path on every build step. That requires an
+  # Admin-class API key with cert/profile management rights; most keys lack it
+  # and fail with "Cloud signing permission error". For manual signing (where
+  # we manage profiles + cert ourselves) skip these entirely.
+  if [[ "$IOS_SIGNING_STYLE" == "manual" ]]; then
+    return 0
+  fi
+
   if [[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" || -n "${IRIS_ASC_AUTH_KEY_ID:-}" || -n "${IRIS_ASC_AUTH_KEY_ISSUER_ID:-}" ]]; then
     require_var IRIS_ASC_AUTH_KEY_PATH
     require_var IRIS_ASC_AUTH_KEY_ID
@@ -68,6 +77,27 @@ require_automatic_signing() {
   if [[ "$IOS_SIGNING_STYLE" != "automatic" ]]; then
     echo "ios-release currently automates only automatic signing. Set IRIS_IOS_SIGNING_STYLE=automatic." >&2
     exit 1
+  fi
+}
+
+require_manual_signing_inputs() {
+  if [[ "$IOS_SIGNING_STYLE" != "manual" ]]; then
+    return 0
+  fi
+  require_var IRIS_IOS_PROVISIONING_PROFILE_UUID
+  require_var IRIS_IOS_CODE_SIGN_IDENTITY
+}
+
+# For export/upload, prefer manual signing when the inputs are present —
+# archive can use automatic signing fine, but xcodebuild's exportArchive +
+# auth-key combo always tries cloud signing and fails without an Admin key.
+prefer_manual_signing_if_inputs_present() {
+  if [[ "$IOS_SIGNING_STYLE" == "manual" ]]; then
+    return 0
+  fi
+  if [[ -n "${IRIS_IOS_PROVISIONING_PROFILE_UUID:-}" && -n "${IRIS_IOS_CODE_SIGN_IDENTITY:-}" ]]; then
+    IOS_SIGNING_STYLE="manual"
+    IOS_CODE_SIGN_STYLE="Manual"
   fi
 }
 
@@ -109,6 +139,10 @@ archive_app() {
   prepare_release_inputs
   rm -rf "$IOS_ARCHIVE_PATH"
 
+  # PRODUCT_BUNDLE_IDENTIFIER is intentionally NOT passed on the command line:
+  # CLI build settings apply to all targets, which would clobber the
+  # NotificationService extension's per-target ID (`to.iris.chat.NotificationService`)
+  # and produce a CFBundleIdentifier collision rejected by App Store Connect.
   xcodebuild \
     -project "$IOS_PROJECT" \
     -scheme "$IOS_SCHEME" \
@@ -116,7 +150,6 @@ archive_app() {
     -destination generic/platform=iOS \
     -archivePath "$IOS_ARCHIVE_PATH" \
     "${AUTH_ARGS[@]}" \
-    PRODUCT_BUNDLE_IDENTIFIER="$IOS_BUNDLE_ID" \
     MARKETING_VERSION="$IRIS_APP_VERSION_NAME" \
     CURRENT_PROJECT_VERSION="$IRIS_APP_VERSION_CODE" \
     DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
@@ -136,9 +169,27 @@ write_export_options() {
   local destination="$1"
   local output_path="$2"
   local internal_testing_only_tag="false"
+  local manual_block=""
 
   if bool_is_true "$IOS_INTERNAL_ONLY"; then
     internal_testing_only_tag="true"
+  fi
+
+  if [[ "$IOS_SIGNING_STYLE" == "manual" ]]; then
+    local profile_entries="    <key>${IOS_BUNDLE_ID}</key>
+    <string>${IRIS_IOS_PROVISIONING_PROFILE_UUID}</string>"
+    if [[ -n "${IRIS_IOS_NOTIFICATION_PROVISIONING_PROFILE_UUID:-}" ]]; then
+      profile_entries+="
+    <key>${IOS_BUNDLE_ID}.NotificationService</key>
+    <string>${IRIS_IOS_NOTIFICATION_PROVISIONING_PROFILE_UUID}</string>"
+    fi
+    manual_block="
+  <key>signingCertificate</key>
+  <string>${IRIS_IOS_CODE_SIGN_IDENTITY}</string>
+  <key>provisioningProfiles</key>
+  <dict>
+${profile_entries}
+  </dict>"
   fi
 
   cat > "$output_path" <<EOF
@@ -161,7 +212,7 @@ write_export_options() {
   <key>testFlightInternalTestingOnly</key>
   <${internal_testing_only_tag}/>
   <key>uploadSymbols</key>
-  <true/>
+  <true/>${manual_block}
 </dict>
 </plist>
 EOF
@@ -172,15 +223,20 @@ export_archive() {
   local ipa_path
 
   normalize_signing_style
+  prefer_manual_signing_if_inputs_present
   configure_auth_args
-  require_automatic_signing
+  require_manual_signing_inputs
   require_var IOS_DEVELOPMENT_TEAM
   if [[ ! -d "$IOS_ARCHIVE_PATH" ]]; then
     echo "Archive not found at $IOS_ARCHIVE_PATH. Run ./scripts/ios-release archive first." >&2
     exit 1
   fi
 
-  export_options_plist="$(mktemp "${TMPDIR:-/tmp}/ndr-ios-export-options.XXXXXX.plist")"
+  # macOS BSD mktemp does not substitute `XXXXXX` when a suffix follows it,
+  # so build the path with a unique name first then rename to .plist.
+  export_options_plist="$(mktemp "${TMPDIR:-/tmp}/ndr-ios-export-options.XXXXXX")"
+  mv "$export_options_plist" "${export_options_plist}.plist"
+  export_options_plist="${export_options_plist}.plist"
   trap 'rm -f "$export_options_plist"' EXIT
   write_export_options export "$export_options_plist"
 
@@ -212,29 +268,26 @@ export_archive() {
 }
 
 upload_archive() {
-  local export_options_plist
+  # Two-step flow: produce a manually-signed .ipa via `export`, then upload via
+  # `xcrun altool`. We avoid xcodebuild's `destination=upload` because that
+  # path forces cloud signing (see configure_auth_args).
+  local ipa_path
+  ipa_path="$(export_archive)"
 
-  normalize_signing_style
-  configure_auth_args
-  require_automatic_signing
-  require_var IOS_DEVELOPMENT_TEAM
-  if [[ ! -d "$IOS_ARCHIVE_PATH" ]]; then
-    echo "Archive not found at $IOS_ARCHIVE_PATH. Run ./scripts/ios-release archive first." >&2
+  require_var IRIS_ASC_AUTH_KEY_ID
+  require_var IRIS_ASC_AUTH_KEY_ISSUER_ID
+  if [[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" && ! -f "$IRIS_ASC_AUTH_KEY_PATH" ]]; then
+    echo "ASC API key file not found: $IRIS_ASC_AUTH_KEY_PATH" >&2
     exit 1
   fi
 
-  export_options_plist="$(mktemp "${TMPDIR:-/tmp}/ndr-ios-upload-options.XXXXXX.plist")"
-  trap 'rm -f "$export_options_plist"' EXIT
-  write_export_options upload "$export_options_plist"
-
-  rm -rf "$IOS_UPLOAD_LOG_PATH"
   ensure_dir "$IOS_UPLOAD_LOG_PATH"
-  xcodebuild \
-    -exportArchive \
-    -archivePath "$IOS_ARCHIVE_PATH" \
-    -exportPath "$IOS_UPLOAD_LOG_PATH" \
-    -exportOptionsPlist "$export_options_plist" \
-    "${AUTH_ARGS[@]}"
+  xcrun altool --upload-app \
+    --type ios \
+    --file "$ipa_path" \
+    --apiKey "$IRIS_ASC_AUTH_KEY_ID" \
+    --apiIssuer "$IRIS_ASC_AUTH_KEY_ISSUER_ID" \
+    | tee "$IOS_UPLOAD_LOG_PATH/altool-upload.log"
 }
 
 case "${1:-}" in

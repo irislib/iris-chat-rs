@@ -3,6 +3,12 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [[ -f "$ROOT/scripts/release_common.sh" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/scripts/release_common.sh"
+  load_release_env "$ROOT"
+fi
 CORE_DIR="$ROOT/core"
 IOS_BINDINGS_DIR="$ROOT/ios/Bindings"
 MACOS_DIR="$ROOT/macos"
@@ -15,8 +21,22 @@ MACOS_APP_NAME="${IRIS_MACOS_APP_NAME:-Iris Chat.app}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-app|macos-dmg>
+usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-app|macos-notarize|macos-dmg>
+
+Signing & notarization (login-keychain mode, recommended):
+  MACOS_SIGNING_IDENTITY  e.g. "Developer ID Application: Your Name (TEAMID)"
+                          (must be present in login keychain; otherwise unsigned)
+  MACOS_NOTARY_PROFILE    notarytool keychain profile name (created via
+                          xcrun notarytool store-credentials <name>); skipping
+                          notarization is fine for ad-hoc local testing
 EOF
+}
+
+extract_team_id() {
+  local identity="$1"
+  if [[ "$identity" =~ \(([A-Z0-9]{10})\)[[:space:]]*$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  fi
 }
 
 host_dynamic_lib() {
@@ -202,6 +222,35 @@ run_macos_app() {
   local derived="$MACOS_DIST_DIR/.derived"
   rm -rf "$derived"
 
+  local sign_args=()
+  local identity="${MACOS_SIGNING_IDENTITY:-}"
+  if [[ -n "$identity" ]]; then
+    if ! security find-identity -v -p codesigning 2>/dev/null | grep -Fq "$identity"; then
+      echo "macos-app: signing identity not found in login keychain: $identity" >&2
+      exit 1
+    fi
+    local team_id
+    team_id="$(extract_team_id "$identity")"
+    local entitlements="$MACOS_DIR/Release.entitlements"
+    sign_args=(
+      CODE_SIGN_STYLE=Manual
+      CODE_SIGN_IDENTITY="$identity"
+      "DEVELOPMENT_TEAM=${team_id}"
+      "CODE_SIGN_ENTITLEMENTS=$entitlements"
+      ENABLE_HARDENED_RUNTIME=YES
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
+      OTHER_CODE_SIGN_FLAGS="--timestamp"
+    )
+  else
+    sign_args=(
+      CODE_SIGN_STYLE=Manual
+      CODE_SIGNING_REQUIRED=NO
+      CODE_SIGNING_ALLOWED=NO
+      CODE_SIGN_IDENTITY=""
+      DEVELOPMENT_TEAM=""
+    )
+  fi
+
   xcodebuild \
     -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
     -scheme IrisChatMac \
@@ -211,11 +260,7 @@ run_macos_app() {
     ARCHS=arm64 \
     VALID_ARCHS=arm64 \
     ONLY_ACTIVE_ARCH=NO \
-    CODE_SIGN_STYLE=Manual \
-    CODE_SIGNING_REQUIRED=NO \
-    CODE_SIGNING_ALLOWED=NO \
-    CODE_SIGN_IDENTITY="" \
-    DEVELOPMENT_TEAM="" \
+    "${sign_args[@]}" \
     build
 
   local app_src
@@ -228,7 +273,62 @@ run_macos_app() {
   local dest="$MACOS_DIST_DIR/$MACOS_APP_NAME"
   rm -rf "$dest"
   cp -R "$app_src" "$dest"
+
+  if [[ -n "$identity" ]]; then
+    codesign --verify --deep --strict --verbose=2 "$dest"
+  fi
+
   printf '%s\n' "$dest"
+}
+
+run_macos_notarize() {
+  local app="$MACOS_DIST_DIR/$MACOS_APP_NAME"
+  if [[ ! -d "$app" ]]; then
+    run_macos_app >/dev/null
+  fi
+
+  local profile="${MACOS_NOTARY_PROFILE:-}"
+  if [[ -z "$profile" ]]; then
+    echo "macos-notarize: MACOS_NOTARY_PROFILE not set; skipping notarization (the .app will install but show Gatekeeper warnings)" >&2
+    return 0
+  fi
+
+  if ! codesign --verify --deep --strict "$app" 2>/dev/null; then
+    echo "macos-notarize: $app is not signed; set MACOS_SIGNING_IDENTITY and rebuild before notarizing" >&2
+    exit 1
+  fi
+
+  local zip
+  zip="$(mktemp -t iris-chat-notarize.XXXXXX).zip"
+  rm -f "$zip"
+  ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
+
+  local submit_output
+  if ! submit_output="$(xcrun notarytool submit "$zip" \
+        --keychain-profile "$profile" \
+        --wait \
+        --output-format json 2>&1)"; then
+    echo "$submit_output" >&2
+    rm -f "$zip"
+    exit 1
+  fi
+  rm -f "$zip"
+
+  local status submission_id
+  status="$(printf '%s' "$submit_output" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
+  submission_id="$(printf '%s' "$submit_output" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+
+  if [[ "$status" != "Accepted" ]]; then
+    echo "macos-notarize: notarization status was '$status' (expected 'Accepted')" >&2
+    if [[ -n "$submission_id" ]]; then
+      xcrun notarytool log "$submission_id" --keychain-profile "$profile" >&2 || true
+    fi
+    exit 1
+  fi
+
+  xcrun stapler staple "$app"
+  xcrun stapler validate "$app"
+  printf '%s\n' "$app"
 }
 
 run_macos_dmg() {
@@ -237,11 +337,14 @@ run_macos_dmg() {
     run_macos_app >/dev/null
   fi
 
+  if [[ -n "${MACOS_SIGNING_IDENTITY:-}" && -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
+    if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
+      run_macos_notarize >/dev/null
+    fi
+  fi
+
   local tag="${IRIS_RELEASE_TAG:-}"
-  if [[ -z "$tag" && -f "$ROOT/scripts/release_common.sh" ]]; then
-    # shellcheck disable=SC1091
-    source "$ROOT/scripts/release_common.sh"
-    load_release_env "$ROOT"
+  if [[ -z "$tag" ]]; then
     resolve_shared_build_metadata "$ROOT"
     tag="v${IRIS_APP_VERSION_NAME}"
   fi
@@ -274,6 +377,7 @@ case "${1:-}" in
   macos-xcodeproj) run_macos_xcodeproj ;;
   macos-build) run_macos_build ;;
   macos-app) run_macos_app ;;
+  macos-notarize) run_macos_notarize ;;
   macos-dmg) run_macos_dmg ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
