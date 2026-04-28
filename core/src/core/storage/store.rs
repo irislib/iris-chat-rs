@@ -4,9 +4,9 @@ use super::super::{
     PersistedThread, ThreadRecord, PERSISTED_STATE_VERSION,
 };
 use super::SharedConnection;
-use crate::state::{ChatMessageKind, DeliveryState, PreferencesSnapshot};
+use crate::state::{ChatMessageKind, ChatMessageSnapshot, DeliveryState, PreferencesSnapshot};
 use nostr_double_ratchet::GroupData;
-use rusqlite::{params, OptionalExtension, Transaction};
+use rusqlite::{params, OptionalExtension, Row, Transaction};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
@@ -92,7 +92,7 @@ impl AppStore {
         let chat_message_ttl_seconds = load_chat_ttls(&conn)?;
         let app_keys = load_app_keys(&conn)?;
         let groups = load_groups(&conn)?;
-        let threads = load_threads(&conn)?;
+        let threads = load_threads(&conn, active_chat_id.as_deref())?;
         let seen_event_ids = load_seen_events(&conn)?;
 
         Ok(Some(PersistedState {
@@ -160,6 +160,18 @@ impl AppStore {
             params![chat_id, message_id],
         )?;
         Ok(())
+    }
+
+    pub(crate) fn load_recent_messages(
+        &self,
+        chat_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<PersistedMessage>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        load_recent_messages(&conn, chat_id, limit)
     }
 
     pub(crate) fn delete_thread(&mut self, chat_id: &str) -> anyhow::Result<()> {
@@ -299,25 +311,6 @@ impl SavePlan {
                     unread_count = excluded.unread_count,
                     updated_at_secs = excluded.updated_at_secs",
             )?;
-            let mut message_stmt = tx.prepare_cached(
-                "INSERT INTO messages(
-                    chat_id, id, kind, author, body, is_outgoing, created_at_secs,
-                    expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
-                    source_event_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
-                 ON CONFLICT(chat_id, id) DO UPDATE SET
-                    kind = excluded.kind,
-                    author = excluded.author,
-                    body = excluded.body,
-                    is_outgoing = excluded.is_outgoing,
-                    created_at_secs = excluded.created_at_secs,
-                    expires_at_secs = excluded.expires_at_secs,
-                    delivery = excluded.delivery,
-                    attachments_json = excluded.attachments_json,
-                    reactions_json = excluded.reactions_json,
-                    reactors_json = excluded.reactors_json,
-                    source_event_id = excluded.source_event_id",
-            )?;
             for chat_id in self.threads_to_write.keys() {
                 let thread = snapshot
                     .threads
@@ -329,21 +322,7 @@ impl SavePlan {
                     thread.updated_at_secs as i64,
                 ])?;
                 for message in &thread.messages {
-                    message_stmt.execute(params![
-                        chat_id,
-                        message.id,
-                        serialize_message_kind(&message.kind),
-                        message.author,
-                        message.body,
-                        message.is_outgoing as i64,
-                        message.created_at_secs as i64,
-                        message.expires_at_secs.map(|secs| secs as i64),
-                        serialize_delivery(&message.delivery),
-                        serde_json::to_string(&message.attachments)?,
-                        serde_json::to_string(&message.reactions)?,
-                        serde_json::to_string(&message.reactors)?,
-                        message.source_event_id,
-                    ])?;
+                    upsert_message_row(tx, chat_id, message)?;
                 }
             }
         }
@@ -514,6 +493,48 @@ fn serialize_authorization_state(state: Option<&PersistedAuthorizationState>) ->
         Some(PersistedAuthorizationState::Revoked) => "revoked",
         None => "",
     }
+}
+
+fn upsert_message_row(
+    tx: &Transaction,
+    chat_id: &str,
+    message: &ChatMessageSnapshot,
+) -> anyhow::Result<()> {
+    tx.execute(
+        "INSERT INTO messages(
+            chat_id, id, kind, author, body, is_outgoing, created_at_secs,
+            expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
+            source_event_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(chat_id, id) DO UPDATE SET
+            kind = excluded.kind,
+            author = excluded.author,
+            body = excluded.body,
+            is_outgoing = excluded.is_outgoing,
+            created_at_secs = excluded.created_at_secs,
+            expires_at_secs = excluded.expires_at_secs,
+            delivery = excluded.delivery,
+            attachments_json = excluded.attachments_json,
+            reactions_json = excluded.reactions_json,
+            reactors_json = excluded.reactors_json,
+            source_event_id = excluded.source_event_id",
+        params![
+            chat_id,
+            message.id,
+            serialize_message_kind(&message.kind),
+            message.author,
+            message.body,
+            message.is_outgoing as i64,
+            message.created_at_secs as i64,
+            message.expires_at_secs.map(|secs| secs as i64),
+            serialize_delivery(&message.delivery),
+            serde_json::to_string(&message.attachments)?,
+            serde_json::to_string(&message.reactions)?,
+            serde_json::to_string(&message.reactors)?,
+            message.source_event_id,
+        ],
+    )?;
+    Ok(())
 }
 
 fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<PersistedPreferences>> {
@@ -727,9 +748,13 @@ fn write_groups(tx: &Transaction, groups: &BTreeMap<String, GroupData>) -> anyho
 }
 
 /// Single-pass message load: one SELECT for thread metadata, one for
-/// the newest page of messages per thread, then group in Rust. This keeps
-/// restart bounded while still giving every chat row its latest preview.
-fn load_threads(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PersistedThread>> {
+/// one preview message per inactive thread plus the newest page for the
+/// active thread, then group in Rust. This keeps restart bounded while
+/// still giving every chat row its latest preview.
+fn load_threads(
+    conn: &rusqlite::Connection,
+    active_chat_id: Option<&str>,
+) -> anyhow::Result<Vec<PersistedThread>> {
     let mut threads_stmt =
         conn.prepare("SELECT chat_id, unread_count, updated_at_secs FROM threads")?;
     let thread_rows = threads_stmt.query_map([], |row| {
@@ -778,30 +803,19 @@ fn load_threads(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PersistedThre
          SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
                 delivery, attachments_json, reactions_json, reactors_json, source_event_id
          FROM ranked
-         WHERE row_number <= ?1
+         WHERE row_number <= CASE WHEN chat_id = ?1 THEN ?2 ELSE 1 END
          ORDER BY chat_id ASC, created_at_secs ASC, numeric_id ASC, id ASC",
     )?;
-    let rows = messages_stmt.query_map([RESTORED_MESSAGES_PER_THREAD as i64], |row| {
-        let chat_id: String = row.get(0)?;
-        Ok((
-            chat_id.clone(),
-            PersistedMessage {
-                id: row.get(1)?,
-                chat_id,
-                kind: parse_message_kind(&row.get::<_, String>(2)?),
-                author: row.get(3)?,
-                body: row.get(4)?,
-                attachments: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
-                reactions: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or_default(),
-                reactors: serde_json::from_str(&row.get::<_, String>(11)?).unwrap_or_default(),
-                is_outgoing: row.get::<_, i64>(5)? != 0,
-                created_at_secs: row.get::<_, i64>(6)? as u64,
-                expires_at_secs: row.get::<_, Option<i64>>(7)?.map(|secs| secs as u64),
-                delivery: parse_delivery(&row.get::<_, String>(8)?),
-                source_event_id: row.get(12)?,
-            },
-        ))
-    })?;
+    let rows = messages_stmt.query_map(
+        params![
+            active_chat_id.unwrap_or_default(),
+            RESTORED_MESSAGES_PER_THREAD as i64
+        ],
+        |row| {
+            let message = persisted_message_from_row(row)?;
+            Ok((message.chat_id.clone(), message))
+        },
+    )?;
 
     for row in rows {
         let (chat_id, message) = row?;
@@ -814,6 +828,55 @@ fn load_threads(conn: &rusqlite::Connection) -> anyhow::Result<Vec<PersistedThre
         .into_iter()
         .filter_map(|chat_id| by_chat.remove(&chat_id))
         .collect())
+}
+
+fn load_recent_messages(
+    conn: &rusqlite::Connection,
+    chat_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<PersistedMessage>> {
+    let mut stmt = conn.prepare(
+        "SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+                delivery, attachments_json, reactions_json, reactors_json, source_event_id
+         FROM (
+             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+                    CASE
+                        WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
+                        ELSE 9223372036854775807
+                    END AS numeric_id
+             FROM messages
+             WHERE chat_id = ?1
+             ORDER BY created_at_secs DESC, numeric_id DESC, id DESC
+             LIMIT ?2
+         )
+         ORDER BY created_at_secs ASC, numeric_id ASC, id ASC",
+    )?;
+    let rows = stmt.query_map(params![chat_id, limit as i64], persisted_message_from_row)?;
+    let mut messages = Vec::new();
+    for row in rows {
+        messages.push(row?);
+    }
+    Ok(messages)
+}
+
+fn persisted_message_from_row(row: &Row<'_>) -> rusqlite::Result<PersistedMessage> {
+    let chat_id: String = row.get(0)?;
+    Ok(PersistedMessage {
+        id: row.get(1)?,
+        chat_id,
+        kind: parse_message_kind(&row.get::<_, String>(2)?),
+        author: row.get(3)?,
+        body: row.get(4)?,
+        attachments: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
+        reactions: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or_default(),
+        reactors: serde_json::from_str(&row.get::<_, String>(11)?).unwrap_or_default(),
+        is_outgoing: row.get::<_, i64>(5)? != 0,
+        created_at_secs: row.get::<_, i64>(6)? as u64,
+        expires_at_secs: row.get::<_, Option<i64>>(7)?.map(|secs| secs as u64),
+        delivery: parse_delivery(&row.get::<_, String>(8)?),
+        source_event_id: row.get(12)?,
+    })
 }
 
 fn load_seen_events(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
@@ -1043,6 +1106,49 @@ mod tests {
         assert_eq!(loaded_messages.len(), RESTORED_MESSAGES_PER_THREAD);
         assert_eq!(loaded_messages.first().unwrap().body, "message 11");
         assert_eq!(loaded_messages.last().unwrap().body, "message 90");
+    }
+
+    #[test]
+    fn load_state_restores_only_latest_message_for_inactive_threads() {
+        let (tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let messages = (1..=RESTORED_MESSAGES_PER_THREAD + 10)
+            .map(|idx| sample_message(&idx.to_string(), &format!("message {idx}"), idx as u64))
+            .collect::<Vec<_>>();
+        let mut threads = BTreeMap::new();
+        threads.insert("chat".to_string(), thread_from_messages("chat", messages));
+        let snapshot = empty_snapshot(
+            None,
+            100,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        drop(store);
+        let conn = open_database(tmp.path()).unwrap();
+        let mut store = AppStore::new(conn);
+        let loaded = store.load_state().unwrap().expect("state present");
+        let loaded_messages = &loaded.threads[0].messages;
+        assert_eq!(loaded_messages.len(), 1);
+        assert_eq!(loaded_messages[0].body, "message 90");
+
+        let page = store
+            .load_recent_messages("chat", RESTORED_MESSAGES_PER_THREAD)
+            .unwrap();
+        assert_eq!(page.len(), RESTORED_MESSAGES_PER_THREAD);
+        assert_eq!(page.first().unwrap().body, "message 11");
+        assert_eq!(page.last().unwrap().body, "message 90");
     }
 
     #[test]

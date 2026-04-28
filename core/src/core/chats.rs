@@ -1,5 +1,7 @@
 use super::*;
 
+const OPEN_CHAT_MESSAGES_PER_PAGE: usize = 80;
+
 impl AppCore {
     pub(super) fn create_chat(&mut self, peer_input: &str) {
         if self.logged_in.is_none() {
@@ -39,6 +41,7 @@ impl AppCore {
         let (chat_id, peer_pubkey) = parse_peer_input(peer_input)?;
         let now = unix_now().get();
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
+        self.load_latest_message_page_for_chat(&chat_id);
 
         if let Some(logged_in) = self.logged_in.as_ref() {
             logged_in.ndr_runtime.setup_user(peer_pubkey)?;
@@ -118,6 +121,7 @@ impl AppCore {
 
         let now = unix_now().get();
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
+        self.load_latest_message_page_for_chat(&chat_id);
         self.active_chat_id = Some(chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
             chat_id: chat_id.clone(),
@@ -129,6 +133,43 @@ impl AppCore {
         self.fetch_recent_protocol_state();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
         self.emit_state();
+    }
+
+    fn load_latest_message_page_for_chat(&mut self, chat_id: &str) {
+        let messages = match self
+            .app_store
+            .load_recent_messages(chat_id, OPEN_CHAT_MESSAGES_PER_PAGE)
+        {
+            Ok(messages) => messages,
+            Err(error) => {
+                self.push_debug_log(
+                    "storage.messages.page.error",
+                    format!("chat_id={chat_id} error={error}"),
+                );
+                return;
+            }
+        };
+        if messages.is_empty() {
+            return;
+        }
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let mut page = messages
+            .iter()
+            .map(chat_message_from_persisted)
+            .collect::<Vec<_>>();
+        let mut seen = page
+            .iter()
+            .map(|message| message.id.clone())
+            .collect::<HashSet<_>>();
+        for message in std::mem::take(&mut thread.messages) {
+            if seen.insert(message.id.clone()) {
+                page.push(message);
+            }
+        }
+        page.sort_by(|left, right| message_order(left).cmp(&message_order(right)));
+        thread.messages = page;
     }
 
     pub(super) fn send_message(&mut self, chat_id: &str, text: &str, expires_at_secs: Option<u64>) {
@@ -784,4 +825,35 @@ impl AppCore {
         self.next_message_id = self.next_message_id.saturating_add(1);
         id.to_string()
     }
+}
+
+fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
+    let (body, parsed_attachments) = extract_message_attachments(&message.body);
+    ChatMessageSnapshot {
+        id: message.id.clone(),
+        chat_id: message.chat_id.clone(),
+        kind: message.kind.clone(),
+        author: message.author.clone(),
+        body,
+        attachments: if message.attachments.is_empty() {
+            parsed_attachments
+        } else {
+            message.attachments.clone()
+        },
+        reactions: message.reactions.clone(),
+        reactors: message.reactors.clone(),
+        is_outgoing: message.is_outgoing,
+        created_at_secs: message.created_at_secs,
+        expires_at_secs: message.expires_at_secs,
+        delivery: message.delivery.clone().into(),
+        source_event_id: message.source_event_id.clone(),
+    }
+}
+
+fn message_order(message: &ChatMessageSnapshot) -> (u64, u64, &str) {
+    (
+        message.created_at_secs,
+        message.id.parse::<u64>().unwrap_or(u64::MAX),
+        message.id.as_str(),
+    )
 }
