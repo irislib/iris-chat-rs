@@ -35,6 +35,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -94,6 +95,7 @@ class IrisNearbyService(
     private var status = "Off"
     private var localNonce = newNonce()
     private var ownProfileEventId: String? = null
+    private var maintenanceJob: Job? = null
 
     val snapshot: Snapshot
         get() =
@@ -231,11 +233,13 @@ class IrisNearbyService(
         startGattServer()
         startAdvertising()
         startScanning()
+        startMaintenance()
     }
 
     @SuppressLint("MissingPermission")
     private fun stop() {
         status = "Off"
+        stopMaintenance()
         guardBluetooth("stop scan", Unit, statusOnFailure = null) {
             adapter?.bluetoothLeScanner?.stopScan(scanCallback)
         }
@@ -408,6 +412,28 @@ class IrisNearbyService(
         peerNonces.forEach { (remotePeerId, remoteNonce) ->
             sendPresence(remotePeerId, remoteNonce)
         }
+    }
+
+    private fun startMaintenance() {
+        maintenanceJob?.cancel()
+        maintenanceJob =
+            applicationScope.launch {
+                var lastHelloMillis = 0L
+                while (visible) {
+                    val nowMillis = System.currentTimeMillis()
+                    pruneStalePeers(nowMillis)
+                    if (nowMillis - lastHelloMillis >= HELLO_INTERVAL_MS) {
+                        sendHello(excludingPeerId = null)
+                        lastHelloMillis = nowMillis
+                    }
+                    delay(PEER_SWEEP_INTERVAL_MS)
+                }
+            }
+    }
+
+    private fun stopMaintenance() {
+        maintenanceJob?.cancel()
+        maintenanceJob = null
     }
 
     private fun sendHello(excludingPeerId: String?) {
@@ -718,6 +744,9 @@ class IrisNearbyService(
         if (remotePeerId == peerId) {
             return
         }
+        if (remotePeerId.isNotEmpty()) {
+            touchPeer(remotePeerId)
+        }
         when (type) {
             "hello" -> {
                 if (remotePeerId.isNotEmpty()) {
@@ -882,6 +911,62 @@ class IrisNearbyService(
             incomingFragments.remove(oldest)
         }
     }
+
+    @SuppressLint("MissingPermission")
+    private fun pruneStalePeers(nowMillis: Long) {
+        val stalePeerIds =
+            peers.values
+                .filter { nowMillis - it.lastSeenMillis > PEER_TTL_MS }
+                .map { it.id }
+                .toSet()
+        if (stalePeerIds.isEmpty()) {
+            return
+        }
+
+        stalePeerIds.forEach { peerId ->
+            peers.remove(peerId)
+            peerNonces.remove(peerId)
+        }
+
+        val staleAddresses =
+            peerIdsByAddress
+                .filterValues { it in stalePeerIds }
+                .keys
+                .toList()
+        staleAddresses.forEach { address ->
+            peerIdsByAddress.remove(address)
+            pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
+            pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
+            writableCharacteristics.remove(address)
+            centralAssemblers.remove(address)
+            serverAssemblers.remove(address)
+            mtuPayloadBytes.remove(address)
+            subscribedServerAddresses.remove(address)
+            gatts.remove(address)?.let { gatt ->
+                guardBluetooth("close stale peer GATT", Unit, statusOnFailure = null) {
+                    gatt.close()
+                }
+            }
+        }
+
+        pruneKnownProfiles()
+        status = nearbyStatusWhenVisible()
+        Log.d(TAG, "expired stale peers count=${stalePeerIds.size}")
+    }
+
+    private fun touchPeer(peerId: String) {
+        val existing = peers[peerId] ?: return
+        peers[peerId] = existing.copy(lastSeenMillis = System.currentTimeMillis())
+    }
+
+    private fun nearbyStatusWhenVisible(): String =
+        when {
+            peers.size == 1 -> "1 nearby"
+            peers.size > 1 -> "${peers.size} nearby"
+            !hasBluetoothPermissions() -> "No Bluetooth access"
+            isBluetoothOn() -> "Visible"
+            else -> "Bluetooth off"
+        }
 
     private fun rememberPeer(
         peerId: String,
@@ -1436,6 +1521,9 @@ class IrisNearbyService(
         const val MAX_EVENT_FRAGMENTS = 1024
         const val MAX_INCOMING_FRAGMENT_SETS = 64
         const val FRAGMENT_TTL_MS = 30_000L
+        const val HELLO_INTERVAL_MS = 5_000L
+        const val PEER_SWEEP_INTERVAL_MS = 1_000L
+        const val PEER_TTL_MS = 15_000L
         const val BLE_CHUNK_BYTES = 180
         const val BLE_WRITE_TIMEOUT_MS = 1_500L
         const val BLE_NOTIFY_TIMEOUT_MS = 1_500L

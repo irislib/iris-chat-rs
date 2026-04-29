@@ -30,6 +30,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
     fileprivate static let maxMailbagEvents = 500
     private static let nearbyPresenceKind: UInt32 = 22242
     private static let nonIrisBackoff: TimeInterval = 60
+    private static let helloInterval: TimeInterval = 5
+    private static let peerSweepInterval: TimeInterval = 1
+    private static let peerTTL: TimeInterval = 15
     private static let maxSimultaneousPeripherals = 4
 
     private let peerID = UUID().uuidString.lowercased()
@@ -55,6 +58,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var ownProfileEventID: String?
     private var lastCentralStateLog: String?
     private var lastPeripheralStateLog: String?
+    private var maintenanceTimer: Timer?
+    private var lastHelloAt = Date.distantPast
 
     var ingestEventJson: ((String) -> Bool)?
     var buildPresenceEventJson: ((String, String, String, String?) -> String)?
@@ -190,10 +195,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
             self.startScanningIfReady()
             self.startAdvertisingIfReady()
         }
+        startMaintenance()
     }
 
     private func stop() {
         status = "Off"
+        stopMaintenance()
         centralManager?.stopScan()
         peripheralManager?.stopAdvertising()
         peripheralManager?.removeAllServices()
@@ -267,6 +274,34 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private func announceToConnectedPeers() {
         sendHello(excludingPeerID: nil)
         sendInventory(excludingPeerID: nil)
+    }
+
+    private func startMaintenance() {
+        stopMaintenance()
+        lastHelloAt = .distantPast
+        let timer = Timer(timeInterval: Self.peerSweepInterval, repeats: true) { [weak self] _ in
+            self?.runMaintenance()
+        }
+        timer.tolerance = 0.2
+        RunLoop.main.add(timer, forMode: .common)
+        maintenanceTimer = timer
+        runMaintenance()
+    }
+
+    private func stopMaintenance() {
+        maintenanceTimer?.invalidate()
+        maintenanceTimer = nil
+        lastHelloAt = .distantPast
+    }
+
+    private func runMaintenance() {
+        guard isVisible else { return }
+        let now = Date()
+        pruneStalePeers(now: now)
+        if now.timeIntervalSince(lastHelloAt) >= Self.helloInterval {
+            sendHello(excludingPeerID: nil)
+            lastHelloAt = now
+        }
     }
 
     private func shouldConnect(to peripheralID: UUID, advertisementData: [String: Any]) -> Bool {
@@ -545,6 +580,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if remotePeerID == peerID {
             return
         }
+        if let remotePeerID, !remotePeerID.isEmpty {
+            touchPeer(remotePeerID)
+        }
 
         switch type {
         case "hello":
@@ -698,6 +736,60 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
+    private func pruneStalePeers(now: Date) {
+        let stalePeerIDs = Set(
+            peers
+                .filter { now.timeIntervalSince($0.lastSeen) > Self.peerTTL }
+                .map { $0.id }
+        )
+        guard !stalePeerIDs.isEmpty else { return }
+
+        peers.removeAll { stalePeerIDs.contains($0.id) }
+        for peerID in stalePeerIDs {
+            peerNonces.removeValue(forKey: peerID)
+        }
+
+        let stalePeripheralIDs = peerIDByPeripheral
+            .filter { stalePeerIDs.contains($0.value) }
+            .map { $0.key }
+        for peripheralID in stalePeripheralIDs {
+            peerIDByPeripheral.removeValue(forKey: peripheralID)
+            writableCharacteristics.removeValue(forKey: peripheralID)
+            peripheralAssemblers.removeValue(forKey: peripheralID)
+            peripheralWriteQueues.removeValue(forKey: peripheralID)
+            if let peripheral = peripherals.removeValue(forKey: peripheralID) {
+                centralManager?.cancelPeripheralConnection(peripheral)
+            }
+        }
+
+        let staleCentralIDs = peerIDByCentral
+            .filter { stalePeerIDs.contains($0.value) }
+            .map { $0.key }
+        for centralID in staleCentralIDs {
+            peerIDByCentral.removeValue(forKey: centralID)
+            subscribedCentrals.removeValue(forKey: centralID)
+            centralAssemblers.removeValue(forKey: centralID)
+        }
+        pendingNotifications.removeAll { item in
+            guard let centralID = item.channel?.central.identifier else { return false }
+            return staleCentralIDs.contains(centralID)
+        }
+
+        pruneKnownProfiles()
+        restartScanningAfterPruning()
+        status = peers.isEmpty ? visibleIdleStatus : sidebarSubtitle
+        NSLog("Iris nearby: expired stale peers \(stalePeerIDs.count)")
+    }
+
+    private func restartScanningAfterPruning() {
+        guard isVisible, let centralManager, centralManager.state == .poweredOn else { return }
+        centralManager.stopScan()
+        centralManager.scanForPeripherals(
+            withServices: [Self.serviceUUID],
+            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+        )
+    }
+
     private func rememberPeer(
         _ peerID: String,
         name: String?,
@@ -732,6 +824,24 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
         status = sidebarSubtitle
         NSLog("Iris nearby: saw peer")
+    }
+
+    private func touchPeer(_ peerID: String) {
+        guard let index = peers.firstIndex(where: { $0.id == peerID }) else { return }
+        peers[index].lastSeen = Date()
+    }
+
+    private var visibleIdleStatus: String {
+        if centralManager?.state == .poweredOn || peripheralManager?.state == .poweredOn {
+            return "Visible"
+        }
+        if let centralManager {
+            return bluetoothStatus(centralManager.state)
+        }
+        if let peripheralManager {
+            return bluetoothStatus(peripheralManager.state)
+        }
+        return "Visible"
     }
 
     private func mailbagEvents() -> [IrisNearbyStoredEvent] {
