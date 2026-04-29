@@ -94,6 +94,8 @@ require_manual_signing_inputs() {
     return 0
   fi
   require_var IRIS_IOS_PROVISIONING_PROFILE_UUID
+  require_var IRIS_IOS_NOTIFICATION_PROVISIONING_PROFILE_UUID
+  require_var IRIS_IOS_SHARE_PROVISIONING_PROFILE_UUID
   require_var IRIS_IOS_CODE_SIGN_IDENTITY
 }
 
@@ -191,6 +193,11 @@ write_export_options() {
       profile_entries+="
     <key>${IOS_BUNDLE_ID}.NotificationService</key>
     <string>${IRIS_IOS_NOTIFICATION_PROVISIONING_PROFILE_UUID}</string>"
+    fi
+    if [[ -n "${IRIS_IOS_SHARE_PROVISIONING_PROFILE_UUID:-}" ]]; then
+      profile_entries+="
+    <key>${IOS_BUNDLE_ID}.ShareExtension</key>
+    <string>${IRIS_IOS_SHARE_PROVISIONING_PROFILE_UUID}</string>"
     fi
     manual_block="
   <key>signingCertificate</key>
