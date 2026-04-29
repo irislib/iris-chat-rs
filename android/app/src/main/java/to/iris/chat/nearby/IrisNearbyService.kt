@@ -387,6 +387,13 @@ class IrisNearbyService(
         sendInventory(excludingPeerId = null)
     }
 
+    private fun announceIdentityToConnectedPeers() {
+        sendHello(excludingPeerId = null)
+        peerNonces.forEach { (remotePeerId, remoteNonce) ->
+            sendPresence(remotePeerId, remoteNonce)
+        }
+    }
+
     private fun sendHello(excludingPeerId: String?) {
         val envelope =
             JSONObject()
@@ -640,16 +647,34 @@ class IrisNearbyService(
             if (!started) {
                 pendingNotifications.remove(address, completed)
                 Log.w(TAG, "notify GATT device failed to start for $address")
+                forgetServerConnection(address, "notify failed to start")
                 return
             }
             val status = withTimeoutOrNull(BLE_NOTIFY_TIMEOUT_MS) { completed.await() }
             pendingNotifications.remove(address, completed)
             if (status != BluetoothGatt.GATT_SUCCESS) {
                 Log.w(TAG, "notify GATT device failed for $address status=$status")
+                forgetServerConnection(address, "notify failed")
                 return
             }
             offset += chunk.size
         }
+    }
+
+    private fun forgetServerConnection(
+        address: String,
+        reason: String,
+    ) {
+        Log.d(TAG, "forget server GATT $address: $reason")
+        subscribedServerAddresses.remove(address)
+        pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
+        serverAssemblers.remove(address)
+        mtuPayloadBytes.remove(address)
+        peerIdsByAddress.remove(address)?.let {
+            peers.remove(it)
+            peerNonces.remove(it)
+        }
+        status = if (peers.isEmpty()) "Visible" else "${peers.size} nearby"
     }
 
     @SuppressLint("MissingPermission")
@@ -684,11 +709,15 @@ class IrisNearbyService(
                         peerIdsByAddress[address] = remotePeerId
                     }
                     val remoteNonce = envelope.optString("nonce").sanitizedNonce()
+                    val previousNonce = peerNonces[remotePeerId]
                     val wasNew = rememberPeer(
                         peerId = remotePeerId,
                         name = envelope.optString("name"),
                         profileEventId = null,
                     )
+                    if (wasNew || (remoteNonce != null && remoteNonce != previousNonce)) {
+                        sendHello(excludingPeerId = null)
+                    }
                     if (remoteNonce != null) {
                         peerNonces[remotePeerId] = remoteNonce
                         sendPresence(remotePeerId, remoteNonce)
@@ -1144,8 +1173,7 @@ class IrisNearbyService(
                     } ?: false
                     if (!descriptorWriteStarted) {
                         Log.d(TAG, "notification descriptor unavailable; sending hello without subscribe")
-                        sendHello(excludingPeerId = null)
-                        sendInventory(excludingPeerId = null)
+                        announceIdentityToConnectedPeers()
                     }
                 }
             }
@@ -1164,8 +1192,7 @@ class IrisNearbyService(
                             gatt.device.address
                         }
                     Log.d(TAG, "notifications ready for $address status=$status")
-                    sendHello(excludingPeerId = null)
-                    sendInventory(excludingPeerId = null)
+                    announceIdentityToConnectedPeers()
                 }
             }
 
@@ -1267,8 +1294,7 @@ class IrisNearbyService(
                             gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
                         }
                     }
-                    sendHello(excludingPeerId = null)
-                    sendInventory(excludingPeerId = null)
+                    announceIdentityToConnectedPeers()
                 }
             }
         }
