@@ -71,6 +71,65 @@ fn ndr_runtime_invite_session_round_trips_text() {
 }
 
 #[test]
+fn local_identity_artifacts_offer_profile_metadata_to_nearby() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let device_id = device.public_key().to_hex();
+    let invite =
+        Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
+    let runtime = NdrRuntime::new(
+        device.public_key(),
+        device.secret_key().to_secret_bytes(),
+        device_id,
+        owner.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    runtime.init().expect("runtime init");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: runtime,
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    core.owner_profiles.insert(
+        owner.public_key().to_hex(),
+        OwnerProfileRecord {
+            name: None,
+            display_name: None,
+            picture: Some("htree://profile-picture".to_string()),
+            updated_at_secs: 1,
+        },
+    );
+
+    core.publish_local_identity_artifacts();
+
+    let nearby_kinds = update_rx
+        .try_iter()
+        .filter_map(|update| match update {
+            AppUpdate::NearbyPublishedEvent { kind, .. } => Some(kind),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        nearby_kinds.contains(&0),
+        "profile metadata should be included in nearby inventory; got {nearby_kinds:?}"
+    );
+}
+
+#[test]
 fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

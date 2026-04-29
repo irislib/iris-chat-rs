@@ -52,6 +52,16 @@ class IrisNearbyService(
         val visible: Boolean,
         val status: String,
         val peerCount: Int,
+        val peers: List<Peer>,
+    )
+
+    data class Peer(
+        val id: String,
+        val name: String,
+        val ownerPubkeyHex: String?,
+        val pictureUrl: String?,
+        val profileEventId: String?,
+        val lastSeenMillis: Long,
     )
 
     private val appContext = context.applicationContext
@@ -65,7 +75,8 @@ class IrisNearbyService(
     private val centralAssemblers = linkedMapOf<String, FrameAssembler>()
     private val serverAssemblers = linkedMapOf<String, FrameAssembler>()
     private val peerIdsByAddress = linkedMapOf<String, String>()
-    private val peers = linkedMapOf<String, Long>()
+    private val peers = linkedMapOf<String, Peer>()
+    private val knownProfiles = linkedMapOf<String, NearbyProfileEvent>()
     private val mtuPayloadBytes = linkedMapOf<String, Int>()
     private val incomingFragments = linkedMapOf<String, IncomingFragment>()
     private val sendMutex = Mutex()
@@ -73,9 +84,18 @@ class IrisNearbyService(
     private var gattServer: BluetoothGattServer? = null
     private var visible = false
     private var status = "Off"
+    private var ownProfileEventId: String? = null
 
     val snapshot: Snapshot
-        get() = Snapshot(visible = visible, status = status, peerCount = peers.size)
+        get() =
+            Snapshot(
+                visible = visible,
+                status = status,
+                peerCount = peers.size,
+                peers =
+                    peers.values
+                        .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id }),
+            )
 
     fun setVisible(nextVisible: Boolean) {
         if (visible == nextVisible) {
@@ -109,9 +129,18 @@ class IrisNearbyService(
             )
         ownOutbound[event.eventId] = record
         forwarded.remove(event.eventId)
+        if (record.kind == 0L) {
+            NearbyProfileEvent.fromEventJson(event.eventJson)?.let { profile ->
+                ownProfileEventId = record.id
+                knownProfiles[record.id] = profile
+            }
+        }
         pruneMailbags()
         Log.d(TAG, "published event kind=${record.kind} id=${record.id} visible=$visible")
         if (visible) {
+            if (record.kind == 0L) {
+                sendHello(excludingPeerId = null)
+            }
             sendEvent(record, excludingPeerId = null)
         }
     }
@@ -229,6 +258,7 @@ class IrisNearbyService(
                 .put("type", "hello")
                 .put("peer_id", peerId)
                 .put("name", "Iris")
+        ownProfileEventId?.let { envelope.put("profile_event_id", it) }
         sendEnvelope(envelope, excludingPeerId)
     }
 
@@ -423,11 +453,14 @@ class IrisNearbyService(
         when (type) {
             "hello" -> {
                 if (remotePeerId.isNotEmpty()) {
-                    val wasNew = !peers.containsKey(remotePeerId)
                     if (address != null) {
                         peerIdsByAddress[address] = remotePeerId
                     }
-                    peers[remotePeerId] = System.currentTimeMillis()
+                    val wasNew = rememberPeer(
+                        peerId = remotePeerId,
+                        name = envelope.optString("name"),
+                        profileEventId = envelope.optString("profile_event_id"),
+                    )
                     if (wasNew) {
                         Log.d(TAG, "peer nearby id=$remotePeerId")
                     }
@@ -526,12 +559,15 @@ class IrisNearbyService(
             return
         }
         val record = StoredNearbyEvent.fromEventJson(eventJson) ?: return
-        if (ownOutbound.containsKey(record.id) || forwarded.containsKey(record.id)) {
+        val existing = ownOutbound[record.id] ?: forwarded[record.id]
+        if (existing != null) {
+            rememberProfile(existing.eventJson, remotePeerId)
             return
         }
         if (!appManager.ingestNearbyEventJson(eventJson)) {
             return
         }
+        rememberProfile(eventJson, remotePeerId)
         forwarded[record.id] = record
         pruneMailbags()
         sendInventory(excludingPeerId = remotePeerId)
@@ -547,15 +583,74 @@ class IrisNearbyService(
         }
     }
 
-    private fun mailbagEvents(): List<StoredNearbyEvent> =
-        (ownOutbound.values + forwarded.values).sortedByDescending { it.createdAtSecs }
-
-    private fun pruneMailbags() {
-        prune(ownOutbound)
-        prune(forwarded)
+    private fun rememberPeer(
+        peerId: String,
+        name: String?,
+        profileEventId: String?,
+    ): Boolean {
+        val existing = peers[peerId]
+        val sanitizedProfileEventId = profileEventId.sanitizedEventId()
+        peers[peerId] =
+            Peer(
+                id = peerId,
+                name = name.sanitizedName() ?: existing?.name ?: "Iris",
+                ownerPubkeyHex = existing?.ownerPubkeyHex,
+                pictureUrl = existing?.pictureUrl,
+                profileEventId = sanitizedProfileEventId ?: existing?.profileEventId,
+                lastSeenMillis = System.currentTimeMillis(),
+            )
+        val profile = peers[peerId]?.profileEventId?.let { knownProfiles[it] }
+        if (profile != null) {
+            applyAdvertisedProfile(peerId, profile)
+        }
+        return existing == null
     }
 
-    private fun prune(bag: LinkedHashMap<String, StoredNearbyEvent>) {
+    private fun rememberProfile(eventJson: String, remotePeerId: String?) {
+        val profile = NearbyProfileEvent.fromEventJson(eventJson) ?: return
+        knownProfiles[profile.id] = profile
+        if (remotePeerId != null) {
+            applyAdvertisedProfile(remotePeerId, profile)
+        }
+    }
+
+    private fun applyAdvertisedProfile(peerId: String, profile: NearbyProfileEvent) {
+        val peer = peers[peerId] ?: return
+        if (peer.profileEventId != profile.id) {
+            return
+        }
+        peers[peerId] =
+            peer.copy(
+                name = profile.displayName ?: peer.name,
+                ownerPubkeyHex = profile.ownerPubkeyHex,
+                pictureUrl = profile.pictureUrl ?: peer.pictureUrl,
+                lastSeenMillis = System.currentTimeMillis(),
+            )
+    }
+
+    private fun mailbagEvents(): List<StoredNearbyEvent> {
+        val records =
+            (ownOutbound.values + forwarded.values)
+                .sortedByDescending { it.createdAtSecs }
+                .toMutableList()
+        val profile = ownProfileEventId?.let { ownOutbound[it] }
+        if (profile != null) {
+            records.removeAll { it.id == profile.id }
+            records.add(0, profile)
+        }
+        return records
+    }
+
+    private fun pruneMailbags() {
+        prune(ownOutbound, preservingId = ownProfileEventId)
+        prune(forwarded, preservingId = null)
+        pruneKnownProfiles()
+    }
+
+    private fun prune(
+        bag: LinkedHashMap<String, StoredNearbyEvent>,
+        preservingId: String?,
+    ) {
         if (bag.size <= MAX_MAILBAG_EVENTS) {
             return
         }
@@ -566,11 +661,30 @@ class IrisNearbyService(
                 .map { it.id }
                 .toSet()
         bag.keys.toList().forEach { id ->
-            if (!keep.contains(id)) {
+            if (!keep.contains(id) && id != preservingId) {
                 bag.remove(id)
             }
         }
     }
+
+    private fun pruneKnownProfiles() {
+        val keep = linkedSetOf<String>()
+        keep += ownOutbound.keys
+        keep += forwarded.keys
+        keep += peers.values.mapNotNull { it.profileEventId }
+        ownProfileEventId?.let { keep += it }
+        knownProfiles.keys.toList().forEach { id ->
+            if (!keep.contains(id)) {
+                knownProfiles.remove(id)
+            }
+        }
+    }
+
+    private fun String?.sanitizedName(): String? =
+        this?.trim()?.takeIf(String::isNotEmpty)
+
+    private fun String?.sanitizedEventId(): String? =
+        this?.trim()?.takeIf { it.length == 64 }
 
     private fun hasBluetoothPermissions(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
@@ -769,6 +883,37 @@ class IrisNearbyService(
                     createdAtSecs = json.optLong("created_at", 0L),
                     eventJson = eventJson,
                     storedAtMillis = System.currentTimeMillis(),
+                )
+            }
+        }
+    }
+
+    private data class NearbyProfileEvent(
+        val id: String,
+        val ownerPubkeyHex: String,
+        val displayName: String?,
+        val pictureUrl: String?,
+    ) {
+        companion object {
+            fun fromEventJson(eventJson: String): NearbyProfileEvent? {
+                val json = runCatching { JSONObject(eventJson) }.getOrNull() ?: return null
+                val id = json.optString("id").trim()
+                if (id.length != 64 || json.optLong("kind", -1L) != 0L) {
+                    return null
+                }
+                val ownerPubkeyHex = json.optString("pubkey").trim()
+                if (ownerPubkeyHex.length != 64) {
+                    return null
+                }
+                val metadata =
+                    runCatching { JSONObject(json.optString("content")) }.getOrNull() ?: return null
+                return NearbyProfileEvent(
+                    id = id,
+                    ownerPubkeyHex = ownerPubkeyHex,
+                    displayName =
+                        metadata.optString("display_name").trim().takeIf(String::isNotEmpty)
+                            ?: metadata.optString("name").trim().takeIf(String::isNotEmpty),
+                    pictureUrl = metadata.optString("picture").trim().takeIf(String::isNotEmpty),
                 )
             }
         }

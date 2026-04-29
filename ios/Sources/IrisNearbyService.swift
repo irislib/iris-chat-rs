@@ -9,6 +9,9 @@ import UIKit
 struct IrisNearbyPeer: Identifiable, Equatable {
     let id: String
     var name: String
+    var ownerPubkeyHex: String?
+    var pictureURL: String?
+    var profileEventID: String?
     var lastSeen: Date
 }
 
@@ -42,7 +45,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var peerIDByCentral: [UUID: String] = [:]
     private var ownOutbound: [String: IrisNearbyStoredEvent] = [:]
     private var forwarded: [String: IrisNearbyStoredEvent] = [:]
+    private var knownProfiles: [String: IrisNearbyProfileEvent] = [:]
     private var incomingFragments: [String: IrisNearbyIncomingFragment] = [:]
+    private var ownProfileEventID: String?
 
     var ingestEventJson: ((String) -> Bool)?
 
@@ -92,8 +97,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
         )
         ownOutbound[eventID] = record
         forwarded.removeValue(forKey: eventID)
+        if kind == 0, let profile = IrisNearbyProfileEvent.fromEventJson(eventJson) {
+            ownProfileEventID = eventID
+            knownProfiles[eventID] = profile
+        }
         pruneMailbags()
         guard isVisible else { return }
+        if kind == 0 {
+            sendHello(excludingPeerID: nil)
+        }
         sendEvent(record, excludingPeerID: nil)
     }
 
@@ -194,15 +206,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func sendHello(excludingPeerID: String?) {
-        sendEnvelope(
-            [
-                "v": 1,
-                "type": "hello",
-                "peer_id": peerID,
-                "name": localDeviceName
-            ],
-            excludingPeerID: excludingPeerID
-        )
+        var envelope: [String: Any] = [
+            "v": 1,
+            "type": "hello",
+            "peer_id": peerID,
+            "name": localDeviceName
+        ]
+        if let ownProfileEventID {
+            envelope["profile_event_id"] = ownProfileEventID
+        }
+        sendEnvelope(envelope, excludingPeerID: excludingPeerID)
     }
 
     private var localDeviceName: String {
@@ -356,7 +369,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         switch type {
         case "hello":
             guard let remotePeerID, !remotePeerID.isEmpty else { return }
-            rememberPeer(remotePeerID, name: envelope["name"] as? String, source: source)
+            rememberPeer(
+                remotePeerID,
+                name: envelope["name"] as? String,
+                profileEventID: envelope["profile_event_id"] as? String,
+                source: source
+            )
             sendInventory(excludingPeerID: nil)
         case "inv":
             handleInventory(envelope)
@@ -444,11 +462,13 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private func handleEventJson(_ eventJson: String, remotePeerID: String?) {
         guard eventJson.utf8.count <= Self.maxEventBytes,
               let record = IrisNearbyStoredEvent.fromEventJson(eventJson) else { return }
-        if ownOutbound[record.id] != nil || forwarded[record.id] != nil {
+        if let existing = ownOutbound[record.id] ?? forwarded[record.id] {
+            rememberProfile(from: existing.eventJson, remotePeerID: remotePeerID)
             return
         }
         let accepted = ingestEventJson?(eventJson) ?? false
         guard accepted else { return }
+        rememberProfile(from: eventJson, remotePeerID: remotePeerID)
         forwarded[record.id] = record
         pruneMailbags()
         sendInventory(excludingPeerID: remotePeerID)
@@ -464,39 +484,59 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
-    private func rememberPeer(_ peerID: String, name: String?, source: IrisNearbySource) {
+    private func rememberPeer(
+        _ peerID: String,
+        name: String?,
+        profileEventID: String?,
+        source: IrisNearbySource
+    ) {
         switch source {
         case .peripheral(let peripheral):
             peerIDByPeripheral[peripheral.identifier] = peerID
         case .central(let central):
             peerIDByCentral[central.identifier] = peerID
         }
+        let sanitizedProfileEventID = sanitizedEventID(profileEventID)
+        let existing = peers.first(where: { $0.id == peerID })
         let peer = IrisNearbyPeer(
             id: peerID,
-            name: name?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? name! : "Iris",
+            name: sanitizedName(name) ?? existing?.name ?? "Iris",
+            ownerPubkeyHex: existing?.ownerPubkeyHex,
+            pictureURL: existing?.pictureURL,
+            profileEventID: sanitizedProfileEventID ?? existing?.profileEventID,
             lastSeen: Date()
         )
         if let index = peers.firstIndex(where: { $0.id == peerID }) {
             peers[index] = peer
         } else {
             peers.append(peer)
-            peers.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        }
+        sortPeers()
+        if let profileEventID = sanitizedProfileEventID ?? existing?.profileEventID,
+           let profile = knownProfiles[profileEventID] {
+            applyAdvertisedProfile(profile, toPeerID: peerID)
         }
         status = sidebarSubtitle
         NSLog("Iris nearby: saw peer")
     }
 
     private func mailbagEvents() -> [IrisNearbyStoredEvent] {
-        (Array(ownOutbound.values) + Array(forwarded.values))
+        var records = (Array(ownOutbound.values) + Array(forwarded.values))
             .sorted { $0.createdAtSecs > $1.createdAtSecs }
+        if let ownProfileEventID, let profile = ownOutbound[ownProfileEventID] {
+            records.removeAll { $0.id == profile.id }
+            records.insert(profile, at: 0)
+        }
+        return records
     }
 
     private func pruneMailbags() {
-        prune(&ownOutbound)
-        prune(&forwarded)
+        prune(&ownOutbound, preserving: ownProfileEventID)
+        prune(&forwarded, preserving: nil)
+        pruneKnownProfiles()
     }
 
-    private func prune(_ bag: inout [String: IrisNearbyStoredEvent]) {
+    private func prune(_ bag: inout [String: IrisNearbyStoredEvent], preserving protectedID: String?) {
         guard bag.count > Self.maxMailbagEvents else { return }
         let keep = Set(
             bag.values
@@ -504,7 +544,64 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 .prefix(Self.maxMailbagEvents)
                 .map(\.id)
         )
-        bag = bag.filter { keep.contains($0.key) }
+        bag = bag.filter { keep.contains($0.key) || $0.key == protectedID }
+    }
+
+    private func pruneKnownProfiles() {
+        var keep = Set(ownOutbound.keys)
+        keep.formUnion(forwarded.keys)
+        if let ownProfileEventID {
+            keep.insert(ownProfileEventID)
+        }
+        for peer in peers {
+            if let profileEventID = peer.profileEventID {
+                keep.insert(profileEventID)
+            }
+        }
+        knownProfiles = knownProfiles.filter { keep.contains($0.key) }
+    }
+
+    private func rememberProfile(from eventJson: String, remotePeerID: String?) {
+        guard let profile = IrisNearbyProfileEvent.fromEventJson(eventJson) else { return }
+        knownProfiles[profile.id] = profile
+        if let remotePeerID {
+            applyAdvertisedProfile(profile, toPeerID: remotePeerID)
+        }
+    }
+
+    private func applyAdvertisedProfile(_ profile: IrisNearbyProfileEvent, toPeerID peerID: String) {
+        guard let index = peers.firstIndex(where: { $0.id == peerID }),
+              peers[index].profileEventID == profile.id else { return }
+        peers[index].ownerPubkeyHex = profile.ownerPubkeyHex
+        if let displayName = profile.displayName {
+            peers[index].name = displayName
+        }
+        if let pictureURL = profile.pictureURL {
+            peers[index].pictureURL = pictureURL
+        }
+        peers[index].lastSeen = Date()
+        sortPeers()
+        status = sidebarSubtitle
+    }
+
+    private func sortPeers() {
+        peers.sort {
+            let comparison = $0.name.localizedCaseInsensitiveCompare($1.name)
+            if comparison == .orderedSame {
+                return $0.id < $1.id
+            }
+            return comparison == .orderedAscending
+        }
+    }
+
+    private func sanitizedName(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func sanitizedEventID(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.count == 64 ? trimmed : nil
     }
 
     private func bluetoothStatus(_ state: CBManagerState) -> String {
@@ -699,6 +796,41 @@ private struct IrisNearbyStoredEvent {
             eventJson: eventJson,
             storedAt: Date()
         )
+    }
+}
+
+private struct IrisNearbyProfileEvent {
+    let id: String
+    let ownerPubkeyHex: String
+    let displayName: String?
+    let pictureURL: String?
+
+    static func fromEventJson(_ eventJson: String) -> IrisNearbyProfileEvent? {
+        guard let data = eventJson.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let id = object["id"] as? String,
+              id.count == 64,
+              let kind = object["kind"] as? NSNumber,
+              kind.uint32Value == 0,
+              let ownerPubkeyHex = object["pubkey"] as? String,
+              ownerPubkeyHex.count == 64,
+              let content = object["content"] as? String,
+              let contentData = content.data(using: .utf8),
+              let metadata = try? JSONSerialization.jsonObject(with: contentData) as? [String: Any] else {
+            return nil
+        }
+        return IrisNearbyProfileEvent(
+            id: id,
+            ownerPubkeyHex: ownerPubkeyHex,
+            displayName: normalized(metadata["display_name"]) ?? normalized(metadata["name"]),
+            pictureURL: normalized(metadata["picture"])
+        )
+    }
+
+    private static func normalized(_ value: Any?) -> String? {
+        guard let string = value as? String else { return nil }
+        let trimmed = string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 }
 

@@ -105,13 +105,11 @@ impl AppCore {
         let mut events: Vec<(&'static str, Event)> = Vec::new();
 
         if let (Some(keys), Some(profile)) = (owner_keys.clone(), local_profile) {
-            if profile.preferred_label().is_some() {
-                if let Ok(event) =
-                    EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile))
-                        .sign_with_keys(&keys)
-                {
-                    events.push(("metadata", event));
-                }
+            if let Ok(event) =
+                EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile))
+                    .sign_with_keys(&keys)
+            {
+                events.push(("metadata", event));
             }
         }
 

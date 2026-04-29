@@ -4,11 +4,14 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import to.iris.chat.core.AppManager
@@ -157,6 +161,14 @@ fun ChatListScreen(
                             },
                             modifier = Modifier.testTag("nearbyChatRow"),
                         )
+                        if (nearbySnapshot.visible && nearbySnapshot.peers.isNotEmpty()) {
+                            NearbyPeerStrip(
+                                appManager = appManager,
+                                appState = appState,
+                                peers = nearbySnapshot.peers,
+                                modifier = Modifier.padding(start = 70.dp, end = 16.dp, bottom = 10.dp),
+                            )
+                        }
                         IrisDivider(modifier = Modifier.padding(start = 70.dp))
                     }
                 }
@@ -224,6 +236,73 @@ fun ChatListScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NearbyPeerStrip(
+    appManager: AppManager,
+    appState: AppState,
+    peers: List<IrisNearbyService.Peer>,
+    modifier: Modifier = Modifier,
+) {
+    LazyRow(
+        modifier = modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        items(peers, key = { it.id }) { peer ->
+            NearbyPeerChip(
+                appManager = appManager,
+                appState = appState,
+                peer = peer,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NearbyPeerChip(
+    appManager: AppManager,
+    appState: AppState,
+    peer: IrisNearbyService.Peer,
+) {
+    val avatarData by rememberNhashImageData(appManager, peer.pictureUrl)
+    val avatarUrl =
+        peer.pictureUrl
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?.let { url ->
+                proxiedImageUrl(
+                    originalSrc = url,
+                    preferences = appState.preferences,
+                    width = 84u,
+                    height = 84u,
+                    square = true,
+                )
+            }
+    Column(
+        modifier =
+            Modifier
+                .width(64.dp)
+                .clickable(enabled = peer.ownerPubkeyHex != null) {
+                    peer.ownerPubkeyHex?.let(appManager::createChat)
+                }
+                .testTag("nearbyPeer-${peer.id.take(12)}"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        IrisAvatar(
+            label = peer.name,
+            size = 42.dp,
+            imageUrl = avatarUrl,
+            imageData = avatarData,
+        )
+        Text(
+            text = peer.name,
+            modifier = Modifier.padding(top = 4.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

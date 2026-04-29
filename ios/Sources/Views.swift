@@ -1340,27 +1340,20 @@ private struct NearbyIrisScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            peerStrip
 
             Rectangle()
                 .fill(palette.border)
                 .frame(height: 1)
 
-            ScrollView {
-                LazyVStack(spacing: 8) {
-                    if service.peers.isEmpty {
-                        Text("No one nearby")
-                            .font(.system(.body, design: .rounded, weight: .semibold))
-                            .foregroundStyle(palette.muted)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 28)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+            if service.peers.isEmpty {
+                Text("No one nearby")
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                peerStrip
+                Spacer(minLength: 0)
             }
-            .background(palette.background)
-
         }
         .background(palette.background)
         .onAppear {
@@ -1401,19 +1394,27 @@ private struct NearbyIrisScreen: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(service.peers) { peer in
-                        VStack(spacing: 6) {
-                            IrisAvatar(
-                                label: peer.name,
-                                size: 42,
-                                preferences: manager.state.preferences,
-                                manager: manager
-                            )
-                            Text(peer.name)
-                                .font(.system(.caption, design: .rounded, weight: .semibold))
-                                .foregroundStyle(palette.textPrimary)
-                                .lineLimit(1)
-                                .frame(maxWidth: 78)
+                        Button {
+                            openPeer(peer)
+                        } label: {
+                            VStack(spacing: 6) {
+                                IrisAvatar(
+                                    label: peer.name,
+                                    size: 42,
+                                    pictureUrl: peer.pictureURL,
+                                    preferences: manager.state.preferences,
+                                    manager: manager
+                                )
+                                Text(peer.name)
+                                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(palette.textPrimary)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 78)
+                            }
                         }
+                        .buttonStyle(.plain)
+                        .disabled(peer.ownerPubkeyHex == nil)
+                        .accessibilityIdentifier("nearbyPeer-\(String(peer.id.prefix(12)))")
                     }
                 }
                 .padding(.horizontal, 16)
@@ -1421,6 +1422,11 @@ private struct NearbyIrisScreen: View {
             }
             .background(palette.panel)
         }
+    }
+
+    private func openPeer(_ peer: IrisNearbyPeer) {
+        guard let ownerPubkeyHex = peer.ownerPubkeyHex else { return }
+        manager.dispatch(.createChat(peerInput: ownerPubkeyHex))
     }
 }
 #endif
