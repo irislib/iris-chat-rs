@@ -1,3 +1,4 @@
+import Intents
 import Social
 import UniformTypeIdentifiers
 
@@ -12,6 +13,7 @@ private struct StoredSharePayload: Codable {
     let id: String
     let text: String
     let attachments: [StoredShareAttachment]
+    let suggestedChatId: String?
 }
 
 final class ShareViewController: SLComposeServiceViewController {
@@ -51,7 +53,12 @@ final class ShareViewController: SLComposeServiceViewController {
             return
         }
 
-        let payload = StoredSharePayload(id: shareID, text: text, attachments: collected.attachments)
+        let payload = StoredSharePayload(
+            id: shareID,
+            text: text,
+            attachments: collected.attachments,
+            suggestedChatId: suggestedChatId
+        )
         do {
             let data = try JSONEncoder().encode(payload)
             let payloadURL = sharesDir.appendingPathComponent(shareID).appendingPathExtension("json")
@@ -61,6 +68,7 @@ final class ShareViewController: SLComposeServiceViewController {
             return
         }
 
+        donateSuggestedInteraction()
         if let url = URL(string: "irischat://share/\(shareID)") {
             await extensionContext?.open(url)
         }
@@ -92,6 +100,25 @@ final class ShareViewController: SLComposeServiceViewController {
         }
 
         return (textParts.joined(separator: "\n"), attachments)
+    }
+
+    private var suggestedChatId: String? {
+        let chatId = (extensionContext?.intent as? INSendMessageIntent)?
+            .conversationIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return chatId?.isEmpty == false ? chatId : nil
+    }
+
+    private func donateSuggestedInteraction() {
+        guard let intent = extensionContext?.intent as? INSendMessageIntent,
+              let chatId = suggestedChatId else {
+            return
+        }
+        let interaction = INInteraction(intent: intent, response: nil)
+        interaction.direction = .outgoing
+        interaction.identifier = "share-extension-\(chatId)-\(Int(Date().timeIntervalSince1970))"
+        interaction.groupIdentifier = "iris-chat-share-suggestions"
+        interaction.donate(completion: nil)
     }
 
     private func loadURLText(from provider: NSItemProvider) async -> String? {

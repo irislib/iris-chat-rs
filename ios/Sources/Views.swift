@@ -336,6 +336,20 @@ private struct ShareTargetSheet: View {
     @ObservedObject var manager: AppManager
     let share: PendingShare
     @Environment(\.dismiss) private var dismiss
+    @State private var searchText = ""
+    @State private var selectedChatIds = Set<String>()
+
+    private var filteredChats: [ChatThreadSnapshot] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else {
+            return manager.state.chatList
+        }
+        return manager.state.chatList.filter { chat in
+            chat.displayName.lowercased().contains(query)
+                || (chat.subtitle?.lowercased().contains(query) ?? false)
+                || (chat.lastMessagePreview?.lowercased().contains(query) ?? false)
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -353,29 +367,25 @@ private struct ShareTargetSheet: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(manager.state.chatList, id: \.chatId) { chat in
-                        Button {
-                            manager.sendPendingShare(to: chat.chatId)
-                            dismiss()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(chat.displayName)
-                                    .foregroundStyle(.primary)
-                                if let subtitle = chat.subtitle, !subtitle.isEmpty {
-                                    Text(subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
+                    List {
+                        if filteredChats.isEmpty {
+                            Text("No matches")
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.plain)
+                        ForEach(filteredChats, id: \.chatId) { chat in
+                            shareTargetRow(chat)
+                        }
                     }
+                    .searchable(text: $searchText, prompt: "Search")
                     .listStyle(.plain)
+                    .onAppear(perform: preselectSuggestedChat)
+                    .irisOnChange(of: share.id) { _ in
+                        selectedChatIds.removeAll()
+                        preselectSuggestedChat()
+                    }
                 }
             }
-            .navigationTitle("Share to")
+            .navigationTitle("Choose recipients")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -383,8 +393,70 @@ private struct ShareTargetSheet: View {
                         dismiss()
                     }
                 }
+                if !manager.state.chatList.isEmpty {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            manager.sendPendingShare(
+                                to: manager.state.chatList
+                                    .map(\.chatId)
+                                    .filter { selectedChatIds.contains($0) }
+                            )
+                            dismiss()
+                        } label: {
+                            Text(selectedChatIds.count > 1 ? "Send (\(selectedChatIds.count))" : "Send")
+                        }
+                        .disabled(selectedChatIds.isEmpty)
+                    }
+                }
             }
         }
+    }
+
+    private func shareTargetRow(_ chat: ChatThreadSnapshot) -> some View {
+        let selected = selectedChatIds.contains(chat.chatId)
+        return Button {
+            if selected {
+                selectedChatIds.remove(chat.chatId)
+            } else {
+                selectedChatIds.insert(chat.chatId)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                IrisAvatar(
+                    label: chat.displayName,
+                    size: 38,
+                    emphasize: selected,
+                    pictureUrl: chat.pictureUrl,
+                    preferences: manager.state.preferences,
+                    manager: manager
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(chat.displayName)
+                        .foregroundStyle(.primary)
+                    if let subtitle = chat.subtitle, !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func preselectSuggestedChat() {
+        guard selectedChatIds.isEmpty,
+              let suggested = share.suggestedChatId,
+              manager.state.chatList.contains(where: { $0.chatId == suggested }) else {
+            return
+        }
+        selectedChatIds.insert(suggested)
     }
 }
 #endif

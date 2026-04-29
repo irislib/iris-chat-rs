@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import Intents
+#endif
 import Security
 import SwiftUI
 #if os(iOS)
@@ -26,7 +29,79 @@ struct PendingShare: Codable, Identifiable, Equatable {
     let id: String
     let text: String
     let attachments: [PendingShareAttachment]
+    let suggestedChatId: String?
 }
+
+#if os(iOS)
+private final class ShareSuggestionDonor {
+    private let groupIdentifier = "iris-chat-share-suggestions"
+    private var donatedIdentifiers = Set<String>()
+
+    func syncRecentChats(_ chats: [ChatThreadSnapshot]) {
+        chats
+            .filter { $0.lastMessageAtSecs != nil }
+            .sorted { ($0.lastMessageAtSecs ?? 0) > ($1.lastMessageAtSecs ?? 0) }
+            .prefix(8)
+            .forEach { chat in
+                donate(chat: chat, timestampSecs: chat.lastMessageAtSecs)
+            }
+    }
+
+    func donateSelectedChats(_ chats: [ChatThreadSnapshot]) {
+        chats.forEach { chat in
+            donate(chat: chat, timestampSecs: nil, force: true)
+        }
+    }
+
+    private func donate(chat: ChatThreadSnapshot, timestampSecs: UInt64?, force: Bool = false) {
+        let chatId = chat.chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !chatId.isEmpty else {
+            return
+        }
+        let timestampKey = timestampSecs.map(String.init) ?? String(Int(Date().timeIntervalSince1970))
+        let identifier = "share-\(chatId)-\(timestampKey)"
+        guard force || !donatedIdentifiers.contains(identifier) else {
+            return
+        }
+        donatedIdentifiers.insert(identifier)
+
+        let displayName = chat.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = displayName.isEmpty ? "Chat" : displayName
+        let recipient = INPerson(
+            personHandle: INPersonHandle(value: chatId, type: .unknown),
+            nameComponents: nil,
+            displayName: title,
+            image: nil,
+            contactIdentifier: nil,
+            customIdentifier: chatId,
+            isContactSuggestion: false,
+            suggestionType: .instantMessageAddress
+        )
+        let groupName = chat.kind == .group ? INSpeakableString(spokenPhrase: title) : nil
+        let intent = INSendMessageIntent(
+            recipients: chat.kind == .direct ? [recipient] : nil,
+            outgoingMessageType: .outgoingMessageText,
+            content: nil,
+            speakableGroupName: groupName,
+            conversationIdentifier: chatId,
+            serviceName: "Iris Chat",
+            sender: nil,
+            attachments: nil
+        )
+        let interaction = INInteraction(intent: intent, response: nil)
+        interaction.direction = .outgoing
+        interaction.identifier = identifier
+        interaction.groupIdentifier = groupIdentifier
+        if let timestampSecs {
+            interaction.dateInterval = DateInterval(
+                start: Date(timeIntervalSince1970: TimeInterval(timestampSecs)),
+                duration: 1
+            )
+        }
+        interaction.donate(completion: nil)
+    }
+}
+#endif
 
 private struct ClientDebugLogEntry {
     let timestampSecs: UInt64
@@ -336,6 +411,7 @@ final class AppManager: ObservableObject {
 #endif
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
+    private let shareSuggestionDonor = ShareSuggestionDonor()
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
@@ -378,6 +454,9 @@ final class AppManager: ObservableObject {
         if AppPaths.testRunId(environment: environment) == nil {
             syncStartupAtLoginPreference(initialState.preferences.startupAtLoginEnabled)
         }
+#if os(iOS)
+        shareSuggestionDonor.syncRecentChats(initialState.chatList)
+#endif
 
 #if os(iOS) || os(macOS)
         nearbyIris.ingestEventJson = { [weak self] eventJson in
@@ -490,25 +569,53 @@ final class AppManager: ObservableObject {
     }
 
     func sendPendingShare(to chatId: String) {
-        let trimmedChatId = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let share = pendingShare, !trimmedChatId.isEmpty else {
+        sendPendingShare(to: [chatId])
+    }
+
+    func sendPendingShare(to chatIds: [String]) {
+        guard let share = pendingShare else {
             return
         }
-        if share.attachments.isEmpty {
-            dispatchToRust(.sendMessage(chatId: trimmedChatId, text: share.text))
-        } else {
-            dispatchToRust(
-                .sendAttachments(
-                    chatId: trimmedChatId,
-                    attachments: share.attachments.map {
-                        OutgoingAttachment(filePath: $0.path, filename: $0.filename)
-                    },
-                    caption: share.text
-                )
-            )
+        let targets = uniqueTrimmedChatIds(chatIds)
+        guard !targets.isEmpty else {
+            return
         }
-        dispatchToRust(.openChat(chatId: trimmedChatId))
+        for chatId in targets {
+            if share.attachments.isEmpty {
+                dispatchToRust(.sendMessage(chatId: chatId, text: share.text))
+            } else {
+                dispatchToRust(
+                    .sendAttachments(
+                        chatId: chatId,
+                        attachments: share.attachments.map {
+                            OutgoingAttachment(filePath: $0.path, filename: $0.filename)
+                        },
+                        caption: share.text
+                    )
+                )
+            }
+        }
+        dispatchToRust(.openChat(chatId: targets[0]))
+#if os(iOS)
+        shareSuggestionDonor.donateSelectedChats(
+            state.chatList.filter { targets.contains($0.chatId) }
+        )
+#endif
         pendingShare = nil
+    }
+
+    private func uniqueTrimmedChatIds(_ chatIds: [String]) -> [String] {
+        var seen = Set<String>()
+        var result = [String]()
+        for raw in chatIds {
+            let chatId = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if chatId.isEmpty || seen.contains(chatId) {
+                continue
+            }
+            seen.insert(chatId)
+            result.append(chatId)
+        }
+        return result
     }
 
     private func loadPendingShare(id: String) {
@@ -1040,6 +1147,7 @@ final class AppManager: ObservableObject {
             postDesktopNotifications(from: state, to: nextState)
             state = nextState
 #if os(iOS)
+            shareSuggestionDonor.syncRecentChats(nextState.chatList)
             mobilePushRuntime.sync(state: nextState, ownerNsec: secretStore.load()?.ownerNsec)
 #endif
             bootstrapInFlight = false

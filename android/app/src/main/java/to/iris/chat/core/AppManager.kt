@@ -514,13 +514,23 @@ class AppManager(
     }
 
     fun sendPendingShareToChat(chatId: String) {
+        sendPendingShareToChats(listOf(chatId))
+    }
+
+    fun sendPendingShareToChats(chatIds: Collection<String>) {
         val share = mutablePendingShare.value ?: return
-        if (share.attachments.isEmpty()) {
-            sendText(chatId, share.text)
-        } else {
-            sendAttachments(chatId, share.attachments, share.text)
+        val targets = chatIds.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        if (targets.isEmpty()) {
+            return
         }
-        openChat(chatId)
+        targets.forEach { chatId ->
+            if (share.attachments.isEmpty()) {
+                sendText(chatId, share.text)
+            } else {
+                sendAttachments(chatId, share.attachments, share.text)
+            }
+        }
+        openChat(targets.first())
         clearPendingShare()
     }
 
