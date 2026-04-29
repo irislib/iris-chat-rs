@@ -4,15 +4,21 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.delay
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.Screen
+import to.iris.chat.ui.components.IrisOfflineBannerState
+import to.iris.chat.ui.components.LocalIrisOfflineBannerState
 import to.iris.chat.ui.screens.ChatListScreen
 import to.iris.chat.ui.screens.ChatScreen
 import to.iris.chat.ui.screens.CreateAccountScreen
@@ -23,6 +29,7 @@ import to.iris.chat.ui.screens.GroupDetailsScreen
 import to.iris.chat.ui.screens.JoinInviteScreen
 import to.iris.chat.ui.screens.NewChatScreen
 import to.iris.chat.ui.screens.NewGroupScreen
+import to.iris.chat.ui.screens.NearbyIrisSheet
 import to.iris.chat.ui.screens.MyProfileSheet
 import to.iris.chat.ui.screens.RestoreAccountScreen
 import to.iris.chat.ui.screens.SplashScreen
@@ -34,18 +41,48 @@ import to.iris.chat.ui.screens.WelcomeScreen
 @Composable
 fun NdrApp(
     container: AppContainer,
-    onNearbyClick: () -> Unit = {},
+    onNearbyVisibilityChange: (Boolean) -> Unit = { container.nearbyIrisService.setVisible(it) },
 ) {
     val appManager = container.appManager
     val splashViewModel = remember { SplashViewModel(appManager) }
     val bootstrapState by splashViewModel.bootstrapState.collectAsStateWithLifecycle()
     val appState by appManager.state.collectAsStateWithLifecycle()
     val context = LocalContext.current
+    var showingNearbyIris by remember { mutableStateOf(false) }
+    var offlineNowSecs by remember { mutableStateOf(System.currentTimeMillis() / 1_000L) }
+    val openNearbyIris = {
+        showingNearbyIris = true
+    }
 
     LaunchedEffect(appState.toast) {
         val message = appState.toast ?: return@LaunchedEffect
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
     }
+
+    val offlineSinceSecs = appState.networkStatus?.allRelaysOfflineSinceSecs?.toLong()
+    val allRelaysOffline =
+        appState.networkStatus?.let { status ->
+            status.relayUrls.isNotEmpty() &&
+                status.connectedRelayCount == 0uL &&
+                offlineSinceSecs != null
+        } == true
+    LaunchedEffect(allRelaysOffline, offlineSinceSecs) {
+        while (allRelaysOffline) {
+            offlineNowSecs = System.currentTimeMillis() / 1_000L
+            delay(1_000L)
+        }
+    }
+    val offlineBannerState =
+        if (
+            allRelaysOffline &&
+            offlineSinceSecs != null &&
+            offlineNowSecs.saturatingSubtract(offlineSinceSecs) >= 5L
+        ) {
+            val bluetoothState = if (container.nearbyIrisService.snapshot.bluetoothOn) "on" else "off"
+            IrisOfflineBannerState("Offline, Bluetooth $bluetoothState")
+        } else {
+            null
+        }
 
     val router = appState.router
     val activeScreen = router.screenStack.lastOrNull() ?: router.defaultScreen
@@ -54,138 +91,153 @@ fun NdrApp(
         appManager.dispatch(AppAction.UpdateScreenStack(router.screenStack.dropLast(1)))
     }
 
-    Box {
-        when (bootstrapState) {
-            AccountBootstrapState.Loading -> {
-                SplashScreen(
-                    bootstrapState = bootstrapState,
-                    onNeedsLogin = {},
-                    onLoggedIn = {},
-                )
-            }
-
-            AccountBootstrapState.NeedsLogin -> {
-                when (activeScreen) {
-                    Screen.Welcome -> WelcomeScreen(appManager = appManager)
-                    Screen.CreateAccount -> CreateAccountScreen(appManager = appManager, appState = appState)
-                    Screen.RestoreAccount -> RestoreAccountScreen(appManager = appManager, appState = appState)
-                    Screen.AddDevice -> AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
-                    else -> WelcomeScreen(appManager = appManager)
+    CompositionLocalProvider(LocalIrisOfflineBannerState provides offlineBannerState) {
+        Box {
+            when (bootstrapState) {
+                AccountBootstrapState.Loading -> {
+                    SplashScreen(
+                        bootstrapState = bootstrapState,
+                        onNeedsLogin = {},
+                        onLoggedIn = {},
+                    )
                 }
-            }
 
-            is AccountBootstrapState.LoggedIn -> {
-                when (val screen = activeScreen) {
-                    Screen.Welcome -> {
-                        WelcomeScreen(appManager = appManager)
+                AccountBootstrapState.NeedsLogin -> {
+                    when (activeScreen) {
+                        Screen.Welcome -> WelcomeScreen(appManager = appManager)
+                        Screen.CreateAccount -> CreateAccountScreen(appManager = appManager, appState = appState)
+                        Screen.RestoreAccount -> RestoreAccountScreen(appManager = appManager, appState = appState)
+                        Screen.AddDevice -> AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
+                        else -> WelcomeScreen(appManager = appManager)
                     }
+                }
 
-                    Screen.CreateAccount -> {
-                        CreateAccountScreen(appManager = appManager, appState = appState)
-                    }
+                is AccountBootstrapState.LoggedIn -> {
+                    when (val screen = activeScreen) {
+                        Screen.Welcome -> {
+                            WelcomeScreen(appManager = appManager)
+                        }
 
-                    Screen.RestoreAccount -> {
-                        RestoreAccountScreen(appManager = appManager, appState = appState)
-                    }
+                        Screen.CreateAccount -> {
+                            CreateAccountScreen(appManager = appManager, appState = appState)
+                        }
 
-                    Screen.AddDevice -> {
-                        AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
-                    }
+                        Screen.RestoreAccount -> {
+                            RestoreAccountScreen(appManager = appManager, appState = appState)
+                        }
 
-                    Screen.ChatList -> {
-                        ChatListScreen(
-                            appManager = appManager,
-                            appState = appState,
-                            nearbyService = container.nearbyIrisService,
-                            onNearbyClick = onNearbyClick,
-                        )
-                    }
+                        Screen.AddDevice -> {
+                            AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
+                        }
 
-                    Screen.NewChat -> {
-                        NewChatScreen(appManager = appManager, appState = appState)
-                    }
-
-                    Screen.NewGroup -> {
-                        NewGroupScreen(appManager = appManager, appState = appState)
-                    }
-
-                    Screen.CreateInvite -> {
-                        CreateInviteScreen(appManager = appManager, appState = appState)
-                    }
-
-                    Screen.JoinInvite -> {
-                        JoinInviteScreen(appManager = appManager, appState = appState)
-                    }
-
-                    Screen.Settings -> {
-                        val account = appState.account
-                        if (account == null) {
+                        Screen.ChatList -> {
                             ChatListScreen(
                                 appManager = appManager,
                                 appState = appState,
                                 nearbyService = container.nearbyIrisService,
-                                onNearbyClick = onNearbyClick,
+                                onNearbyClick = openNearbyIris,
                             )
-                        } else {
-                            MyProfileSheet(
+                        }
+
+                        Screen.NewChat -> {
+                            NewChatScreen(appManager = appManager, appState = appState)
+                        }
+
+                        Screen.NewGroup -> {
+                            NewGroupScreen(appManager = appManager, appState = appState)
+                        }
+
+                        Screen.CreateInvite -> {
+                            CreateInviteScreen(appManager = appManager, appState = appState)
+                        }
+
+                        Screen.JoinInvite -> {
+                            JoinInviteScreen(appManager = appManager, appState = appState)
+                        }
+
+                        Screen.Settings -> {
+                            val account = appState.account
+                            if (account == null) {
+                                ChatListScreen(
+                                    appManager = appManager,
+                                    appState = appState,
+                                    nearbyService = container.nearbyIrisService,
+                                    onNearbyClick = openNearbyIris,
+                                )
+                            } else {
+                                MyProfileSheet(
+                                    appManager = appManager,
+                                    npub = account.npub,
+                                    displayName = account.displayName,
+                                    pictureUrl = account.pictureUrl,
+                                    deviceNpub = account.deviceNpub,
+                                    canManageDevices = account.hasOwnerSigningAuthority,
+                                    sendTypingIndicators = appState.preferences.sendTypingIndicators,
+                                    sendReadReceipts = appState.preferences.sendReadReceipts,
+                                    desktopNotificationsEnabled = appState.preferences.desktopNotificationsEnabled,
+                                    imageProxyEnabled = appState.preferences.imageProxyEnabled,
+                                    imageProxyUrl = appState.preferences.imageProxyUrl,
+                                    imageProxyKeyHex = appState.preferences.imageProxyKeyHex,
+                                    imageProxySaltHex = appState.preferences.imageProxySaltHex,
+                                    preferences = appState.preferences,
+                                    networkStatus = appState.networkStatus,
+                                    onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },
+                                    onLogout = { appManager.logout() },
+                                    onDismiss = {
+                                        appManager.dispatch(
+                                            AppAction.UpdateScreenStack(router.screenStack.dropLast(1)),
+                                        )
+                                    },
+                                )
+                            }
+                        }
+
+                        Screen.DeviceRoster -> {
+                            DeviceRosterScreen(appManager = appManager, appState = appState)
+                        }
+
+                        Screen.AwaitingDeviceApproval -> {
+                            AwaitingDeviceApprovalScreen(appManager = appManager, appState = appState)
+                        }
+
+                        Screen.DeviceRevoked -> {
+                            DeviceRevokedScreen(appManager = appManager, appState = appState)
+                        }
+
+                        is Screen.Chat -> {
+                            // ChatScreen takes only `(appManager, chatId)` and
+                            // collects its own state slices internally. Passing
+                            // `appState` here would invalidate ChatScreen's
+                            // memoization on every relay event.
+                            ChatScreen(
                                 appManager = appManager,
-                                npub = account.npub,
-                                displayName = account.displayName,
-                                pictureUrl = account.pictureUrl,
-                                deviceNpub = account.deviceNpub,
-                                canManageDevices = account.hasOwnerSigningAuthority,
-                                sendTypingIndicators = appState.preferences.sendTypingIndicators,
-                                sendReadReceipts = appState.preferences.sendReadReceipts,
-                                desktopNotificationsEnabled = appState.preferences.desktopNotificationsEnabled,
-                                imageProxyEnabled = appState.preferences.imageProxyEnabled,
-                                imageProxyUrl = appState.preferences.imageProxyUrl,
-                                imageProxyKeyHex = appState.preferences.imageProxyKeyHex,
-                                imageProxySaltHex = appState.preferences.imageProxySaltHex,
-                                preferences = appState.preferences,
-                                networkStatus = appState.networkStatus,
-                                onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },
-                                onLogout = { appManager.logout() },
-                                onDismiss = {
-                                    appManager.dispatch(
-                                        AppAction.UpdateScreenStack(router.screenStack.dropLast(1)),
-                                    )
-                                },
+                                chatId = screen.chatId,
+                            )
+                        }
+
+                        is Screen.GroupDetails -> {
+                            GroupDetailsScreen(
+                                appManager = appManager,
+                                appState = appState,
+                                groupId = screen.groupId,
                             )
                         }
                     }
-
-                    Screen.DeviceRoster -> {
-                        DeviceRosterScreen(appManager = appManager, appState = appState)
-                    }
-
-                    Screen.AwaitingDeviceApproval -> {
-                        AwaitingDeviceApprovalScreen(appManager = appManager, appState = appState)
-                    }
-
-                    Screen.DeviceRevoked -> {
-                        DeviceRevokedScreen(appManager = appManager, appState = appState)
-                    }
-
-                    is Screen.Chat -> {
-                        // ChatScreen takes only `(appManager, chatId)` and
-                        // collects its own state slices internally. Passing
-                        // `appState` here would invalidate ChatScreen's
-                        // memoization on every relay event.
-                        ChatScreen(
-                            appManager = appManager,
-                            chatId = screen.chatId,
-                        )
-                    }
-
-                    is Screen.GroupDetails -> {
-                        GroupDetailsScreen(
-                            appManager = appManager,
-                            appState = appState,
-                            groupId = screen.groupId,
-                        )
-                    }
                 }
+            }
+
+            if (showingNearbyIris) {
+                NearbyIrisSheet(
+                    appManager = appManager,
+                    appState = appState,
+                    service = container.nearbyIrisService,
+                    onVisibleChange = onNearbyVisibilityChange,
+                    onDismiss = { showingNearbyIris = false },
+                )
             }
         }
     }
 }
+
+private fun Long.saturatingSubtract(other: Long): Long =
+    if (this >= other) this - other else 0L

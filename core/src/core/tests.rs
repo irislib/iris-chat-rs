@@ -86,6 +86,27 @@ fn direct_message_with_no_relays_is_queued_locally() {
 }
 
 #[test]
+fn network_status_marks_configured_session_offline_until_a_relay_connects() {
+    let owner = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+
+    core.start_primary_session(owner.clone(), owner, false, false)
+        .expect("primary session");
+
+    let status = core.state.network_status.as_ref().expect("network status");
+    assert_eq!(status.relay_urls, vec!["wss://relay.invalid".to_string()]);
+    assert_eq!(status.connected_relay_count, 0);
+    assert!(status.all_relays_offline_since_secs.is_some());
+}
+
+#[test]
 fn ndr_runtime_invite_session_round_trips_text() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

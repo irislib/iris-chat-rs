@@ -146,6 +146,8 @@ pub struct AppCore {
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     direct_message_subscriptions: DirectMessageSubscriptionTracker,
     relay_status_watch_urls: HashSet<String>,
+    relay_connected_count: u64,
+    all_relays_offline_since_secs: Option<u64>,
     pending_mobile_push_events: VecDeque<Event>,
     debug_log: VecDeque<DebugLogEntry>,
     debug_event_counters: DebugEventCounters,

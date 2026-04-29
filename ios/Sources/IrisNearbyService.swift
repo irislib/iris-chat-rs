@@ -74,6 +74,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return "No users nearby"
     }
 
+    var isBluetoothOn: Bool {
+        if centralManager?.state == .poweredOn || peripheralManager?.state == .poweredOn {
+            return true
+        }
+        guard isVisible, status != "Off", !Self.isBlockingStatus(status) else {
+            return false
+        }
+        return true
+    }
+
     private static func nearbySummary(for peers: [IrisNearbyPeer]) -> String {
         let names = peers.map(summaryName)
         switch names.count {

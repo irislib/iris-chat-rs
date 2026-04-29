@@ -51,6 +51,8 @@ impl AppCore {
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
             relay_status_watch_urls: HashSet::new(),
+            relay_connected_count: 0,
+            all_relays_offline_since_secs: None,
             pending_mobile_push_events: VecDeque::new(),
             debug_log: VecDeque::new(),
             debug_event_counters: DebugEventCounters::default(),

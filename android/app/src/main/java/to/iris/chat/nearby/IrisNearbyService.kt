@@ -53,6 +53,7 @@ class IrisNearbyService(
     data class Snapshot(
         val visible: Boolean,
         val status: String,
+        val bluetoothOn: Boolean,
         val peerCount: Int,
         val peers: List<Peer>,
     )
@@ -99,11 +100,26 @@ class IrisNearbyService(
             Snapshot(
                 visible = visible,
                 status = status,
+                bluetoothOn = isBluetoothOn(),
                 peerCount = peers.size,
                 peers =
                     peers.values
                         .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id }),
             )
+
+    private fun isBluetoothOn(): Boolean =
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                false
+            } else {
+                adapter?.isEnabled == true
+            }
+        } catch (_: SecurityException) {
+            false
+        }
 
     fun setVisible(nextVisible: Boolean) {
         if (visible == nextVisible) {

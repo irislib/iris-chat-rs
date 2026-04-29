@@ -31,6 +31,7 @@ impl AppCore {
         let t0 = crate::perflog::now_ms();
         self.state.account = self.build_account_snapshot();
         self.state.device_roster = self.build_device_roster_snapshot();
+        self.refresh_relay_connection_status();
         self.state.network_status = Some(self.build_network_status_snapshot());
         self.state.public_invite = self.build_public_invite_snapshot();
         self.state.link_device = self.build_link_device_snapshot();
@@ -333,6 +334,8 @@ impl AppCore {
         NetworkStatusSnapshot {
             relay_set_id: RELAY_SET_ID.to_string(),
             relay_urls: self.preferences.nostr_relay_urls.clone(),
+            connected_relay_count: self.relay_connected_count,
+            all_relays_offline_since_secs: self.all_relays_offline_since_secs,
             syncing: self.state.busy.syncing_network,
             pending_outbound_count: 0,
             pending_group_control_count: 0,

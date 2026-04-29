@@ -1,6 +1,9 @@
 package to.iris.chat
 
+import android.Manifest
+import android.os.Build
 import android.view.KeyEvent as AndroidKeyEvent
+import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
@@ -21,6 +24,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTouchInput
 import androidx.test.espresso.Espresso.pressBack
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertFalse
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -75,6 +79,24 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("deviceRosterCurrentDeviceNpub", useUnmergedTree = true)
             .assertIsDisplayed()
         composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun nearby_row_opens_nearby_sheet() {
+        grantNearbyPermissions()
+        composeRule.ensureChatList()
+        composeRule.hideKeyboard()
+
+        composeRule.onNodeWithTag("nearbyChatRow", useUnmergedTree = true).performClick()
+
+        composeRule.waitForDisplayedTag("nearbyIrisSheet")
+        composeRule.waitForDisplayedTag("nearbyCloseButton")
+        composeRule.waitForDisplayedTag("nearbyVisibilitySwitch")
+
+        composeRule.onNodeWithTag("nearbyCloseButton", useUnmergedTree = true).performClick()
+        composeRule.waitUntil(10_000) {
+            !composeRule.hasTag("nearbyIrisSheet")
+        }
     }
 
     @Test
@@ -399,6 +421,18 @@ class PikaLikeUiTest {
         }
     }
 
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitForDisplayedTag(
+        tag: String,
+        timeoutMillis: Long = 15_000,
+    ) {
+        waitUntil(timeoutMillis) {
+            runCatching {
+                onNodeWithTag(tag, useUnmergedTree = true).assertIsDisplayed()
+                true
+            }.getOrDefault(false)
+        }
+    }
+
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitForText(
         text: String,
         timeoutMillis: Long = 15_000,
@@ -472,6 +506,37 @@ class PikaLikeUiTest {
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.hasTag(tag: String): Boolean =
         onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.hideKeyboard() {
+        runOnUiThread {
+            val activity = activity
+            activity
+                .getSystemService(InputMethodManager::class.java)
+                .hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
+            activity.window.decorView.clearFocus()
+        }
+        waitForIdle()
+    }
+
+    private fun grantNearbyPermissions() {
+        val packageName = composeRule.activity.packageName
+        val permissions =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                listOf(
+                    Manifest.permission.BLUETOOTH_SCAN,
+                    Manifest.permission.BLUETOOTH_CONNECT,
+                    Manifest.permission.BLUETOOTH_ADVERTISE,
+                )
+            } else {
+                listOf(Manifest.permission.ACCESS_FINE_LOCATION)
+            }
+        val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
+        permissions.forEach { permission ->
+            runCatching {
+                uiAutomation.grantRuntimePermission(packageName, permission)
+            }
+        }
+    }
 
     private fun currentChatMessageBodies(): List<String> =
         (composeRule.activity.application as IrisChatApp)

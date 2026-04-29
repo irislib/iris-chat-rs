@@ -1431,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.122"
+version = "0.0.123"
 dependencies = [
  "base64",
  "crossbeam-channel",

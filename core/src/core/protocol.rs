@@ -471,6 +471,41 @@ impl AppCore {
             | RelayStatus::Connecting
             | RelayStatus::Banned => {}
         }
+        self.rebuild_state();
+        self.emit_state();
+    }
+
+    pub(super) fn refresh_relay_connection_status(&mut self) {
+        let configured_relay_count = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.relay_urls.len())
+            .unwrap_or(0);
+        let connected_relay_count = self.connected_relay_count();
+        self.relay_connected_count = connected_relay_count;
+
+        if configured_relay_count == 0 || connected_relay_count > 0 {
+            self.all_relays_offline_since_secs = None;
+        } else if self.all_relays_offline_since_secs.is_none() {
+            self.all_relays_offline_since_secs = Some(unix_now().get());
+        }
+    }
+
+    fn connected_relay_count(&self) -> u64 {
+        self.logged_in
+            .as_ref()
+            .map(|logged_in| {
+                self.runtime.block_on(async {
+                    logged_in
+                        .client
+                        .relays()
+                        .await
+                        .values()
+                        .filter(|relay| relay.status() == RelayStatus::Connected)
+                        .count() as u64
+                })
+            })
+            .unwrap_or(0)
     }
 
     pub(super) fn handle_protocol_subscription_liveness_check(&mut self, token: u64) {

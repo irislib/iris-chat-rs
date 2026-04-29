@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
             IrisChatTheme {
                 NdrApp(
                     container = container,
-                    onNearbyClick = ::openNearby,
+                    onNearbyVisibilityChange = ::setNearbyVisible,
                 )
             }
         }
@@ -168,14 +168,13 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun openNearby() {
-        val service = container.nearbyIrisService
-        if (service.snapshot.visible) {
-            service.setVisible(false)
+    private fun setNearbyVisible(visible: Boolean) {
+        if (!visible) {
+            container.nearbyIrisService.setVisible(false)
             return
         }
         requestNearbyPermissionIfNeeded {
-            service.setVisible(true)
+            container.nearbyIrisService.setVisible(true)
         }
     }
 
@@ -198,6 +197,10 @@ class MainActivity : ComponentActivity() {
             }
         if (missing.isEmpty()) {
             onGranted()
+            return
+        }
+        if (pendingNearbyPermissionAction != null) {
+            pendingNearbyPermissionAction = onGranted
             return
         }
         pendingNearbyPermissionAction = onGranted

@@ -265,6 +265,8 @@ pub struct GroupDetailsSnapshot {
 pub struct NetworkStatusSnapshot {
     pub relay_set_id: String,
     pub relay_urls: Vec<String>,
+    pub connected_relay_count: u64,
+    pub all_relays_offline_since_secs: Option<u64>,
     pub syncing: bool,
     pub pending_outbound_count: u64,
     pub pending_group_control_count: u64,

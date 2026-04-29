@@ -2,6 +2,11 @@ package to.iris.chat.ui.components
 
 import android.graphics.BitmapFactory
 import android.text.format.DateUtils
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -62,8 +67,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +79,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -89,6 +97,16 @@ import kotlin.math.abs
 private val CardShape = RoundedCornerShape(24.dp)
 private val PillShape = RoundedCornerShape(100.dp)
 
+@Immutable
+data class IrisOfflineBannerState(
+    val text: String,
+)
+
+val LocalIrisOfflineBannerState =
+    staticCompositionLocalOf<IrisOfflineBannerState?> {
+        null
+    }
+
 @Composable
 fun IrisTopBar(
     title: String,
@@ -101,94 +119,132 @@ fun IrisTopBar(
     onTitleClick: (() -> Unit)? = null,
 ) {
     val palette = IrisTheme.palette
-    Surface(
+    val offlineBanner = LocalIrisOfflineBannerState.current
+    Column(
         modifier =
             modifier
-                .fillMaxWidth()
-                .statusBarsPadding(),
-        color = palette.toolbar,
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
+                .fillMaxWidth(),
     ) {
-        Row(
+        Surface(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    .statusBarsPadding(),
+            color = palette.toolbar,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
         ) {
-            when {
-                onBack != null -> {
-                    BadgedBox(
-                        badge = {
-                            if (backBadgeCount > 0uL) {
-                                Badge(
-                                    containerColor = IrisTheme.palette.accent,
-                                    contentColor = Color.White,
-                                ) {
-                                    Text(
-                                        if (backBadgeCount > 99uL) "99+" else backBadgeCount.toString(),
-                                        color = Color.White,
-                                    )
-                                }
-                            }
-                        },
-                    ) {
-                        IconButton(
-                            onClick = onBack,
-                            modifier = Modifier.size(40.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                                contentDescription = "Back",
-                            )
-                        }
-                    }
-                }
-
-                leading != null -> {
-                    Row(
-                        modifier = Modifier.padding(start = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        content = leading,
-                    )
-                }
-
-                else -> {
-                    Spacer(modifier = Modifier.size(40.dp))
-                }
-            }
-
             Row(
                 modifier =
                     Modifier
-                        .weight(1f)
-                        .let { base ->
-                            if (onTitleClick != null) {
-                                base
-                                    .clickable(onClick = onTitleClick)
-                                    .testTag("chatHeaderTitleButton")
-                            } else {
-                                base
-                            }
-                        },
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        .fillMaxWidth()
+                        .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                titleAccessoryLeading?.invoke()
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
+                when {
+                    onBack != null -> {
+                        BadgedBox(
+                            badge = {
+                                if (backBadgeCount > 0uL) {
+                                    Badge(
+                                        containerColor = IrisTheme.palette.accent,
+                                        contentColor = Color.White,
+                                    ) {
+                                        Text(
+                                            if (backBadgeCount > 99uL) "99+" else backBadgeCount.toString(),
+                                            color = Color.White,
+                                        )
+                                    }
+                                }
+                            },
+                        ) {
+                            IconButton(
+                                onClick = onBack,
+                                modifier = Modifier.size(40.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                                    contentDescription = "Back",
+                                )
+                            }
+                        }
+                    }
+
+                    leading != null -> {
+                        Row(
+                            modifier = Modifier.padding(start = 2.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            content = leading,
+                        )
+                    }
+
+                    else -> {
+                        Spacer(modifier = Modifier.size(40.dp))
+                    }
+                }
+
+                Row(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .let { base ->
+                                if (onTitleClick != null) {
+                                    base
+                                        .clickable(onClick = onTitleClick)
+                                        .testTag("chatHeaderTitleButton")
+                                } else {
+                                    base
+                                }
+                            },
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    titleAccessoryLeading?.invoke()
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    content = actions,
                 )
             }
+        }
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                content = actions,
-            )
+        AnimatedVisibility(
+            visible = offlineBanner != null,
+            enter = expandVertically(expandFrom = Alignment.Top) + fadeIn(),
+            exit = shrinkVertically(shrinkTowards = Alignment.Top) + fadeOut(),
+        ) {
+            Surface(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag("offlineStatusBanner"),
+                color = palette.accentAlt,
+                contentColor = Color.White,
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                Text(
+                    text = offlineBanner?.text.orEmpty(),
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }

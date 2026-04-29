@@ -98,7 +98,8 @@ struct RootView: View {
                         leading: topBarLeadingItem,
                         trailing: topBarTrailingItem,
                         titleAccessoryLeading: chatHeaderTitleAvatar,
-                        onTitleTap: chatHeaderOnTap
+                        onTitleTap: chatHeaderOnTap,
+                        offlineBanner: offlineBanner
                     ) {
                         content
                     }
@@ -263,6 +264,19 @@ struct RootView: View {
         }
     }
 
+    private var offlineBanner: AnyView {
+#if os(iOS)
+        AnyView(
+            OfflineStatusBanner(
+                networkStatus: manager.state.networkStatus,
+                nearbyService: manager.nearbyIris
+            )
+        )
+#else
+        AnyView(EmptyView())
+#endif
+    }
+
     private func screenTitle(_ screen: Screen) -> String {
         switch screen {
         case .welcome: return "Welcome"
@@ -305,6 +319,7 @@ struct NavigationShell<Content: View>: View {
     let trailing: AnyView
     let titleAccessoryLeading: AnyView
     let onTitleTap: (() -> Void)?
+    let offlineBanner: AnyView
     let content: () -> Content
 
     init(
@@ -316,6 +331,7 @@ struct NavigationShell<Content: View>: View {
         trailing: AnyView = AnyView(EmptyView()),
         titleAccessoryLeading: AnyView = AnyView(EmptyView()),
         onTitleTap: (() -> Void)? = nil,
+        offlineBanner: AnyView = AnyView(EmptyView()),
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
@@ -326,6 +342,7 @@ struct NavigationShell<Content: View>: View {
         self.trailing = trailing
         self.titleAccessoryLeading = titleAccessoryLeading
         self.onTitleTap = onTitleTap
+        self.offlineBanner = offlineBanner
         self.content = content
     }
 
@@ -342,6 +359,8 @@ struct NavigationShell<Content: View>: View {
                 onTitleTap: onTitleTap
             )
 
+            offlineBanner
+
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
@@ -352,6 +371,46 @@ struct NavigationShell<Content: View>: View {
 }
 
 #if os(iOS)
+private struct OfflineStatusBanner: View {
+    @Environment(\.irisPalette) private var palette
+
+    let networkStatus: NetworkStatusSnapshot?
+    @ObservedObject var nearbyService: IrisNearbyService
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { timeline in
+            let text = bannerText(at: timeline.date)
+            VStack(spacing: 0) {
+                if let text {
+                    Text(text)
+                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 6)
+                        .background(palette.accentAlt)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                        .accessibilityIdentifier("offlineStatusBanner")
+                }
+            }
+            .clipped()
+            .animation(.easeInOut(duration: 0.22), value: text)
+        }
+    }
+
+    private func bannerText(at date: Date) -> String? {
+        guard let status = networkStatus,
+              !status.relayUrls.isEmpty,
+              status.connectedRelayCount == 0,
+              let offlineSince = status.allRelaysOfflineSinceSecs,
+              date.timeIntervalSince1970 - TimeInterval(offlineSince) >= 5 else {
+            return nil
+        }
+        return "Offline, Bluetooth \(nearbyService.isBluetoothOn ? "on" : "off")"
+    }
+}
+
 private struct IrisSwipeBackModifier: ViewModifier {
     let enabled: Bool
     let onBack: () -> Void
