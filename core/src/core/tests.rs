@@ -361,7 +361,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     alice
         .send_text(bob_keys.public_key(), message.to_string(), None)
         .expect("alice sends");
-    let bob_message_authors = bob.session_manager().get_all_message_push_author_pubkeys();
+    let bob_message_authors = bob.get_all_message_push_author_pubkeys();
     let published_events = drain_signed_events(&alice, &alice_keys);
     let message_event = published_events
         .iter()
@@ -485,9 +485,7 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     alice
         .send_text(bob_keys.public_key(), message.to_string(), None)
         .expect("alice sends");
-    let bob_message_authors = bob_runtime
-        .session_manager()
-        .get_all_message_push_author_pubkeys();
+    let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
     let message_event = drain_signed_events(&alice, &alice_keys)
         .into_iter()
         .find(|event| {
@@ -602,7 +600,7 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
     alice
         .send_typing(bob_keys.public_key(), None)
         .expect("alice sends typing");
-    let bob_message_authors = bob.session_manager().get_all_message_push_author_pubkeys();
+    let bob_message_authors = bob.get_all_message_push_author_pubkeys();
     let typing_event = drain_signed_events(&alice, &alice_keys)
         .into_iter()
         .find(|event| {
@@ -807,9 +805,7 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         .accept_invite(&alice_invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob_runtime, &bob_keys, &alice);
-    let bob_message_authors = bob_runtime
-        .session_manager()
-        .get_all_message_push_author_pubkeys();
+    let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
     let user_record_key = format!("user/{}", alice_keys.public_key().to_hex());
     let ratchet_before = bob_storage
         .get(&user_record_key)

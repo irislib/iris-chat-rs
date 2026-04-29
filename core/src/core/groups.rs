@@ -76,9 +76,10 @@ impl AppCore {
             let logged_in = self.logged_in.as_ref().expect("checked above");
             logged_in
                 .ndr_runtime
-                .with_group_context(|session_manager, group_manager, _| {
+                .with_group_context(|_, group_manager, _| {
                     let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
-                        session_manager
+                        logged_in
+                            .ndr_runtime
                             .send_event(recipient, rumor.clone())
                             .map(|_| ())
                     };
@@ -406,24 +407,24 @@ impl AppCore {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
-        let result =
-            logged_in
-                .ndr_runtime
-                .with_group_context(|session_manager, group_manager, _| {
-                    let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
-                        session_manager
-                            .send_event(recipient, rumor.clone())
-                            .map(|_| ())
-                    };
-                    group_manager.fan_out_group_metadata(
-                        group,
-                        FanoutGroupMetadataOptions {
-                            send_pairwise: &mut send_pairwise,
-                            exclude_secret_for: exclude_secret_for.as_deref(),
-                            now_ms: Some(unix_now().get().saturating_mul(1000)),
-                        },
-                    )
-                });
+        let result = logged_in
+            .ndr_runtime
+            .with_group_context(|_, group_manager, _| {
+                let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
+                    logged_in
+                        .ndr_runtime
+                        .send_event(recipient, rumor.clone())
+                        .map(|_| ())
+                };
+                group_manager.fan_out_group_metadata(
+                    group,
+                    FanoutGroupMetadataOptions {
+                        send_pairwise: &mut send_pairwise,
+                        exclude_secret_for: exclude_secret_for.as_deref(),
+                        now_ms: Some(unix_now().get().saturating_mul(1000)),
+                    },
+                )
+            });
         if let Err(error) = result {
             self.push_debug_log("group.metadata.fanout.error", error.to_string());
         }

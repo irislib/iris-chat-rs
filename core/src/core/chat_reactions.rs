@@ -47,9 +47,10 @@ impl AppCore {
             let mut result = Ok(());
             logged_in
                 .ndr_runtime
-                .with_group_context(|session_manager, group_manager, _| {
+                .with_group_context(|_, group_manager, _| {
                     let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
-                        session_manager
+                        logged_in
+                            .ndr_runtime
                             .send_event(recipient, rumor.clone())
                             .map(|_| ())
                     };
