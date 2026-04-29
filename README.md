@@ -5,20 +5,25 @@ Encrypted chat app using Nostr Double Ratchet. Shared Rust core, native UIs.
 Primary development is on hashtree:
 https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs
 
-## Status
+## Features
 
-- Shared Rust core owns app state, navigation, messaging, sync, SQLite
-  persistence, and support bundle export.
-- Native shells exist for Android, iOS, macOS, Linux, and Windows.
-- Android, iOS, and macOS are the most active app targets.
-- Linux and Windows are buildable and releaseable, but have lighter acceptance
-  coverage.
-- Current app features: encrypted direct and group chats, device linking,
-  QR/link invites, offline queueing, relay sync, attachments, profile pictures,
-  notifications, share targets, and desktop open-at-login.
+- Encrypted direct and group chats.
+- Device linking and QR/link invites.
+- Offline queueing, message server sync, and SQLite persistence.
+- Attachments, profile pictures, notifications, and support bundles.
+- Desktop open-at-login on macOS, Linux, and Windows.
 - Android, iOS, and macOS expose iris chat as a share destination. The share
   picker supports search and multiple recipients; iOS also donates recent chats
   for share-sheet suggestions.
+
+## Status
+
+- Shared Rust core drives app state, navigation, messaging, sync, persistence,
+  and support export across platforms.
+- Native shells exist for Android, iOS, macOS, Linux, and Windows.
+- Android, iOS, and macOS are the most active app targets.
+- Linux and Windows are buildable and releaseable, with lighter acceptance
+  coverage.
 
 ## Repo
 
