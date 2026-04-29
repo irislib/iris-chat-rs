@@ -59,6 +59,7 @@ mkdir -p "$DIST_DIR"
 TAG="v${IRIS_APP_VERSION_NAME}"
 LINUX_ARCH_LABEL="${IRIS_LINUX_ARCH_LABEL:-x64}"
 ARTIFACT_BASENAME="iris-chat-${TAG}-linux-${LINUX_ARCH_LABEL}"
+DEB_VERSION="${IRIS_LINUX_DEB_VERSION:-${IRIS_APP_VERSION_NAME}-1}"
 
 if [[ "$SKIP_DOCKER_BUILD" -ne 1 ]]; then
   docker build \
@@ -89,6 +90,7 @@ docker run \
   -e IRIS_APP_VERSION_CODE="$IRIS_APP_VERSION_CODE" \
   -e IRIS_BUILD_GIT_SHA="$IRIS_BUILD_GIT_SHA" \
   -e IRIS_BUILD_TIMESTAMP_UTC="$IRIS_BUILD_TIMESTAMP_UTC" \
+  -e IRIS_LINUX_DEB_VERSION="$DEB_VERSION" \
   --entrypoint /bin/bash \
   "$IMAGE" -lc '
     set -Eeuo pipefail
@@ -171,7 +173,7 @@ README
 
     tar -czf "$OUT/${ARTIFACT_BASENAME}.tar.gz" -C "$STAGE" iris-chat
 
-    if cargo deb --no-build --output \
+    if cargo deb --no-build --deb-version "$IRIS_LINUX_DEB_VERSION" --output \
         "$OUT/${ARTIFACT_BASENAME}.deb" 2>/dev/null; then
       echo "Built deb at $OUT/${ARTIFACT_BASENAME}.deb"
     else
