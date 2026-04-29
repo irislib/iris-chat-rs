@@ -8,12 +8,11 @@ public partial class DeviceRevokedView : UserControl
     public DeviceRevokedView() { InitializeComponent(); }
 
     private void OnAcknowledge(object sender, RoutedEventArgs e) =>
-        App.CurrentManager.AcknowledgeRevokedDevice();
+        ConfirmLogout();
 
-    private void OnReset(object sender, RoutedEventArgs e)
+    private static void ConfirmLogout()
     {
         var result = MessageBox.Show(
-            Window.GetWindow(this),
             "This removes your secret keys, messages, and cached files from this device.",
             "Delete app data?",
             MessageBoxButton.OKCancel,

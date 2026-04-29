@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use iris_chat_core::{AppAction, AppState};
+use iris_chat_core::AppState;
 
 use crate::app_manager::AppManager;
 
@@ -20,7 +20,7 @@ pub fn render(_state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     {
         let manager = manager.clone();
         acknowledge.connect_clicked(move |_| {
-            manager.dispatch(AppAction::AcknowledgeRevokedDevice);
+            manager.logout();
         });
     }
     status.set_child(Some(&acknowledge));

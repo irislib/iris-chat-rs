@@ -2598,6 +2598,7 @@ private struct DeviceRosterRow: View {
 
 struct DeviceRevokedScreen: View {
     @ObservedObject var manager: AppManager
+    @State private var showingLogoutConfirmation = false
 
     var body: some View {
         IrisScrollScreen {
@@ -2613,12 +2614,21 @@ struct DeviceRevokedScreen: View {
                     .frame(maxWidth: .infinity)
 
                 Button("Sign in again") {
-                    manager.dispatch(.acknowledgeRevokedDevice)
+                    showingLogoutConfirmation = true
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
                 .accessibilityIdentifier("deviceRevokedLogoutButton")
             }
             .accessibilityIdentifier("deviceRevokedScreen")
+        }
+        .alert("Delete app data?", isPresented: $showingLogoutConfirmation) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                manager.logout()
+            }
+            .accessibilityIdentifier("deviceRevokedConfirmLogoutButton")
+        } message: {
+            Text("This removes your secret keys, messages, and cached files from this device.")
         }
     }
 }

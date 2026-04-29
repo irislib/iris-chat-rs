@@ -306,13 +306,16 @@ impl AppCore {
         let Some(app_keys) = app_keys else {
             return;
         };
-        let known = known_app_keys_from_ndr(event.pubkey, &app_keys, event.created_at.as_secs());
-        self.app_keys.insert(event.pubkey.to_hex(), known);
+        let Some((effective_app_keys, effective_created_at)) =
+            self.apply_known_app_keys_snapshot(event.pubkey, &app_keys, event.created_at.as_secs())
+        else {
+            return;
+        };
         if let Some(logged_in) = self.logged_in.as_ref() {
             logged_in.ndr_runtime.ingest_app_keys_snapshot(
                 event.pubkey,
-                app_keys,
-                event.created_at.as_secs(),
+                effective_app_keys,
+                effective_created_at,
             );
         }
         self.mark_mobile_push_dirty();

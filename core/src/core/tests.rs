@@ -880,6 +880,156 @@ fn linked_device_authorization_follows_app_keys() {
 }
 
 #[test]
+fn restored_authorized_linked_device_is_not_revoked_by_cached_roster() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let other_device = Keys::generate();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-restored-auth-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.app_keys.insert(
+        owner.public_key().to_hex(),
+        known_app_keys_from_ndr(
+            owner.public_key(),
+            &AppKeys::new(vec![DeviceEntry::new(other_device.public_key(), 10)]),
+            10,
+        ),
+    );
+
+    assert_eq!(
+        core.restored_local_authorization_state(
+            None,
+            owner.public_key(),
+            device.public_key(),
+            Some(LocalAuthorizationState::Authorized),
+        ),
+        LocalAuthorizationState::Authorized
+    );
+    assert_eq!(
+        core.local_authorization_state(
+            None,
+            owner.public_key(),
+            device.public_key(),
+            Some(LocalAuthorizationState::Authorized),
+        ),
+        LocalAuthorizationState::Revoked
+    );
+}
+
+#[test]
+fn app_keys_cache_ignores_older_roster_events() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let old_device = Keys::generate();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-roster-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.app_keys.insert(
+        owner.public_key().to_hex(),
+        known_app_keys_from_ndr(
+            owner.public_key(),
+            &AppKeys::new(vec![DeviceEntry::new(device.public_key(), 20)]),
+            20,
+        ),
+    );
+
+    let stale = AppKeys::new(vec![DeviceEntry::new(old_device.public_key(), 10)]);
+    assert!(
+        core.apply_known_app_keys_snapshot(owner.public_key(), &stale, 10)
+            .is_none(),
+        "older app-key events must not replace the cached roster"
+    );
+
+    let cached = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("cached roster");
+    assert_eq!(cached.created_at_secs, 20);
+    assert!(cached
+        .devices
+        .iter()
+        .any(|entry| entry.identity_pubkey_hex == device.public_key().to_hex()));
+    assert!(!cached
+        .devices
+        .iter()
+        .any(|entry| entry.identity_pubkey_hex == old_device.public_key().to_hex()));
+    assert_eq!(
+        core.local_authorization_state(
+            None,
+            owner.public_key(),
+            device.public_key(),
+            Some(LocalAuthorizationState::Authorized),
+        ),
+        LocalAuthorizationState::Authorized
+    );
+}
+
+#[test]
+fn app_keys_cache_merges_same_timestamp_roster_events() {
+    let owner = Keys::generate();
+    let device_a = Keys::generate();
+    let device_b = Keys::generate();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-roster-merge-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.app_keys.insert(
+        owner.public_key().to_hex(),
+        known_app_keys_from_ndr(
+            owner.public_key(),
+            &AppKeys::new(vec![DeviceEntry::new(device_a.public_key(), 20)]),
+            20,
+        ),
+    );
+
+    let concurrent = AppKeys::new(vec![DeviceEntry::new(device_b.public_key(), 20)]);
+    let applied = core
+        .apply_known_app_keys_snapshot(owner.public_key(), &concurrent, 20)
+        .expect("same-timestamp roster should merge");
+    assert_eq!(applied.1, 20);
+
+    let cached = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("cached roster");
+    assert_eq!(cached.created_at_secs, 20);
+    assert!(cached
+        .devices
+        .iter()
+        .any(|entry| entry.identity_pubkey_hex == device_a.public_key().to_hex()));
+    assert!(cached
+        .devices
+        .iter()
+        .any(|entry| entry.identity_pubkey_hex == device_b.public_key().to_hex()));
+}
+
+#[test]
 fn start_linked_device_creates_ownerless_link_invite() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let mut core = AppCore::new(

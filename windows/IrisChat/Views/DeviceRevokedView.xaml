@@ -18,10 +18,6 @@
                     Margin="0,0,0,10">
                 <TextBlock Text="Sign in again" />
             </Button>
-            <Button Style="{StaticResource DangerButton}"
-                    Click="OnReset">
-                <TextBlock Text="Reset and sign out" />
-            </Button>
         </StackPanel>
     </Grid>
 </UserControl>

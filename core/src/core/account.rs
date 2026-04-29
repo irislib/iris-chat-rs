@@ -591,7 +591,7 @@ impl AppCore {
         }
         ndr_runtime.sync_groups(self.groups.values().cloned().collect())?;
 
-        let authorization_state = self.local_authorization_state(
+        let authorization_state = self.restored_local_authorization_state(
             owner_keys.as_ref(),
             owner_pubkey,
             device_pubkey,
@@ -681,6 +681,33 @@ impl AppCore {
         }
     }
 
+    pub(super) fn apply_known_app_keys_snapshot(
+        &mut self,
+        owner: PublicKey,
+        incoming_app_keys: &AppKeys,
+        incoming_created_at: u64,
+    ) -> Option<(AppKeys, u64)> {
+        let owner_hex = owner.to_hex();
+        let current = self.app_keys.get(&owner_hex).cloned();
+        let current_app_keys = current.as_ref().and_then(known_app_keys_to_ndr);
+        let current_created_at = current
+            .as_ref()
+            .map(|known| known.created_at_secs)
+            .unwrap_or_default();
+        let applied = apply_app_keys_snapshot(
+            current_app_keys.as_ref(),
+            current_created_at,
+            incoming_app_keys,
+            incoming_created_at,
+        );
+        let known = known_app_keys_from_ndr(owner, &applied.app_keys, applied.created_at);
+        if current.as_ref() == Some(&known) {
+            return None;
+        }
+        self.app_keys.insert(owner_hex, known);
+        Some((applied.app_keys, applied.created_at))
+    }
+
     pub(super) fn refresh_local_authorization_state(&mut self) -> bool {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return false;
@@ -708,12 +735,45 @@ impl AppCore {
         true
     }
 
+    pub(super) fn restored_local_authorization_state(
+        &self,
+        owner_keys: Option<&Keys>,
+        owner_pubkey: PublicKey,
+        device_pubkey: PublicKey,
+        previous: Option<LocalAuthorizationState>,
+    ) -> LocalAuthorizationState {
+        self.local_authorization_state_inner(
+            owner_keys,
+            owner_pubkey,
+            device_pubkey,
+            previous,
+            false,
+        )
+    }
+
     pub(super) fn local_authorization_state(
         &self,
         owner_keys: Option<&Keys>,
         owner_pubkey: PublicKey,
         device_pubkey: PublicKey,
         previous: Option<LocalAuthorizationState>,
+    ) -> LocalAuthorizationState {
+        self.local_authorization_state_inner(
+            owner_keys,
+            owner_pubkey,
+            device_pubkey,
+            previous,
+            true,
+        )
+    }
+
+    fn local_authorization_state_inner(
+        &self,
+        owner_keys: Option<&Keys>,
+        owner_pubkey: PublicKey,
+        device_pubkey: PublicKey,
+        previous: Option<LocalAuthorizationState>,
+        allow_revoke: bool,
     ) -> LocalAuthorizationState {
         if owner_keys.is_some() {
             return LocalAuthorizationState::Authorized;
@@ -730,6 +790,10 @@ impl AppCore {
             .iter()
             .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(&device_hex));
         if registered {
+            return LocalAuthorizationState::Authorized;
+        }
+
+        if !allow_revoke && previous == Some(LocalAuthorizationState::Authorized) {
             return LocalAuthorizationState::Authorized;
         }
 
