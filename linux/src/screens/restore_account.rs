@@ -9,7 +9,7 @@ use crate::screens::{entry, primary_button, screen_container};
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
 
-    let header = gtk::Label::new(Some("Restore account"));
+    let header = gtk::Label::new(Some("Restore profile"));
     header.add_css_class("title-2");
     header.set_halign(gtk::Align::Start);
     container.append(&header);
@@ -29,7 +29,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let submit = primary_button(if busy {
         "Restoring…"
     } else {
-        "Restore account"
+        "Restore profile"
     });
     submit.set_sensitive(!busy);
 

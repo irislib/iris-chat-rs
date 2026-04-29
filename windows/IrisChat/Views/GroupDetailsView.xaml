@@ -43,6 +43,18 @@
                     CornerRadius="{StaticResource SectionRadius}"
                     Padding="20"
                     Margin="0,0,0,16">
+                <Button Style="{StaticResource SecondaryButton}"
+                        HorizontalAlignment="Left"
+                        Click="OnToggleMute"
+                        x:Name="MuteChatButton">
+                    <TextBlock x:Name="MuteChatText" Text="Mute chat" />
+                </Button>
+            </Border>
+
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
                 <StackPanel>
                     <TextBlock Text="Members"
                                Style="{StaticResource SectionTitleText}"

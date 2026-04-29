@@ -39,7 +39,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder()
         .title("Linked devices")
-        .description("These devices can use your account.")
+        .description("These devices can use your profile.")
         .build();
 
     let device = adw::ActionRow::builder().title("This device").build();

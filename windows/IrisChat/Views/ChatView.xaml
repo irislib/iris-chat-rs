@@ -35,8 +35,15 @@
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Style="{StaticResource GhostButton}"
+                            Click="OnToggleMute"
+                            x:Name="MuteChatButton"
+                            Visibility="Collapsed">
+                        <TextBlock x:Name="MuteChatText" Text="Mute chat" />
+                    </Button>
+                    <Button Style="{StaticResource GhostButton}"
                             Click="OnGroupDetails"
                             x:Name="GroupDetailsButton"
+                            Margin="6,0,0,0"
                             Visibility="Collapsed">
                         <TextBlock Text="Details" />
                     </Button>

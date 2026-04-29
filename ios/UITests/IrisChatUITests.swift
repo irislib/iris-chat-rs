@@ -186,7 +186,9 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "restoreAccountScreen").waitForExistence(timeout: 10))
         XCTAssertTrue(element(app, "importKeyField").waitForExistence(timeout: 10))
         typeText(validOwnerNsec, into: element(app, "importKeyField"), app: app)
-        element(app, "importKeyButton").tap()
+        if !waitForChatList(app, timeout: 2) {
+            element(app, "importKeyButton").tap()
+        }
 
         XCTAssertTrue(waitForChatList(app, timeout: 20))
     }
@@ -237,7 +239,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "myProfileLogoutButton").waitForExistence(timeout: 10))
         element(app, "myProfileLogoutButton").tap()
         XCTAssertTrue(element(app, "myProfileConfirmLogoutButton").waitForExistence(timeout: 10))
-        element(app, "myProfileConfirmLogoutButton").tap()
+        app.buttons["myProfileConfirmLogoutButton"].firstMatch.tap()
 
         XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 20))
         XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 10))

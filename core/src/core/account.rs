@@ -256,7 +256,7 @@ impl AppCore {
 
     pub(super) fn add_authorized_device(&mut self, device_input: &str) {
         let Some(logged_in) = self.logged_in.as_ref() else {
-            self.state.toast = Some("Create or restore an account first.".to_string());
+            self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
             return;
         };
@@ -300,7 +300,7 @@ impl AppCore {
         let logged_in = self
             .logged_in
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Create or restore an account first."))?;
+            .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
         if logged_in.owner_keys.is_none() {
             return Err(anyhow::anyhow!(
                 "Only the primary device can manage devices."
@@ -319,7 +319,7 @@ impl AppCore {
 
     pub(super) fn remove_authorized_device(&mut self, device_pubkey_hex: &str) {
         let Some(logged_in) = self.logged_in.as_ref() else {
-            self.state.toast = Some("Create or restore an account first.".to_string());
+            self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
             return;
         };
@@ -474,6 +474,9 @@ impl AppCore {
                 persisted.preferences.image_proxy_salt_hex.clone();
             self.preferences.mobile_push_server_url =
                 persisted.preferences.mobile_push_server_url.clone();
+            self.preferences.muted_chat_ids = persisted.preferences.muted_chat_ids.clone();
+            self.preferences.muted_chat_ids.sort();
+            self.preferences.muted_chat_ids.dedup();
             self.seen_event_order = persisted
                 .seen_event_ids
                 .iter()
@@ -860,7 +863,7 @@ fn parse_link_device_invite_input(input: &str, owner_pubkey: PublicKey) -> anyho
         .owner_public_key
         .is_some_and(|invite_owner| invite_owner != owner_pubkey)
     {
-        return Err(anyhow::anyhow!("This code is for a different account."));
+        return Err(anyhow::anyhow!("This code is for a different profile."));
     }
     Ok(invite)
 }

@@ -182,6 +182,31 @@ fn settings_card(
     }
     group.add(&name_row);
 
+    let mute_row = adw::ActionRow::builder()
+        .title(if details.is_muted {
+            "Unmute chat"
+        } else {
+            "Mute chat"
+        })
+        .activatable(true)
+        .build();
+    let mute_icon = gtk::Image::from_icon_name(if details.is_muted {
+        "audio-volume-high-symbolic"
+    } else {
+        "audio-volume-muted-symbolic"
+    });
+    mute_row.add_prefix(&mute_icon);
+    let manager_for_mute = manager.clone();
+    let chat_id_for_mute = format!("group:{group_id}");
+    let muted_for_mute = details.is_muted;
+    mute_row.connect_activated(move |_| {
+        manager_for_mute.dispatch(AppAction::SetChatMuted {
+            chat_id: chat_id_for_mute.clone(),
+            muted: !muted_for_mute,
+        });
+    });
+    group.add(&mute_row);
+
     group.upcast()
 }
 

@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 3;
+const SCHEMA_VERSION: u32 = 4;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS preferences (
     image_proxy_url TEXT NOT NULL,
     image_proxy_key_hex TEXT NOT NULL,
     image_proxy_salt_hex TEXT NOT NULL,
-    mobile_push_server_url TEXT NOT NULL
+    mobile_push_server_url TEXT NOT NULL,
+    muted_chat_ids_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS owner_profiles (
@@ -134,6 +135,26 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             tx.execute_batch(
                 "ALTER TABLE preferences
                  ADD COLUMN invite_acceptance_notifications_enabled INTEGER NOT NULL DEFAULT 1;",
+            )?;
+        }
+    }
+    if current < 4 {
+        let has_column = {
+            let mut stmt = tx.prepare("PRAGMA table_info(preferences)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for row in rows {
+                if row? == "muted_chat_ids_json" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_column {
+            tx.execute_batch(
+                "ALTER TABLE preferences
+                 ADD COLUMN muted_chat_ids_json TEXT NOT NULL DEFAULT '[]';",
             )?;
         }
     }

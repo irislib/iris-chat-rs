@@ -74,6 +74,63 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn set_chat_muted(&mut self, chat_id: &str, muted: bool) {
+        let Some(normalized_chat_id) = self.normalize_muted_chat_id(chat_id) else {
+            return;
+        };
+
+        let mut muted_chat_ids = self.preferences.muted_chat_ids.clone();
+        muted_chat_ids.sort();
+        muted_chat_ids.dedup();
+        let had_muted = muted_chat_ids
+            .iter()
+            .any(|existing| existing == &normalized_chat_id);
+
+        if muted == had_muted {
+            if muted_chat_ids != self.preferences.muted_chat_ids {
+                self.preferences.muted_chat_ids = muted_chat_ids;
+                self.persist_best_effort();
+            }
+            return;
+        }
+
+        if muted {
+            muted_chat_ids.push(normalized_chat_id.clone());
+            muted_chat_ids.sort();
+            muted_chat_ids.dedup();
+        } else {
+            muted_chat_ids.retain(|existing| existing != &normalized_chat_id);
+        }
+        self.preferences.muted_chat_ids = muted_chat_ids;
+        self.mark_mobile_push_dirty();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn is_chat_muted(&self, chat_id: &str) -> bool {
+        self.normalize_muted_chat_id(chat_id)
+            .is_some_and(|normalized| {
+                self.preferences
+                    .muted_chat_ids
+                    .iter()
+                    .any(|chat_id| chat_id == &normalized)
+            })
+    }
+
+    fn normalize_muted_chat_id(&self, chat_id: &str) -> Option<String> {
+        let trimmed = chat_id.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if is_group_chat_id(trimmed) {
+            return parse_group_id_from_chat_id(trimmed).map(|group_id| group_chat_id(&group_id));
+        }
+        parse_peer_input(trimmed)
+            .ok()
+            .map(|(normalized, _)| normalized)
+    }
+
     pub(super) fn set_desktop_notifications_enabled(&mut self, enabled: bool) {
         if self.preferences.desktop_notifications_enabled == enabled {
             return;

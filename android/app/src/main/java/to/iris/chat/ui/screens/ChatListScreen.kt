@@ -5,35 +5,50 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.util.concurrent.ConcurrentHashMap
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatKind
+import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
@@ -54,6 +69,7 @@ fun ChatListScreen(
 ) {
     var relativeNowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     var nearbyTick by remember { mutableStateOf(0) }
+    var pendingDeleteChat by remember { mutableStateOf<ChatThreadSnapshot?>(null) }
     val account = appState.account
 
     LaunchedEffect(Unit) {
@@ -191,23 +207,33 @@ fun ChatListScreen(
                                 )
                             }
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        IrisChatListRow(
-                            title = chat.displayName,
-                            preview =
-                                if (chat.isTyping) {
-                                    "Typing"
-                                } else {
-                                    chat.lastMessagePreview ?: subtitle.orEmpty()
+                        SwipeableChatListRow(
+                            chat = chat,
+                            onToggleMute = {
+                                appManager.dispatch(
+                                    AppAction.SetChatMuted(chat.chatId, !chat.isMuted),
+                                )
                             },
-                            timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), relativeNowMillis),
-                            imageUrl = avatarUrl,
-                            imageData = avatarData,
-                            unreadCount = chat.unreadCount.toLong(),
-                            lastMessageMine = chat.lastMessageIsOutgoing == true,
-                            lastDelivery = chat.lastMessageDelivery,
-                            onClick = { appManager.openChat(chat.chatId) },
-                            modifier = Modifier.testTag("chatRow-${chat.chatId.take(12)}"),
-                        )
+                            onDeleteRequest = { pendingDeleteChat = chat },
+                        ) {
+                            IrisChatListRow(
+                                title = chat.displayName,
+                                preview =
+                                    if (chat.isTyping) {
+                                        "Typing"
+                                    } else {
+                                        chat.lastMessagePreview ?: subtitle.orEmpty()
+                                    },
+                                timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), relativeNowMillis),
+                                imageUrl = avatarUrl,
+                                imageData = avatarData,
+                                unreadCount = chat.unreadCount.toLong(),
+                                lastMessageMine = chat.lastMessageIsOutgoing == true,
+                                lastDelivery = chat.lastMessageDelivery,
+                                onClick = { appManager.openChat(chat.chatId) },
+                                modifier = Modifier.testTag("chatRow-${chat.chatId.take(12)}"),
+                            )
+                        }
                         if (chat.kind == ChatKind.GROUP && subtitle != null) {
                             Text(
                                 text = subtitle,
@@ -221,6 +247,107 @@ fun ChatListScreen(
                 }
             }
         }
+
+        pendingDeleteChat?.let { chat ->
+            AlertDialog(
+                onDismissRequest = { pendingDeleteChat = null },
+                title = { Text("Delete chat?") },
+                confirmButton = {
+                    Button(
+                        onClick = {
+                            appManager.dispatch(AppAction.DeleteChat(chat.chatId))
+                            pendingDeleteChat = null
+                        },
+                    ) {
+                        Text("Delete")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { pendingDeleteChat = null }) {
+                        Text("Cancel")
+                    }
+                },
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeableChatListRow(
+    chat: ChatThreadSnapshot,
+    onToggleMute: () -> Unit,
+    onDeleteRequest: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val dismissState =
+        rememberSwipeToDismissBoxState(
+            positionalThreshold = { distance -> distance * 0.28f },
+        )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        enableDismissFromStartToEnd = false,
+        backgroundContent = {
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .background(IrisTheme.palette.panelAlt)
+                        .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ChatSwipeActionButton(
+                    label = if (chat.isMuted) "Unmute" else "Mute",
+                    icon = if (chat.isMuted) IrisIcons.Notifications else IrisIcons.NotificationsOff,
+                    color = IrisTheme.palette.accent,
+                    onClick = {
+                        onToggleMute()
+                        scope.launch { dismissState.reset() }
+                    },
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                ChatSwipeActionButton(
+                    label = "Delete",
+                    icon = IrisIcons.DeleteForever,
+                    color = MaterialTheme.colorScheme.error,
+                    onClick = {
+                        onDeleteRequest()
+                        scope.launch { dismissState.reset() }
+                    },
+                )
+            }
+        },
+    ) {
+        content()
+    }
+}
+
+@Composable
+private fun ChatSwipeActionButton(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    color: Color,
+    onClick: () -> Unit,
+) {
+    Column(
+        modifier =
+            Modifier
+                .width(72.dp)
+                .height(58.dp)
+                .clickable(onClick = onClick),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Icon(imageVector = icon, contentDescription = label, tint = color)
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = color,
+        )
     }
 }
 

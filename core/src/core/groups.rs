@@ -30,7 +30,7 @@ impl AppCore {
         picture: Option<(String, String)>,
     ) {
         if self.logged_in.is_none() {
-            self.state.toast = Some("Create or restore an account first.".to_string());
+            self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
             return;
         }

@@ -40,7 +40,7 @@ impl AppCore {
             return;
         }
         let Some(logged_in) = self.logged_in.as_ref() else {
-            self.state.toast = Some("Create or restore an account first.".to_string());
+            self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
             return;
         };
@@ -70,7 +70,7 @@ impl AppCore {
         self.push_debug_log("profile.picture.upload.start", format!("path={file_path}"));
         let Some(logged_in) = self.logged_in.as_ref() else {
             self.push_debug_log("profile.picture.upload.skip", "no_logged_in".to_string());
-            self.state.toast = Some("Create or restore an account first.".to_string());
+            self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
             return;
         };

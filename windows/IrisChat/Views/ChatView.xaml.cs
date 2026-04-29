@@ -57,6 +57,8 @@ public partial class ChatView : UserControl
         HeaderSubtitle.Text = chat.subtitle ?? string.Empty;
         HeaderAvatar.Label = chat.displayName;
         HeaderAvatar.PictureUrl = chat.pictureUrl;
+        MuteChatButton.Visibility = Visibility.Visible;
+        MuteChatText.Text = chat.isMuted ? "Unmute chat" : "Mute chat";
         GroupDetailsButton.Visibility = chat.kind == ChatKind.Group ? Visibility.Visible : Visibility.Collapsed;
         DeleteChatButton.Visibility = chat.kind == ChatKind.Direct ? Visibility.Visible : Visibility.Collapsed;
 
@@ -165,5 +167,12 @@ public partial class ChatView : UserControl
         var chat = App.CurrentManager.CurrentChat;
         if (chat == null) return;
         App.CurrentManager.DeleteChat(chat.chatId);
+    }
+
+    private void OnToggleMute(object sender, RoutedEventArgs e)
+    {
+        var chat = App.CurrentManager.CurrentChat;
+        if (chat == null) return;
+        App.CurrentManager.SetChatMuted(chat.chatId, !chat.isMuted);
     }
 }

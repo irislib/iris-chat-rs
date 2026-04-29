@@ -47,7 +47,7 @@ func resolveDeviceAuthorizationInput(
         if !acceptedOwnerInputs.contains(normalizedOwner) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput: "",
-                errorMessage: "This code is for a different account."
+                errorMessage: "This code is for a different profile."
             )
         }
 

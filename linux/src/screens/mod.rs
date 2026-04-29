@@ -44,8 +44,8 @@ pub fn render(screen: &Screen, state: &AppState, manager: &Rc<AppManager>) -> gt
 pub fn title(screen: &Screen) -> &'static str {
     match screen {
         Screen::Welcome => "Welcome",
-        Screen::CreateAccount => "Create account",
-        Screen::RestoreAccount => "Restore account",
+        Screen::CreateAccount => "Create profile",
+        Screen::RestoreAccount => "Restore profile",
         Screen::AddDevice => "Link device",
         Screen::ChatList => "Chats",
         Screen::NewChat => "New chat",

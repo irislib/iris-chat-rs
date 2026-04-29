@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <ScrollViewer VerticalScrollBarVisibility="Auto">
         <StackPanel Margin="32" MaxWidth="520" HorizontalAlignment="Center">
-            <TextBlock Text="Create account"
+            <TextBlock Text="Create profile"
                        Style="{StaticResource HeadingText}"
                        Margin="0,0,0,12" />
             <TextBlock Text="Name" Margin="0,0,0,4" />
@@ -15,7 +15,7 @@
                     IsDefault="True"
                     Click="OnCreate"
                     Margin="0,16,0,0">
-                <TextBlock Text="Create account" />
+                <TextBlock Text="Create profile" />
             </Button>
         </StackPanel>
     </ScrollViewer>

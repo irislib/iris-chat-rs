@@ -37,7 +37,7 @@ public partial class DeviceRosterView : UserControl
         AddBlock.Visibility = roster.canManageDevices ? Visibility.Visible : Visibility.Collapsed;
 
         HeaderHint.Text = roster.canManageDevices
-            ? "These devices can use your account."
+            ? "These devices can use your profile."
             : "This device can view the list but cannot change it.";
 
         foreach (var d in roster.devices)

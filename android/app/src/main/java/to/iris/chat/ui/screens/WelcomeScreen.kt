@@ -136,7 +136,7 @@ private fun WelcomeHero(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             IrisPrimaryButton(
-                text = "Create account",
+                text = "Create profile",
                 onClick = { appManager.pushScreen(Screen.CreateAccount) },
                 icon = {
                     Icon(
@@ -151,7 +151,7 @@ private fun WelcomeHero(
                         .testTag("welcomeCreateAction"),
             )
             IrisSecondaryButton(
-                text = "Restore account",
+                text = "Restore profile",
                 onClick = { appManager.pushScreen(Screen.RestoreAccount) },
                 icon = {
                     Icon(
@@ -224,7 +224,7 @@ fun CreateAccountScreen(
 
         IrisSectionCard(modifier = Modifier.testTag("createAccountScreen")) {
             Text(
-                text = "Create account",
+                text = "Create profile",
                 style = MaterialTheme.typography.headlineSmall,
             )
             TextField(
@@ -253,7 +253,7 @@ fun CreateAccountScreen(
                 colors = irisTextFieldColors(),
             )
             IrisPrimaryButton(
-                text = if (appState.busy.creatingAccount) "Creating…" else "Create account",
+                text = if (appState.busy.creatingAccount) "Creating…" else "Create profile",
                 onClick = submitCreateAccount,
                 enabled = canCreateAccount,
                 modifier =
@@ -280,7 +280,7 @@ fun RestoreAccountScreen(
 
         IrisSectionCard(modifier = Modifier.testTag("restoreAccountScreen")) {
             Text(
-                text = "Restore account",
+                text = "Restore profile",
                 style = MaterialTheme.typography.headlineSmall,
             )
             Text(
@@ -320,7 +320,7 @@ fun RestoreAccountScreen(
                 colors = irisTextFieldColors(),
             )
             IrisPrimaryButton(
-                text = if (appState.busy.restoringSession) "Restoring…" else "Restore account",
+                text = if (appState.busy.restoringSession) "Restoring…" else "Restore profile",
                 onClick = {
                     lastSubmittedSecret = restoreInput.trim()
                     appManager.restoreSession(restoreInput)

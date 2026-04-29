@@ -5,7 +5,7 @@ const OPEN_CHAT_MESSAGES_PER_PAGE: usize = 80;
 impl AppCore {
     pub(super) fn create_chat(&mut self, peer_input: &str) {
         if self.logged_in.is_none() {
-            self.state.toast = Some("Create or restore an account first.".to_string());
+            self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
             return;
         }
@@ -180,7 +180,7 @@ impl AppCore {
             return;
         }
         if self.logged_in.is_none() {
-            self.state.toast = Some("Create or restore an account first.".to_string());
+            self.state.toast = Some("Create or restore a profile first.".to_string());
             self.emit_state();
             return;
         }
@@ -610,6 +610,10 @@ impl AppCore {
             }
         }
         self.chat_message_ttl_seconds.remove(&normalized);
+        self.preferences
+            .muted_chat_ids
+            .retain(|chat_id| chat_id != &normalized);
+        self.mark_mobile_push_dirty();
         self.typing_indicators
             .retain(|_, indicator| indicator.chat_id != normalized);
         self.typing_floor_secs.remove(&normalized);

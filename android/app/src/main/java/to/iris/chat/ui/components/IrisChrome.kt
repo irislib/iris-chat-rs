@@ -50,6 +50,8 @@ import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Movie
+import androidx.compose.material.icons.rounded.Notifications
+import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.PersonRemove
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Refresh
@@ -634,6 +636,8 @@ object IrisIcons {
     val Key = Icons.Rounded.Key
     val Movie = Icons.Rounded.Movie
     val Audio = Icons.Rounded.Audiotrack
+    val Notifications = Icons.Rounded.Notifications
+    val NotificationsOff = Icons.Rounded.NotificationsOff
     val Close = Icons.Rounded.Close
     val RemoveMember = Icons.Rounded.PersonRemove
     val Logout = Icons.AutoMirrored.Rounded.Logout

@@ -1,6 +1,7 @@
 use super::*;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use nostr::Tag;
+use rusqlite::OptionalExtension;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,8 +29,19 @@ impl AppCore {
         // per call on Android debug, dominating the per-emit
         // `rebuild_state` cost — and nothing on the shell side ever
         // read it. Leave the vec empty; the schema stays stable.
+        let muted_direct_chat_ids: HashSet<String> = self
+            .preferences
+            .muted_chat_ids
+            .iter()
+            .filter(|chat_id| !is_group_chat_id(chat_id))
+            .cloned()
+            .collect();
         let mut message_author_pubkeys = HashSet::new();
-        message_author_pubkeys.extend(self.known_message_author_hexes());
+        message_author_pubkeys.extend(
+            self.known_message_author_hexes()
+                .into_iter()
+                .filter(|author| !muted_direct_chat_ids.contains(author)),
+        );
         let message_author_pubkeys = sorted_hexes(message_author_pubkeys);
         let invite_response_pubkeys = if self.preferences.invite_acceptance_notifications_enabled {
             vec![logged_in.local_invite.inviter_ephemeral_public_key.to_hex()]
@@ -268,6 +280,13 @@ pub(crate) fn decrypt_mobile_push_notification(
     let group_title = group_id
         .as_ref()
         .and_then(|id| lookup_group_name(&data_dir, id));
+    let resolved_chat_id = group_id
+        .as_ref()
+        .map(|id| group_chat_id(id))
+        .unwrap_or_else(|| sender_owner.to_hex());
+    if is_chat_muted_in_data_dir(&data_dir, &resolved_chat_id) {
+        return suppressed_resolution();
+    }
 
     let body = decrypted_mobile_push_body(inner_kind, &inner_content);
 
@@ -353,6 +372,9 @@ fn lookup_mobile_push_preview(
         .ok()?;
 
     let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX);
+    if is_chat_muted_in(&conn, &chat_id) {
+        return Some(suppressed_resolution());
+    }
     let sender_pubkey = nostr::PublicKey::parse(&author_hex).ok();
     let sender_name = sender_pubkey
         .as_ref()
@@ -476,6 +498,29 @@ fn lookup_group_name_in(conn: &rusqlite::Connection, group_id: &str) -> Option<S
         .ok()?;
     let trimmed = name.trim().to_string();
     (!trimmed.is_empty()).then_some(trimmed)
+}
+
+fn is_chat_muted_in_data_dir(data_dir: &str, chat_id: &str) -> bool {
+    open_lookup_connection(data_dir)
+        .as_ref()
+        .is_some_and(|conn| is_chat_muted_in(conn, chat_id))
+}
+
+fn is_chat_muted_in(conn: &rusqlite::Connection, chat_id: &str) -> bool {
+    let muted_json: Option<String> = conn
+        .query_row(
+            "SELECT muted_chat_ids_json FROM preferences WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let Some(muted_json) = muted_json else {
+        return false;
+    };
+    let muted_chat_ids: Vec<String> = serde_json::from_str(&muted_json).unwrap_or_default();
+    muted_chat_ids.iter().any(|muted| muted == chat_id)
 }
 
 struct NotificationPreviewStorage {

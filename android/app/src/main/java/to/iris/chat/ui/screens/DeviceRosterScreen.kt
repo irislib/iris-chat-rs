@@ -109,7 +109,7 @@ fun DeviceRosterScreen(
                     style = MaterialTheme.typography.titleLarge,
                 )
                 Text(
-                    text = "These devices can use your account.",
+                    text = "These devices can use your profile.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
                 )
@@ -354,7 +354,7 @@ private fun DeviceRosterRow(
             onDismissRequest = { confirmRemoval = false },
             title = { Text("Remove device?") },
             text = {
-                Text("This device will no longer use your account.")
+                Text("This device will no longer use your profile.")
             },
             dismissButton = {
                 TextButton(onClick = { confirmRemoval = false }) {
@@ -444,7 +444,7 @@ private fun resolveDeviceAuthorizationInput(
         if (normalizedOwner !in acceptedOwnerInputs) {
             return ResolvedDeviceAuthorizationInput(
                 deviceInput = "",
-                errorMessage = "This code is for a different account.",
+                errorMessage = "This code is for a different profile.",
             )
         }
 

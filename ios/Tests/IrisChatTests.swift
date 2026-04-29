@@ -83,6 +83,7 @@ private final class MockRustApp: RustAppClient {
             imageProxyUrl: "https://imgproxy.iris.to",
             imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
             imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
+            mutedChatIds: [],
             mobilePushServerUrl: ""
         ),
         toast: nil
@@ -177,7 +178,8 @@ private func makeAppState(
         imageProxyUrl: "https://imgproxy.iris.to",
         imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
         imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
-            mobilePushServerUrl: ""
+        mutedChatIds: [],
+        mobilePushServerUrl: ""
     ),
     toast: String? = nil
 ) -> AppState {
@@ -234,7 +236,8 @@ private func makeChatThread(
         lastMessageIsOutgoing: lastMessageIsOutgoing,
         lastMessageDelivery: .received,
         unreadCount: unreadCount,
-        isTyping: false
+        isTyping: false,
+        isMuted: false
     )
 }
 
@@ -373,7 +376,8 @@ final class IrisChatTests: XCTestCase {
                     imageProxyUrl: "https://imgproxy.iris.to",
                     imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
                     imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
-            mobilePushServerUrl: ""
+                    mutedChatIds: [],
+                    mobilePushServerUrl: ""
                 )
             )
         )
@@ -399,7 +403,8 @@ final class IrisChatTests: XCTestCase {
                 imageProxyUrl: "https://imgproxy.iris.to",
                 imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
                 imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
-            mobilePushServerUrl: ""
+                mutedChatIds: [],
+                mobilePushServerUrl: ""
             )
         )))
 
@@ -427,7 +432,7 @@ final class IrisChatTests: XCTestCase {
         )
 
         XCTAssertEqual(resolved.deviceInput, "")
-        XCTAssertEqual(resolved.errorMessage, "This code is for a different account.")
+        XCTAssertEqual(resolved.errorMessage, "This code is for a different profile.")
     }
 
     func testKeychainSecretStoreRoundTrip() throws {

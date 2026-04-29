@@ -486,6 +486,7 @@ fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.image_proxy_key_hex.hash(&mut hasher);
     preferences.image_proxy_salt_hex.hash(&mut hasher);
     preferences.mobile_push_server_url.hash(&mut hasher);
+    preferences.muted_chat_ids.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -666,7 +667,7 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     invite_acceptance_notifications_enabled,
                     startup_at_login_enabled, nostr_relay_urls_json, image_proxy_enabled,
                     image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex,
-                    mobile_push_server_url
+                    mobile_push_server_url, muted_chat_ids_json
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -683,6 +684,8 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     image_proxy_key_hex: row.get::<_, String>(8)?,
                     image_proxy_salt_hex: row.get::<_, String>(9)?,
                     mobile_push_server_url: row.get::<_, String>(10)?,
+                    muted_chat_ids: serde_json::from_str(&row.get::<_, String>(11)?)
+                        .unwrap_or_default(),
                 })
             },
         )
@@ -697,8 +700,8 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             id, send_typing_indicators, send_read_receipts, desktop_notifications_enabled,
             invite_acceptance_notifications_enabled, startup_at_login_enabled,
             nostr_relay_urls_json, image_proxy_enabled, image_proxy_url, image_proxy_key_hex,
-            image_proxy_salt_hex, mobile_push_server_url
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+            image_proxy_salt_hex, mobile_push_server_url, muted_chat_ids_json
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
          ON CONFLICT(id) DO UPDATE SET
             send_typing_indicators = excluded.send_typing_indicators,
             send_read_receipts = excluded.send_read_receipts,
@@ -710,7 +713,8 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             image_proxy_url = excluded.image_proxy_url,
             image_proxy_key_hex = excluded.image_proxy_key_hex,
             image_proxy_salt_hex = excluded.image_proxy_salt_hex,
-            mobile_push_server_url = excluded.mobile_push_server_url",
+            mobile_push_server_url = excluded.mobile_push_server_url,
+            muted_chat_ids_json = excluded.muted_chat_ids_json",
         params![
             preferences.send_typing_indicators as i64,
             preferences.send_read_receipts as i64,
@@ -723,6 +727,7 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             preferences.image_proxy_key_hex,
             preferences.image_proxy_salt_hex,
             preferences.mobile_push_server_url,
+            serde_json::to_string(&preferences.muted_chat_ids)?,
         ],
     )?;
     Ok(())

@@ -224,6 +224,7 @@ impl AppCore {
                 chat_id,
                 ttl_seconds,
             } => self.set_chat_message_ttl(&chat_id, ttl_seconds),
+            AppAction::SetChatMuted { chat_id, muted } => self.set_chat_muted(&chat_id, muted),
             AppAction::SendAttachment {
                 chat_id,
                 file_path,

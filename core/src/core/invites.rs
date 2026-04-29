@@ -67,7 +67,7 @@ impl AppCore {
             let logged_in = self
                 .logged_in
                 .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Create or restore an account first."))?;
+                .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
             logged_in
                 .ndr_runtime
                 .accept_invite(&invite, Some(owner_pubkey))?

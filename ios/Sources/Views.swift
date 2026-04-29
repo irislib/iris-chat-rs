@@ -301,8 +301,8 @@ struct RootView: View {
     private func screenTitle(_ screen: Screen) -> String {
         switch screen {
         case .welcome: return "Welcome"
-        case .createAccount: return "Create Account"
-        case .restoreAccount: return "Restore Account"
+        case .createAccount: return "Create Profile"
+        case .restoreAccount: return "Restore Profile"
         case .addDevice: return "Link Device"
         case .chatList: return "Chats"
         case .newChat: return "New Chat"
@@ -1097,6 +1097,19 @@ private struct DirectChatInfoSheet: View {
                         IrisCopyButton(label: "Copy user ID", value: peerInputToNpub(input: chatId))
                             .accessibilityIdentifier("directChatCopyUserIdButton")
 
+                        Button {
+                            manager.dispatch(.setChatMuted(chatId: chatId, muted: !chat.isMuted))
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: chat.isMuted ? "bell.fill" : "bell.slash.fill")
+                                Text(chat.isMuted ? "Unmute chat" : "Mute chat")
+                            }
+                            .foregroundStyle(palette.textPrimary)
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("directChatMuteButton")
+
                         IrisSectionCard {
                             CardHeader(
                                 title: "Disappearing messages",
@@ -1265,7 +1278,7 @@ struct WelcomeScreen: View {
                         Button {
                             manager.dispatch(.pushScreen(screen: .createAccount))
                         } label: {
-                            Label("Create account", systemImage: "plus")
+                            Label("Create profile", systemImage: "plus")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(IrisPrimaryButtonStyle())
@@ -1274,7 +1287,7 @@ struct WelcomeScreen: View {
                         Button {
                             manager.dispatch(.pushScreen(screen: .restoreAccount))
                         } label: {
-                            Label("Restore account", systemImage: "key.fill")
+                            Label("Restore profile", systemImage: "key.fill")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(IrisSecondaryButtonStyle())
@@ -1328,7 +1341,7 @@ struct CreateAccountScreen: View {
                     .accessibilityIdentifier("createAccountScreen")
 
                 CardHeader(
-                    title: "Create account"
+                    title: "Create profile"
                 )
 
                 TextField("Name", text: $displayName)
@@ -1339,7 +1352,7 @@ struct CreateAccountScreen: View {
                     .onSubmit(submitCreateAccount)
                     .accessibilityIdentifier("signupNameField")
 
-                Button(manager.state.busy.creatingAccount ? "Creating…" : "Create account") {
+                Button(manager.state.busy.creatingAccount ? "Creating…" : "Create profile") {
                     submitCreateAccount()
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
@@ -1373,7 +1386,7 @@ struct RestoreAccountScreen: View {
                     .accessibilityIdentifier("restoreAccountScreen")
 
                 CardHeader(
-                    title: "Restore account",
+                    title: "Restore profile",
                     subtitle: "Paste your secret key."
                 )
 
@@ -1383,7 +1396,7 @@ struct RestoreAccountScreen: View {
                 ))
                     .irisInputField()
 
-                Button(manager.state.busy.restoringSession ? "Restoring…" : "Restore account") {
+                Button(manager.state.busy.restoringSession ? "Restoring…" : "Restore profile") {
                     submitRestore(restoreSecret.text, force: true)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
@@ -1571,9 +1584,11 @@ private struct ChatListRowContainer: View {
     @ObservedObject var manager: AppManager
     let chat: ChatThreadSnapshot
     let timeLabel: String?
+    @State private var showingDeleteConfirmation = false
 
+    @ViewBuilder
     var body: some View {
-        IrisChatRow(
+        let row = IrisChatRow(
             title: chat.displayName,
             preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
             subtitle: nil,
@@ -1586,6 +1601,32 @@ private struct ChatListRowContainer: View {
                 manager.dispatch(.openChat(chatId: chat.chatId))
             }
         )
+
+#if os(iOS)
+        row
+            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                Button(role: .destructive) {
+                    showingDeleteConfirmation = true
+                } label: {
+                    Label("Delete", systemImage: "trash.fill")
+                }
+
+                Button {
+                    manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
+                } label: {
+                    Label(chat.isMuted ? "Unmute" : "Mute", systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill")
+                }
+                .tint(.orange)
+            }
+            .alert("Delete chat?", isPresented: $showingDeleteConfirmation) {
+                Button("Delete", role: .destructive) {
+                    manager.dispatch(.deleteChat(chatId: chat.chatId))
+                }
+                Button("Cancel", role: .cancel) {}
+            }
+#else
+        row
+#endif
     }
 }
 
@@ -2513,6 +2554,22 @@ struct GroupDetailsScreen: View {
                 }
 
                 IrisSectionCard {
+                    Button {
+                        manager.dispatch(.setChatMuted(chatId: "group:\(groupId)", muted: !details.isMuted))
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: details.isMuted ? "bell.fill" : "bell.slash.fill")
+                            Text(details.isMuted ? "Unmute chat" : "Mute chat")
+                            Spacer()
+                        }
+                        .foregroundStyle(palette.textPrimary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("groupDetailsMuteButton")
+                }
+
+                IrisSectionCard {
                     CardHeader(
                         title: "Members",
                         subtitle: "\(details.members.count) people in this conversation."
@@ -2749,7 +2806,7 @@ struct DeviceRosterScreen: View {
                 IrisSectionCard(accent: true) {
                     CardHeader(
                         title: "Linked devices",
-                        subtitle: "These devices can use your account."
+                        subtitle: "These devices can use your profile."
                     )
 
                     Button("Copy user ID") {
@@ -2926,7 +2983,7 @@ private struct DeviceRosterRow: View {
             }
             .accessibilityIdentifier("deviceRosterConfirmRemove-\(String(device.devicePubkeyHex.prefix(12)))")
         } message: {
-            Text("This device will no longer use your account.")
+            Text("This device will no longer use your profile.")
         }
     }
 }
@@ -3173,7 +3230,7 @@ struct SettingsScreen: View {
                     IrisSectionCard {
                         CardHeader(
                             title: "Danger Zone",
-                            subtitle: "Local account, secret keys, messages, and cached files are removed from this device."
+                            subtitle: "Local profile, secret keys, messages, and cached files are removed from this device."
                         )
 
                         Button("Logout", role: .destructive) {
@@ -3205,7 +3262,7 @@ struct SettingsScreen: View {
                 title: Text(isDeviceExport ? "Export This Device's Key" : "Export Secret Key"),
                 message: Text(isDeviceExport
                     ? "This key only unlocks this device. Copy it now?"
-                    : "Your secret key gives full access to your account. Never share it with anyone. Store it securely."),
+                    : "Your secret key gives full access to your profile. Never share it with anyone. Store it securely."),
                 primaryButton: .cancel(Text("Cancel")),
                 secondaryButton: .default(Text(isDeviceExport ? "Copy Key" : "Copy")) {
                     let secret = isDeviceExport ? manager.exportDeviceNsec() : manager.exportOwnerNsec()

@@ -33,13 +33,13 @@ pub fn render(manager: &Rc<AppManager>) -> gtk::Widget {
         container.append(&banner);
     }
 
-    let create = welcome_button("Create account", "list-add-symbolic", true);
+    let create = welcome_button("Create profile", "list-add-symbolic", true);
     dispatch_on_click(&create, manager, || AppAction::PushScreen {
         screen: Screen::CreateAccount,
     });
     container.append(&create);
 
-    let restore = welcome_button("Restore account", "dialog-password-symbolic", false);
+    let restore = welcome_button("Restore profile", "dialog-password-symbolic", false);
     dispatch_on_click(&restore, manager, || AppAction::PushScreen {
         screen: Screen::RestoreAccount,
     });

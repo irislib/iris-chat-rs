@@ -257,6 +257,8 @@ pub(super) struct PersistedPreferences {
     pub(super) image_proxy_salt_hex: String,
     #[serde(default)]
     pub(super) mobile_push_server_url: String,
+    #[serde(default)]
+    pub(super) muted_chat_ids: Vec<String>,
 }
 
 impl Default for PersistedPreferences {
@@ -275,6 +277,7 @@ impl Default for PersistedPreferences {
             image_proxy_key_hex: defaults.image_proxy_key_hex,
             image_proxy_salt_hex: defaults.image_proxy_salt_hex,
             mobile_push_server_url: defaults.mobile_push_server_url,
+            muted_chat_ids: defaults.muted_chat_ids,
         }
     }
 }

@@ -16,6 +16,7 @@ pub struct ChatInfoSnapshot {
     pub display_name: String,
     pub subtitle: Option<String>,
     pub picture_url: Option<String>,
+    pub is_muted: bool,
     pub preferences: PreferencesSnapshot,
 }
 
@@ -94,6 +95,23 @@ pub fn present_chat_info(
     }
     header_row.append(&text_column);
     content.append(&header_row);
+
+    let mute = gtk::Button::with_label(if info.is_muted {
+        "Unmute chat"
+    } else {
+        "Mute chat"
+    });
+    mute.set_halign(gtk::Align::Start);
+    let manager_for_mute = manager.clone();
+    let chat_id_for_mute = info.chat_id.clone();
+    let muted_for_mute = info.is_muted;
+    mute.connect_clicked(move |_| {
+        manager_for_mute.dispatch(AppAction::SetChatMuted {
+            chat_id: chat_id_for_mute.clone(),
+            muted: !muted_for_mute,
+        });
+    });
+    content.append(&mute);
 
     let delete = gtk::Button::with_label("Delete chat");
     delete.add_css_class("destructive-action");

@@ -115,6 +115,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                         display_name: chat.display_name.clone(),
                         subtitle: chat.subtitle.clone(),
                         picture_url: chat.picture_url.clone(),
+                        is_muted: chat.is_muted,
                         preferences: state.preferences.clone(),
                     },
                     manager.clone(),
@@ -377,6 +378,7 @@ fn attach_chat_title_click(slot: &gtk::Box, manager: &Rc<AppManager>, chat: &Cur
                 display_name: chat.display_name.clone(),
                 subtitle: chat.subtitle.clone(),
                 picture_url: chat.picture_url.clone(),
+                is_muted: chat.is_muted,
                 preferences: state.preferences.clone(),
             },
             manager.clone(),
@@ -393,6 +395,9 @@ fn notify_new_messages(
     let prev_map: HashMap<&str, &ChatThreadSnapshot> =
         prev.iter().map(|c| (c.chat_id.as_str(), c)).collect();
     for chat in current {
+        if chat.is_muted {
+            continue;
+        }
         if Some(chat.chat_id.as_str()) == focused_chat_id {
             continue;
         }

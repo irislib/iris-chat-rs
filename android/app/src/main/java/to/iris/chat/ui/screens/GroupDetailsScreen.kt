@@ -191,6 +191,40 @@ fun GroupDetailsScreen(
                 )
             }
 
+            run {
+                val groupChatId = "group:$groupId"
+                IrisSectionCard {
+                    Row(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    appManager.dispatch(
+                                        AppAction.SetChatMuted(groupChatId, !details.isMuted),
+                                    )
+                                }
+                                .padding(vertical = 10.dp)
+                                .testTag("groupDetailsMuteButton"),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            imageVector =
+                                if (details.isMuted) {
+                                    IrisIcons.Notifications
+                                } else {
+                                    IrisIcons.NotificationsOff
+                                },
+                            contentDescription = null,
+                        )
+                        Text(
+                            text = if (details.isMuted) "Unmute chat" else "Mute chat",
+                            style = MaterialTheme.typography.labelLarge,
+                        )
+                    }
+                }
+            }
+
             IrisSectionCard {
                 Text(
                     text = "Members",

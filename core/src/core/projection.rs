@@ -70,6 +70,7 @@ impl AppCore {
                 let last_message = thread.messages.last();
                 let thread_kind = chat_kind_for_id(&thread.chat_id);
                 let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
+                let is_muted = self.is_chat_muted(&thread.chat_id);
                 let display_name = group_snapshot
                     .as_ref()
                     .map(|group| group.name.clone())
@@ -106,6 +107,7 @@ impl AppCore {
                     last_message_delivery: last_message.map(|message| message.delivery.clone()),
                     unread_count: thread.unread_count,
                     is_typing: self.thread_has_typing_indicator(&thread.chat_id),
+                    is_muted,
                 }
             })
             .collect();
@@ -116,6 +118,7 @@ impl AppCore {
             .and_then(|chat_id| self.threads.get(chat_id))
             .map(|thread| {
                 let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
+                let is_muted = self.is_chat_muted(&thread.chat_id);
                 let direct_picture = if group_snapshot.is_none() {
                     self.owner_profiles
                         .get(&thread.chat_id)
@@ -147,6 +150,7 @@ impl AppCore {
                         .chat_message_ttl_seconds
                         .get(&thread.chat_id)
                         .copied(),
+                    is_muted,
                     messages: thread.messages.clone(),
                     typing_indicators: self.typing_indicator_snapshots(&thread.chat_id),
                 }
@@ -407,6 +411,7 @@ impl AppCore {
             .ok()
             .and_then(owner_npub_from_owner)
             .unwrap_or_else(|| creator.clone());
+        let is_muted = self.is_chat_muted(&group_chat_id(&group.id));
 
         Some(GroupDetailsSnapshot {
             group_id: group.id,
@@ -415,6 +420,7 @@ impl AppCore {
             created_by_display_name: self.owner_display_label(&creator),
             created_by_npub: creator_npub,
             can_manage: group.admins.iter().any(|admin| admin == &local_owner_hex),
+            is_muted,
             revision: group.created_at,
             members,
         })

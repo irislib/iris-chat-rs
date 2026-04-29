@@ -6,6 +6,7 @@ struct IrisChatApp: App {
     @UIApplicationDelegateAdaptor(IrisPushAppDelegate.self) private var appDelegate
 #endif
     @StateObject private var manager = AppManager()
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
@@ -23,6 +24,11 @@ struct IrisChatApp: App {
                         return
                     }
                     manager.handleChatLink(url)
+                }
+                .irisOnChange(of: scenePhase) { phase in
+                    if phase == .active {
+                        manager.appForegrounded()
+                    }
                 }
         }
     }

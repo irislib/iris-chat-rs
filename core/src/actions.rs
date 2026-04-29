@@ -55,6 +55,10 @@ pub enum AppAction {
         chat_id: String,
         ttl_seconds: Option<u64>,
     },
+    SetChatMuted {
+        chat_id: String,
+        muted: bool,
+    },
     SendAttachment {
         chat_id: String,
         file_path: String,

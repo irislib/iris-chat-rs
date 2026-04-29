@@ -620,6 +620,23 @@ private fun DirectChatInfoSheet(
                     ) {
                         Icon(imageVector = IrisIcons.Copy, contentDescription = null)
                     }
+                    IrisInlineAction(
+                        text = if (chat.isMuted) "Unmute chat" else "Mute chat",
+                        onClick = {
+                            appManager.dispatch(AppAction.SetChatMuted(chatId, !chat.isMuted))
+                        },
+                        modifier = Modifier.testTag("directChatMuteButton"),
+                    ) {
+                        Icon(
+                            imageVector =
+                                if (chat.isMuted) {
+                                    IrisIcons.Notifications
+                                } else {
+                                    IrisIcons.NotificationsOff
+                                },
+                            contentDescription = null,
+                        )
+                    }
                     DisappearingMessagesCard(
                         currentTtlSeconds = chat.messageTtlSeconds,
                         onSelect = { ttlSeconds ->

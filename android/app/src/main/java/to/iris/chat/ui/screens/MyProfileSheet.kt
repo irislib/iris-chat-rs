@@ -796,7 +796,7 @@ fun MyProfileSheet(
                     if (isDeviceExport) {
                         "This key only unlocks this device. Copy it now?"
                     } else {
-                        "Your secret key gives full access to your account. Never share it with anyone. Store it securely."
+                        "Your secret key gives full access to your profile. Never share it with anyone. Store it securely."
                     },
                 )
             },

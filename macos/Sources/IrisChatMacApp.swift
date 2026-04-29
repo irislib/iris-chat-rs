@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct IrisChatMacApp: App {
     @StateObject private var manager = AppManager()
+    @Environment(\.scenePhase) private var scenePhase
     private let startInBackground = CommandLine.arguments.contains(PlatformStartupAtLogin.backgroundLaunchArgument)
 
     var body: some Scene {
@@ -17,6 +18,11 @@ struct IrisChatMacApp: App {
                 }
                 .onOpenURL { url in
                     _ = manager.handleShareURL(url)
+                }
+                .irisOnChange(of: scenePhase) { phase in
+                    if phase == .active {
+                        manager.appForegrounded()
+                    }
                 }
         }
         .defaultSize(width: 1280, height: 820)

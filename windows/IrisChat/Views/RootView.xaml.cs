@@ -137,8 +137,8 @@ public partial class RootView : UserControl
     private static string ScreenTitle(Screen screen) => screen switch
     {
         Screen.Welcome => "Welcome",
-        Screen.CreateAccount => "Create Account",
-        Screen.RestoreAccount => "Restore Account",
+        Screen.CreateAccount => "Create Profile",
+        Screen.RestoreAccount => "Restore Profile",
         Screen.AddDevice => "Link Device",
         Screen.ChatList => "Chats",
         Screen.NewChat => "New Chat",

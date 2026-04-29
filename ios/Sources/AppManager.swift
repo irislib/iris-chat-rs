@@ -4,7 +4,7 @@ import Intents
 #endif
 import Security
 import SwiftUI
-#if os(iOS)
+#if os(iOS) || os(macOS)
 import UserNotifications
 #endif
 
@@ -649,7 +649,7 @@ final class AppManager: ObservableObject {
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
             if let payloadJson = serializedPushPayload(content: content),
                let chatID = chatID(fromPushPayloadJson: payloadJson),
-               isPushChatOpen(chatID) {
+               (isPushChatOpen(chatID) || isPushChatMuted(chatID)) {
                 return []
             }
             return [.banner, .sound, .list]
@@ -663,9 +663,10 @@ final class AppManager: ObservableObject {
         guard resolution.shouldShow else {
             return []
         }
-        if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
-           isPushChatOpen(chatID) {
-            return []
+        if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) {
+            if isPushChatOpen(chatID) || isPushChatMuted(chatID) {
+                return []
+            }
         }
         await postForegroundDecryptedPush(resolution: resolution)
         return []
@@ -677,7 +678,7 @@ final class AppManager: ObservableObject {
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
             if let payloadJson = serializedPushPayload(userInfo: userInfo),
                let chatID = chatID(fromPushPayloadJson: payloadJson),
-               isPushChatOpen(chatID) {
+               (isPushChatOpen(chatID) || isPushChatMuted(chatID)) {
                 return []
             }
             return [.banner, .sound, .list]
@@ -688,9 +689,10 @@ final class AppManager: ObservableObject {
         guard resolution.shouldShow else {
             return []
         }
-        if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
-           isPushChatOpen(chatID) {
-            return []
+        if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) {
+            if isPushChatOpen(chatID) || isPushChatMuted(chatID) {
+                return []
+            }
         }
         await postForegroundDecryptedPush(resolution: resolution)
         return []
@@ -706,7 +708,7 @@ final class AppManager: ObservableObject {
         guard let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) else {
             return false
         }
-        return isPushChatOpen(chatID)
+        return isPushChatOpen(chatID) || isPushChatMuted(chatID)
     }
 
     func handlePushNotificationTap(userInfo: [AnyHashable: Any]) {
@@ -786,6 +788,12 @@ final class AppManager: ObservableObject {
         }
     }
 
+    private func isPushChatMuted(_ chatID: String) -> Bool {
+        state.chatList.contains { chat in
+            chat.isMuted && pushChatID(chat.chatId, matches: chatID)
+        }
+    }
+
     private var currentScreenChatID: String? {
         guard case .chat(let chatID) = activeScreen else {
             return nil
@@ -821,6 +829,13 @@ final class AppManager: ObservableObject {
         } catch {
             showToast("Startup setting unavailable")
         }
+    }
+
+    func appForegrounded() {
+        dispatchToRust(.appForegrounded)
+#if os(iOS) || os(macOS)
+        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+#endif
     }
 
     private func syncStartupAtLoginPreference(_ enabled: Bool) {
@@ -1261,6 +1276,9 @@ final class AppManager: ObservableObject {
             uniqueKeysWithValues: oldState.chatList.map { ($0.chatId, $0.unreadCount) }
         )
         for chat in nextState.chatList {
+            guard !chat.isMuted else {
+                continue
+            }
             guard chat.lastMessageIsOutgoing == false else {
                 continue
             }

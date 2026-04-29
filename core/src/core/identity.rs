@@ -112,9 +112,9 @@ pub(super) fn chat_unavailable_message(logged_in: Option<&LoggedInState>) -> &'s
             "This device is still waiting for approval."
         }
         Some(LocalAuthorizationState::Revoked) => {
-            "This device has been removed from the account. Log out to continue."
+            "This device has been removed from the profile. Log out to continue."
         }
-        _ => "Create or restore an account first.",
+        _ => "Create or restore a profile first.",
     }
 }
 

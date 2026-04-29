@@ -53,6 +53,7 @@ pub struct PreferencesSnapshot {
     pub image_proxy_url: String,
     pub image_proxy_key_hex: String,
     pub image_proxy_salt_hex: String,
+    pub muted_chat_ids: Vec<String>,
     /// User-configurable notification server URL. Empty string means
     /// "use the platform default" (notifications.iris.to in release,
     /// notifications-sandbox.iris.to in debug). When non-empty, the
@@ -74,6 +75,7 @@ impl Default for PreferencesSnapshot {
             image_proxy_url: crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string(),
             image_proxy_key_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string(),
             image_proxy_salt_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
+            muted_chat_ids: Vec::new(),
             mobile_push_server_url: String::new(),
         }
     }
@@ -223,6 +225,7 @@ pub struct ChatThreadSnapshot {
     pub last_message_delivery: Option<DeliveryState>,
     pub unread_count: u64,
     pub is_typing: bool,
+    pub is_muted: bool,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -235,6 +238,7 @@ pub struct CurrentChatSnapshot {
     pub group_id: Option<String>,
     pub member_count: u64,
     pub message_ttl_seconds: Option<u64>,
+    pub is_muted: bool,
     pub messages: Vec<ChatMessageSnapshot>,
     pub typing_indicators: Vec<TypingIndicatorSnapshot>,
 }
@@ -257,6 +261,7 @@ pub struct GroupDetailsSnapshot {
     pub created_by_display_name: String,
     pub created_by_npub: String,
     pub can_manage: bool,
+    pub is_muted: bool,
     pub revision: u64,
     pub members: Vec<GroupMemberSnapshot>,
 }

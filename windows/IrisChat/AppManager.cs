@@ -192,6 +192,9 @@ public sealed class AppManager : INotifyPropertyChanged
     public void SetChatMessageTtl(string chatId, ulong? ttlSeconds) =>
         DispatchToRust(new AppAction.SetChatMessageTtl(chatId, ttlSeconds));
 
+    public void SetChatMuted(string chatId, bool muted) =>
+        DispatchToRust(new AppAction.SetChatMuted(chatId, muted));
+
     public void ToggleReaction(string chatId, string messageId, string emoji) =>
         DispatchToRust(new AppAction.ToggleReaction(chatId, messageId, emoji));
 
@@ -470,6 +473,7 @@ public sealed class AppManager : INotifyPropertyChanged
 
         foreach (var chat in next.chatList ?? Array.Empty<ChatThreadSnapshot>())
         {
+            if (chat.isMuted) continue;
             if (chat.lastMessageIsOutgoing == true) continue;
             if (chat.chatId == currentChatId) continue;
             oldUnread.TryGetValue(chat.chatId, out var prevUnread);
