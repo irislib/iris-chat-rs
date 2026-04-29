@@ -64,10 +64,33 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if !isVisible {
             return "Click to enable"
         }
-        if peers.count == 1 { return "1 nearby" }
-        if peers.count > 1 { return "\(peers.count) nearby" }
+        if !peers.isEmpty {
+            return Self.nearbySummary(for: peers)
+        }
         if Self.isBlockingStatus(status) { return status }
         return "No users nearby"
+    }
+
+    private static func nearbySummary(for peers: [IrisNearbyPeer]) -> String {
+        let names = peers.map(summaryName)
+        switch names.count {
+        case 1:
+            return "\(names[0]) nearby"
+        case 2:
+            return "\(names[0]) and \(names[1]) nearby"
+        case 3:
+            return "\(names[0]), \(names[1]) and \(names[2]) nearby"
+        default:
+            let shown = names.prefix(3).joined(separator: ", ")
+            let otherCount = names.count - 3
+            let suffix = otherCount == 1 ? "other" : "others"
+            return "\(shown) and \(otherCount) \(suffix) nearby"
+        }
+    }
+
+    private static func summaryName(for peer: IrisNearbyPeer) -> String {
+        let trimmed = peer.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Someone" : trimmed
     }
 
     private static func isBlockingStatus(_ status: String) -> Bool {

@@ -1444,25 +1444,24 @@ private struct NearbyIrisScreen: View {
 
     private var header: some View {
         HStack(spacing: 12) {
-            Text("Nearby")
-                .font(.system(.title3, design: .rounded, weight: .bold))
-                .foregroundStyle(palette.textPrimary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Nearby")
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .foregroundStyle(palette.textPrimary)
 
-            Text(service.sidebarSubtitle)
-                .font(.system(.caption, design: .rounded, weight: .semibold))
-                .foregroundStyle(palette.muted)
+                Text(service.sidebarSubtitle)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
 
             Spacer()
 
-            Button {
-                service.toggleVisibility()
-            } label: {
-                Image(systemName: service.isVisible ? "eye.fill" : "eye.slash.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 36, height: 36)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel(service.isVisible ? "Visible" : "Hidden")
+            Toggle("", isOn: visibilityBinding)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityLabel(service.isVisible ? "Visible" : "Hidden")
 
             IrisModalCloseButton(action: onClose)
                 .accessibilityIdentifier("nearbyCloseButton")
@@ -1470,6 +1469,13 @@ private struct NearbyIrisScreen: View {
         .padding(.horizontal, 18)
         .frame(height: 58)
         .background(palette.toolbar)
+    }
+
+    private var visibilityBinding: Binding<Bool> {
+        Binding(
+            get: { service.isVisible },
+            set: { service.setVisible($0) }
+        )
     }
 
     @ViewBuilder
@@ -1511,6 +1517,7 @@ private struct NearbyIrisScreen: View {
     private func openPeer(_ peer: IrisNearbyPeer) {
         guard let ownerPubkeyHex = peer.ownerPubkeyHex else { return }
         manager.dispatch(.createChat(peerInput: ownerPubkeyHex))
+        onClose()
     }
 }
 #endif

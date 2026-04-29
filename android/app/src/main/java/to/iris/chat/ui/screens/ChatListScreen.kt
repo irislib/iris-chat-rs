@@ -258,11 +258,24 @@ private fun NearbyPeerStrip(
 private fun nearbyPreview(snapshot: IrisNearbyService.Snapshot): String =
     when {
         !snapshot.visible -> "Click to enable"
-        snapshot.peerCount == 1 -> "1 nearby"
-        snapshot.peerCount > 1 -> "${snapshot.peerCount} nearby"
+        snapshot.peers.isNotEmpty() -> nearbyPeerSummary(snapshot.peers)
         snapshot.status in nearbyBlockingStatuses -> snapshot.status
         else -> "No users nearby"
     }
+
+private fun nearbyPeerSummary(peers: List<IrisNearbyService.Peer>): String {
+    val names = peers.map { it.name.trim().ifEmpty { "Someone" } }
+    return when (names.size) {
+        1 -> "${names[0]} nearby"
+        2 -> "${names[0]} and ${names[1]} nearby"
+        3 -> "${names[0]}, ${names[1]} and ${names[2]} nearby"
+        else -> {
+            val otherCount = names.size - 3
+            val suffix = if (otherCount == 1) "other" else "others"
+            "${names.take(3).joinToString(", ")} and $otherCount $suffix nearby"
+        }
+    }
+}
 
 private val nearbyBlockingStatuses =
     setOf(
