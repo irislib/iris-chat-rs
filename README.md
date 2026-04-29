@@ -12,9 +12,9 @@ https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsd
 - Offline queueing, message server sync, and SQLite persistence.
 - Attachments, profile pictures, notifications, and support bundles.
 - Desktop open-at-login on macOS, Linux, and Windows.
-- Android, iOS, and macOS expose iris chat as a share destination. The share
-  picker supports search and multiple recipients; iOS also donates recent chats
-  for share-sheet suggestions.
+- Share to iris chat from Android, iOS, and macOS.
+- Search and choose one or more recipients.
+- iOS suggests recent chats in the share sheet.
 
 ## Status
 
