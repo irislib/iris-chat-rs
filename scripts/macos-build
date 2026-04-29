@@ -237,6 +237,7 @@ run_macos_app() {
   PROFILE="release"
   TARGETS="${IRIS_MACOS_RUST_TARGETS:-aarch64-apple-darwin}"
   export IRIS_MACOS_RUST_PROFILE="release"
+  resolve_shared_build_metadata "$ROOT"
 
   run_macos_xcframework
   run_macos_xcodeproj
@@ -283,6 +284,8 @@ run_macos_app() {
     ARCHS=arm64 \
     VALID_ARCHS=arm64 \
     ONLY_ACTIVE_ARCH=NO \
+    "MARKETING_VERSION=$IRIS_APP_VERSION_NAME" \
+    "CURRENT_PROJECT_VERSION=$IRIS_APP_VERSION_CODE" \
     "${sign_args[@]}" \
     build
 
@@ -302,6 +305,33 @@ run_macos_app() {
   fi
 
   printf '%s\n' "$dest"
+}
+
+submit_notarization() {
+  local artifact="$1"
+  local label="$2"
+  local profile="${MACOS_NOTARY_PROFILE:-}"
+  local submit_output
+
+  if ! submit_output="$(xcrun notarytool submit "$artifact" \
+        --keychain-profile "$profile" \
+        --wait \
+        --output-format json 2>&1)"; then
+    echo "$submit_output" >&2
+    exit 1
+  fi
+
+  local status submission_id
+  status="$(printf '%s' "$submit_output" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
+  submission_id="$(printf '%s' "$submit_output" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
+
+  if [[ "$status" != "Accepted" ]]; then
+    echo "$label: notarization status was '$status' (expected 'Accepted')" >&2
+    if [[ -n "$submission_id" ]]; then
+      xcrun notarytool log "$submission_id" --keychain-profile "$profile" >&2 || true
+    fi
+    exit 1
+  fi
 }
 
 run_macos_notarize() {
@@ -326,28 +356,8 @@ run_macos_notarize() {
   rm -f "$zip"
   ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
 
-  local submit_output
-  if ! submit_output="$(xcrun notarytool submit "$zip" \
-        --keychain-profile "$profile" \
-        --wait \
-        --output-format json 2>&1)"; then
-    echo "$submit_output" >&2
-    rm -f "$zip"
-    exit 1
-  fi
+  submit_notarization "$zip" "macos-notarize"
   rm -f "$zip"
-
-  local status submission_id
-  status="$(printf '%s' "$submit_output" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("status",""))')"
-  submission_id="$(printf '%s' "$submit_output" | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')"
-
-  if [[ "$status" != "Accepted" ]]; then
-    echo "macos-notarize: notarization status was '$status' (expected 'Accepted')" >&2
-    if [[ -n "$submission_id" ]]; then
-      xcrun notarytool log "$submission_id" --keychain-profile "$profile" >&2 || true
-    fi
-    exit 1
-  fi
 
   xcrun stapler staple "$app"
   xcrun stapler validate "$app"
@@ -356,9 +366,7 @@ run_macos_notarize() {
 
 run_macos_dmg() {
   local app="$MACOS_DIST_DIR/$MACOS_APP_NAME"
-  if [[ ! -d "$app" ]]; then
-    run_macos_app >/dev/null
-  fi
+  run_macos_app >/dev/null
 
   if [[ -n "${MACOS_SIGNING_IDENTITY:-}" && -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
     if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
@@ -390,6 +398,13 @@ run_macos_dmg() {
     "$dmg"
 
   rm -rf "$stage"
+
+  if [[ -n "${MACOS_SIGNING_IDENTITY:-}" && -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
+    submit_notarization "$dmg" "macos-dmg"
+    xcrun stapler staple "$dmg"
+    xcrun stapler validate "$dmg"
+  fi
+
   printf '%s\n' "$dmg"
 }
 
