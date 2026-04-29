@@ -273,6 +273,7 @@ fun RestoreAccountScreen(
     appState: AppState,
 ) {
     var restoreInput by rememberSaveable { mutableStateOf("") }
+    var lastSubmittedSecret by rememberSaveable { mutableStateOf<String?>(null) }
 
     OnboardingColumn {
         BackToWelcomeButton(appManager = appManager)
@@ -289,7 +290,19 @@ fun RestoreAccountScreen(
             )
             TextField(
                 value = restoreInput,
-                onValueChange = { restoreInput = it },
+                onValueChange = { value ->
+                    val previous = restoreInput.trim()
+                    restoreInput = value
+                    val current = value.trim()
+                    if (
+                        !appState.busy.restoringSession &&
+                        current != lastSubmittedSecret &&
+                        shouldAutoSubmitSecret(previous = previous, current = current)
+                    ) {
+                        lastSubmittedSecret = current
+                        appManager.restoreSession(current)
+                    }
+                },
                 modifier =
                     Modifier
                         .fillMaxWidth()
@@ -308,7 +321,10 @@ fun RestoreAccountScreen(
             )
             IrisPrimaryButton(
                 text = if (appState.busy.restoringSession) "Restoring…" else "Restore account",
-                onClick = { appManager.restoreSession(restoreInput) },
+                onClick = {
+                    lastSubmittedSecret = restoreInput.trim()
+                    appManager.restoreSession(restoreInput)
+                },
                 enabled =
                     restoreInput.trim().isNotEmpty() &&
                         !appState.busy.restoringSession,
@@ -322,6 +338,22 @@ fun RestoreAccountScreen(
         OnboardingMessageCard(message = appState.toast)
     }
 }
+
+private fun shouldAutoSubmitSecret(
+    previous: String,
+    current: String,
+): Boolean {
+    if (current.isBlank()) return false
+    val pasted = current.length > previous.length + 4
+    val lower = current.lowercase()
+    if (lower.startsWith("nsec1")) {
+        return pasted || current.length >= 63
+    }
+    return current.length == 64 && current.all { it.isAsciiHexDigit() }
+}
+
+private fun Char.isAsciiHexDigit(): Boolean =
+    this in '0'..'9' || this in 'a'..'f' || this in 'A'..'F'
 
 @Composable
 fun AddDeviceScreen(

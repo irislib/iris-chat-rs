@@ -345,8 +345,37 @@ struct NavigationShell<Content: View>: View {
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
+#if os(iOS)
+        .modifier(IrisSwipeBackModifier(enabled: canGoBack, onBack: onBack))
+#endif
     }
 }
+
+#if os(iOS)
+private struct IrisSwipeBackModifier: ViewModifier {
+    let enabled: Bool
+    let onBack: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 18, coordinateSpace: .global)
+                    .onEnded { value in
+                        guard enabled, value.startLocation.x <= 28 else {
+                            return
+                        }
+                        let horizontal = value.translation.width
+                        let vertical = abs(value.translation.height)
+                        guard horizontal > 72, horizontal > vertical * 1.35 else {
+                            return
+                        }
+                        onBack()
+                    }
+            )
+    }
+}
+#endif
 
 private struct DesktopChatShell: View {
     @Environment(\.irisPalette) private var palette
@@ -1124,6 +1153,7 @@ struct CreateAccountScreen: View {
 struct RestoreAccountScreen: View {
     @ObservedObject var manager: AppManager
     @StateObject private var restoreSecret = SecretKeyDraft()
+    @State private var lastSubmittedSecret: String?
 
     var body: some View {
         IrisScrollScreen {
@@ -1139,18 +1169,42 @@ struct RestoreAccountScreen: View {
 
                 SecretKeyField(text: Binding(
                     get: { restoreSecret.text },
-                    set: { restoreSecret.text = $0 }
+                    set: { updateSecret($0) }
                 ))
                     .irisInputField()
 
                 Button(manager.state.busy.restoringSession ? "Restoring…" : "Restore account") {
-                    manager.restoreSession(ownerNsec: restoreSecret.text)
+                    submitRestore(restoreSecret.text, force: true)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
                 .disabled(manager.state.busy.restoringSession)
                 .accessibilityIdentifier("importKeyButton")
             }
         }
+    }
+
+    private func updateSecret(_ value: String) {
+        let previous = restoreSecret.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        restoreSecret.text = value
+        let current = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard shouldAutoSubmitSecret(previous: previous, current: current) else {
+            return
+        }
+        submitRestore(current)
+    }
+
+    private func submitRestore(_ value: String, force: Bool = false) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            manager.restoreSession(ownerNsec: trimmed)
+            return
+        }
+        guard !manager.state.busy.restoringSession else { return }
+        guard force || lastSubmittedSecret != trimmed else {
+            return
+        }
+        lastSubmittedSecret = trimmed
+        manager.restoreSession(ownerNsec: trimmed)
     }
 }
 
@@ -1559,30 +1613,27 @@ struct NewChatScreen: View {
                     .frame(maxWidth: .infinity, alignment: .center)
 
                 HStack(spacing: 10) {
-                    Button("Copy") {
+                    Button {
                         manager.copyToClipboard(invite.url)
+                    } label: {
+                        NewChatInviteActionLabel(systemImage: "doc.on.doc", title: "Copy")
                     }
-                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .frame(maxWidth: .infinity)
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
                     .accessibilityIdentifier("newChatInviteCopyButton")
 
                     ShareLink(item: invite.url) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("Share")
-                        }
-                        .frame(maxWidth: .infinity)
+                        NewChatInviteActionLabel(systemImage: "square.and.arrow.up", title: "Share")
                     }
-                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .frame(maxWidth: .infinity)
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
                     .accessibilityIdentifier("newChatInviteShareButton")
 
                     Button(action: { showingInviteQr = true }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "qrcode")
-                            Text("Show")
-                        }
-                        .frame(maxWidth: .infinity)
+                        NewChatInviteActionLabel(systemImage: "qrcode", title: "Show")
                     }
-                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .frame(maxWidth: .infinity)
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
                     .accessibilityIdentifier("newChatInviteQrButton")
                 }
             } else {
@@ -1715,6 +1766,40 @@ struct NewChatScreen: View {
             manager.dispatch(.acceptInvite(inviteInput: trimmed))
         }
     }
+}
+
+private struct NewChatInviteActionLabel: View {
+    let systemImage: String
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.system(.body, weight: .semibold))
+            Text(title)
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .allowsTightening(true)
+        }
+        .frame(maxWidth: .infinity, minHeight: 38)
+    }
+}
+
+private func shouldAutoSubmitSecret(previous: String, current: String) -> Bool {
+    guard !current.isEmpty else {
+        return false
+    }
+    let pasted = current.count > previous.count + 4
+    let lower = current.lowercased()
+    if lower.hasPrefix("nsec1") {
+        return pasted || current.count >= 63
+    }
+    let hexDigits = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+    if current.count == 64, current.unicodeScalars.allSatisfy({ hexDigits.contains($0) }) {
+        return true
+    }
+    return false
 }
 
 struct CreateInviteScreen: View {

@@ -5,7 +5,9 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,9 +18,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,6 +44,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
@@ -156,31 +161,25 @@ fun NewChatScreen(
                     )
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        IrisSecondaryButton(
+                        NewChatInviteActionButton(
                             text = "Copy",
                             onClick = { clipboard.setText("Invite", inviteUrl) },
                             modifier = Modifier.weight(1f).testTag("newChatInviteCopyButton"),
-                            icon = {
-                                Icon(imageVector = IrisIcons.Copy, contentDescription = null)
-                            },
+                            icon = { Icon(imageVector = IrisIcons.Copy, contentDescription = null) },
                         )
                         if (canShareInvite) {
-                            IrisSecondaryButton(
+                            NewChatInviteActionButton(
                                 text = "Share",
                                 onClick = { shareText(context, inviteUrl, "Share invite") },
                                 modifier = Modifier.weight(1f).testTag("newChatInviteShareButton"),
-                                icon = {
-                                    Icon(imageVector = IrisIcons.Share, contentDescription = null)
-                                },
+                                icon = { Icon(imageVector = IrisIcons.Share, contentDescription = null) },
                             )
                         }
-                        IrisSecondaryButton(
+                        NewChatInviteActionButton(
                             text = "Show",
                             onClick = { showInviteQr = true },
                             modifier = Modifier.weight(1f).testTag("newChatInviteQrButton"),
-                            icon = {
-                                Icon(imageVector = IrisIcons.ScanQr, contentDescription = null)
-                            },
+                            icon = { Icon(imageVector = IrisIcons.ScanQr, contentDescription = null) },
                         )
                     }
                 } else {
@@ -311,6 +310,43 @@ fun NewChatScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun NewChatInviteActionButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: @Composable () -> Unit,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = modifier.defaultMinSize(minHeight = 66.dp),
+        shape = RoundedCornerShape(999.dp),
+        border = BorderStroke(1.dp, IrisTheme.palette.border),
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
+        colors =
+            ButtonDefaults.outlinedButtonColors(
+                containerColor = IrisTheme.palette.panel,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            icon()
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 1,
+                softWrap = false,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth(),
+            )
         }
     }
 }

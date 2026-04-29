@@ -461,6 +461,11 @@ final class AppManager: ObservableObject {
     ) async -> UNNotificationPresentationOptions {
         let userInfo = content.userInfo
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
+            if let payloadJson = serializedPushPayload(content: content),
+               let chatID = chatID(fromPushPayloadJson: payloadJson),
+               isPushChatOpen(chatID) {
+                return []
+            }
             return [.banner, .sound, .list]
         }
         if isGenericIrisFallback(content: content) && !hasPushEventPayload(userInfo: userInfo) {
@@ -473,7 +478,7 @@ final class AppManager: ObservableObject {
             return []
         }
         if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
-           state.currentChat?.chatId.caseInsensitiveCompare(chatID) == .orderedSame {
+           isPushChatOpen(chatID) {
             return []
         }
         await postForegroundDecryptedPush(resolution: resolution)
@@ -484,6 +489,11 @@ final class AppManager: ObservableObject {
         userInfo: [AnyHashable: Any]
     ) async -> UNNotificationPresentationOptions {
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
+            if let payloadJson = serializedPushPayload(userInfo: userInfo),
+               let chatID = chatID(fromPushPayloadJson: payloadJson),
+               isPushChatOpen(chatID) {
+                return []
+            }
             return [.banner, .sound, .list]
         }
         guard let resolution = resolvePushNotification(userInfo: userInfo) else {
@@ -493,7 +503,7 @@ final class AppManager: ObservableObject {
             return []
         }
         if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson),
-           state.currentChat?.chatId.caseInsensitiveCompare(chatID) == .orderedSame {
+           isPushChatOpen(chatID) {
             return []
         }
         await postForegroundDecryptedPush(resolution: resolution)
@@ -510,7 +520,7 @@ final class AppManager: ObservableObject {
         guard let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) else {
             return false
         }
-        return state.currentChat?.chatId.caseInsensitiveCompare(chatID) == .orderedSame
+        return isPushChatOpen(chatID)
     }
 
     func handlePushNotificationTap(userInfo: [AnyHashable: Any]) {
@@ -577,6 +587,44 @@ final class AppManager: ObservableObject {
             trigger: nil
         )
         try? await UNUserNotificationCenter.current().add(request)
+    }
+
+    private func isPushChatOpen(_ chatID: String) -> Bool {
+        let openChatIDs = [
+            currentScreenChatID,
+            state.currentChat?.chatId
+        ].compactMap { $0 }
+
+        return openChatIDs.contains { openChatID in
+            pushChatID(openChatID, matches: chatID)
+        }
+    }
+
+    private var currentScreenChatID: String? {
+        guard case .chat(let chatID) = activeScreen else {
+            return nil
+        }
+        return chatID
+    }
+
+    private func pushChatID(_ openChatID: String, matches pushChatID: String) -> Bool {
+        let open = openChatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let push = pushChatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !open.isEmpty, !push.isEmpty else {
+            return false
+        }
+        if open.caseInsensitiveCompare(push) == .orderedSame {
+            return true
+        }
+        if open.hasPrefix(mobilePushGroupChatPrefix) {
+            let openGroupID = String(open.dropFirst(mobilePushGroupChatPrefix.count))
+            return openGroupID.caseInsensitiveCompare(push) == .orderedSame
+        }
+        if push.hasPrefix(mobilePushGroupChatPrefix) {
+            let pushGroupID = String(push.dropFirst(mobilePushGroupChatPrefix.count))
+            return open.caseInsensitiveCompare(pushGroupID) == .orderedSame
+        }
+        return false
     }
 #endif
 
@@ -1191,6 +1239,7 @@ private func chatLinkFragmentComponents(_ url: URL) -> [String] {
 #if os(iOS)
 private let foregroundDecryptedPushMarkerKey = "iris_foreground_decrypted_push"
 private let encryptedMobilePushOuterKind = 1060
+private let mobilePushGroupChatPrefix = "group:"
 
 private func serializedPushPayload(userInfo: [AnyHashable: Any]) -> String? {
     serializedPushPayload(dictionary: pushPayloadDictionary(userInfo: userInfo))
@@ -1285,7 +1334,7 @@ private func chatID(fromPushPayloadJson payloadJson: String) -> String? {
         return nil
     }
     if let groupID = normalizedPushString(object["group_id"]) {
-        return groupID
+        return "\(mobilePushGroupChatPrefix)\(groupID)"
     }
     if let sender = normalizedPushString(object["sender_pubkey"]) {
         return sender
