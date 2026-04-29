@@ -17,6 +17,7 @@ IOS_SIGNING_STYLE="${IRIS_IOS_SIGNING_STYLE:-automatic}"
 IOS_BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-to.iris.chat}"
 IOS_DEVELOPMENT_TEAM="${IRIS_IOS_DEVELOPMENT_TEAM:-J8PPJKD7TA}"
 IOS_INTERNAL_ONLY="${IRIS_IOS_INTERNAL_ONLY:-false}"
+IOS_ATTACH_INTERNAL_AFTER_UPLOAD="${IRIS_IOS_ATTACH_INTERNAL_AFTER_UPLOAD:-$IOS_INTERNAL_ONLY}"
 IOS_ARCHIVE_BASENAME="${IRIS_IOS_ARCHIVE_BASENAME:-$(release_slug ios)}"
 IOS_ARCHIVE_PATH="${IRIS_IOS_ARCHIVE_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}.xcarchive}"
 IOS_EXPORT_PATH="${IRIS_IOS_EXPORT_PATH:-$IOS_DIST_DIR/${IOS_ARCHIVE_BASENAME}}"
@@ -34,7 +35,7 @@ run_xcodebuild() {
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/ios-release <print-config|prepare|archive|export|upload>
+usage: ./scripts/ios-release <print-config|prepare|archive|export|upload|internal>
 EOF
 }
 
@@ -118,6 +119,7 @@ ios.development.team=${IOS_DEVELOPMENT_TEAM:-<unset>}
 ios.signing.style=$IOS_SIGNING_STYLE
 ios.export.method=$IOS_EXPORT_METHOD
 ios.internal.only=$IOS_INTERNAL_ONLY
+ios.attach.internal.after.upload=$IOS_ATTACH_INTERNAL_AFTER_UPLOAD
 ios.archive.path=$IOS_ARCHIVE_PATH
 ios.export.path=$IOS_EXPORT_PATH
 app.version.name=$IRIS_APP_VERSION_NAME
@@ -297,6 +299,10 @@ upload_archive() {
     --apiKey "$IRIS_ASC_AUTH_KEY_ID" \
     --apiIssuer "$IRIS_ASC_AUTH_KEY_ISSUER_ID" \
     | tee "$IOS_UPLOAD_LOG_PATH/altool-upload.log"
+
+  if bool_is_true "$IOS_ATTACH_INTERNAL_AFTER_UPLOAD"; then
+    "$ROOT/scripts/testflight-internal" put
+  fi
 }
 
 case "${1:-}" in
@@ -314,6 +320,9 @@ case "${1:-}" in
     ;;
   upload)
     upload_archive
+    ;;
+  internal)
+    "$ROOT/scripts/testflight-internal" put
     ;;
   -h|--help|help)
     usage

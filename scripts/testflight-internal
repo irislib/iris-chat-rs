@@ -1,0 +1,338 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/release_common.sh"
+
+load_release_env "$ROOT"
+resolve_shared_build_metadata "$ROOT"
+
+IOS_BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-to.iris.chat}"
+ACTION="${1:-put}"
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/testflight-internal <put|attach|wait|status|groups>
+
+Commands:
+  put      wait for the uploaded build, then attach it to internal TestFlight groups
+  attach   attach the already-visible build to internal TestFlight groups
+  wait     wait until the uploaded build is visible and valid
+  status   print current App Store Connect build/internal-group status
+  groups   list TestFlight groups for the app
+
+Environment:
+  IRIS_TESTFLIGHT_GROUPS          optional comma-separated internal group names or IDs
+  IRIS_TESTFLIGHT_WAIT_ATTEMPTS   default 20
+  IRIS_TESTFLIGHT_WAIT_SECONDS    default 30
+EOF
+}
+
+case "$ACTION" in
+  put|attach|wait|status|groups)
+    ;;
+  -h|--help|help)
+    usage
+    exit 0
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
+
+require_var IRIS_ASC_AUTH_KEY_PATH
+require_var IRIS_ASC_AUTH_KEY_ID
+require_var IRIS_ASC_AUTH_KEY_ISSUER_ID
+
+if [[ ! -f "$IRIS_ASC_AUTH_KEY_PATH" ]]; then
+  echo "ASC API key file not found: $IRIS_ASC_AUTH_KEY_PATH" >&2
+  exit 1
+fi
+
+export IRIS_TESTFLIGHT_ACTION="$ACTION"
+export IRIS_IOS_BUNDLE_ID="$IOS_BUNDLE_ID"
+
+python3 <<'PY'
+import base64
+import json
+import os
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+try:
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, utils
+except ImportError as exc:
+    raise SystemExit(
+        "Python package 'cryptography' is required for App Store Connect JWT signing."
+    ) from exc
+
+
+BASE_URL = "https://api.appstoreconnect.apple.com/v1/"
+ACTION = os.environ["IRIS_TESTFLIGHT_ACTION"]
+BUNDLE_ID = os.environ["IRIS_IOS_BUNDLE_ID"]
+VERSION_NAME = os.environ["IRIS_APP_VERSION_NAME"]
+BUILD_NUMBER = os.environ["IRIS_APP_VERSION_CODE"]
+WAIT_ATTEMPTS = int(os.environ.get("IRIS_TESTFLIGHT_WAIT_ATTEMPTS", "20"))
+WAIT_SECONDS = int(os.environ.get("IRIS_TESTFLIGHT_WAIT_SECONDS", "30"))
+
+
+def fail(message, code=1):
+    print(message, file=sys.stderr)
+    raise SystemExit(code)
+
+
+def b64url(data):
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def create_token():
+    with open(os.environ["IRIS_ASC_AUTH_KEY_PATH"], "rb") as key_file:
+        private_key = serialization.load_pem_private_key(key_file.read(), password=None)
+
+    now = int(time.time())
+    header = {
+        "alg": "ES256",
+        "kid": os.environ["IRIS_ASC_AUTH_KEY_ID"],
+        "typ": "JWT",
+    }
+    payload = {
+        "iss": os.environ["IRIS_ASC_AUTH_KEY_ISSUER_ID"],
+        "iat": now,
+        "exp": now + 20 * 60,
+        "aud": "appstoreconnect-v1",
+    }
+    signing_input = (
+        f"{b64url(json.dumps(header, separators=(',', ':')).encode())}."
+        f"{b64url(json.dumps(payload, separators=(',', ':')).encode())}"
+    ).encode("ascii")
+    der_signature = private_key.sign(signing_input, ec.ECDSA(hashes.SHA256()))
+    r_value, s_value = utils.decode_dss_signature(der_signature)
+    signature = r_value.to_bytes(32, "big") + s_value.to_bytes(32, "big")
+    return signing_input.decode("ascii") + "." + b64url(signature)
+
+
+TOKEN = create_token()
+
+
+def request(method, path_or_url, params=None, body=None):
+    if path_or_url.startswith("https://"):
+        url = path_or_url
+    else:
+        url = BASE_URL + path_or_url
+        if params:
+            url += "?" + urllib.parse.urlencode(params)
+
+    data = json.dumps(body).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {TOKEN}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            raw = response.read().decode("utf-8")
+            return response.status, json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as error:
+        raw = error.read().decode("utf-8", errors="replace")
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError:
+            body = raw
+        return error.code, body
+
+
+def require_ok(status, body, operation):
+    if 200 <= status < 300:
+        return body
+    fail(f"{operation} failed: HTTP {status}\n{json.dumps(body, indent=2)}")
+
+
+def get_all(path, params=None):
+    status, body = request("GET", path, params)
+    body = require_ok(status, body, f"GET {path}")
+    data = list(body.get("data", []))
+    next_url = body.get("links", {}).get("next")
+    while next_url:
+        status, body = request("GET", next_url)
+        body = require_ok(status, body, f"GET {next_url}")
+        data.extend(body.get("data", []))
+        next_url = body.get("links", {}).get("next")
+    return data
+
+
+def app_id():
+    apps = get_all("apps", {"filter[bundleId]": BUNDLE_ID, "limit": "1"})
+    if not apps:
+        fail(f"No App Store Connect app found for bundle {BUNDLE_ID}")
+    return apps[0]["id"]
+
+
+APP_ID = app_id()
+
+
+def find_build():
+    builds = get_all(
+        "builds",
+        {
+            "filter[app]": APP_ID,
+            "filter[version]": BUILD_NUMBER,
+            "limit": "1",
+        },
+    )
+    return builds[0] if builds else None
+
+
+def wait_for_valid_build():
+    for attempt in range(1, WAIT_ATTEMPTS + 1):
+        build = find_build()
+        if build is not None:
+            state = build["attributes"].get("processingState")
+            print(
+                f"Found TestFlight build {BUILD_NUMBER}: {state} "
+                f"(attempt {attempt}/{WAIT_ATTEMPTS})",
+                flush=True,
+            )
+            if state == "VALID":
+                return build
+            if state in {"FAILED", "INVALID"}:
+                fail(f"Build {BUILD_NUMBER} is {state}")
+        else:
+            print(
+                f"Waiting for TestFlight build {BUILD_NUMBER} "
+                f"(attempt {attempt}/{WAIT_ATTEMPTS})",
+                flush=True,
+            )
+        if attempt < WAIT_ATTEMPTS:
+            time.sleep(WAIT_SECONDS)
+    fail(f"Build {BUILD_NUMBER} did not become VALID in time")
+
+
+def groups():
+    return get_all("betaGroups", {"filter[app]": APP_ID, "limit": "200"})
+
+
+def select_internal_groups(all_groups):
+    wanted_raw = os.environ.get("IRIS_TESTFLIGHT_GROUPS", "").strip()
+    if not wanted_raw:
+        selected = [
+            group
+            for group in all_groups
+            if group.get("attributes", {}).get("isInternalGroup") is True
+        ]
+    else:
+        wanted = {item.strip() for item in wanted_raw.split(",") if item.strip()}
+        selected = [
+            group
+            for group in all_groups
+            if group["id"] in wanted or group.get("attributes", {}).get("name") in wanted
+        ]
+        matched = {
+            group["id"] for group in selected
+        } | {group.get("attributes", {}).get("name") for group in selected}
+        missing = sorted(wanted - matched)
+        if missing:
+            fail(f"TestFlight group not found: {', '.join(missing)}")
+        external = [
+            group.get("attributes", {}).get("name", group["id"])
+            for group in selected
+            if group.get("attributes", {}).get("isInternalGroup") is not True
+        ]
+        if external and os.environ.get("IRIS_TESTFLIGHT_ALLOW_EXTERNAL") != "true":
+            fail(
+                "Refusing to attach external TestFlight group(s): "
+                + ", ".join(external)
+                + ". Set IRIS_TESTFLIGHT_ALLOW_EXTERNAL=true to override."
+            )
+
+    if not selected:
+        fail("No internal TestFlight groups found")
+    return selected
+
+
+def group_has_build(group_id, build):
+    for item in get_all(f"betaGroups/{group_id}/builds", {"limit": "200"}):
+        if item["id"] == build["id"]:
+            return True
+    return False
+
+
+def summarize_build(build, selected_groups=None):
+    attrs = build["attributes"]
+    print(f"Iris Chat {VERSION_NAME} ({BUILD_NUMBER})")
+    print(f"Build: {build['id']}")
+    print(f"State: {attrs.get('processingState')}")
+    print(f"Audience: {attrs.get('buildAudienceType')}")
+    print(f"Uploaded: {attrs.get('uploadedDate')}")
+
+    all_groups = groups()
+    selected = selected_groups or select_internal_groups(all_groups)
+    print("Internal TestFlight groups:")
+    for group in selected:
+        attrs = group.get("attributes", {})
+        attached = group_has_build(group["id"], build)
+        print(f"  - {attrs.get('name', group['id'])}: {'attached' if attached else 'not attached'}")
+
+
+def attach_build(build, selected_groups):
+    body = {
+        "data": [
+            {"type": "betaGroups", "id": group["id"]}
+            for group in selected_groups
+        ]
+    }
+    status, response_body = request(
+        "POST",
+        f"builds/{build['id']}/relationships/betaGroups",
+        body=body,
+    )
+    if not (200 <= status < 300 or status == 409):
+        fail(f"Attach failed: HTTP {status}\n{json.dumps(response_body, indent=2)}")
+
+    failures = [
+        group.get("attributes", {}).get("name", group["id"])
+        for group in selected_groups
+        if not group_has_build(group["id"], build)
+    ]
+    if failures:
+        fail("Build was not found in group(s) after attach: " + ", ".join(failures))
+
+    print(f"Attached build {BUILD_NUMBER} to internal TestFlight group(s):")
+    for group in selected_groups:
+        print(f"  - {group.get('attributes', {}).get('name', group['id'])}")
+
+
+if ACTION == "groups":
+    print(f"TestFlight groups for {BUNDLE_ID}:")
+    for group in groups():
+        attrs = group.get("attributes", {})
+        kind = "internal" if attrs.get("isInternalGroup") else "external"
+        print(f"  - {attrs.get('name', group['id'])} [{kind}] {group['id']}")
+    raise SystemExit(0)
+
+if ACTION in {"put", "wait"}:
+    build = wait_for_valid_build()
+else:
+    build = find_build()
+    if build is None:
+        fail(f"Build {BUILD_NUMBER} is not visible in App Store Connect yet")
+    if ACTION == "attach" and build["attributes"].get("processingState") != "VALID":
+        fail(f"Build {BUILD_NUMBER} is {build['attributes'].get('processingState')}, not VALID")
+
+selected_groups = select_internal_groups(groups())
+
+if ACTION in {"put", "attach"}:
+    attach_build(build, selected_groups)
+else:
+    summarize_build(build, selected_groups)
+PY
