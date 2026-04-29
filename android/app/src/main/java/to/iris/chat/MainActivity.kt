@@ -7,6 +7,7 @@ import android.os.Bundle
 import android.os.Build
 import android.content.pm.PackageManager
 import android.util.Log
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.app.ActivityCompat
@@ -20,6 +21,15 @@ import to.iris.chat.ui.theme.IrisChatTheme
 
 class MainActivity : ComponentActivity() {
     private lateinit var container: AppContainer
+    private var pendingNearbyPermissionAction: (() -> Unit)? = null
+    private val nearbyPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+            val action = pendingNearbyPermissionAction
+            pendingNearbyPermissionAction = null
+            if (action != null && grants.isNotEmpty() && grants.values.all { it }) {
+                action()
+            }
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -29,7 +39,10 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             IrisChatTheme {
-                NdrApp(container = container)
+                NdrApp(
+                    container = container,
+                    onNearbyClick = ::openNearby,
+                )
             }
         }
     }
@@ -44,7 +57,6 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         Log.d(TAG, "onStart")
         requestNotificationPermissionIfNeeded()
-        requestNearbyPermissionIfNeeded()
         container.appManager.appForegrounded()
     }
 
@@ -58,7 +70,6 @@ class MainActivity : ComponentActivity() {
         const val TAG = "NdrDebug"
         const val ACTION_OPEN_CHAT_LIST = "to.iris.chat.OPEN_CHAT_LIST"
         const val NOTIFICATION_PERMISSION_REQUEST = 1001
-        const val NEARBY_PERMISSION_REQUEST = 1002
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
@@ -157,28 +168,39 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun requestNearbyPermissionIfNeeded() {
-        val permissions =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                arrayOf(
-                    Manifest.permission.BLUETOOTH_SCAN,
-                    Manifest.permission.BLUETOOTH_CONNECT,
-                    Manifest.permission.BLUETOOTH_ADVERTISE,
-                )
-            } else {
-                arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-            }
+    private fun openNearby() {
+        val service = container.nearbyIrisService
+        if (service.snapshot.visible) {
+            service.setVisible(false)
+            return
+        }
+        requestNearbyPermissionIfNeeded {
+            service.setVisible(true)
+        }
+    }
+
+    private fun nearbyPermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+            )
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    private fun requestNearbyPermissionIfNeeded(onGranted: () -> Unit) {
+        val permissions = nearbyPermissions()
         val missing =
             permissions.filter {
                 ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
             }
         if (missing.isEmpty()) {
+            onGranted()
             return
         }
-        ActivityCompat.requestPermissions(
-            this,
-            missing.toTypedArray(),
-            NEARBY_PERMISSION_REQUEST,
-        )
+        pendingNearbyPermissionAction = onGranted
+        nearbyPermissionLauncher.launch(missing.toTypedArray())
     }
 }

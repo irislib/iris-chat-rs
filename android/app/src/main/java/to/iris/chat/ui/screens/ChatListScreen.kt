@@ -48,6 +48,7 @@ fun ChatListScreen(
     appManager: AppManager,
     appState: AppState,
     nearbyService: IrisNearbyService? = null,
+    onNearbyClick: () -> Unit = {},
 ) {
     var relativeNowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
     var nearbyTick by remember { mutableStateOf(0) }
@@ -151,7 +152,7 @@ fun ChatListScreen(
                             lastMessageMine = false,
                             lastDelivery = null,
                             onClick = {
-                                nearbyService.toggleVisible()
+                                onNearbyClick()
                                 nearbyTick += 1
                             },
                             modifier = Modifier.testTag("nearbyChatRow"),

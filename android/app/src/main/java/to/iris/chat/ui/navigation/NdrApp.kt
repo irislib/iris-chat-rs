@@ -32,7 +32,10 @@ import to.iris.chat.ui.screens.AddDeviceScreen
 import to.iris.chat.ui.screens.WelcomeScreen
 
 @Composable
-fun NdrApp(container: AppContainer) {
+fun NdrApp(
+    container: AppContainer,
+    onNearbyClick: () -> Unit = {},
+) {
     val appManager = container.appManager
     val splashViewModel = remember { SplashViewModel(appManager) }
     val bootstrapState by splashViewModel.bootstrapState.collectAsStateWithLifecycle()
@@ -94,6 +97,7 @@ fun NdrApp(container: AppContainer) {
                             appManager = appManager,
                             appState = appState,
                             nearbyService = container.nearbyIrisService,
+                            onNearbyClick = onNearbyClick,
                         )
                     }
 
@@ -120,6 +124,7 @@ fun NdrApp(container: AppContainer) {
                                 appManager = appManager,
                                 appState = appState,
                                 nearbyService = container.nearbyIrisService,
+                                onNearbyClick = onNearbyClick,
                             )
                         } else {
                             MyProfileSheet(

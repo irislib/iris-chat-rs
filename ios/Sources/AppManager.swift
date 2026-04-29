@@ -336,15 +336,19 @@ final class AppManager: ObservableObject {
         }
 
 #if os(macOS)
+#if DEBUG
         nearbyBitchat.configureDebugMessageToSendOnFirstPeer(environment["IRIS_BITCHAT_NEARBY_TEST_MESSAGE"])
         if environment["IRIS_BITCHAT_NEARBY_AUTOSTART"] == "1" {
             nearbyBitchat.setVisible(true)
         }
 #endif
+#endif
 #if os(iOS) || os(macOS)
+#if DEBUG
         if environment["IRIS_NEARBY_AUTOSTART"] == "1" {
             nearbyIris.setVisible(true)
         }
+#endif
 #endif
     }
 
