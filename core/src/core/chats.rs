@@ -831,8 +831,23 @@ impl AppCore {
         let chat_id = chat_id.unwrap_or_else(|| sender_owner.to_hex());
         self.clear_typing_indicator(&chat_id, &sender_owner.to_hex());
         if sender_owner == local_owner {
-            if let Some(message_id) = message_id {
+            let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
+            if self.threads.get(&chat_id).is_some_and(|thread| {
+                thread
+                    .messages
+                    .iter()
+                    .any(|message| message.id == message_id)
+            }) {
                 self.update_message_delivery(&chat_id, &message_id, DeliveryState::Sent);
+            } else {
+                self.push_outgoing_message_with_id(
+                    message_id,
+                    &chat_id,
+                    body,
+                    created_at_secs,
+                    expires_at_secs,
+                    DeliveryState::Sent,
+                );
             }
             return;
         }

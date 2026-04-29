@@ -243,6 +243,53 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun start_link_invite_and_wait_for_authorization_from_args() {
+        val ownerInput = optionalArg("owner_input").orEmpty()
+        val expectedState = requiredAuthorizationState()
+        var linkRequested = false
+
+        val linkDevice =
+            waitForState("link device invite", timeoutMs = 90_000) {
+                val manager = appManager()
+                manager.state.value.linkDevice?.let { return@waitForState it }
+
+                when (manager.bootstrapState.value) {
+                    AccountBootstrapState.Loading -> null
+                    AccountBootstrapState.NeedsLogin -> {
+                        if (!linkRequested) {
+                            linkRequested = true
+                            manager.startLinkedDevice(ownerInput)
+                        }
+                        null
+                    }
+                    is AccountBootstrapState.LoggedIn -> null
+                }
+            }
+
+        reportStatus(
+            "invite_url" to linkDevice.url,
+            "device_input" to linkDevice.deviceInput,
+        )
+
+        val account =
+            waitForState("authorization state ${expectedState.name}", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .account
+                    ?.takeIf { it.authorizationState == expectedState }
+            }
+
+        reportStatus(
+            "npub" to account.npub,
+            "public_key_hex" to account.publicKeyHex,
+            "device_npub" to account.deviceNpub,
+            "device_public_key_hex" to account.devicePublicKeyHex,
+            "authorization_state" to account.authorizationState.name,
+        )
+    }
+
+    @Test
     fun add_authorized_device_from_args() {
         ensureLoggedIn()
         val deviceInput = requiredArg("device_input")
@@ -292,6 +339,31 @@ class RealRelayHarnessTest {
 
         reportStatus(
             "device_pubkey_hex" to normalizePeerInput(deviceInput),
+            "device_count" to roster.devices.size.toString(),
+        )
+    }
+
+    @Test
+    fun accept_link_invite_from_args() {
+        ensureLoggedIn()
+        val inviteUrl = requiredArg("invite_url")
+        val initialDeviceCount = appManager().state.value.deviceRoster?.devices?.size ?: 0
+
+        appManager().addAuthorizedDevice(inviteUrl)
+
+        val roster =
+            waitForState("accepted link invite", timeoutMs = 90_000) {
+                val state = appManager().state.value
+                state.toast?.takeIf { it.isNotBlank() }?.let { toast ->
+                    fail("Link invite accept failed: $toast")
+                }
+                state.deviceRoster?.takeIf { roster ->
+                    !state.busy.updatingRoster && roster.devices.size > initialDeviceCount
+                }
+            }
+
+        reportStatus(
+            "accepted" to "true",
             "device_count" to roster.devices.size.toString(),
         )
     }
@@ -956,6 +1028,38 @@ class RealRelayHarnessTest {
         )
     }
 
+    @Test
+    fun report_chat_messages_from_args() {
+        ensureLoggedIn()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        val current =
+            waitForState("opened chat messages", timeoutMs = 30_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current -> current.chatId.equals(chat.chatId, ignoreCase = true) }
+            }
+
+        reportStatus(
+            "chat_id" to current.chatId,
+            "messages" to current.messages.joinToString("|") { message ->
+                listOf(
+                    message.id,
+                    message.body,
+                    message.isOutgoing.toString(),
+                    message.delivery.name,
+                ).joinToString(",")
+            },
+        )
+    }
+
     /**
      * Set the local owner's `name` (kind:0 metadata) so peers can
      * resolve the sender's display name in their notification title.
@@ -1255,9 +1359,9 @@ class RealRelayHarnessTest {
     fun assert_message_absent_from_args() {
         ensureLoggedIn()
         val expectedMessage = requiredArg("message")
-        val peerInput = arguments.getString("peer_input").orEmpty()
-        val expectedChatId = arguments.getString("chat_id").orEmpty().takeIf { it.isNotBlank() }
-        val direction = arguments.getString("direction").orEmpty().lowercase()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val expectedChatId = optionalArg("chat_id")
+        val direction = optionalArg("direction").orEmpty().lowercase()
         val timeoutMs = optionalArg("timeout_ms")?.toLong() ?: 30_000
 
         if (peerInput.isNotBlank()) {

@@ -1415,6 +1415,82 @@ fn web_runtime_message_duplicates_dedupe_by_inner_rumor_id() {
 }
 
 #[test]
+fn self_synced_direct_message_is_rendered_as_outgoing_on_linked_device() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("self-sync-missing-outgoing", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let inner_id = "d".repeat(64);
+    let content = serde_json::json!({
+        "content": "sent from sibling",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_500u64,
+        "tags": [["p", chat_id], ["ms", "1777159500123"]],
+        "pubkey": owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(
+        owner.public_key(),
+        Some(sibling_device.public_key()),
+        content,
+        Some("e".repeat(64)),
+    );
+
+    let thread = core.threads.get(&chat_id).expect("thread");
+    assert_eq!(thread.messages.len(), 1);
+    let message = &thread.messages[0];
+    assert_eq!(message.id, inner_id);
+    assert_eq!(message.body, "sent from sibling");
+    assert!(message.is_outgoing);
+    assert_eq!(message.delivery, DeliveryState::Sent);
+}
+
+#[test]
+fn self_synced_direct_message_updates_existing_local_outgoing_without_duplicate() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("self-sync-existing-outgoing", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let inner_id = "f".repeat(64);
+    core.push_outgoing_message_with_id(
+        inner_id.clone(),
+        &chat_id,
+        "local optimistic".to_string(),
+        1_777_159_499,
+        None,
+        DeliveryState::Pending,
+    );
+    let content = serde_json::json!({
+        "content": "sent from this device",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_500u64,
+        "tags": [["p", chat_id], ["ms", "1777159500123"]],
+        "pubkey": owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(
+        owner.public_key(),
+        Some(device.public_key()),
+        content,
+        Some("a".repeat(64)),
+    );
+
+    let thread = core.threads.get(&chat_id).expect("thread");
+    assert_eq!(thread.messages.len(), 1);
+    let message = &thread.messages[0];
+    assert_eq!(message.body, "local optimistic");
+    assert!(message.is_outgoing);
+    assert_eq!(message.delivery, DeliveryState::Sent);
+}
+
+#[test]
 fn web_runtime_typing_rumors_do_not_become_chat_messages() {
     let owner = Keys::generate();
     let device = Keys::generate();
