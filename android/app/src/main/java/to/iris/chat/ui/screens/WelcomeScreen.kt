@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -42,6 +43,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -203,6 +205,14 @@ fun CreateAccountScreen(
     var displayName by rememberSaveable { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val canCreateAccount =
+        displayName.trim().isNotEmpty() &&
+            !appState.busy.creatingAccount
+    val submitCreateAccount = {
+        if (canCreateAccount) {
+            appManager.createAccount(displayName.trim())
+        }
+    }
 
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
@@ -233,14 +243,19 @@ fun CreateAccountScreen(
                 },
                 singleLine = true,
                 enabled = !appState.busy.creatingAccount,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions =
+                    KeyboardActions(
+                        onDone = {
+                            submitCreateAccount()
+                        },
+                    ),
                 colors = irisTextFieldColors(),
             )
             IrisPrimaryButton(
                 text = if (appState.busy.creatingAccount) "Creating…" else "Create account",
-                onClick = { appManager.createAccount(displayName) },
-                enabled =
-                    displayName.trim().isNotEmpty() &&
-                        !appState.busy.creatingAccount,
+                onClick = submitCreateAccount,
+                enabled = canCreateAccount,
                 modifier =
                     Modifier
                         .fillMaxWidth()

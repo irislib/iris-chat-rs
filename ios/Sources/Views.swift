@@ -1067,6 +1067,14 @@ struct CreateAccountScreen: View {
     @State private var displayName = ""
     @FocusState private var isNameFocused: Bool
 
+    private var trimmedDisplayName: String {
+        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var canCreateAccount: Bool {
+        !trimmedDisplayName.isEmpty && !manager.state.busy.creatingAccount
+    }
+
     var body: some View {
         IrisScrollScreen {
             IrisSectionCard {
@@ -1082,16 +1090,15 @@ struct CreateAccountScreen: View {
                     .textFieldStyle(.plain)
                     .irisInputField()
                     .focused($isNameFocused)
+                    .submitLabel(.done)
+                    .onSubmit(submitCreateAccount)
                     .accessibilityIdentifier("signupNameField")
 
                 Button(manager.state.busy.creatingAccount ? "Creating…" : "Create account") {
-                    manager.createAccount(name: displayName)
+                    submitCreateAccount()
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
-                .disabled(
-                    displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
-                    manager.state.busy.creatingAccount
-                )
+                .disabled(!canCreateAccount)
                 .accessibilityIdentifier("generateKeyButton")
             }
         }
@@ -1100,6 +1107,11 @@ struct CreateAccountScreen: View {
                 isNameFocused = true
             }
         }
+    }
+
+    private func submitCreateAccount() {
+        guard canCreateAccount else { return }
+        manager.createAccount(name: trimmedDisplayName)
     }
 }
 

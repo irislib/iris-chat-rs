@@ -7,10 +7,12 @@
                        Style="{StaticResource HeadingText}"
                        Margin="0,0,0,12" />
             <TextBlock Text="Name" Margin="0,0,0,4" />
-            <TextBox x:Name="NameInput" />
+            <TextBox x:Name="NameInput"
+                     KeyDown="OnNameInputKeyDown" />
 
             <Button x:Name="CreateButton"
                     Style="{StaticResource PrimaryButton}"
+                    IsDefault="True"
                     Click="OnCreate"
                     Margin="0,16,0,0">
                 <TextBlock Text="Create account" />
