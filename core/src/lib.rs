@@ -10,6 +10,7 @@ mod updates;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
+use std::{panic, panic::AssertUnwindSafe};
 
 use flume::{Receiver, Sender};
 
@@ -174,7 +175,12 @@ impl FfiApp {
                     };
                     let t0 = crate::perflog::now_ms();
                     crate::perflog!("reconcile.start kind={kind}");
-                    reconciler.reconcile(update);
+                    if panic::catch_unwind(AssertUnwindSafe(|| reconciler.reconcile(update)))
+                        .is_err()
+                    {
+                        crate::perflog!("reconcile.failed kind={kind}");
+                        continue;
+                    }
                     crate::perflog!(
                         "reconcile.end kind={kind} elapsed_ms={}",
                         crate::perflog::now_ms().saturating_sub(t0)

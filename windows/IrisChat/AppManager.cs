@@ -430,6 +430,21 @@ public sealed class AppManager : INotifyPropertyChanged
         }
     }
 
+    private void ApplySafely(AppUpdate update)
+    {
+        try
+        {
+            Apply(update);
+        }
+        catch (Exception error)
+        {
+            var message = $"Iris Chat FFI update callback failed ({update.GetType().Name}): {error}";
+            Trace.TraceError(message);
+            Debug.WriteLine(message);
+            ShowToast(DispatchFailureToast);
+        }
+    }
+
     private void PostDesktopNotifications(AppState old, AppState next)
     {
         if (old.account == null) return;
@@ -527,7 +542,7 @@ public sealed class AppManager : INotifyPropertyChanged
 
         public void Reconcile(AppUpdate update)
         {
-            _owner._ui.BeginInvoke(new Action(() => _owner.Apply(update)));
+            _owner._ui.BeginInvoke(new Action(() => _owner.ApplySafely(update)));
         }
     }
 }

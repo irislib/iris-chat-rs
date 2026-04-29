@@ -639,6 +639,13 @@ class AppManager(
         action::class.simpleName
             ?: action::class.java.simpleName.ifEmpty { "unknown" }
 
+    private fun updateLogName(update: AppUpdate): String =
+        update::class.simpleName
+            ?: update::class.java.simpleName.ifEmpty { "unknown" }
+
+    private fun isFatalJvmError(error: Throwable): Boolean =
+        error is VirtualMachineError || error is ThreadDeath
+
     private suspend fun restoreSessionFromSecureStore() {
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.
         Log.d(TAG, "restoreSessionFromSecureStore start")
@@ -938,7 +945,15 @@ class AppManager(
             if (generation != rustGeneration) {
                 return
             }
-            applyUpdate(update)
+            try {
+                applyUpdate(update)
+            } catch (error: Throwable) {
+                if (isFatalJvmError(error)) {
+                    throw error
+                }
+                Log.e(TAG, "FFI update callback failed (${updateLogName(update)})", error)
+                publishShellToast(DISPATCH_FAILURE_TOAST)
+            }
         }
     }
 }

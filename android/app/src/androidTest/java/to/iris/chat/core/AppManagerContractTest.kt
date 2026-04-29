@@ -125,6 +125,26 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun update_side_effect_failure_does_not_escape_reconciler_callback() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        appManager.setNearbyEventPublisher {
+            throw LinkageError("bluetooth callback failed")
+        }
+
+        rust.emit(
+            AppUpdate.NearbyPublishedEvent(
+                eventId = "a".repeat(64),
+                kind = 1u,
+                createdAtSecs = 42u,
+                eventJson = """{"id":"${"a".repeat(64)}"}""",
+            ),
+        )
+
+        assertEquals("Action failed. Copy support bundle in Settings.", appManager.state.value.toast)
+    }
+
+    @Test
     fun restore_from_stored_bundle_dispatches_restore_account_bundle() {
         persistStoredSecret(
             StoredAccountBundle(

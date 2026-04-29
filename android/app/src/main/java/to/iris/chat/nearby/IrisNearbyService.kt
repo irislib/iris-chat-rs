@@ -33,6 +33,7 @@ import java.nio.ByteOrder
 import java.util.UUID
 import java.util.zip.Deflater
 import java.util.zip.Inflater
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -118,6 +119,49 @@ class IrisNearbyService(
         setVisible(!visible)
     }
 
+    private inline fun <T> guardBluetooth(
+        operation: String,
+        fallback: T,
+        statusOnFailure: String? = "Bluetooth unavailable",
+        block: () -> T,
+    ): T =
+        try {
+            block()
+        } catch (error: Throwable) {
+            if (shouldRethrow(error)) {
+                throw error
+            }
+            statusOnFailure?.let { status = it }
+            Log.w(TAG, "$operation failed", error)
+            fallback
+        }
+
+    private suspend fun <T> guardBluetoothSuspend(
+        operation: String,
+        fallback: T,
+        statusOnFailure: String? = "Bluetooth unavailable",
+        block: suspend () -> T,
+    ): T =
+        try {
+            block()
+        } catch (error: Throwable) {
+            if (shouldRethrow(error)) {
+                throw error
+            }
+            statusOnFailure?.let { status = it }
+            Log.w(TAG, "$operation failed", error)
+            fallback
+        }
+
+    private fun launchBluetooth(
+        operation: String,
+        block: suspend () -> Unit,
+    ) {
+        applicationScope.launch {
+            guardBluetoothSuspend(operation, Unit, block = block)
+        }
+    }
+
     fun publish(event: NearbyPublishedEvent) {
         val record =
             StoredNearbyEvent(
@@ -151,7 +195,11 @@ class IrisNearbyService(
             Log.w(TAG, "missing Bluetooth permissions")
             return
         }
-        if (adapter?.isEnabled != true) {
+        val enabled =
+            guardBluetooth("read Bluetooth state", false, "Bluetooth off") {
+                adapter?.isEnabled == true
+            }
+        if (!enabled) {
             status = "Bluetooth off"
             return
         }
@@ -164,9 +212,17 @@ class IrisNearbyService(
     @SuppressLint("MissingPermission")
     private fun stop() {
         status = "Off"
-        runCatching { adapter?.bluetoothLeScanner?.stopScan(scanCallback) }
-        runCatching { adapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback) }
-        gatts.values.forEach { gatt -> runCatching { gatt.close() } }
+        guardBluetooth("stop scan", Unit, statusOnFailure = null) {
+            adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        }
+        guardBluetooth("stop advertising", Unit, statusOnFailure = null) {
+            adapter?.bluetoothLeAdvertiser?.stopAdvertising(advertiseCallback)
+        }
+        gatts.values.forEach { gatt ->
+            guardBluetooth("close GATT", Unit, statusOnFailure = null) {
+                gatt.close()
+            }
+        }
         gatts.clear()
         writableCharacteristics.clear()
         centralAssemblers.clear()
@@ -175,14 +231,19 @@ class IrisNearbyService(
         mtuPayloadBytes.clear()
         incomingFragments.clear()
         peers.clear()
-        runCatching { gattServer?.close() }
+        guardBluetooth("close GATT server", Unit, statusOnFailure = null) {
+            gattServer?.close()
+        }
         gattServer = null
     }
 
     @SuppressLint("MissingPermission")
     private fun startGattServer() {
         val manager = bluetoothManager ?: return
-        val server = manager.openGattServer(appContext, gattServerCallback) ?: return
+        val server =
+            guardBluetooth("open GATT server", null as BluetoothGattServer?, "Bluetooth unavailable") {
+                manager.openGattServer(appContext, gattServerCallback)
+            } ?: return
         val service = BluetoothGattService(SERVICE_UUID, BluetoothGattService.SERVICE_TYPE_PRIMARY)
         val characteristic =
             BluetoothGattCharacteristic(
@@ -199,13 +260,23 @@ class IrisNearbyService(
             ),
         )
         service.addCharacteristic(characteristic)
-        server.addService(service)
-        gattServer = server
+        val added =
+            guardBluetooth("add GATT service", false, "Bluetooth unavailable") {
+                server.addService(service)
+            }
+        if (added) {
+            gattServer = server
+        } else {
+            runCatching { server.close() }
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun startAdvertising() {
-        val advertiser = adapter?.bluetoothLeAdvertiser
+        val advertiser =
+            guardBluetooth("get advertiser", null as android.bluetooth.le.BluetoothLeAdvertiser?, "Advertise unavailable") {
+                adapter?.bluetoothLeAdvertiser
+            }
         if (advertiser == null) {
             status = "Advertise unavailable"
             return
@@ -221,29 +292,43 @@ class IrisNearbyService(
                 .addServiceUuid(ParcelUuid(SERVICE_UUID))
                 .setIncludeDeviceName(false)
                 .build()
-        advertiser.startAdvertising(settings, data, advertiseCallback)
+        guardBluetooth("start advertising", Unit, "Advertise failed") {
+            advertiser.startAdvertising(settings, data, advertiseCallback)
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun startScanning() {
-        val scanner = adapter?.bluetoothLeScanner ?: return
+        val scanner =
+            guardBluetooth("get scanner", null as android.bluetooth.le.BluetoothLeScanner?, "Scan failed") {
+                adapter?.bluetoothLeScanner
+            } ?: return
         val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
         val settings =
             ScanSettings.Builder()
                 .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                 .build()
         status = "Scanning"
-        scanner.startScan(listOf(filter), settings, scanCallback)
+        guardBluetooth("start scan", Unit, "Scan failed") {
+            scanner.startScan(listOf(filter), settings, scanCallback)
+        }
     }
 
     @SuppressLint("MissingPermission")
     private fun connect(device: BluetoothDevice) {
-        val address = device.address
+        val address =
+            guardBluetooth("read device address", null as String?, "Connect failed") {
+                device.address
+            } ?: return
         if (gatts.containsKey(address)) {
             return
         }
         status = "Connecting"
-        gatts[address] = device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+        val gatt =
+            guardBluetooth("connect GATT", null as BluetoothGatt?, "Connect failed") {
+                device.connectGatt(appContext, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            } ?: return
+        gatts[address] = gatt
     }
 
     private fun announceToConnectedPeers() {
@@ -342,7 +427,7 @@ class IrisNearbyService(
             return
         }
         Log.d(TAG, "send event_frag count=${frames.size} event=${record.id} peers=${peers.size}")
-        applicationScope.launch {
+        launchBluetooth("send event fragments") {
             sendMutex.withLock {
                 frames.forEach { frame ->
                     sendFrame(frame, excludingPeerId)
@@ -366,7 +451,7 @@ class IrisNearbyService(
             return
         }
         Log.d(TAG, "send $type bytes=${frame.size} peers=${peers.size}")
-        applicationScope.launch {
+        launchBluetooth("send frame") {
             sendMutex.withLock {
                 sendFrame(frame, excludingPeerId)
             }
@@ -384,15 +469,22 @@ class IrisNearbyService(
         }
         val server = gattServer ?: return
         val characteristic = server.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID) ?: return
-        bluetoothManager
-            ?.getConnectedDevices(BluetoothProfile.GATT)
-            ?.toList()
-            ?.forEach { device ->
-                if (peerIdsByAddress[device.address] == excludingPeerId) {
-                    return@forEach
-                }
-                notifyDevice(server, device, characteristic, frame)
+        val connectedDevices = guardBluetooth("connected GATT devices", emptyList(), statusOnFailure = null) {
+            bluetoothManager
+                ?.getConnectedDevices(BluetoothProfile.GATT)
+                ?.toList()
+                ?: emptyList()
+        }
+        connectedDevices.forEach { device ->
+            val address =
+                guardBluetooth("read connected device address", null as String?, statusOnFailure = null) {
+                    device.address
+                } ?: return@forEach
+            if (peerIdsByAddress[address] == excludingPeerId) {
+                return@forEach
             }
+            notifyDevice(server, device, characteristic, frame)
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -402,17 +494,23 @@ class IrisNearbyService(
         data: ByteArray,
     ) {
         var offset = 0
-        val chunkSize = mtuPayloadBytes[gatt.device.address] ?: BLE_CHUNK_BYTES
+        val address =
+            guardBluetooth("read GATT device address", null as String?, statusOnFailure = null) {
+                gatt.device.address
+            } ?: return
+        val chunkSize = mtuPayloadBytes[address] ?: BLE_CHUNK_BYTES
         while (offset < data.size) {
             val chunk = data.copyOfRange(offset, minOf(offset + chunkSize, data.size))
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                gatt.writeCharacteristic(characteristic, chunk, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
-            } else {
-                @Suppress("DEPRECATION")
-                characteristic.value = chunk
-                characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
-                @Suppress("DEPRECATION")
-                gatt.writeCharacteristic(characteristic)
+            guardBluetooth("write GATT characteristic", Unit, statusOnFailure = null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    gatt.writeCharacteristic(characteristic, chunk, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                } else {
+                    @Suppress("DEPRECATION")
+                    characteristic.value = chunk
+                    characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                    @Suppress("DEPRECATION")
+                    gatt.writeCharacteristic(characteristic)
+                }
             }
             offset += chunk.size
             delay(BLE_CHUNK_DELAY_MS)
@@ -427,16 +525,22 @@ class IrisNearbyService(
         data: ByteArray,
     ) {
         var offset = 0
-        val chunkSize = mtuPayloadBytes[device.address] ?: BLE_CHUNK_BYTES
+        val address =
+            guardBluetooth("read notify device address", null as String?, statusOnFailure = null) {
+                device.address
+            } ?: return
+        val chunkSize = mtuPayloadBytes[address] ?: BLE_CHUNK_BYTES
         while (offset < data.size) {
             val chunk = data.copyOfRange(offset, minOf(offset + chunkSize, data.size))
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                server.notifyCharacteristicChanged(device, characteristic, false, chunk)
-            } else {
-                @Suppress("DEPRECATION")
-                characteristic.value = chunk
-                @Suppress("DEPRECATION")
-                server.notifyCharacteristicChanged(device, characteristic, false)
+            guardBluetooth("notify GATT device", Unit, statusOnFailure = null) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    server.notifyCharacteristicChanged(device, characteristic, false, chunk)
+                } else {
+                    @Suppress("DEPRECATION")
+                    characteristic.value = chunk
+                    @Suppress("DEPRECATION")
+                    server.notifyCharacteristicChanged(device, characteristic, false)
+                }
             }
             offset += chunk.size
             delay(BLE_CHUNK_DELAY_MS)
@@ -706,8 +810,10 @@ class IrisNearbyService(
     private val scanCallback =
         object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
-                if (hasBluetoothPermissions()) {
-                    connect(result.device)
+                guardBluetooth("scan result", Unit, statusOnFailure = null) {
+                    if (hasBluetoothPermissions()) {
+                        connect(result.device)
+                    }
                 }
             }
         }
@@ -729,60 +835,85 @@ class IrisNearbyService(
         object : BluetoothGattCallback() {
             @SuppressLint("MissingPermission")
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-                if (newState == BluetoothProfile.STATE_CONNECTED) {
-                    val address = gatt.device.address
-                    applicationScope.launch {
-                        delay(200)
-                        val requested = runCatching { gatt.requestMtu(517) }.getOrDefault(false)
-                        if (!requested) {
-                            Log.w(TAG, "MTU request failed to start for $address")
-                            gatt.discoverServices()
+                guardBluetooth("GATT connection state", Unit, statusOnFailure = null) {
+                    if (newState == BluetoothProfile.STATE_CONNECTED) {
+                        val address =
+                            guardBluetooth("read connected GATT address", "unknown", statusOnFailure = null) {
+                                gatt.device.address
+                            }
+                        launchBluetooth("request GATT MTU") {
+                            delay(200)
+                            val requested =
+                                guardBluetooth("request MTU", false, statusOnFailure = null) {
+                                    gatt.requestMtu(517)
+                                }
+                            if (!requested) {
+                                Log.w(TAG, "MTU request failed to start for $address")
+                                guardBluetooth("discover services", Unit, statusOnFailure = null) {
+                                    gatt.discoverServices()
+                                }
+                            }
+                        }
+                    } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        val address =
+                            guardBluetooth("read disconnected GATT address", null as String?, statusOnFailure = null) {
+                                gatt.device.address
+                            } ?: return
+                        gatts.remove(address)
+                        writableCharacteristics.remove(address)
+                        centralAssemblers.remove(address)
+                        mtuPayloadBytes.remove(address)
+                        peerIdsByAddress.remove(address)?.let { peers.remove(it) }
+                        guardBluetooth("close GATT", Unit, statusOnFailure = null) {
+                            gatt.close()
                         }
                     }
-                } else if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    val address = gatt.device.address
-                    gatts.remove(address)
-                    writableCharacteristics.remove(address)
-                    centralAssemblers.remove(address)
-                    mtuPayloadBytes.remove(address)
-                    peerIdsByAddress.remove(address)?.let { peers.remove(it) }
-                    gatt.close()
                 }
             }
 
             @SuppressLint("MissingPermission")
             override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
-                val address = gatt.device.address
-                if (status == BluetoothGatt.GATT_SUCCESS) {
-                    mtuPayloadBytes[address] = (mtu - 3).coerceAtLeast(20)
-                    Log.d(TAG, "MTU $mtu for $address")
-                } else {
-                    Log.w(TAG, "MTU request failed for $address status=$status")
+                guardBluetooth("GATT MTU changed", Unit, statusOnFailure = null) {
+                    val address = gatt.device.address
+                    if (status == BluetoothGatt.GATT_SUCCESS) {
+                        mtuPayloadBytes[address] = (mtu - 3).coerceAtLeast(20)
+                        Log.d(TAG, "MTU $mtu for $address")
+                    } else {
+                        Log.w(TAG, "MTU request failed for $address status=$status")
+                    }
+                    guardBluetooth("discover services after MTU", Unit, statusOnFailure = null) {
+                        gatt.discoverServices()
+                    }
                 }
-                gatt.discoverServices()
             }
 
             @SuppressLint("MissingPermission")
             override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-                val characteristic =
-                    gatt.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID) ?: return
-                val address = gatt.device.address
-                writableCharacteristics[address] = characteristic
-                centralAssemblers[address] = FrameAssembler()
-                gatt.setCharacteristicNotification(characteristic, true)
-                characteristic.getDescriptor(CLIENT_CONFIG_UUID)?.let { descriptor ->
-                    val value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                        gatt.writeDescriptor(descriptor, value)
-                    } else {
-                        @Suppress("DEPRECATION")
-                        descriptor.value = value
-                        @Suppress("DEPRECATION")
-                        gatt.writeDescriptor(descriptor)
+                guardBluetooth("GATT services discovered", Unit, statusOnFailure = null) {
+                    val characteristic =
+                        gatt.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID) ?: return
+                    val address = gatt.device.address
+                    writableCharacteristics[address] = characteristic
+                    centralAssemblers[address] = FrameAssembler()
+                    guardBluetooth("enable characteristic notifications", Unit, statusOnFailure = null) {
+                        gatt.setCharacteristicNotification(characteristic, true)
                     }
+                    characteristic.getDescriptor(CLIENT_CONFIG_UUID)?.let { descriptor ->
+                        val value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                        guardBluetooth("write notification descriptor", Unit, statusOnFailure = null) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                                gatt.writeDescriptor(descriptor, value)
+                            } else {
+                                @Suppress("DEPRECATION")
+                                descriptor.value = value
+                                @Suppress("DEPRECATION")
+                                gatt.writeDescriptor(descriptor)
+                            }
+                        }
+                    }
+                    sendHello(excludingPeerId = null)
+                    sendInventory(excludingPeerId = null)
                 }
-                sendHello(excludingPeerId = null)
-                sendInventory(excludingPeerId = null)
             }
 
             override fun onCharacteristicChanged(
@@ -790,7 +921,9 @@ class IrisNearbyService(
                 characteristic: BluetoothGattCharacteristic,
                 value: ByteArray,
             ) {
-                ingestChunk(gatt.device.address, value, centralAssemblers)
+                guardBluetooth("GATT characteristic changed", Unit, statusOnFailure = null) {
+                    ingestChunk(gatt.device.address, value, centralAssemblers)
+                }
             }
 
             @Deprecated("Deprecated by Android")
@@ -798,23 +931,31 @@ class IrisNearbyService(
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic,
             ) {
-                @Suppress("DEPRECATION")
-                ingestChunk(gatt.device.address, characteristic.value ?: return, centralAssemblers)
+                guardBluetooth("GATT characteristic changed", Unit, statusOnFailure = null) {
+                    @Suppress("DEPRECATION")
+                    ingestChunk(gatt.device.address, characteristic.value ?: return, centralAssemblers)
+                }
             }
         }
 
     private val gattServerCallback =
         object : BluetoothGattServerCallback() {
             override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
-                mtuPayloadBytes[device.address] = (mtu - 3).coerceAtLeast(20)
-                Log.d(TAG, "server MTU $mtu for ${device.address}")
+                guardBluetooth("server MTU changed", Unit, statusOnFailure = null) {
+                    val address = device.address
+                    mtuPayloadBytes[address] = (mtu - 3).coerceAtLeast(20)
+                    Log.d(TAG, "server MTU $mtu for $address")
+                }
             }
 
             override fun onConnectionStateChange(device: BluetoothDevice, status: Int, newState: Int) {
-                if (newState == BluetoothProfile.STATE_DISCONNECTED) {
-                    serverAssemblers.remove(device.address)
-                    mtuPayloadBytes.remove(device.address)
-                    peerIdsByAddress.remove(device.address)?.let { peers.remove(it) }
+                guardBluetooth("server connection state", Unit, statusOnFailure = null) {
+                    if (newState == BluetoothProfile.STATE_DISCONNECTED) {
+                        val address = device.address
+                        serverAssemblers.remove(address)
+                        mtuPayloadBytes.remove(address)
+                        peerIdsByAddress.remove(address)?.let { peers.remove(it) }
+                    }
                 }
             }
 
@@ -827,10 +968,14 @@ class IrisNearbyService(
                 offset: Int,
                 value: ByteArray,
             ) {
-                ingestChunk(device.address, value, serverAssemblers)
-                if (responseNeeded && hasBluetoothPermissions()) {
-                    @SuppressLint("MissingPermission")
-                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                guardBluetooth("server characteristic write", Unit, statusOnFailure = null) {
+                    ingestChunk(device.address, value, serverAssemblers)
+                    if (responseNeeded && hasBluetoothPermissions()) {
+                        @SuppressLint("MissingPermission")
+                        guardBluetooth("send write response", Unit, statusOnFailure = null) {
+                            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                        }
+                    }
                 }
             }
 
@@ -843,12 +988,16 @@ class IrisNearbyService(
                 offset: Int,
                 value: ByteArray,
             ) {
-                if (responseNeeded && hasBluetoothPermissions()) {
-                    @SuppressLint("MissingPermission")
-                    gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                guardBluetooth("server descriptor write", Unit, statusOnFailure = null) {
+                    if (responseNeeded && hasBluetoothPermissions()) {
+                        @SuppressLint("MissingPermission")
+                        guardBluetooth("send descriptor response", Unit, statusOnFailure = null) {
+                            gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
+                        }
+                    }
+                    sendHello(excludingPeerId = null)
+                    sendInventory(excludingPeerId = null)
                 }
-                sendHello(excludingPeerId = null)
-                sendInventory(excludingPeerId = null)
             }
         }
 
@@ -1038,6 +1187,9 @@ class IrisNearbyService(
             return frames
         }
     }
+
+    private fun shouldRethrow(error: Throwable): Boolean =
+        error is CancellationException || error is VirtualMachineError || error is ThreadDeath
 
     private companion object {
         const val TAG = "IrisNearby"
