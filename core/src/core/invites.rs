@@ -36,7 +36,10 @@ impl AppCore {
         self.emit_state();
 
         let result = match parse_public_invite_or_direct_chat_input(trimmed) {
-            Ok(PublicInviteInput::Invite(invite)) => self.accept_parsed_invite(invite),
+            Ok(PublicInviteInput::Invite(invite)) => {
+                self.preload_invite_owner_app_keys(&invite);
+                self.accept_parsed_invite(invite)
+            }
             Ok(PublicInviteInput::DirectChat) => self.open_direct_chat_from_peer_input(trimmed),
             Err(_) => Err(anyhow::anyhow!("Invalid invite link.")),
         };
@@ -82,6 +85,64 @@ impl AppCore {
         self.mark_mobile_push_dirty();
         self.process_runtime_events();
         Ok(chat_id)
+    }
+
+    fn preload_invite_owner_app_keys(&mut self, invite: &Invite) {
+        let Some(owner_pubkey) = invite.owner_public_key else {
+            return;
+        };
+        if owner_pubkey == invite.inviter {
+            return;
+        }
+        let Some((client, relay_urls)) = self
+            .logged_in
+            .as_ref()
+            .filter(|logged_in| !logged_in.relay_urls.is_empty())
+            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
+        else {
+            return;
+        };
+
+        let filter = Filter::new()
+            .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+            .author(owner_pubkey)
+            .limit(10);
+        let fetched = self.runtime.block_on(async {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+            client.fetch_events(filter, Duration::from_secs(2)).await
+        });
+
+        let Ok(events) = fetched else {
+            self.push_debug_log(
+                "invite.app_keys.preload",
+                format!("owner={} result=fetch_failed", owner_pubkey.to_hex()),
+            );
+            return;
+        };
+
+        let latest = events
+            .iter()
+            .filter(|event| is_app_keys_event(event))
+            .max_by_key(|event| (event.created_at.as_secs(), event.id.to_hex()))
+            .cloned();
+        let Some(event) = latest else {
+            self.push_debug_log(
+                "invite.app_keys.preload",
+                format!("owner={} result=not_found", owner_pubkey.to_hex()),
+            );
+            return;
+        };
+
+        let created_at = event.created_at.as_secs();
+        self.apply_app_keys_event(&event);
+        self.push_debug_log(
+            "invite.app_keys.preload",
+            format!(
+                "owner={} result=applied created_at={created_at}",
+                owner_pubkey.to_hex()
+            ),
+        );
     }
 }
 

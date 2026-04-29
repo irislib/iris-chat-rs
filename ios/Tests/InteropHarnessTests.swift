@@ -44,7 +44,7 @@ final class InteropHarnessTests: XCTestCase {
         let account = "stored-account-bundle"
         let dataDir = useAppStorage
             ? AppPaths.dataDir(fileManager: .default, environment: [:])
-            : harnessRootDir(env: env).appendingPathComponent(runID, isDirectory: true)
+            : isolatedHarnessDataDir(runID: runID, env: env)
         let reset = env["IRIS_IOS_HARNESS_RESET"] == "1"
 
         let secretStore: AccountSecretStore
@@ -80,6 +80,67 @@ final class InteropHarnessTests: XCTestCase {
         case "create_account_and_report_identity", "report_logged_in_identity":
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
             reportIdentity(snapshot)
+        case "create_public_invite_and_report_url":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            manager.dispatch(.createPublicInvite)
+            let invite = try await waitFor(label: "public invite", timeout: 90) {
+                manager.state.publicInvite
+            }
+            status("invite_url", invite.url)
+        case "accept_invite_and_send_message_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let inviteURL = try requiredEnv("IRIS_IOS_HARNESS_INVITE_URL", env: env)
+            let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
+            let expectedChatID = env["IRIS_IOS_HARNESS_EXPECTED_CHAT_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            manager.dispatch(.acceptInvite(inviteInput: inviteURL))
+            var acceptedChat: CurrentChatSnapshot? = nil
+            let acceptDeadline = Date().addingTimeInterval(180)
+            while Date() < acceptDeadline {
+                let state = manager.state
+                if !state.busy.acceptingInvite,
+                   let toast = state.toast,
+                   !toast.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    throw HarnessError.unexpected("Invite accept failed: \(toast)")
+                }
+                if !state.busy.acceptingInvite,
+                   let current = state.currentChat,
+                   !current.chatId.isEmpty {
+                    if let expectedChatID, !expectedChatID.isEmpty,
+                       self.sameIdentifier(current.chatId, expectedChatID) == false {
+                        try await Task.sleep(nanoseconds: 200_000_000)
+                        continue
+                    }
+                    acceptedChat = current
+                    break
+                }
+                try await Task.sleep(nanoseconds: 200_000_000)
+            }
+            guard let chat = acceptedChat else {
+                throw HarnessError.timeout("accepted invite")
+            }
+
+            manager.dispatch(.sendMessage(chatId: chat.chatId, text: message))
+            let finalizedDelivery: String = try await waitFor(label: "invite chat message publish", timeout: 180) { () -> String? in
+                guard let current = manager.state.currentChat else {
+                    return nil
+                }
+                guard self.sameIdentifier(current.chatId, chat.chatId) else {
+                    return nil
+                }
+                let messageEntry = current.messages.first { entry in
+                    let isFinal = entry.delivery != .queued && entry.delivery != .pending
+                    return entry.isOutgoing && entry.body == message && isFinal
+                }
+                guard let messageEntry else { return nil }
+                return String(describing: messageEntry.delivery)
+            }
+            if finalizedDelivery.caseInsensitiveCompare("failed") == .orderedSame {
+                throw HarnessError.unexpected("Invite chat message failed to publish")
+            }
+            status("chat_id", chat.chatId)
+            status("message", message)
+            status("delivery", finalizedDelivery)
         case "enable_nearby_and_report_peers":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             manager.nearbyIris.setVisible(true)
@@ -657,6 +718,17 @@ final class InteropHarnessTests: XCTestCase {
             return sandboxRoot
         }
         return URL(fileURLWithPath: "/tmp/ndr-ios-harness", isDirectory: true)
+    }
+
+    private func isolatedHarnessDataDir(runID: String, env: [String: String]) -> URL {
+#if os(iOS)
+        return AppPaths.dataDir(
+            fileManager: .default,
+            environment: ["IRIS_UI_TEST_RUN_ID": "harness-\(runID)"]
+        )
+#else
+        return harnessRootDir(env: env).appendingPathComponent(runID, isDirectory: true)
+#endif
     }
 
     private func isWritableHarnessRoot(_ path: String) -> Bool {

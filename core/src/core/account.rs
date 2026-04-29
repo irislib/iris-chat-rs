@@ -392,7 +392,7 @@ impl AppCore {
         owner_keys: Option<Keys>,
         device_keys: Keys,
         allow_restore: bool,
-        _allow_protocol_restore: bool,
+        allow_protocol_restore: bool,
     ) -> anyhow::Result<()> {
         self.push_debug_log(
             "session.start",
@@ -425,6 +425,7 @@ impl AppCore {
         self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
+        self.defer_owner_app_keys_publish = false;
         self.debug_log.clear();
         self.debug_event_counters = DebugEventCounters::default();
         self.next_message_id = 1;
@@ -564,9 +565,12 @@ impl AppCore {
             .map(LocalAuthorizationState::from);
 
         let device_pubkey = device_keys.public_key();
-        if owner_keys.is_some() {
+        let should_defer_owner_app_keys_publish =
+            owner_keys.is_some() && allow_restore && !allow_protocol_restore;
+        if owner_keys.is_some() && !should_defer_owner_app_keys_publish {
             self.upsert_local_app_key_device(owner_pubkey, device_pubkey);
         }
+        self.defer_owner_app_keys_publish = should_defer_owner_app_keys_publish;
 
         let storage = Arc::new(SqliteStorageAdapter::new(
             self.app_store.shared(),
@@ -700,11 +704,23 @@ impl AppCore {
             .as_ref()
             .map(|known| known.created_at_secs)
             .unwrap_or_default();
-        let applied = apply_app_keys_snapshot(
+        let required_device = self
+            .logged_in
+            .as_ref()
+            .filter(|logged_in| {
+                self.defer_owner_app_keys_publish
+                    && logged_in.owner_keys.is_some()
+                    && logged_in.owner_pubkey == owner
+            })
+            .map(|logged_in| {
+                DeviceEntry::new(logged_in.device_keys.public_key(), unix_now().get())
+            });
+        let applied = apply_app_keys_snapshot_with_required_device(
             current_app_keys.as_ref(),
             current_created_at,
             incoming_app_keys,
             incoming_created_at,
+            required_device,
         );
         let known = known_app_keys_from_ndr(owner, &applied.app_keys, applied.created_at);
         if current.as_ref() == Some(&known) {

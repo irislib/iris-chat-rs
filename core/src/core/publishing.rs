@@ -23,6 +23,13 @@ impl AppCore {
         label: &'static str,
         completion: Option<(String, String)>,
     ) {
+        if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
+            self.push_debug_log(
+                "publish.runtime",
+                "label=runtime skipped=defer_owner_app_keys".to_string(),
+            );
+            return;
+        }
         self.remember_event(event.id.to_string());
         self.emit_nearby_published_event(&event);
         let Some((client, relay_urls)) = self
@@ -104,6 +111,7 @@ impl AppCore {
         let local_invite = logged_in.local_invite.clone();
         let local_app_keys = self.app_keys.get(&owner_pubkey.to_hex()).cloned();
         let local_profile = self.owner_profiles.get(&owner_pubkey.to_hex()).cloned();
+        let publish_app_keys = !self.defer_owner_app_keys_publish;
         let client = logged_in.client.clone();
         let relay_urls = logged_in.relay_urls.clone();
         let tx = self.core_sender.clone();
@@ -120,7 +128,7 @@ impl AppCore {
             }
         }
 
-        if let (Some(keys), Some(app_keys)) = (owner_keys, local_app_keys) {
+        if let (true, Some(keys), Some(app_keys)) = (publish_app_keys, owner_keys, local_app_keys) {
             if let Some(ndr_app_keys) = known_app_keys_to_ndr(&app_keys) {
                 if let Ok(unsigned) = ndr_app_keys.get_encrypted_event(&keys) {
                     if let Ok(event) = unsigned.sign_with_keys(&keys) {

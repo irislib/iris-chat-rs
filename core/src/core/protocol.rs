@@ -643,20 +643,31 @@ async fn fetch_events_for_filters(
     filters: Vec<Filter>,
     timeout: Duration,
 ) -> Result<Vec<Event>, String> {
+    use tokio::task::JoinSet;
+
+    let mut tasks = JoinSet::new();
+    for filter in filters {
+        let client = client.clone();
+        tasks.spawn(async move { client.fetch_events(filter, timeout).await });
+    }
+
     let mut any_success = false;
     let mut last_error = None;
     let mut seen_event_ids = HashSet::new();
     let mut collected = Vec::new();
 
-    for filter in filters {
-        match client.fetch_events(filter, timeout).await {
-            Ok(events) => {
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(Ok(events)) => {
                 any_success = true;
                 for event in events.iter() {
                     if seen_event_ids.insert(event.id) {
                         collected.push(event.clone());
                     }
                 }
+            }
+            Ok(Err(error)) => {
+                last_error = Some(error.to_string());
             }
             Err(error) => {
                 last_error = Some(error.to_string());

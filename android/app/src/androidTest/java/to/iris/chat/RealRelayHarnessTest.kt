@@ -16,6 +16,7 @@ import org.junit.runner.RunWith
 import to.iris.chat.core.AppManager
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.DeviceAuthorizationState
@@ -995,7 +996,7 @@ class RealRelayHarnessTest {
                     }
                     ?.let { return@waitForState it }
 
-            val state = appManager().state.value
+                val state = appManager().state.value
                 state.currentChat?.takeIf { chat ->
                     matchesResolvedChat(chat.chatId) &&
                         chat.messages.any { entry ->
@@ -1502,12 +1503,8 @@ class RealRelayHarnessTest {
 
     private fun ensureChatOpen(peerInput: String): CurrentChatSnapshot {
         val existing =
-            appManager().state.value.chatList.firstOrNull { thread ->
-                matchesPeerInput(
-                    chatId = thread.chatId,
-                    peerNpub = thread.subtitle.orEmpty(),
-                    peerInput = peerInput,
-                )
+            waitForOptionalState(timeoutMs = 5_000) {
+                findChatMatchingPeerInput(peerInput)
             }
         if (existing != null) {
             appManager().openChat(existing.chatId)
@@ -1529,6 +1526,15 @@ class RealRelayHarnessTest {
                 ?.takeIf { current -> matchesPeerInput(current.chatId, current.subtitle.orEmpty(), peerInput) }
         }
     }
+
+    private fun findChatMatchingPeerInput(peerInput: String): ChatThreadSnapshot? =
+        appManager().state.value.chatList.firstOrNull { thread ->
+            matchesPeerInput(
+                chatId = thread.chatId,
+                peerNpub = thread.subtitle.orEmpty(),
+                peerInput = peerInput,
+            )
+        }
 
     private fun ensureChatOpenById(chatId: String): CurrentChatSnapshot {
         val trimmed = chatId.trim()
@@ -2068,6 +2074,15 @@ class RealRelayHarnessTest {
             SystemClock.sleep(100)
         }
         throw AssertionError("Timed out waiting for $label")
+    }
+
+    private fun <T> waitForOptionalState(timeoutMs: Long, condition: () -> T?): T? {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            condition()?.let { return it }
+            SystemClock.sleep(100)
+        }
+        return null
     }
 
     private companion object {

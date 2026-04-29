@@ -291,7 +291,13 @@ impl AppCore {
     /// Process an app-keys event (kind 30078) — adds/removes devices
     /// for an owner. The mobile-push snapshot indexes by tracked owner
     /// + device, so any change there invalidates the cache.
-    fn apply_app_keys_event(&mut self, event: &Event) {
+    pub(super) fn apply_app_keys_event(&mut self, event: &Event) {
+        let should_publish_backfilled_owner_app_keys =
+            self.logged_in.as_ref().is_some_and(|logged_in| {
+                self.defer_owner_app_keys_publish
+                    && logged_in.owner_keys.is_some()
+                    && logged_in.owner_pubkey == event.pubkey
+            });
         let app_keys = self
             .logged_in
             .as_ref()
@@ -306,11 +312,30 @@ impl AppCore {
         let Some(app_keys) = app_keys else {
             return;
         };
-        let Some((effective_app_keys, effective_created_at)) =
-            self.apply_known_app_keys_snapshot(event.pubkey, &app_keys, event.created_at.as_secs())
-        else {
+        let applied =
+            self.apply_known_app_keys_snapshot(event.pubkey, &app_keys, event.created_at.as_secs());
+        let Some((mut effective_app_keys, mut effective_created_at)) = applied else {
+            if should_publish_backfilled_owner_app_keys {
+                self.defer_owner_app_keys_publish = false;
+            }
             return;
         };
+        if should_publish_backfilled_owner_app_keys {
+            if let Some((owner, device)) = self
+                .logged_in
+                .as_ref()
+                .map(|logged_in| (logged_in.owner_pubkey, logged_in.device_keys.public_key()))
+            {
+                self.upsert_local_app_key_device(owner, device);
+                if let Some(known) = self.app_keys.get(&owner.to_hex()) {
+                    if let Some(app_keys) = known_app_keys_to_ndr(known) {
+                        effective_app_keys = app_keys;
+                        effective_created_at = known.created_at_secs;
+                    }
+                }
+            }
+            self.defer_owner_app_keys_publish = false;
+        }
         if let Some(logged_in) = self.logged_in.as_ref() {
             logged_in.ndr_runtime.ingest_app_keys_snapshot(
                 event.pubkey,
@@ -319,10 +344,12 @@ impl AppCore {
             );
         }
         self.mark_mobile_push_dirty();
-        if self.refresh_local_authorization_state() {
-            self.rebuild_state();
-            self.persist_best_effort();
-            self.emit_state();
+        let _authorization_changed = self.refresh_local_authorization_state();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+        if should_publish_backfilled_owner_app_keys {
+            self.publish_local_app_keys();
         }
     }
 }

@@ -1,7 +1,6 @@
 package to.iris.chat.ui.screens
 
 import android.net.Uri
-import android.os.Build
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -385,7 +384,7 @@ private fun DeviceRosterRow(
 
 private fun deviceDisplayTitle(device: DeviceEntrySnapshot): String =
     if (device.isCurrentDevice) {
-        currentDeviceLabel()
+        "This device"
     } else {
         "Linked device"
     }
@@ -398,11 +397,6 @@ private fun deviceDisplaySubtitle(device: DeviceEntrySnapshot): String {
             "Iris Chat"
         }
     return clientLabel
-}
-
-private fun currentDeviceLabel(): String {
-    val model = Build.MODEL.trim()
-    return model.ifEmpty { "Android device" }
 }
 
 @Composable

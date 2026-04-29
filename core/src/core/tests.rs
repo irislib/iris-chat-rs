@@ -1208,6 +1208,173 @@ fn app_keys_cache_merges_same_timestamp_roster_events() {
 }
 
 #[test]
+fn restored_owner_session_does_not_publish_single_device_app_keys_before_backfill() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    core.start_primary_session(owner, device, true, false)
+        .expect("restored session");
+
+    let app_keys_events = update_rx
+        .try_iter()
+        .filter(|update| {
+            if let AppUpdate::NearbyPublishedEvent { event_json, .. } = update {
+                return serde_json::from_str::<Event>(event_json)
+                    .map(|event| is_app_keys_event(&event))
+                    .unwrap_or(false);
+            }
+            false
+        })
+        .count();
+    assert_eq!(
+        app_keys_events, 0,
+        "restored nsec login must not overwrite relay AppKeys before fetching them"
+    );
+}
+
+#[test]
+fn restored_account_bundle_publishes_existing_device_app_keys_on_startup() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    core.start_session(owner.public_key(), Some(owner), device.clone(), true, true)
+        .expect("restored account bundle session");
+
+    let app_keys_events = update_rx
+        .try_iter()
+        .filter(|update| {
+            if let AppUpdate::NearbyPublishedEvent { event_json, .. } = update {
+                return serde_json::from_str::<Event>(event_json)
+                    .map(|event| is_app_keys_event(&event))
+                    .unwrap_or(false);
+            }
+            false
+        })
+        .count();
+    assert!(
+        app_keys_events > 0,
+        "same-device startup must continue publishing the current AppKeys roster"
+    );
+}
+
+#[test]
+fn restored_owner_app_keys_backfill_merges_current_device_and_republishes() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let web_device = Keys::generate();
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    core.start_primary_session(owner.clone(), device.clone(), true, false)
+        .expect("restored session");
+    while update_rx.try_recv().is_ok() {}
+
+    let remote_app_keys = AppKeys::new(vec![DeviceEntry::new(web_device.public_key(), 10)]);
+    let remote_event = remote_app_keys
+        .get_event(owner.public_key())
+        .sign_with_keys(&owner)
+        .expect("remote app keys event");
+    core.apply_app_keys_event(&remote_event);
+
+    let known = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("known app keys");
+    assert!(known
+        .devices
+        .iter()
+        .any(|entry| entry.identity_pubkey_hex == web_device.public_key().to_hex()));
+    assert!(known
+        .devices
+        .iter()
+        .any(|entry| entry.identity_pubkey_hex == device.public_key().to_hex()));
+
+    let published_app_keys = update_rx
+        .try_iter()
+        .filter_map(|update| match update {
+            AppUpdate::NearbyPublishedEvent { event_json, .. } => {
+                serde_json::from_str::<Event>(&event_json)
+                    .ok()
+                    .filter(is_app_keys_event)
+                    .and_then(|event| AppKeys::from_event(&event).ok())
+            }
+            _ => None,
+        })
+        .last()
+        .expect("republished merged app keys");
+    assert!(published_app_keys
+        .get_device(&web_device.public_key())
+        .is_some());
+    assert!(published_app_keys
+        .get_device(&device.public_key())
+        .is_some());
+}
+
+#[test]
+fn app_keys_event_rerenders_device_roster_even_when_authorization_is_unchanged() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let other_device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.start_primary_session(owner.clone(), device.clone(), false, false)
+        .expect("primary session");
+    assert_eq!(
+        core.state
+            .device_roster
+            .as_ref()
+            .expect("device roster")
+            .devices
+            .len(),
+        1
+    );
+
+    let remote_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(device.public_key(), 10),
+        DeviceEntry::new(other_device.public_key(), 10),
+    ]);
+    let remote_event = remote_app_keys
+        .get_event(owner.public_key())
+        .sign_with_keys(&owner)
+        .expect("app keys event");
+    core.apply_app_keys_event(&remote_event);
+
+    let roster = core.state.device_roster.as_ref().expect("device roster");
+    assert_eq!(roster.devices.len(), 2);
+    assert!(roster
+        .devices
+        .iter()
+        .any(|entry| entry.device_pubkey_hex == other_device.public_key().to_hex()));
+}
+
+#[test]
 fn start_linked_device_creates_ownerless_link_invite() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let mut core = AppCore::new(

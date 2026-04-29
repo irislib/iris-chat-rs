@@ -47,6 +47,7 @@ impl AppCore {
             device_invite_poll_token: 0,
             message_expiry_token: 0,
             protocol_reconnect_token: 0,
+            defer_owner_app_keys_publish: false,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
             relay_status_watch_urls: HashSet::new(),

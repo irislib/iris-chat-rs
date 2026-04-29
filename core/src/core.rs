@@ -12,10 +12,10 @@ use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;
 use nostr::{EventBuilder, UnsignedEvent};
 use nostr_double_ratchet::{
-    add_group_admin, add_group_member, apply_app_keys_snapshot, apply_metadata_update,
-    build_direct_message_backfill_filter, is_app_keys_event, parse_group_metadata,
-    remove_group_admin, remove_group_member, update_group_data, validate_metadata_creation,
-    validate_metadata_update, AppKeys, CreateGroupOptions, DeviceEntry,
+    add_group_admin, add_group_member, apply_app_keys_snapshot_with_required_device,
+    apply_metadata_update, build_direct_message_backfill_filter, is_app_keys_event,
+    parse_group_metadata, remove_group_admin, remove_group_member, update_group_data,
+    validate_metadata_creation, validate_metadata_update, AppKeys, CreateGroupOptions, DeviceEntry,
     DirectMessageSubscriptionTracker, FanoutGroupMetadataOptions, GroupData, GroupDecryptedEvent,
     GroupSendEvent, GroupUpdate, Invite, MetadataValidation, NdrRuntime, SendOptions,
     SessionManagerEvent, SessionState, StorageAdapter, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND,
@@ -142,6 +142,7 @@ pub struct AppCore {
     device_invite_poll_token: u64,
     message_expiry_token: u64,
     protocol_reconnect_token: u64,
+    defer_owner_app_keys_publish: bool,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     direct_message_subscriptions: DirectMessageSubscriptionTracker,
     relay_status_watch_urls: HashSet<String>,

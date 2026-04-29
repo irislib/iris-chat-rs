@@ -2643,7 +2643,7 @@ private struct DeviceRosterRow: View {
     @State private var showingRemoveConfirmation = false
 
     private var displayTitle: String {
-        device.isCurrentDevice ? PlatformDeviceLabels.currentDeviceLabel : "Linked device"
+        device.isCurrentDevice ? "This device" : "Linked device"
     }
 
     private var displaySubtitle: String {
