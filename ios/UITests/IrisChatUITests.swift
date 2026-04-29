@@ -145,6 +145,31 @@ final class IrisChatUITests: XCTestCase {
         assertNoDispatchFailureToast(app)
     }
 
+    func testDesktopNearbyModalDismissesFromCloseButtonAndOutsideClick() throws {
+#if os(macOS)
+        let app = launchCleanApp()
+        createAccount(app)
+
+        let nearbyRow = element(app, "desktopNearbyRow")
+        XCTAssertTrue(nearbyRow.waitForExistence(timeout: 10))
+
+        nearbyRow.tap()
+        let closeButton = element(app, "nearbyCloseButton")
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 10))
+        closeButton.tap()
+        XCTAssertFalse(closeButton.waitForExistence(timeout: 2))
+
+        nearbyRow.tap()
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 10))
+        app.windows.firstMatch
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.12))
+            .tap()
+        XCTAssertFalse(closeButton.waitForExistence(timeout: 2))
+#else
+        throw XCTSkip("Nearby uses the native mobile sheet on iOS")
+#endif
+    }
+
     private func openChatWithPeer(_ app: XCUIApplication) {
         tapNewChat(app)
         XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))

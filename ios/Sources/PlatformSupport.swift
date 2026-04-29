@@ -287,6 +287,15 @@ extension View {
         self
         #endif
     }
+
+    @ViewBuilder
+    func irisDismissOnMacOutsideClick(_ action: @escaping () -> Void) -> some View {
+        #if canImport(AppKit)
+        self.background(IrisOutsideClickDismissHandler(action: action).allowsHitTesting(false))
+        #else
+        self
+        #endif
+    }
 }
 
 #if canImport(AppKit)
@@ -322,6 +331,98 @@ private final class IrisEscapeKeyView: NSView {
             action?()
         } else {
             super.keyDown(with: event)
+        }
+    }
+}
+
+private struct IrisOutsideClickDismissHandler: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> IrisOutsideClickDismissView {
+        let view = IrisOutsideClickDismissView()
+        view.action = action
+        return view
+    }
+
+    func updateNSView(_ view: IrisOutsideClickDismissView, context: Context) {
+        view.action = action
+        view.ensureMonitoring()
+    }
+
+    static func dismantleNSView(_ nsView: IrisOutsideClickDismissView, coordinator: ()) {
+        nsView.stopMonitoring()
+    }
+}
+
+private final class IrisOutsideClickDismissView: NSView {
+    var action: (() -> Void)?
+    private var localMonitor: Any?
+    private var globalMonitor: Any?
+    private var isDismissing = false
+
+    deinit {
+        stopMonitoring()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        ensureMonitoring()
+    }
+
+    func ensureMonitoring() {
+        guard window != nil else {
+            stopMonitoring()
+            return
+        }
+        guard localMonitor == nil else {
+            return
+        }
+
+        let mouseDownEvents: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown, .otherMouseDown]
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mouseDownEvents) { [weak self] event in
+            self?.handleLocalMouseDown(event) ?? event
+        }
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mouseDownEvents) { [weak self] _ in
+            self?.dismiss()
+        }
+    }
+
+    func stopMonitoring() {
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+            self.localMonitor = nil
+        }
+        if let globalMonitor {
+            NSEvent.removeMonitor(globalMonitor)
+            self.globalMonitor = nil
+        }
+    }
+
+    private func handleLocalMouseDown(_ event: NSEvent) -> NSEvent? {
+        guard let window else {
+            return event
+        }
+        guard event.window === window else {
+            dismiss()
+            return nil
+        }
+
+        let localPoint = convert(event.locationInWindow, from: nil)
+        guard bounds.contains(localPoint) else {
+            dismiss()
+            return nil
+        }
+        return event
+    }
+
+    private func dismiss() {
+        guard !isDismissing else {
+            return
+        }
+        isDismissing = true
+        DispatchQueue.main.async { [weak self] in
+            self?.action?()
+            self?.isDismissing = false
         }
     }
 }

@@ -224,8 +224,16 @@ struct QrScannerSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Scanning is not available on macOS yet.")
-                .font(.system(.title3, design: .rounded, weight: .bold))
+            HStack(alignment: .top, spacing: 12) {
+                Text("Scanning is not available on macOS yet.")
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                Spacer()
+                IrisModalCloseButton {
+                    dismiss()
+                }
+                .accessibilityIdentifier("qrScannerCloseButton")
+            }
+
             Text("Paste the code instead.")
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(.secondary)
@@ -243,12 +251,6 @@ struct QrScannerSheet: View {
                     dismiss()
                 }
                 .disabled(pastedCode.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                Spacer()
-
-                Button("Close") {
-                    dismiss()
-                }
             }
         }
         .padding(20)

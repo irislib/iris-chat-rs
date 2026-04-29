@@ -122,14 +122,20 @@ struct RootView: View {
                 DirectChatInfoSheet(manager: manager, chatId: wrapper.value)
                     .presentationDetents([.medium])
                     .presentationDragIndicator(.visible)
+                    .irisDismissOnMacOutsideClick { directChatInfoChatId = nil }
             }
         }
 #if os(iOS) || os(macOS)
         .sheet(isPresented: $showingNearbyIris) {
-            NearbyIrisScreen(manager: manager, service: manager.nearbyIris)
+            NearbyIrisScreen(
+                manager: manager,
+                service: manager.nearbyIris,
+                onClose: { showingNearbyIris = false }
+            )
 #if os(macOS)
                 .frame(minWidth: 420, minHeight: 520)
 #endif
+                .irisDismissOnMacOutsideClick { showingNearbyIris = false }
         }
 #endif
     }
@@ -905,7 +911,7 @@ private struct DirectChatInfoSheet: View {
             .background(palette.background)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    IrisModalCloseButton { dismiss() }
                 }
             }
             #if os(iOS)
@@ -1348,6 +1354,7 @@ private struct NearbyIrisScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     @ObservedObject var service: IrisNearbyService
+    let onClose: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1394,6 +1401,9 @@ private struct NearbyIrisScreen: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel(service.isVisible ? "Visible" : "Hidden")
+
+            IrisModalCloseButton(action: onClose)
+                .accessibilityIdentifier("nearbyCloseButton")
         }
         .padding(.horizontal, 18)
         .frame(height: 58)
@@ -1481,6 +1491,7 @@ struct NewChatScreen: View {
                 handleNewChatInput(code)
                 showingScanner = false
             }
+            .irisDismissOnMacOutsideClick { showingScanner = false }
         }
         #if os(macOS)
         .overlay { inviteQrOverlay }
@@ -1635,9 +1646,19 @@ struct NewChatScreen: View {
     private var inviteQrSheet: some View {
         if let invite = manager.state.publicInvite {
             VStack(spacing: 18) {
-                Text("Invite code")
-                    .font(.system(.title3, design: .rounded, weight: .bold))
-                    .foregroundStyle(palette.textPrimary)
+                ZStack {
+                    Text("Invite code")
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundStyle(palette.textPrimary)
+                        .frame(maxWidth: .infinity)
+                    HStack {
+                        Spacer()
+                        IrisModalCloseButton {
+                            showingInviteQr = false
+                        }
+                        .accessibilityIdentifier("newChatInviteQrCloseButton")
+                    }
+                }
 
                 QrCodeImage(text: invite.url)
                     .frame(maxWidth: 320)
@@ -1784,6 +1805,7 @@ struct JoinInviteScreen: View {
                 inviteInput = code
                 showingScanner = false
             }
+            .irisDismissOnMacOutsideClick { showingScanner = false }
         }
     }
 }
@@ -1864,6 +1886,7 @@ struct NewGroupScreen: View {
                 addMember(code)
                 showingScanner = false
             }
+            .irisDismissOnMacOutsideClick { showingScanner = false }
         }
         .fileImporter(
             isPresented: $showingGroupPicturePicker,
@@ -2325,6 +2348,7 @@ struct GroupDetailsScreen: View {
                 memberInput = normalizePeerInput(input: code)
                 showingScanner = false
             }
+            .irisDismissOnMacOutsideClick { showingScanner = false }
         }
         .fileImporter(
             isPresented: $showingGroupPicturePicker,
@@ -2506,6 +2530,7 @@ struct DeviceRosterScreen: View {
                 deviceInput = code
                 showingScanner = false
             }
+            .irisDismissOnMacOutsideClick { showingScanner = false }
         }
     }
 }
@@ -3368,14 +3393,13 @@ private struct IrisProfilePictureViewer: View {
                 }
             }
 
-            Button(action: onClose) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 30, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(18)
-            }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Close profile picture")
+            IrisModalCloseButton(
+                accessibilityLabel: "Close profile picture",
+                tone: .light,
+                iconSize: 30,
+                hitSize: 66,
+                action: onClose
+            )
         }
         .irisOnExitCommand(onClose)
         .irisOnEscapeKey(onClose)

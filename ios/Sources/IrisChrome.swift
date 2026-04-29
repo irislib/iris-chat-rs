@@ -589,6 +589,55 @@ struct IrisCopyButton: View {
     }
 }
 
+struct IrisModalCloseButton: View {
+    enum Tone {
+        case standard
+        case light
+    }
+
+    @Environment(\.irisPalette) private var palette
+    let accessibilityLabel: String
+    let tone: Tone
+    let iconSize: CGFloat
+    let hitSize: CGFloat
+    let action: () -> Void
+
+    init(
+        accessibilityLabel: String = "Close",
+        tone: Tone = .standard,
+        iconSize: CGFloat = 22,
+        hitSize: CGFloat = 38,
+        action: @escaping () -> Void
+    ) {
+        self.accessibilityLabel = accessibilityLabel
+        self.tone = tone
+        self.iconSize = iconSize
+        self.hitSize = hitSize
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: iconSize, weight: .semibold))
+                .foregroundStyle(foregroundColor)
+                .frame(width: hitSize, height: hitSize)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private var foregroundColor: Color {
+        switch tone {
+        case .standard:
+            return palette.muted
+        case .light:
+            return Color.white.opacity(0.9)
+        }
+    }
+}
+
 struct IrisInfoPill: View {
     @Environment(\.irisPalette) private var palette
 

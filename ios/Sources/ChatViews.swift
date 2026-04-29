@@ -584,12 +584,15 @@ private struct ChatMessageRow: View {
                         Button("Delete locally", role: .destructive, action: onDelete)
                     }
                     .sheet(isPresented: $showReactionPicker) {
-                        IrisEmojiPicker { emoji in
+                        IrisEmojiPicker(
+                            onClose: { showReactionPicker = false }
+                        ) { emoji in
                             showReactionPicker = false
                             onReact(emoji)
                         }
                         .presentationDetents([.medium, .large])
                         .presentationDragIndicator(.visible)
+                        .irisDismissOnMacOutsideClick { showReactionPicker = false }
                     }
                     .accessibilityIdentifier("chatMessage-\(message.id)")
 
@@ -775,8 +778,17 @@ private struct ChatMessageActionDock: View {
 private struct IrisEmojiPicker: View {
     @Environment(\.irisPalette) private var palette
     let onPick: (String) -> Void
+    let onClose: (() -> Void)?
 
     @State private var query: String = ""
+
+    init(
+        onClose: (() -> Void)? = nil,
+        onPick: @escaping (String) -> Void
+    ) {
+        self.onClose = onClose
+        self.onPick = onPick
+    }
 
     private static let categories: [(String, String, [String])] = [
         ("Smileys", "face.smiling",
@@ -812,19 +824,27 @@ private struct IrisEmojiPicker: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(palette.muted)
-                TextField("Search", text: $query)
-                    .textFieldStyle(.plain)
-                    .autocorrectionDisabled()
+            HStack(spacing: 8) {
+                HStack {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundStyle(palette.muted)
+                    TextField("Search", text: $query)
+                        .textFieldStyle(.plain)
+                        .autocorrectionDisabled()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(palette.panel)
+                )
+                .frame(maxWidth: .infinity)
+
+                if let onClose {
+                    IrisModalCloseButton(action: onClose)
+                        .accessibilityIdentifier("reactionPickerCloseButton")
+                }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(palette.panel)
-            )
             .padding(10)
 
             ScrollView {
@@ -1257,14 +1277,13 @@ private struct IrisImageViewer: View {
                     .accessibilityLabel("Share image")
                 }
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 30, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.9))
-                        .padding(18)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close image")
+                IrisModalCloseButton(
+                    accessibilityLabel: "Close image",
+                    tone: .light,
+                    iconSize: 30,
+                    hitSize: 66,
+                    action: onClose
+                )
             }
         }
         .irisOnExitCommand(onClose)
