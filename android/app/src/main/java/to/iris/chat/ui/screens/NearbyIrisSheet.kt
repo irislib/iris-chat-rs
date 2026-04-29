@@ -110,15 +110,18 @@ fun NearbyIrisSheet(
                                     modifier = Modifier.weight(1f),
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                 ) {
+                                    val statusText = if (snapshot.visible) snapshot.status else "Off"
                                     Text(
                                         text = "Visible",
                                         style = MaterialTheme.typography.titleMedium,
                                     )
-                                    Text(
-                                        text = if (snapshot.visible) snapshot.status else "Off",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = IrisTheme.palette.muted,
-                                    )
+                                    if (statusText != "Visible") {
+                                        Text(
+                                            text = statusText,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = IrisTheme.palette.muted,
+                                        )
+                                    }
                                 }
                                 Switch(
                                     checked = snapshot.visible,
