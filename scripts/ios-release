@@ -35,7 +35,7 @@ run_xcodebuild() {
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/ios-release <print-config|prepare|archive|export|upload|internal>
+usage: ./scripts/ios-release <print-config|prepare|archive|export|upload|internal|public>
 EOF
 }
 
@@ -323,6 +323,9 @@ case "${1:-}" in
     ;;
   internal)
     "$ROOT/scripts/testflight-internal" put
+    ;;
+  public)
+    "$ROOT/scripts/testflight-public" put
     ;;
   -h|--help|help)
     usage

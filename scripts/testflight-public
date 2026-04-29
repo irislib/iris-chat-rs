@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ACTION="${1:-put}"
+
+case "$ACTION" in
+  put)
+    exec "$ROOT/scripts/testflight-internal" public
+    ;;
+  submit)
+    exec "$ROOT/scripts/testflight-internal" public-submit
+    ;;
+  attach)
+    exec "$ROOT/scripts/testflight-internal" public-attach
+    ;;
+  status)
+    exec "$ROOT/scripts/testflight-internal" public-status
+    ;;
+  groups)
+    exec "$ROOT/scripts/testflight-internal" groups
+    ;;
+  -h|--help|help)
+    cat <<'EOF'
+usage: ./scripts/testflight-public <put|submit|attach|status|groups>
+
+Commands:
+  put      wait, prepare metadata, submit Beta App Review, and attach external groups
+  submit   submit the already-visible build for Beta App Review
+  attach   attach the already-visible build to external TestFlight groups
+  status   print current public TestFlight status
+  groups   list TestFlight groups for the app
+EOF
+    ;;
+  *)
+    echo "Unknown command: $ACTION" >&2
+    exit 2
+    ;;
+esac
