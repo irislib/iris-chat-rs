@@ -428,12 +428,13 @@ class AppManagerContractTest {
             publicInvite = null,
             linkDevice = null,
             networkStatus = null,
-            mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList()),
+            mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList()),
             preferences =
                 PreferencesSnapshot(
                     sendTypingIndicators = true,
                     sendReadReceipts = true,
                     desktopNotificationsEnabled = true,
+                    inviteAcceptanceNotificationsEnabled = true,
                     startupAtLoginEnabled = false,
                     nostrRelayUrls =
                         listOf(
@@ -578,12 +579,13 @@ private object AppManagerContractDefaults {
             publicInvite = null,
             linkDevice = null,
             networkStatus = null,
-            mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList()),
+            mobilePush = MobilePushSyncSnapshot(null, emptyList(), emptyList(), emptyList()),
             preferences =
                 PreferencesSnapshot(
                     sendTypingIndicators = true,
                     sendReadReceipts = true,
                     desktopNotificationsEnabled = true,
+                    inviteAcceptanceNotificationsEnabled = true,
                     startupAtLoginEnabled = false,
                     nostrRelayUrls =
                         listOf(

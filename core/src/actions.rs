@@ -86,6 +86,9 @@ pub enum AppAction {
     SetDesktopNotificationsEnabled {
         enabled: bool,
     },
+    SetInviteAcceptanceNotificationsEnabled {
+        enabled: bool,
+    },
     SetStartupAtLoginEnabled {
         enabled: bool,
     },

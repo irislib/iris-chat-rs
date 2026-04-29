@@ -46,6 +46,7 @@ pub struct PreferencesSnapshot {
     pub send_typing_indicators: bool,
     pub send_read_receipts: bool,
     pub desktop_notifications_enabled: bool,
+    pub invite_acceptance_notifications_enabled: bool,
     pub startup_at_login_enabled: bool,
     pub nostr_relay_urls: Vec<String>,
     pub image_proxy_enabled: bool,
@@ -66,6 +67,7 @@ impl Default for PreferencesSnapshot {
             send_typing_indicators: false,
             send_read_receipts: true,
             desktop_notifications_enabled: true,
+            invite_acceptance_notifications_enabled: true,
             startup_at_login_enabled: false,
             nostr_relay_urls: crate::core::configured_relays(),
             image_proxy_enabled: true,
@@ -285,6 +287,7 @@ pub struct MobilePushSessionSnapshot {
 pub struct MobilePushSyncSnapshot {
     pub owner_pubkey_hex: Option<String>,
     pub message_author_pubkeys: Vec<String>,
+    pub invite_response_pubkeys: Vec<String>,
     pub sessions: Vec<MobilePushSessionSnapshot>,
 }
 

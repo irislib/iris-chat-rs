@@ -433,6 +433,7 @@ pub fn build_mobile_push_create_subscription_request(
     push_token: String,
     apns_topic: Option<String>,
     message_author_pubkeys: Vec<String>,
+    invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
 ) -> Option<MobilePushSubscriptionRequest> {
@@ -442,6 +443,7 @@ pub fn build_mobile_push_create_subscription_request(
         push_token,
         apns_topic,
         message_author_pubkeys,
+        invite_response_pubkeys,
         is_release,
         server_url_override,
     )
@@ -456,6 +458,7 @@ pub fn build_mobile_push_update_subscription_request(
     push_token: String,
     apns_topic: Option<String>,
     message_author_pubkeys: Vec<String>,
+    invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
 ) -> Option<MobilePushSubscriptionRequest> {
@@ -466,6 +469,7 @@ pub fn build_mobile_push_update_subscription_request(
         push_token,
         apns_topic,
         message_author_pubkeys,
+        invite_response_pubkeys,
         is_release,
         server_url_override,
     )

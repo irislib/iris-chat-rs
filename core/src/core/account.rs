@@ -459,6 +459,9 @@ impl AppCore {
             self.preferences.send_read_receipts = persisted.preferences.send_read_receipts;
             self.preferences.desktop_notifications_enabled =
                 persisted.preferences.desktop_notifications_enabled;
+            self.preferences.invite_acceptance_notifications_enabled = persisted
+                .preferences
+                .invite_acceptance_notifications_enabled;
             self.preferences.startup_at_login_enabled =
                 persisted.preferences.startup_at_login_enabled;
             self.preferences.nostr_relay_urls =

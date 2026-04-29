@@ -476,6 +476,9 @@ fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.send_typing_indicators.hash(&mut hasher);
     preferences.send_read_receipts.hash(&mut hasher);
     preferences.desktop_notifications_enabled.hash(&mut hasher);
+    preferences
+        .invite_acceptance_notifications_enabled
+        .hash(&mut hasher);
     preferences.startup_at_login_enabled.hash(&mut hasher);
     preferences.nostr_relay_urls.hash(&mut hasher);
     preferences.image_proxy_enabled.hash(&mut hasher);
@@ -660,6 +663,7 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
     let row = conn
         .query_row(
             "SELECT send_typing_indicators, send_read_receipts, desktop_notifications_enabled,
+                    invite_acceptance_notifications_enabled,
                     startup_at_login_enabled, nostr_relay_urls_json, image_proxy_enabled,
                     image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex,
                     mobile_push_server_url
@@ -670,14 +674,15 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     send_typing_indicators: row.get::<_, i64>(0)? != 0,
                     send_read_receipts: row.get::<_, i64>(1)? != 0,
                     desktop_notifications_enabled: row.get::<_, i64>(2)? != 0,
-                    startup_at_login_enabled: row.get::<_, i64>(3)? != 0,
-                    nostr_relay_urls: serde_json::from_str(&row.get::<_, String>(4)?)
+                    invite_acceptance_notifications_enabled: row.get::<_, i64>(3)? != 0,
+                    startup_at_login_enabled: row.get::<_, i64>(4)? != 0,
+                    nostr_relay_urls: serde_json::from_str(&row.get::<_, String>(5)?)
                         .unwrap_or_default(),
-                    image_proxy_enabled: row.get::<_, i64>(5)? != 0,
-                    image_proxy_url: row.get::<_, String>(6)?,
-                    image_proxy_key_hex: row.get::<_, String>(7)?,
-                    image_proxy_salt_hex: row.get::<_, String>(8)?,
-                    mobile_push_server_url: row.get::<_, String>(9)?,
+                    image_proxy_enabled: row.get::<_, i64>(6)? != 0,
+                    image_proxy_url: row.get::<_, String>(7)?,
+                    image_proxy_key_hex: row.get::<_, String>(8)?,
+                    image_proxy_salt_hex: row.get::<_, String>(9)?,
+                    mobile_push_server_url: row.get::<_, String>(10)?,
                 })
             },
         )
@@ -690,13 +695,15 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
     tx.execute(
         "INSERT INTO preferences (
             id, send_typing_indicators, send_read_receipts, desktop_notifications_enabled,
-            startup_at_login_enabled, nostr_relay_urls_json, image_proxy_enabled,
-            image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex, mobile_push_server_url
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            invite_acceptance_notifications_enabled, startup_at_login_enabled,
+            nostr_relay_urls_json, image_proxy_enabled, image_proxy_url, image_proxy_key_hex,
+            image_proxy_salt_hex, mobile_push_server_url
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT(id) DO UPDATE SET
             send_typing_indicators = excluded.send_typing_indicators,
             send_read_receipts = excluded.send_read_receipts,
             desktop_notifications_enabled = excluded.desktop_notifications_enabled,
+            invite_acceptance_notifications_enabled = excluded.invite_acceptance_notifications_enabled,
             startup_at_login_enabled = excluded.startup_at_login_enabled,
             nostr_relay_urls_json = excluded.nostr_relay_urls_json,
             image_proxy_enabled = excluded.image_proxy_enabled,
@@ -708,6 +715,7 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             preferences.send_typing_indicators as i64,
             preferences.send_read_receipts as i64,
             preferences.desktop_notifications_enabled as i64,
+            preferences.invite_acceptance_notifications_enabled as i64,
             preferences.startup_at_login_enabled as i64,
             nostr_relay_urls_json,
             preferences.image_proxy_enabled as i64,

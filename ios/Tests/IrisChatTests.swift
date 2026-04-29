@@ -66,11 +66,17 @@ private final class MockRustApp: RustAppClient {
         publicInvite: nil,
         linkDevice: nil,
         networkStatus: nil,
-        mobilePush: MobilePushSyncSnapshot(ownerPubkeyHex: nil, messageAuthorPubkeys: [], sessions: []),
+        mobilePush: MobilePushSyncSnapshot(
+            ownerPubkeyHex: nil,
+            messageAuthorPubkeys: [],
+            inviteResponsePubkeys: [],
+            sessions: []
+        ),
         preferences: PreferencesSnapshot(
             sendTypingIndicators: true,
             sendReadReceipts: true,
             desktopNotificationsEnabled: true,
+            inviteAcceptanceNotificationsEnabled: true,
             startupAtLoginEnabled: false,
             nostrRelayUrls: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://relay.snort.social", "wss://temp.iris.to"],
             imageProxyEnabled: true,
@@ -164,6 +170,7 @@ private func makeAppState(
         sendTypingIndicators: true,
         sendReadReceipts: true,
         desktopNotificationsEnabled: true,
+        inviteAcceptanceNotificationsEnabled: true,
         startupAtLoginEnabled: false,
         nostrRelayUrls: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://relay.snort.social", "wss://temp.iris.to"],
         imageProxyEnabled: true,
@@ -186,7 +193,12 @@ private func makeAppState(
         publicInvite: nil,
         linkDevice: nil,
         networkStatus: nil,
-        mobilePush: MobilePushSyncSnapshot(ownerPubkeyHex: nil, messageAuthorPubkeys: [], sessions: []),
+        mobilePush: MobilePushSyncSnapshot(
+            ownerPubkeyHex: nil,
+            messageAuthorPubkeys: [],
+            inviteResponsePubkeys: [],
+            sessions: []
+        ),
         preferences: preferences,
         toast: toast
     )
@@ -354,6 +366,7 @@ final class IrisChatTests: XCTestCase {
                     sendTypingIndicators: true,
                     sendReadReceipts: true,
                     desktopNotificationsEnabled: false,
+                    inviteAcceptanceNotificationsEnabled: true,
                     startupAtLoginEnabled: false,
                     nostrRelayUrls: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://relay.snort.social", "wss://temp.iris.to"],
                     imageProxyEnabled: true,
@@ -379,6 +392,7 @@ final class IrisChatTests: XCTestCase {
                 sendTypingIndicators: true,
                 sendReadReceipts: true,
                 desktopNotificationsEnabled: false,
+                inviteAcceptanceNotificationsEnabled: true,
                 startupAtLoginEnabled: false,
                 nostrRelayUrls: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://relay.snort.social", "wss://temp.iris.to"],
                 imageProxyEnabled: true,

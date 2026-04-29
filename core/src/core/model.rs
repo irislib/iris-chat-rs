@@ -241,6 +241,8 @@ pub(super) struct PersistedPreferences {
     pub(super) send_read_receipts: bool,
     #[serde(default = "default_true")]
     pub(super) desktop_notifications_enabled: bool,
+    #[serde(default = "default_true")]
+    pub(super) invite_acceptance_notifications_enabled: bool,
     #[serde(default)]
     pub(super) startup_at_login_enabled: bool,
     #[serde(default = "default_nostr_relay_urls")]
@@ -264,6 +266,8 @@ impl Default for PersistedPreferences {
             send_typing_indicators: defaults.send_typing_indicators,
             send_read_receipts: defaults.send_read_receipts,
             desktop_notifications_enabled: defaults.desktop_notifications_enabled,
+            invite_acceptance_notifications_enabled: defaults
+                .invite_acceptance_notifications_enabled,
             startup_at_login_enabled: defaults.startup_at_login_enabled,
             nostr_relay_urls: defaults.nostr_relay_urls,
             image_proxy_enabled: defaults.image_proxy_enabled,

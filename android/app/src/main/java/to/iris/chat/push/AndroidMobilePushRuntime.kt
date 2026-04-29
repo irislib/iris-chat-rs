@@ -38,6 +38,7 @@ class AndroidMobilePushRuntime(
         val owner = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null }
         val ownerSecret = ownerNsec?.trim()?.ifEmpty { null }
         val authors = state.mobilePush.messageAuthorPubkeys
+        val inviteResponses = state.mobilePush.inviteResponsePubkeys
         val enabled = state.preferences.desktopNotificationsEnabled
         val serverOverride = userServerOverride(state) ?: buildServerOverride()
         val signature =
@@ -46,6 +47,7 @@ class AndroidMobilePushRuntime(
                 owner.orEmpty(),
                 if (ownerSecret == null) "0" else "1",
                 authors.joinToString(","),
+                inviteResponses.joinToString(","),
                 serverOverride.orEmpty(),
             ).joinToString("|")
         if (signature == lastSyncSignature) {
@@ -55,7 +57,7 @@ class AndroidMobilePushRuntime(
 
         val storageKeyName = mobilePushSubscriptionIdKey(PLATFORM_KEY)
         val storageKey = stringPreferencesKey(storageKeyName)
-        if (!enabled || ownerSecret == null || authors.isEmpty()) {
+        if (!enabled || ownerSecret == null || (authors.isEmpty() && inviteResponses.isEmpty())) {
             disableStoredSubscription(ownerSecret, storageKey, serverOverride)
             return
         }
@@ -63,10 +65,10 @@ class AndroidMobilePushRuntime(
         val token = messaging.token.await()?.trim()?.ifEmpty { null } ?: return
         val storedId = currentStoredId(storageKey)
         val existingId = resolveExistingSubscriptionId(ownerSecret, token, storedId, serverOverride)
-        if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, storageKey, serverOverride)) {
+        if (existingId != null && updateSubscription(ownerSecret, existingId, token, authors, inviteResponses, storageKey, serverOverride)) {
             return
         }
-        createSubscription(ownerSecret, token, authors, storageKey, serverOverride)
+        createSubscription(ownerSecret, token, authors, inviteResponses, storageKey, serverOverride)
     }
 
     suspend fun unregisterStoredSubscription(
@@ -118,6 +120,7 @@ class AndroidMobilePushRuntime(
         subscriptionId: String,
         pushToken: String,
         authors: List<String>,
+        inviteResponses: List<String>,
         storageKey: Preferences.Key<String>,
         serverOverride: String?,
     ): Boolean {
@@ -129,6 +132,7 @@ class AndroidMobilePushRuntime(
                 pushToken = pushToken,
                 apnsTopic = null,
                 messageAuthorPubkeys = authors,
+                inviteResponsePubkeys = inviteResponses,
                 isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
             ) ?: return false
@@ -147,6 +151,7 @@ class AndroidMobilePushRuntime(
         ownerNsec: String,
         pushToken: String,
         authors: List<String>,
+        inviteResponses: List<String>,
         storageKey: Preferences.Key<String>,
         serverOverride: String?,
     ) {
@@ -157,6 +162,7 @@ class AndroidMobilePushRuntime(
                 pushToken = pushToken,
                 apnsTopic = null,
                 messageAuthorPubkeys = authors,
+                inviteResponsePubkeys = inviteResponses,
                 isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
             ) ?: return

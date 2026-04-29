@@ -107,6 +107,7 @@ final class MobilePushRuntime {
         let owner = state.mobilePush.ownerPubkeyHex?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let ownerSecret = ownerNsec?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let authors = state.mobilePush.messageAuthorPubkeys
+        let inviteResponses = state.mobilePush.inviteResponsePubkeys
         let enabled = state.preferences.desktopNotificationsEnabled
         let userServerOverride = state.preferences.mobilePushServerUrl.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let serverOverride = userServerOverride ?? mobilePushBuildServerOverride
@@ -115,6 +116,7 @@ final class MobilePushRuntime {
             owner ?? "",
             ownerSecret == nil ? "0" : "1",
             authors.joined(separator: ","),
+            inviteResponses.joined(separator: ","),
             serverOverride ?? "",
         ].joined(separator: "|")
 
@@ -128,6 +130,7 @@ final class MobilePushRuntime {
                 enabled: enabled,
                 ownerNsec: ownerSecret,
                 messageAuthorPubkeys: authors,
+                inviteResponsePubkeys: inviteResponses,
                 serverOverride: serverOverride
             )
         }
@@ -154,10 +157,13 @@ final class MobilePushRuntime {
         enabled: Bool,
         ownerNsec: String?,
         messageAuthorPubkeys: [String],
+        inviteResponsePubkeys: [String],
         serverOverride: String?
     ) async {
         let storageKey = mobilePushSubscriptionIdKey(platformKey: "ios")
-        guard enabled, let ownerNsec, !messageAuthorPubkeys.isEmpty else {
+        guard enabled,
+              let ownerNsec,
+              !messageAuthorPubkeys.isEmpty || !inviteResponsePubkeys.isEmpty else {
             await disableStoredSubscription(ownerNsec: ownerNsec, storageKey: storageKey, serverOverride: serverOverride)
             return
         }
@@ -179,6 +185,7 @@ final class MobilePushRuntime {
                subscriptionId: existingId,
                pushToken: token,
                messageAuthorPubkeys: messageAuthorPubkeys,
+               inviteResponsePubkeys: inviteResponsePubkeys,
                storageKey: storageKey,
                serverOverride: serverOverride
            ) {
@@ -189,6 +196,7 @@ final class MobilePushRuntime {
             ownerNsec: ownerNsec,
             pushToken: token,
             messageAuthorPubkeys: messageAuthorPubkeys,
+            inviteResponsePubkeys: inviteResponsePubkeys,
             storageKey: storageKey,
             serverOverride: serverOverride
         )
@@ -261,6 +269,7 @@ final class MobilePushRuntime {
         subscriptionId: String,
         pushToken: String,
         messageAuthorPubkeys: [String],
+        inviteResponsePubkeys: [String],
         storageKey: String,
         serverOverride: String?
     ) async -> Bool {
@@ -271,6 +280,7 @@ final class MobilePushRuntime {
             pushToken: pushToken,
             apnsTopic: Bundle.main.bundleIdentifier,
             messageAuthorPubkeys: messageAuthorPubkeys,
+            inviteResponsePubkeys: inviteResponsePubkeys,
             isRelease: isMobilePushReleaseBuild,
             serverUrlOverride: serverOverride
         ) else {
@@ -291,6 +301,7 @@ final class MobilePushRuntime {
         ownerNsec: String,
         pushToken: String,
         messageAuthorPubkeys: [String],
+        inviteResponsePubkeys: [String],
         storageKey: String,
         serverOverride: String?
     ) async {
@@ -300,6 +311,7 @@ final class MobilePushRuntime {
             pushToken: pushToken,
             apnsTopic: Bundle.main.bundleIdentifier,
             messageAuthorPubkeys: messageAuthorPubkeys,
+            inviteResponsePubkeys: inviteResponsePubkeys,
             isRelease: isMobilePushReleaseBuild,
             serverUrlOverride: serverOverride
         ) else {

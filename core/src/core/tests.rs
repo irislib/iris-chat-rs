@@ -955,6 +955,91 @@ fn mobile_push_fallback_allows_chat_message_kind() {
 }
 
 #[test]
+fn mobile_push_fallback_renders_invite_acceptance() {
+    let keys = Keys::generate();
+    let p_tag_pubkey = "a".repeat(64);
+    let event = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "ciphertext")
+        .tag(nostr::Tag::parse(["p", p_tag_pubkey.as_str()]).expect("p tag"))
+        .sign_with_keys(&keys)
+        .expect("invite response event");
+    let payload = serde_json::json!({
+        "event": serde_json::to_string(&event).expect("event json"),
+        "title": "Iris Chat",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let resolution = resolve_mobile_push_notification(payload);
+
+    assert!(resolution.should_show);
+    assert_eq!(resolution.title, "Invite accepted");
+    assert_eq!(resolution.body, "Someone joined your chat");
+}
+
+#[test]
+fn mobile_push_subscription_body_includes_invite_response_filter() {
+    let owner = Keys::generate();
+    let author = Keys::generate().public_key().to_hex();
+    let invite_response_pubkey = Keys::generate().public_key().to_hex();
+    let request = build_mobile_push_create_subscription_request(
+        owner
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| owner.secret_key().to_secret_hex()),
+        "ios".to_string(),
+        "apns-token".to_string(),
+        Some("to.iris.chat".to_string()),
+        vec![author.clone()],
+        vec![invite_response_pubkey.clone()],
+        true,
+        None,
+    )
+    .expect("subscription request");
+    let body: serde_json::Value =
+        serde_json::from_str(request.body_json.as_deref().expect("body json")).expect("json");
+
+    assert_eq!(body["filter"]["authors"][0].as_str(), Some(author.as_str()));
+    assert_eq!(
+        body["filters"][1]["kinds"][0],
+        serde_json::json!(INVITE_RESPONSE_KIND)
+    );
+    assert_eq!(
+        body["filters"][1]["#p"][0].as_str(),
+        Some(invite_response_pubkey.as_str())
+    );
+}
+
+#[test]
+fn mobile_push_snapshot_tracks_local_invite_when_enabled() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let core = logged_in_test_core("mobile-push-invite-response", &owner, &device);
+
+    let snapshot = core.build_mobile_push_sync_snapshot();
+
+    let invite_pubkey = core
+        .logged_in
+        .as_ref()
+        .expect("logged in")
+        .local_invite
+        .inviter_ephemeral_public_key
+        .to_hex();
+    assert_eq!(snapshot.invite_response_pubkeys, vec![invite_pubkey]);
+}
+
+#[test]
+fn mobile_push_snapshot_omits_local_invite_when_disabled() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("mobile-push-invite-response-disabled", &owner, &device);
+    core.set_invite_acceptance_notifications_enabled(false);
+
+    let snapshot = core.build_mobile_push_sync_snapshot();
+
+    assert!(snapshot.invite_response_pubkeys.is_empty());
+}
+
+#[test]
 fn typing_indicators_default_to_opt_in() {
     assert!(!PersistedPreferences::default().send_typing_indicators);
     assert!(!AppState::empty().preferences.send_typing_indicators);

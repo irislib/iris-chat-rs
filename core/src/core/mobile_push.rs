@@ -8,6 +8,7 @@ use std::time::Duration;
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
 const MOBILE_PUSH_AUTH_KIND: u16 = 27_235;
 const MOBILE_PUSH_CHAT_MESSAGE_KIND: u64 = CHAT_MESSAGE_KIND as u64;
+const MOBILE_PUSH_INVITE_RESPONSE_KIND: u64 = INVITE_RESPONSE_KIND as u64;
 const MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND: u64 = MESSAGE_EVENT_KIND as u64;
 const MOBILE_PUSH_PRODUCTION_SERVER_URL: &str = "https://notifications.iris.to";
 const MOBILE_PUSH_SANDBOX_SERVER_URL: &str = "https://notifications-sandbox.iris.to";
@@ -30,10 +31,16 @@ impl AppCore {
         let mut message_author_pubkeys = HashSet::new();
         message_author_pubkeys.extend(self.known_message_author_hexes());
         let message_author_pubkeys = sorted_hexes(message_author_pubkeys);
+        let invite_response_pubkeys = if self.preferences.invite_acceptance_notifications_enabled {
+            vec![logged_in.local_invite.inviter_ephemeral_public_key.to_hex()]
+        } else {
+            Vec::new()
+        };
 
         MobilePushSyncSnapshot {
             owner_pubkey_hex: Some(logged_in.owner_pubkey.to_string()),
             message_author_pubkeys,
+            invite_response_pubkeys,
             sessions: Vec::new(),
         }
     }
@@ -159,6 +166,10 @@ pub(crate) fn decrypt_mobile_push_notification(
         }
         Err(_) => return fallback(),
     };
+
+    if outer_event.kind.as_u16() as u64 == MOBILE_PUSH_INVITE_RESPONSE_KIND {
+        return invite_acceptance_push_resolution(payload_object, outer_event);
+    }
 
     let outer_event_id = outer_event.id.to_string();
     // When NDR decrypt fails (the foreground app already advanced
@@ -603,6 +614,12 @@ pub(crate) fn resolve_mobile_push_notification(
         .or_else(|| event_kind(payload.get("inner_event_json")))
         .or_else(|| event_kind(payload.get("inner_event")));
 
+    if inner_kind.is_none()
+        && event_kind(payload.get("event")) == Some(MOBILE_PUSH_INVITE_RESPONSE_KIND)
+    {
+        return invite_acceptance_fallback_resolution(payload);
+    }
+
     if inner_kind.is_some_and(|kind| !should_show_mobile_push_kind(kind)) {
         return MobilePushNotificationResolution {
             should_show: false,
@@ -702,6 +719,7 @@ pub(crate) fn build_mobile_push_create_subscription_request(
     push_token: String,
     apns_topic: Option<String>,
     message_author_pubkeys: Vec<String>,
+    invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
 ) -> Option<MobilePushSubscriptionRequest> {
@@ -710,6 +728,7 @@ pub(crate) fn build_mobile_push_create_subscription_request(
         &push_token,
         apns_topic.as_deref(),
         message_author_pubkeys,
+        invite_response_pubkeys,
     )?;
     build_mobile_push_subscription_request(
         owner_nsec,
@@ -730,6 +749,7 @@ pub(crate) fn build_mobile_push_update_subscription_request(
     push_token: String,
     apns_topic: Option<String>,
     message_author_pubkeys: Vec<String>,
+    invite_response_pubkeys: Vec<String>,
     is_release: bool,
     server_url_override: Option<String>,
 ) -> Option<MobilePushSubscriptionRequest> {
@@ -739,6 +759,7 @@ pub(crate) fn build_mobile_push_update_subscription_request(
         &push_token,
         apns_topic.as_deref(),
         message_author_pubkeys,
+        invite_response_pubkeys,
     )?;
     build_mobile_push_subscription_request(
         owner_nsec,
@@ -807,6 +828,7 @@ fn mobile_push_subscription_body_json(
     push_token: &str,
     apns_topic: Option<&str>,
     message_author_pubkeys: Vec<String>,
+    invite_response_pubkeys: Vec<String>,
 ) -> Option<String> {
     let platform = normalize_platform_key(platform_key);
     let token = push_token.trim();
@@ -814,19 +836,32 @@ fn mobile_push_subscription_body_json(
         return None;
     }
     let authors = normalize_hex_list(message_author_pubkeys);
-    if authors.is_empty() {
+    let invite_response_pubkeys = normalize_hex_list(invite_response_pubkeys);
+    if authors.is_empty() && invite_response_pubkeys.is_empty() {
         return None;
     }
+    let mut filters = Vec::new();
+    if !authors.is_empty() {
+        filters.push(serde_json::json!({
+            "kinds": [MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND],
+            "authors": authors,
+        }));
+    }
+    if !invite_response_pubkeys.is_empty() {
+        filters.push(serde_json::json!({
+            "kinds": [MOBILE_PUSH_INVITE_RESPONSE_KIND],
+            "#p": invite_response_pubkeys,
+        }));
+    }
+    let primary_filter = filters.first()?.clone();
 
     let mut payload = serde_json::json!({
         "webhooks": [],
         "web_push_subscriptions": [],
         "fcm_tokens": if platform == "android" { vec![token.to_string()] } else { Vec::<String>::new() },
         "apns_tokens": if platform == "ios" { vec![token.to_string()] } else { Vec::<String>::new() },
-        "filter": {
-            "kinds": [MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND],
-            "authors": authors,
-        },
+        "filter": primary_filter,
+        "filters": filters,
     });
     if platform == "ios" {
         if let Some(topic) = apns_topic.map(str::trim).filter(|value| !value.is_empty()) {
@@ -959,6 +994,59 @@ fn event_content(value: Option<&String>) -> Option<String> {
     normalized_value(Some(&content))
 }
 
+fn invite_acceptance_push_resolution(
+    payload_object: &serde_json::Map<String, serde_json::Value>,
+    event: nostr::Event,
+) -> MobilePushNotificationResolution {
+    let title = "Invite accepted".to_string();
+    let body = "Someone joined your chat".to_string();
+    let mut resolved_payload = serde_json::Map::new();
+    for (key, value) in payload_object {
+        resolved_payload.insert(key.clone(), value.clone());
+    }
+    resolved_payload.insert(
+        "title".to_string(),
+        serde_json::Value::String(title.clone()),
+    );
+    resolved_payload.insert("body".to_string(), serde_json::Value::String(body.clone()));
+    resolved_payload.insert(
+        "inner_kind".to_string(),
+        serde_json::Value::String(MOBILE_PUSH_INVITE_RESPONSE_KIND.to_string()),
+    );
+    resolved_payload.insert(
+        "invite_response_event_id".to_string(),
+        serde_json::Value::String(event.id.to_hex()),
+    );
+
+    MobilePushNotificationResolution {
+        should_show: true,
+        title,
+        body,
+        payload_json: serde_json::to_string(&serde_json::Value::Object(resolved_payload))
+            .unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
+fn invite_acceptance_fallback_resolution(
+    mut payload: BTreeMap<String, String>,
+) -> MobilePushNotificationResolution {
+    let title = "Invite accepted".to_string();
+    let body = "Someone joined your chat".to_string();
+    payload.insert("title".to_string(), title.clone());
+    payload.insert("body".to_string(), body.clone());
+    payload.insert(
+        "inner_kind".to_string(),
+        MOBILE_PUSH_INVITE_RESPONSE_KIND.to_string(),
+    );
+
+    MobilePushNotificationResolution {
+        should_show: true,
+        title,
+        body,
+        payload_json: serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
 fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {
     let content = content.trim();
     match kind {
@@ -975,6 +1063,7 @@ fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {
         kind if kind == GROUP_METADATA_KIND as u64 => "Updated group".to_string(),
         kind if kind == CHAT_SETTINGS_KIND as u64 => "Updated chat".to_string(),
         kind if kind == APP_KEYS_EVENT_KIND as u64 => "Updated devices".to_string(),
+        MOBILE_PUSH_INVITE_RESPONSE_KIND => "Someone joined your chat".to_string(),
         _ => {
             if content.is_empty() {
                 "New activity".to_string()
@@ -1001,5 +1090,8 @@ fn should_show_mobile_push_kind(kind: u64) -> bool {
     // receipts, typing rumors, group/settings control events, and
     // app-keys updates are noise as standalone notifications — the
     // user sees the right state when they open the chat.
-    matches!(kind, MOBILE_PUSH_CHAT_MESSAGE_KIND)
+    matches!(
+        kind,
+        MOBILE_PUSH_CHAT_MESSAGE_KIND | MOBILE_PUSH_INVITE_RESPONSE_KIND
+    )
 }

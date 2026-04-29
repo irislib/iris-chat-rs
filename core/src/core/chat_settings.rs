@@ -79,6 +79,18 @@ impl AppCore {
             return;
         }
         self.preferences.desktop_notifications_enabled = enabled;
+        self.mark_mobile_push_dirty();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_invite_acceptance_notifications_enabled(&mut self, enabled: bool) {
+        if self.preferences.invite_acceptance_notifications_enabled == enabled {
+            return;
+        }
+        self.preferences.invite_acceptance_notifications_enabled = enabled;
+        self.mark_mobile_push_dirty();
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();

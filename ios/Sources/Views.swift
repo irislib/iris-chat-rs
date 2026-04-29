@@ -3040,6 +3040,9 @@ private struct NotificationsSettingsSection: View {
         Toggle("Enabled", isOn: enabled)
             .accessibilityIdentifier("myProfileDesktopNotificationsToggle")
 
+        Toggle("Invite accepted", isOn: inviteAccepted)
+            .accessibilityIdentifier("myProfileInviteAcceptedNotificationsToggle")
+
         TextField(Self.defaultServerUrl, text: serverUrl)
             .textFieldStyle(.roundedBorder)
             .autocorrectionDisabled()
@@ -3064,6 +3067,15 @@ private struct NotificationsSettingsSection: View {
         Binding(
             get: { manager.state.preferences.desktopNotificationsEnabled },
             set: { enabled in manager.dispatch(.setDesktopNotificationsEnabled(enabled: enabled)) }
+        )
+    }
+
+    private var inviteAccepted: Binding<Bool> {
+        Binding(
+            get: { manager.state.preferences.inviteAcceptanceNotificationsEnabled },
+            set: { enabled in
+                manager.dispatch(.setInviteAcceptanceNotificationsEnabled(enabled: enabled))
+            }
         )
     }
 

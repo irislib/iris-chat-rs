@@ -249,6 +249,9 @@ impl AppCore {
             AppAction::SetDesktopNotificationsEnabled { enabled } => {
                 self.set_desktop_notifications_enabled(enabled)
             }
+            AppAction::SetInviteAcceptanceNotificationsEnabled { enabled } => {
+                self.set_invite_acceptance_notifications_enabled(enabled)
+            }
             AppAction::SetStartupAtLoginEnabled { enabled } => {
                 self.set_startup_at_login_enabled(enabled)
             }

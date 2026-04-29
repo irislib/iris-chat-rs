@@ -416,6 +416,25 @@ fun MyProfileSheet(
                         modifier = Modifier.testTag("myProfileDesktopNotificationsSwitch"),
                     )
                 }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Invite accepted",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Switch(
+                        checked = preferences.inviteAcceptanceNotificationsEnabled,
+                        onCheckedChange = { enabled ->
+                            appManager.dispatch(
+                                AppAction.SetInviteAcceptanceNotificationsEnabled(enabled),
+                            )
+                        },
+                        modifier = Modifier.testTag("myProfileInviteAcceptedNotificationsSwitch"),
+                    )
+                }
                 TextField(
                     value = preferences.mobilePushServerUrl,
                     onValueChange = { value ->

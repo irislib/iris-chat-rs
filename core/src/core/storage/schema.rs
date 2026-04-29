@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 2;
+const SCHEMA_VERSION: u32 = 3;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS preferences (
     send_typing_indicators INTEGER NOT NULL,
     send_read_receipts INTEGER NOT NULL,
     desktop_notifications_enabled INTEGER NOT NULL,
+    invite_acceptance_notifications_enabled INTEGER NOT NULL DEFAULT 1,
     startup_at_login_enabled INTEGER NOT NULL,
     nostr_relay_urls_json TEXT NOT NULL,
     image_proxy_enabled INTEGER NOT NULL,
@@ -116,6 +117,26 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
 
     let tx = conn.transaction()?;
     tx.execute_batch(INITIAL_SCHEMA)?;
+    if current < 3 {
+        let has_column = {
+            let mut stmt = tx.prepare("PRAGMA table_info(preferences)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for row in rows {
+                if row? == "invite_acceptance_notifications_enabled" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_column {
+            tx.execute_batch(
+                "ALTER TABLE preferences
+                 ADD COLUMN invite_acceptance_notifications_enabled INTEGER NOT NULL DEFAULT 1;",
+            )?;
+        }
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())
