@@ -32,6 +32,13 @@ impl AppCore {
         else {
             return;
         };
+        if relay_urls.is_empty() {
+            self.push_debug_log(
+                "publish.runtime",
+                format!("label={label} success=false relays=0 skipped=no_servers"),
+            );
+            return;
+        }
 
         let tx = self.core_sender.clone();
         let relay_count = relay_urls.len();

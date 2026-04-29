@@ -744,6 +744,101 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun send_nearby_message_from_args() {
+        ensureLoggedIn()
+        maybeDisableRelays()
+        withActivity {
+            nearbyService().setVisible(true)
+        }
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val chatIdArg = optionalArg("chat_id")
+        val message = requiredArg("message")
+        val chat =
+            chatIdArg
+                ?.let { ensureChatOpenById(it) }
+                ?: ensureChatOpen(peerInput)
+
+        appManager().sendText(chat.chatId, message)
+        val outgoing =
+            waitForState("nearby outgoing message", timeoutMs = 30_000) {
+                appManager()
+                    .state
+                    .value
+                    .currentChat
+                    ?.takeIf { current -> current.chatId == chat.chatId }
+                    ?.messages
+                    ?.find { entry -> entry.isOutgoing && entry.body == message }
+            }
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "message" to message,
+            "delivery" to outgoing.delivery.name,
+            "relay_count" to appManager().state.value.preferences.nostrRelayUrls.size.toString(),
+        )
+    }
+
+    @Test
+    fun disable_relays_and_report() {
+        ensureLoggedIn()
+        disableRelays()
+        reportStatus(
+            "relay_count" to appManager().state.value.preferences.nostrRelayUrls.size.toString(),
+            "relays" to JSONArray(appManager().state.value.preferences.nostrRelayUrls).toString(),
+        )
+    }
+
+    @Test
+    fun nearby_chat_exchange_from_args() {
+        ensureLoggedIn()
+        maybeDisableRelays()
+        val peerInput = requiredArg("peer_input")
+        val role = optionalArg("role")?.lowercase() ?: "initiator"
+        val count = (optionalArg("count")?.toIntOrNull() ?: 10).coerceIn(1, 50)
+        val prefix = optionalArg("prefix") ?: "nearby"
+        val peerOwnerHex = peerInputToHex(peerInput).ifBlank { normalizePeerInput(peerInput) }
+
+        withActivity {
+            nearbyService().setVisible(true)
+        }
+        waitForState("nearby peer $peerOwnerHex", timeoutMs = 60_000) {
+            nearbyService().snapshot.peers.firstOrNull { peer ->
+                peer.ownerPubkeyHex?.equals(peerOwnerHex, ignoreCase = true) == true
+            }
+        }
+
+        val chat = ensureChatOpen(peerInput)
+        val startedAt = SystemClock.elapsedRealtime()
+        var sent = 0
+        var received = 0
+        for (index in 1..count) {
+            val message = "$prefix-$index"
+            val shouldSend = (role == "initiator") == (index % 2 == 1)
+            if (shouldSend) {
+                appManager().sendText(chat.chatId, message)
+                waitForState("outgoing $message", timeoutMs = 30_000) {
+                    true.takeIf { countMessages(chat.chatId, message, "outgoing") > 0 }
+                }
+                sent += 1
+            } else {
+                waitForState("incoming $message", timeoutMs = 60_000) {
+                    true.takeIf { countMessages(chat.chatId, message, "incoming") > 0 }
+                }
+                received += 1
+            }
+        }
+
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "role" to role,
+            "sent" to sent.toString(),
+            "received" to received.toString(),
+            "elapsed_ms" to (SystemClock.elapsedRealtime() - startedAt).toString(),
+            "relay_count" to appManager().state.value.preferences.nostrRelayUrls.size.toString(),
+        )
+    }
+
+    @Test
     fun send_typing_from_args() {
         ensureLoggedIn()
         val peerInput = optionalArg("peer_input").orEmpty()
@@ -1249,6 +1344,28 @@ class RealRelayHarnessTest {
                     null
                 }
                 is AccountBootstrapState.LoggedIn -> null
+            }
+        }
+    }
+
+    private fun maybeDisableRelays() {
+        if (optionalArg("disable_relays") != "0") {
+            disableRelays()
+        }
+    }
+
+    private fun disableRelays() {
+        while (true) {
+            val relays = appManager().state.value.preferences.nostrRelayUrls
+            if (relays.isEmpty()) {
+                return
+            }
+            val relayUrl = relays.first()
+            appManager().dispatch(AppAction.RemoveNostrRelay(relayUrl))
+            waitForState<Boolean>("removed relay $relayUrl", timeoutMs = 30_000) {
+                true.takeIf {
+                    !appManager().state.value.preferences.nostrRelayUrls.contains(relayUrl)
+                }
             }
         }
     }

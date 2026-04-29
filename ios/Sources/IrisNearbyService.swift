@@ -21,8 +21,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private static let serviceUUID = CBUUID(string: "8A0DAE01-D8E5-4F27-9F20-A616F1FBA6D0")
     private static let characteristicUUID = CBUUID(string: "8A0DAE02-D8E5-4F27-9F20-A616F1FBA6D0")
-    fileprivate static let singleFrameBytes = 480
-    fileprivate static let fragmentPayloadBytes = 180
+    fileprivate static let singleFrameBytes = 16 * 1024
+    fileprivate static let fragmentPayloadBytes = 4 * 1024
     fileprivate static let maxEventFragments = 1024
     fileprivate static let maxIncomingFragmentSets = 64
     fileprivate static let fragmentTTL: TimeInterval = 30
@@ -39,6 +39,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var writableCharacteristics: [UUID: CBCharacteristic] = [:]
     private var peripheralAssemblers: [UUID: IrisNearbyFrameAssembler] = [:]
+    private var peripheralWriteQueues: [UUID: IrisNearbyPeripheralWriteQueue] = [:]
     private var subscribedCentrals: [UUID: IrisNearbyCentralChannel] = [:]
     private var centralAssemblers: [UUID: IrisNearbyFrameAssembler] = [:]
     private var pendingNotifications: [(data: Data, channel: IrisNearbyCentralChannel?)] = []
@@ -52,6 +53,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var incomingFragments: [String: IrisNearbyIncomingFragment] = [:]
     private var localNonce = UUID().uuidString.lowercased()
     private var ownProfileEventID: String?
+    private var lastCentralStateLog: String?
+    private var lastPeripheralStateLog: String?
 
     var ingestEventJson: ((String) -> Bool)?
     var buildPresenceEventJson: ((String, String, String, String?) -> String)?
@@ -171,6 +174,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         } else {
             startAdvertisingIfReady()
         }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, self.isVisible else { return }
+            self.logBluetoothStates()
+            self.startScanningIfReady()
+            self.startAdvertisingIfReady()
+        }
     }
 
     private func stop() {
@@ -185,6 +194,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peripherals.removeAll()
         writableCharacteristics.removeAll()
         peripheralAssemblers.removeAll()
+        peripheralWriteQueues.removeAll()
         subscribedCentrals.removeAll()
         centralAssemblers.removeAll()
         pendingNotifications.removeAll()
@@ -272,6 +282,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peripherals.removeValue(forKey: peripheral.identifier)
         writableCharacteristics.removeValue(forKey: peripheral.identifier)
         peripheralAssemblers.removeValue(forKey: peripheral.identifier)
+        peripheralWriteQueues.removeValue(forKey: peripheral.identifier)
         if let peerID = peerIDByPeripheral.removeValue(forKey: peripheral.identifier) {
             peers.removeAll { $0.id == peerID }
             peerNonces.removeValue(forKey: peerID)
@@ -439,14 +450,61 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func write(_ data: Data, to peripheral: CBPeripheral, characteristic: CBCharacteristic) {
-        let writeType: CBCharacteristicWriteType =
-            characteristic.properties.contains(.write) ? .withResponse : .withoutResponse
+        let writeType: CBCharacteristicWriteType
+        if characteristic.properties.contains(.writeWithoutResponse) {
+            writeType = .withoutResponse
+        } else if characteristic.properties.contains(.write) {
+            writeType = .withResponse
+        } else {
+            return
+        }
+
         let maxLength = max(20, peripheral.maximumWriteValueLength(for: writeType))
+        var queue = peripheralWriteQueues[peripheral.identifier] ?? IrisNearbyPeripheralWriteQueue()
+        if queue.chunks.isEmpty {
+            queue.writeType = writeType
+        }
         var offset = 0
         while offset < data.count {
             let end = min(offset + maxLength, data.count)
-            peripheral.writeValue(Data(data[offset..<end]), for: characteristic, type: writeType)
+            queue.chunks.append(Data(data[offset..<end]))
             offset = end
+        }
+        peripheralWriteQueues[peripheral.identifier] = queue
+        flushWriteQueue(for: peripheral.identifier)
+    }
+
+    private func flushWriteQueue(for peripheralID: UUID) {
+        guard var queue = peripheralWriteQueues[peripheralID],
+              let peripheral = peripherals[peripheralID],
+              let characteristic = writableCharacteristics[peripheralID] else { return }
+
+        switch queue.writeType {
+        case .withResponse:
+            if queue.chunks.isEmpty {
+                peripheralWriteQueues.removeValue(forKey: peripheralID)
+                return
+            }
+            guard !queue.waitingForResponse else {
+                peripheralWriteQueues[peripheralID] = queue
+                return
+            }
+            let chunk = queue.chunks.removeFirst()
+            queue.waitingForResponse = true
+            peripheralWriteQueues[peripheralID] = queue
+            peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
+        case .withoutResponse:
+            while !queue.chunks.isEmpty && peripheral.canSendWriteWithoutResponse {
+                let chunk = queue.chunks.removeFirst()
+                peripheral.writeValue(chunk, for: characteristic, type: .withoutResponse)
+            }
+            if queue.chunks.isEmpty {
+                peripheralWriteQueues.removeValue(forKey: peripheralID)
+            } else {
+                peripheralWriteQueues[peripheralID] = queue
+            }
+        @unknown default:
+            peripheralWriteQueues.removeValue(forKey: peripheralID)
         }
     }
 
@@ -711,6 +769,20 @@ final class IrisNearbyService: NSObject, ObservableObject {
         guard let profile = IrisNearbyProfileEvent.fromEventJson(eventJson) else { return }
         knownProfiles[profile.id] = profile
         if let remotePeerID {
+            if !peers.contains(where: { $0.id == remotePeerID }) {
+                peers.append(
+                    IrisNearbyPeer(
+                        id: remotePeerID,
+                        name: profile.displayName ?? "Iris",
+                        ownerPubkeyHex: profile.ownerPubkeyHex,
+                        pictureURL: profile.pictureURL,
+                        profileEventID: profile.id,
+                        lastSeen: Date()
+                    )
+                )
+                sortPeers()
+                status = sidebarSubtitle
+            }
             applyAdvertisedProfile(profile, toPeerID: remotePeerID)
         }
     }
@@ -734,8 +806,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private func applyAdvertisedProfile(_ profile: IrisNearbyProfileEvent, toPeerID peerID: String) {
         guard let index = peers.firstIndex(where: { $0.id == peerID }) else { return }
-        guard let ownerPubkeyHex = peers[index].ownerPubkeyHex,
-              ownerPubkeyHex.caseInsensitiveCompare(profile.ownerPubkeyHex) == .orderedSame else {
+        if let ownerPubkeyHex = peers[index].ownerPubkeyHex,
+           ownerPubkeyHex.caseInsensitiveCompare(profile.ownerPubkeyHex) != .orderedSame {
             return
         }
         if let profileEventID = peers[index].profileEventID, profileEventID != profile.id {
@@ -790,10 +862,46 @@ final class IrisNearbyService: NSObject, ObservableObject {
         @unknown default: return "Bluetooth"
         }
     }
+
+    private func logBluetoothStates() {
+        if let centralManager {
+            logState(
+                bluetoothDescription(centralManager.state),
+                previous: &lastCentralStateLog,
+                label: "central"
+            )
+        }
+        if let peripheralManager {
+            logState(
+                bluetoothDescription(peripheralManager.state),
+                previous: &lastPeripheralStateLog,
+                label: "peripheral"
+            )
+        }
+    }
+
+    private func logState(_ state: String, previous: inout String?, label: String) {
+        guard previous != state else { return }
+        previous = state
+        NSLog("Iris nearby: %@ state %@", label, state)
+    }
+
+    private func bluetoothDescription(_ state: CBManagerState) -> String {
+        switch state {
+        case .unknown: return "unknown"
+        case .resetting: return "resetting"
+        case .unsupported: return "unsupported"
+        case .unauthorized: return "unauthorized"
+        case .poweredOff: return "powered off"
+        case .poweredOn: return "powered on"
+        @unknown default: return "unknown"
+        }
+    }
 }
 
 extension IrisNearbyService: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        logBluetoothStates()
         if central.state == .poweredOn {
             startScanningIfReady()
         } else {
@@ -825,6 +933,7 @@ extension IrisNearbyService: CBCentralManagerDelegate {
         peripherals.removeValue(forKey: peripheral.identifier)
         writableCharacteristics.removeValue(forKey: peripheral.identifier)
         peripheralAssemblers.removeValue(forKey: peripheral.identifier)
+        peripheralWriteQueues.removeValue(forKey: peripheral.identifier)
         if let peerID = peerIDByPeripheral.removeValue(forKey: peripheral.identifier) {
             peers.removeAll { $0.id == peerID }
             peerNonces.removeValue(forKey: peerID)
@@ -833,6 +942,27 @@ extension IrisNearbyService: CBCentralManagerDelegate {
             status = peers.isEmpty ? "Scanning" : sidebarSubtitle
             startScanningIfReady()
         }
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didWriteValueFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        guard characteristic.uuid == Self.characteristicUUID else { return }
+        guard var queue = peripheralWriteQueues[peripheral.identifier] else { return }
+        if let error {
+            NSLog("Iris nearby: write failed \(error.localizedDescription)")
+            peripheralWriteQueues.removeValue(forKey: peripheral.identifier)
+            return
+        }
+        queue.waitingForResponse = false
+        peripheralWriteQueues[peripheral.identifier] = queue
+        flushWriteQueue(for: peripheral.identifier)
+    }
+
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        flushWriteQueue(for: peripheral.identifier)
     }
 }
 
@@ -892,6 +1022,7 @@ extension IrisNearbyService: CBPeripheralDelegate {
 
 extension IrisNearbyService: CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
+        logBluetoothStates()
         if peripheral.state == .poweredOn {
             startAdvertisingIfReady()
         } else {
@@ -968,6 +1099,12 @@ extension IrisNearbyService: CBPeripheralManagerDelegate {
 private struct IrisNearbyCentralChannel {
     let central: CBCentral
     let characteristic: CBMutableCharacteristic
+}
+
+private struct IrisNearbyPeripheralWriteQueue {
+    var chunks: [Data] = []
+    var writeType: CBCharacteristicWriteType = .withResponse
+    var waitingForResponse = false
 }
 
 private enum IrisNearbySource {

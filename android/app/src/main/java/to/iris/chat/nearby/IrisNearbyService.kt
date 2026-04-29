@@ -31,12 +31,15 @@ import android.util.Log
 import androidx.core.content.ContextCompat
 import java.io.ByteArrayOutputStream
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import to.iris.chat.core.AppManager
@@ -78,6 +81,9 @@ class IrisNearbyService(
     private val peers = linkedMapOf<String, Peer>()
     private val knownProfiles = linkedMapOf<String, NearbyProfileEvent>()
     private val mtuPayloadBytes = linkedMapOf<String, Int>()
+    private val subscribedServerAddresses = ConcurrentHashMap.newKeySet<String>()
+    private val pendingGattWrites = ConcurrentHashMap<String, CompletableDeferred<Int>>()
+    private val pendingNotifications = ConcurrentHashMap<String, CompletableDeferred<Int>>()
     private val ignoredAddresses = linkedMapOf<String, Long>()
     private val incomingFragments = linkedMapOf<String, IncomingFragment>()
     private val sendMutex = Mutex()
@@ -232,6 +238,11 @@ class IrisNearbyService(
         peerIdsByAddress.clear()
         peerNonces.clear()
         mtuPayloadBytes.clear()
+        subscribedServerAddresses.clear()
+        pendingGattWrites.values.forEach { it.complete(BluetoothGatt.GATT_FAILURE) }
+        pendingGattWrites.clear()
+        pendingNotifications.values.forEach { it.complete(BluetoothGatt.GATT_FAILURE) }
+        pendingNotifications.clear()
         ignoredAddresses.clear()
         incomingFragments.clear()
         peers.clear()
@@ -488,7 +499,6 @@ class IrisNearbyService(
             sendMutex.withLock {
                 frames.forEach { frame ->
                     sendFrame(frame, excludingPeerId)
-                    delay(FRAGMENT_SEND_DELAY_MS)
                 }
             }
         }
@@ -517,30 +527,39 @@ class IrisNearbyService(
 
     @SuppressLint("MissingPermission")
     private suspend fun sendFrame(frame: ByteArray, excludingPeerId: String?) {
+        gattServer?.let { server ->
+            val characteristic =
+                server.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID) ?: return@let
+            val connectedDevices = guardBluetooth("connected GATT devices", emptyList(), statusOnFailure = null) {
+                bluetoothManager
+                    ?.getConnectedDevices(BluetoothProfile.GATT)
+                    ?.toList()
+                    ?: emptyList()
+            }
+            connectedDevices.forEach { device ->
+                val address =
+                    guardBluetooth("read connected device address", null as String?, statusOnFailure = null) {
+                        device.address
+                    } ?: return@forEach
+                if (!subscribedServerAddresses.contains(address)) {
+                    return@forEach
+                }
+                if (peerIdsByAddress[address] == excludingPeerId) {
+                    return@forEach
+                }
+                notifyDevice(server, device, characteristic, frame)
+            }
+        }
+
         writableCharacteristics.toList().forEach { (address, characteristic) ->
             if (peerIdsByAddress[address] == excludingPeerId) {
                 return@forEach
             }
             val gatt = gatts[address] ?: return@forEach
-            writeToGatt(gatt, characteristic, frame)
-        }
-        val server = gattServer ?: return
-        val characteristic = server.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID) ?: return
-        val connectedDevices = guardBluetooth("connected GATT devices", emptyList(), statusOnFailure = null) {
-            bluetoothManager
-                ?.getConnectedDevices(BluetoothProfile.GATT)
-                ?.toList()
-                ?: emptyList()
-        }
-        connectedDevices.forEach { device ->
-            val address =
-                guardBluetooth("read connected device address", null as String?, statusOnFailure = null) {
-                    device.address
-                } ?: return@forEach
-            if (peerIdsByAddress[address] == excludingPeerId) {
+            if (!writeToGatt(gatt, characteristic, frame)) {
+                forgetCentralConnection(address, gatt, "write failed")
                 return@forEach
             }
-            notifyDevice(server, device, characteristic, frame)
         }
     }
 
@@ -549,18 +568,24 @@ class IrisNearbyService(
         gatt: BluetoothGatt,
         characteristic: BluetoothGattCharacteristic,
         data: ByteArray,
-    ) {
+    ): Boolean {
         var offset = 0
         val address =
             guardBluetooth("read GATT device address", null as String?, statusOnFailure = null) {
                 gatt.device.address
-            } ?: return
+            } ?: return false
         val chunkSize = mtuPayloadBytes[address] ?: BLE_CHUNK_BYTES
         while (offset < data.size) {
             val chunk = data.copyOfRange(offset, minOf(offset + chunkSize, data.size))
-            guardBluetooth("write GATT characteristic", Unit, statusOnFailure = null) {
+            val completed = CompletableDeferred<Int>()
+            pendingGattWrites.put(address, completed)?.complete(BluetoothGatt.GATT_FAILURE)
+            val started = guardBluetooth("write GATT characteristic", false, statusOnFailure = null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    gatt.writeCharacteristic(characteristic, chunk, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                    gatt.writeCharacteristic(
+                        characteristic,
+                        chunk,
+                        BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT,
+                    ) == BluetoothStatusCodes.SUCCESS
                 } else {
                     @Suppress("DEPRECATION")
                     characteristic.value = chunk
@@ -569,9 +594,20 @@ class IrisNearbyService(
                     gatt.writeCharacteristic(characteristic)
                 }
             }
+            if (!started) {
+                pendingGattWrites.remove(address, completed)
+                Log.w(TAG, "write GATT characteristic failed to start for $address")
+                return false
+            }
+            val status = withTimeoutOrNull(BLE_WRITE_TIMEOUT_MS) { completed.await() }
+            pendingGattWrites.remove(address, completed)
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.w(TAG, "write GATT characteristic failed for $address status=$status")
+                return false
+            }
             offset += chunk.size
-            delay(BLE_CHUNK_DELAY_MS)
         }
+        return true
     }
 
     @SuppressLint("MissingPermission")
@@ -589,9 +625,11 @@ class IrisNearbyService(
         val chunkSize = mtuPayloadBytes[address] ?: BLE_CHUNK_BYTES
         while (offset < data.size) {
             val chunk = data.copyOfRange(offset, minOf(offset + chunkSize, data.size))
-            guardBluetooth("notify GATT device", Unit, statusOnFailure = null) {
+            val completed = CompletableDeferred<Int>()
+            pendingNotifications.put(address, completed)?.complete(BluetoothGatt.GATT_FAILURE)
+            val started = guardBluetooth("notify GATT device", false, statusOnFailure = null) {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    server.notifyCharacteristicChanged(device, characteristic, false, chunk)
+                    server.notifyCharacteristicChanged(device, characteristic, false, chunk) == BluetoothStatusCodes.SUCCESS
                 } else {
                     @Suppress("DEPRECATION")
                     characteristic.value = chunk
@@ -599,8 +637,36 @@ class IrisNearbyService(
                     server.notifyCharacteristicChanged(device, characteristic, false)
                 }
             }
+            if (!started) {
+                pendingNotifications.remove(address, completed)
+                Log.w(TAG, "notify GATT device failed to start for $address")
+                return
+            }
+            val status = withTimeoutOrNull(BLE_NOTIFY_TIMEOUT_MS) { completed.await() }
+            pendingNotifications.remove(address, completed)
+            if (status != BluetoothGatt.GATT_SUCCESS) {
+                Log.w(TAG, "notify GATT device failed for $address status=$status")
+                return
+            }
             offset += chunk.size
-            delay(BLE_CHUNK_DELAY_MS)
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun forgetCentralConnection(
+        address: String,
+        gatt: BluetoothGatt?,
+        reason: String,
+    ) {
+        Log.d(TAG, "forget central GATT $address: $reason")
+        pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
+        pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
+        gatts.remove(address)
+        writableCharacteristics.remove(address)
+        centralAssemblers.remove(address)
+        mtuPayloadBytes.remove(address)
+        guardBluetooth("close stale GATT", Unit, statusOnFailure = null) {
+            gatt?.close()
         }
     }
 
@@ -799,6 +865,18 @@ class IrisNearbyService(
         val profile = NearbyProfileEvent.fromEventJson(eventJson) ?: return
         knownProfiles[profile.id] = profile
         if (remotePeerId != null) {
+            if (!peers.containsKey(remotePeerId)) {
+                peers[remotePeerId] =
+                    Peer(
+                        id = remotePeerId,
+                        name = profile.displayName ?: "Iris",
+                        ownerPubkeyHex = profile.ownerPubkeyHex,
+                        pictureUrl = profile.pictureUrl,
+                        profileEventId = profile.id,
+                        lastSeenMillis = System.currentTimeMillis(),
+                    )
+                status = if (peers.size == 1) "1 nearby" else "${peers.size} nearby"
+            }
             applyAdvertisedProfile(remotePeerId, profile)
         }
     }
@@ -829,7 +907,7 @@ class IrisNearbyService(
 
     private fun applyAdvertisedProfile(peerId: String, profile: NearbyProfileEvent) {
         val peer = peers[peerId] ?: return
-        if (peer.ownerPubkeyHex == null || !peer.ownerPubkeyHex.equals(profile.ownerPubkeyHex, ignoreCase = true)) {
+        if (peer.ownerPubkeyHex != null && !peer.ownerPubkeyHex.equals(profile.ownerPubkeyHex, ignoreCase = true)) {
             return
         }
         if (peer.profileEventId != null && peer.profileEventId != profile.id) {
@@ -979,6 +1057,8 @@ class IrisNearbyService(
                             guardBluetooth("read disconnected GATT address", null as String?, statusOnFailure = null) {
                                 gatt.device.address
                             } ?: return
+                        pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
+                        pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
                         if (status != BluetoothGatt.GATT_SUCCESS && !peerIdsByAddress.containsKey(address)) {
                             ignoreAddress(address)
                         }
@@ -994,6 +1074,23 @@ class IrisNearbyService(
                             gatt.close()
                         }
                     }
+                }
+            }
+
+            override fun onCharacteristicWrite(
+                gatt: BluetoothGatt,
+                characteristic: BluetoothGattCharacteristic,
+                status: Int,
+            ) {
+                guardBluetooth("GATT characteristic write", Unit, statusOnFailure = null) {
+                    if (characteristic.uuid != CHARACTERISTIC_UUID) {
+                        return@guardBluetooth
+                    }
+                    val address =
+                        guardBluetooth("read write GATT address", "unknown", statusOnFailure = null) {
+                            gatt.device.address
+                        }
+                    pendingGattWrites.remove(address)?.complete(status)
                 }
             }
 
@@ -1110,11 +1207,20 @@ class IrisNearbyService(
                         val address = device.address
                         serverAssemblers.remove(address)
                         mtuPayloadBytes.remove(address)
+                        subscribedServerAddresses.remove(address)
+                        pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
+                        pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
                         peerIdsByAddress.remove(address)?.let {
                             peers.remove(it)
                             peerNonces.remove(it)
                         }
                     }
+                }
+            }
+
+            override fun onNotificationSent(device: BluetoothDevice, status: Int) {
+                guardBluetooth("server notification sent", Unit, statusOnFailure = null) {
+                    pendingNotifications.remove(device.address)?.complete(status)
                 }
             }
 
@@ -1148,6 +1254,13 @@ class IrisNearbyService(
                 value: ByteArray,
             ) {
                 guardBluetooth("server descriptor write", Unit, statusOnFailure = null) {
+                    if (descriptor.uuid == CLIENT_CONFIG_UUID) {
+                        if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
+                            subscribedServerAddresses.add(device.address)
+                        } else {
+                            subscribedServerAddresses.remove(device.address)
+                        }
+                    }
                     if (responseNeeded && hasBluetoothPermissions()) {
                         @SuppressLint("MissingPermission")
                         guardBluetooth("send descriptor response", Unit, statusOnFailure = null) {
@@ -1276,17 +1389,17 @@ class IrisNearbyService(
         val CHARACTERISTIC_UUID: UUID = UUID.fromString("8A0DAE02-D8E5-4F27-9F20-A616F1FBA6D0")
         val CLIENT_CONFIG_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         const val NEARBY_FRAME_HEADER_BYTES = 13
-        const val SINGLE_FRAME_BYTES = 480
-        const val FRAGMENT_PAYLOAD_BYTES = 180
+        const val SINGLE_FRAME_BYTES = 16 * 1024
+        const val FRAGMENT_PAYLOAD_BYTES = 4 * 1024
         const val MAX_EVENT_FRAGMENTS = 1024
         const val MAX_INCOMING_FRAGMENT_SETS = 64
         const val FRAGMENT_TTL_MS = 30_000L
         const val BLE_CHUNK_BYTES = 180
-        const val BLE_CHUNK_DELAY_MS = 30L
+        const val BLE_WRITE_TIMEOUT_MS = 1_500L
+        const val BLE_NOTIFY_TIMEOUT_MS = 1_500L
         const val NON_IRIS_BACKOFF_MS = 60_000L
         const val MAX_IGNORED_ADDRESSES = 100
         const val MAX_SIMULTANEOUS_GATTS = 4
-        const val FRAGMENT_SEND_DELAY_MS = 30L
         const val NEARBY_PRESENCE_KIND = 22242L
         const val MAX_EVENT_BYTES = 128 * 1024
         const val MAX_MAILBAG_EVENTS = 500

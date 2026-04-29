@@ -47,7 +47,15 @@ final class InteropHarnessTests: XCTestCase {
             : harnessRootDir(env: env).appendingPathComponent(runID, isDirectory: true)
         let reset = env["IRIS_IOS_HARNESS_RESET"] == "1"
 
-        let secretStore = KeychainSecretStore(service: service, account: account)
+        let secretStore: AccountSecretStore
+        if useAppStorage || env["IRIS_IOS_HARNESS_USE_KEYCHAIN"] == "1" {
+            secretStore = KeychainSecretStore(service: service, account: account)
+        } else {
+            secretStore = FileAccountSecretStore(
+                url: dataDir.appendingPathComponent("account-secret.json"),
+                fileManager: .default
+            )
+        }
         if reset {
             secretStore.clear()
             try? FileManager.default.removeItem(at: dataDir)
@@ -203,6 +211,88 @@ final class InteropHarnessTests: XCTestCase {
             status("chat_id", chatID)
             status("message", message)
             status("delivery", finalizedDelivery)
+        case "send_nearby_message_from_args":
+            try await maybeDisableRelays(manager: manager, env: env)
+            manager.nearbyIris.setVisible(true)
+            let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
+            let chatID = try await ensureChatOpen(
+                manager: manager,
+                dataDir: dataDir,
+                chatID: env["IRIS_IOS_HARNESS_CHAT_ID"],
+                peerInput: env["IRIS_IOS_HARNESS_PEER_INPUT"]
+            )
+            manager.dispatch(.sendMessage(chatId: chatID, text: message))
+            let delivery = try await waitFor(label: "nearby outgoing message \(message)", timeout: 30) {
+                manager.state.currentChat?
+                    .messages
+                    .first(where: { $0.isOutgoing && $0.body == message })
+                    .map { String(describing: $0.delivery) }
+            }
+            status("chat_id", chatID)
+            status("message", message)
+            status("delivery", delivery)
+            status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
+        case "disable_relays_and_report":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            try await disableRelays(manager: manager)
+            status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
+            status("relays", manager.state.preferences.nostrRelayUrls.joined(separator: "|"))
+        case "nearby_chat_exchange_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            try await maybeDisableRelays(manager: manager, env: env)
+            let peerInput = try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env)
+            let role = (env["IRIS_IOS_HARNESS_ROLE"] ?? "initiator").lowercased()
+            let count = min(max(Int(env["IRIS_IOS_HARNESS_COUNT"] ?? "") ?? 10, 1), 50)
+            let prefix = env["IRIS_IOS_HARNESS_PREFIX"] ?? "nearby"
+            let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: peerInput)
+
+            manager.nearbyIris.setVisible(true)
+            _ = try await waitFor(label: "nearby peer \(peerOwnerHex)", timeout: 60) {
+                manager.nearbyIris.peers.first(where: { peer in
+                    peer.ownerPubkeyHex?.caseInsensitiveCompare(peerOwnerHex) == .orderedSame
+                })
+            }
+
+            let chatID = try await ensureChatOpen(manager: manager, dataDir: dataDir, chatID: nil, peerInput: peerInput)
+            let startedAt = Date()
+            var sent = 0
+            var received = 0
+            for index in 1...count {
+                let message = "\(prefix)-\(index)"
+                let shouldSend = (role == "initiator") == (index % 2 == 1)
+                if shouldSend {
+                    manager.dispatch(.sendMessage(chatId: chatID, text: message))
+                    _ = try await waitFor(label: "outgoing \(message)", timeout: 30) {
+                        self.messageExists(
+                            manager: manager,
+                            dataDir: dataDir,
+                            chatID: chatID,
+                            message: message,
+                            direction: "outgoing",
+                            peerInput: peerInput
+                        ) ? true : nil
+                    }
+                    sent += 1
+                } else {
+                    _ = try await waitFor(label: "incoming \(message)", timeout: 60) {
+                        self.messageExists(
+                            manager: manager,
+                            dataDir: dataDir,
+                            chatID: chatID,
+                            message: message,
+                            direction: "incoming",
+                            peerInput: peerInput
+                        ) ? true : nil
+                    }
+                    received += 1
+                }
+            }
+            status("chat_id", chatID)
+            status("role", role)
+            status("sent", String(sent))
+            status("received", String(received))
+            status("elapsed_ms", String(Int(Date().timeIntervalSince(startedAt) * 1000)))
+            status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
         case "wait_for_message_from_args":
             let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
             let direction = (env["IRIS_IOS_HARNESS_DIRECTION"] ?? "any").lowercased()
@@ -307,6 +397,27 @@ final class InteropHarnessTests: XCTestCase {
         }
     }
 
+    private func maybeDisableRelays(manager: AppManager, env: [String: String]) async throws {
+        if env["IRIS_IOS_HARNESS_DISABLE_RELAYS"] != "0" {
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            try await disableRelays(manager: manager)
+        }
+    }
+
+    private func disableRelays(manager: AppManager) async throws {
+        while true {
+            let relays = manager.state.preferences.nostrRelayUrls
+            if relays.isEmpty {
+                return
+            }
+            let relay = relays[0]
+            manager.dispatch(.removeNostrRelay(relayUrl: relay))
+            _ = try await waitFor(label: "removed relay \(relay)", timeout: 30) {
+                manager.state.preferences.nostrRelayUrls.contains(relay) ? nil : true
+            }
+        }
+    }
+
     private func ensureChatOpen(
         manager: AppManager,
         dataDir: URL,
@@ -320,7 +431,7 @@ final class InteropHarnessTests: XCTestCase {
             if manager.state.currentChat?.chatId.caseInsensitiveCompare(trimmedChatID) != .orderedSame {
                 manager.dispatch(.openChat(chatId: trimmedChatID))
             }
-            return try await waitForChatVisibility(manager: manager, dataDir: dataDir, chatID: trimmedChatID, timeout: 30)
+            return try await waitForCurrentChat(manager: manager, chatID: trimmedChatID, timeout: 30)
         }
 
         let rawPeer = try requiredEnv(
@@ -342,14 +453,14 @@ final class InteropHarnessTests: XCTestCase {
             chatMatchesPeerReference(chatId: $0.chatId, peerLabel: $0.subtitle, peerInput: rawPeer)
         }) {
             manager.dispatch(.openChat(chatId: existing.chatId))
-            return try await waitForChatVisibility(manager: manager, dataDir: dataDir, chatID: existing.chatId, timeout: 90)
+            return try await waitForCurrentChat(manager: manager, chatID: existing.chatId, timeout: 90)
         }
 
         let previousThreadCount = splitPersistenceThreadFiles(dataDir: dataDir).count
         let previousActiveChatID = stringValue(readJsonObject(at: dataDir.appendingPathComponent("core/meta.json"))?["active_chat_id"])
         manager.dispatch(.createChat(peerInput: rawPeer))
 
-        return try await waitForCreatedChat(
+        let createdChatID = try await waitForCreatedChat(
             manager: manager,
             dataDir: dataDir,
             peerInput: rawPeer,
@@ -357,25 +468,18 @@ final class InteropHarnessTests: XCTestCase {
             previousThreadCount: previousThreadCount,
             timeout: 90
         )
+        manager.dispatch(.openChat(chatId: createdChatID))
+        return try await waitForCurrentChat(manager: manager, chatID: createdChatID, timeout: 30)
     }
 
-    private func waitForChatVisibility(
+    private func waitForCurrentChat(
         manager: AppManager,
-        dataDir: URL,
         chatID: String,
         timeout: TimeInterval
     ) async throws -> String {
-        try await waitFor(label: "chat \(chatID)", timeout: timeout) {
+        try await waitFor(label: "current chat \(chatID)", timeout: timeout) {
             if let current = manager.state.currentChat, self.sameIdentifier(current.chatId, chatID) {
                 return current.chatId
-            }
-            if let thread = manager.state.chatList.first(where: { self.sameIdentifier($0.chatId, chatID) }) {
-                return thread.chatId
-            }
-            let activeChatID = self.stringValue(self.readJsonObject(at: dataDir.appendingPathComponent("core/meta.json"))?["active_chat_id"])
-            let hasThread = self.readSplitThread(dataDir: dataDir, chatID: chatID) != nil
-            if self.sameIdentifier(activeChatID, chatID) || hasThread {
-                return chatID
             }
             return nil
         }
@@ -657,6 +761,30 @@ final class InteropHarnessTests: XCTestCase {
             }
         }
         return nil
+    }
+
+    private func messageExists(
+        manager: AppManager,
+        dataDir: URL,
+        chatID: String,
+        message: String,
+        direction: String,
+        peerInput: String?
+    ) -> Bool {
+        if let current = manager.state.currentChat,
+           chatMatchesExpectedChat(chatId: current.chatId, peerInput: peerInput, expectedChatID: chatID),
+           current.messages.contains(where: {
+               $0.body == message && directionMatches(isOutgoing: $0.isOutgoing, direction: direction)
+           }) {
+            return true
+        }
+        return splitPersistenceThreadWithMessage(
+            dataDir: dataDir,
+            chatID: chatID,
+            expectedMessage: message,
+            direction: direction,
+            peerInput: peerInput
+        ) != nil
     }
 
     private func splitPersistenceMessageDelivery(
@@ -1156,6 +1284,8 @@ final class InteropHarnessTests: XCTestCase {
             return value
         case let value as NSNumber:
             return value.stringValue
+        case _ as NSNull:
+            return ""
         case .none:
             return ""
         default:

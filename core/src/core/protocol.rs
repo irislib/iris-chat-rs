@@ -170,6 +170,7 @@ impl AppCore {
         let Some(client) = self
             .logged_in
             .as_ref()
+            .filter(|logged_in| !logged_in.relay_urls.is_empty())
             .map(|logged_in| logged_in.client.clone())
         else {
             return;
@@ -301,6 +302,9 @@ impl AppCore {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
+        if logged_in.relay_urls.is_empty() {
+            return;
+        }
         let client = logged_in.client.clone();
         let relay_urls = logged_in.relay_urls.clone();
         self.runtime.spawn(async move {
@@ -357,6 +361,16 @@ impl AppCore {
             self.mark_mobile_push_dirty();
         }
         self.process_runtime_events();
+
+        if self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.relay_urls.is_empty())
+            .unwrap_or(true)
+        {
+            self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+            return;
+        }
 
         let subscription_filters_changed = if !group_authors.is_empty() {
             let filter = Filter::new()
@@ -434,6 +448,9 @@ impl AppCore {
     }
 
     pub(super) fn handle_relay_status_changed(&mut self, relay_url: String, status: RelayStatus) {
+        if !self.preferences.nostr_relay_urls.contains(&relay_url) {
+            return;
+        }
         self.push_debug_log("relay.status", format!("url={relay_url} status={status}"));
         match status {
             RelayStatus::Connected => {

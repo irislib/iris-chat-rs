@@ -19,6 +19,73 @@ fn restoring_invalid_secret_key_shows_normie_error() {
 }
 
 #[test]
+fn removing_last_message_server_leaves_empty_list() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls = vec![
+        "wss://relay-one.example".to_string(),
+        "wss://relay-two.example".to_string(),
+    ];
+    core.rebuild_state();
+
+    core.handle_action(AppAction::RemoveNostrRelay {
+        relay_url: "wss://relay-one.example".to_string(),
+    });
+    core.handle_action(AppAction::RemoveNostrRelay {
+        relay_url: "wss://relay-two.example".to_string(),
+    });
+
+    assert!(core.preferences.nostr_relay_urls.is_empty());
+    assert!(core.state.preferences.nostr_relay_urls.is_empty());
+    assert_eq!(core.state.toast, None);
+}
+
+#[test]
+fn direct_message_with_no_relays_is_queued_locally() {
+    let owner = Keys::generate();
+    let peer = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.start_primary_session(owner.clone(), owner, false, false)
+        .expect("primary session");
+
+    core.handle_action(AppAction::CreateChat {
+        peer_input: peer.public_key().to_hex(),
+    });
+    let chat_id = core
+        .state
+        .current_chat
+        .as_ref()
+        .expect("created chat")
+        .chat_id
+        .clone();
+
+    core.handle_action(AppAction::SendMessage {
+        chat_id,
+        text: "queued offline".to_string(),
+    });
+
+    let current = core.state.current_chat.as_ref().expect("current chat");
+    assert_eq!(core.state.toast, None);
+    assert!(current.messages.iter().any(|message| {
+        message.body == "queued offline"
+            && message.is_outgoing
+            && message.delivery == DeliveryState::Queued
+    }));
+}
+
+#[test]
 fn ndr_runtime_invite_session_round_trips_text() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

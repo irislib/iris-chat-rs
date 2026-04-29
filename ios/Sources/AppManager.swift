@@ -124,6 +124,10 @@ final class FileAccountSecretStore: AccountSecretStore {
                 withIntermediateDirectories: true
             )
             try data.write(to: url, options: .atomic)
+            try? fileManager.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: url.path
+            )
         } catch {
             NSLog("Iris Chat file secret save failed: %@", "\(error)")
         }

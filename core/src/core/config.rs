@@ -20,6 +20,7 @@ pub(super) const DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS: u64 = 30 * 24 * 60 * 60;
 pub(super) const DEVICE_INVITE_DISCOVERY_LIMIT: usize = 256;
 pub(super) const DEVICE_INVITE_DISCOVERY_POLL_SECS: u64 = 5;
 pub(super) const RELAY_CONNECT_TIMEOUT_SECS: u64 = 5;
+pub(super) const RELAY_SYNC_TIMEOUT_SECS: u64 = 5;
 pub(super) const RESUBSCRIBE_CATCH_UP_DELAY_SECS: u64 = 5;
 pub(super) const GROUP_CHAT_PREFIX: &str = "group:";
 pub(super) const CHAT_INVITE_ROOT_URL: &str = "https://chat.iris.to/";
@@ -30,36 +31,21 @@ pub(super) const PERSISTED_STATE_VERSION: u32 = 12;
 pub(crate) fn configured_relays() -> Vec<String> {
     let compiled_defaults = compiled_default_relays();
     match std::env::var("IRIS_DEMO_RELAYS") {
-        Ok(value) => {
-            let custom: Vec<String> = value
-                .split(',')
-                .map(str::trim)
-                .filter(|entry| !entry.is_empty())
-                .map(ToOwned::to_owned)
-                .collect();
-            if custom.is_empty() {
-                compiled_defaults
-            } else {
-                custom
-            }
-        }
+        Ok(value) => value
+            .split(',')
+            .map(str::trim)
+            .filter(|entry| !entry.is_empty())
+            .map(ToOwned::to_owned)
+            .collect(),
         Err(_) => compiled_defaults,
     }
 }
 
 pub(super) fn relay_urls_from_strings(relays: &[String]) -> Vec<RelayUrl> {
-    let parsed: Vec<RelayUrl> = relays
+    relays
         .iter()
         .filter_map(|relay| RelayUrl::parse(relay).ok())
-        .collect();
-    if parsed.is_empty() {
-        FALLBACK_DEFAULT_RELAYS
-            .iter()
-            .filter_map(|relay| RelayUrl::parse(relay).ok())
-            .collect()
-    } else {
-        parsed
-    }
+        .collect()
 }
 
 pub(super) fn normalize_nostr_relay_url(raw_url: &str) -> Result<String, String> {
@@ -105,11 +91,7 @@ pub(super) fn normalize_nostr_relay_urls(relays: &[String]) -> Vec<String> {
             }
         }
     }
-    if normalized.is_empty() {
-        configured_relays()
-    } else {
-        normalized
-    }
+    normalized
 }
 
 pub(super) fn compiled_default_relays() -> Vec<String> {
@@ -147,7 +129,11 @@ pub(crate) fn trusted_test_build_flag() -> bool {
 
 pub(super) async fn ensure_session_relays_configured(client: &Client, relay_urls: &[RelayUrl]) {
     for relay in relay_urls {
-        let _ = client.add_relay(relay.clone()).await;
+        let _ = tokio::time::timeout(
+            Duration::from_secs(RELAY_SYNC_TIMEOUT_SECS),
+            client.add_relay(relay.clone()),
+        )
+        .await;
     }
 }
 
@@ -158,7 +144,11 @@ pub(super) async fn sync_session_relays(
 ) {
     for relay in previous_relay_urls {
         if !next_relay_urls.iter().any(|next| next == relay) {
-            let _ = client.remove_relay(relay).await;
+            let _ = tokio::time::timeout(
+                Duration::from_secs(RELAY_SYNC_TIMEOUT_SECS),
+                client.remove_relay(relay),
+            )
+            .await;
         }
     }
     ensure_session_relays_configured(client, next_relay_urls).await;
@@ -180,5 +170,11 @@ mod tests {
                 "wss://temp.iris.to",
             ]
         );
+    }
+
+    #[test]
+    fn empty_relay_list_stays_disabled() {
+        assert!(normalize_nostr_relay_urls(&[]).is_empty());
+        assert!(relay_urls_from_strings(&[]).is_empty());
     }
 }

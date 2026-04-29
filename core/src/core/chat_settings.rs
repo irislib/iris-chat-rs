@@ -141,9 +141,6 @@ impl AppCore {
             Ok(url) => url,
             Err(message) => return self.reject_relay_setting(message),
         };
-        if self.preferences.nostr_relay_urls.len() <= 1 {
-            return self.reject_relay_setting("At least one relay is required.".to_string());
-        }
         let Some(index) = self
             .preferences
             .nostr_relay_urls
@@ -257,12 +254,10 @@ impl AppCore {
         let should_refresh = if let Some(logged_in) = self.logged_in.as_mut() {
             let client = logged_in.client.clone();
             let previous_relay_urls = logged_in.relay_urls.clone();
-            self.runtime.block_on(sync_session_relays(
-                &client,
-                &previous_relay_urls,
-                &next_relay_urls,
-            ));
-            logged_in.relay_urls = next_relay_urls;
+            logged_in.relay_urls = next_relay_urls.clone();
+            self.runtime.spawn(async move {
+                sync_session_relays(&client, &previous_relay_urls, &next_relay_urls).await;
+            });
             true
         } else {
             false

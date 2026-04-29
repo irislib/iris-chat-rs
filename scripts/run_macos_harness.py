@@ -156,13 +156,16 @@ def build_env(args: argparse.Namespace) -> dict[str, str]:
     env_vars = {
         "IRIS_IOS_HARNESS_ACTION": args.action,
         "IRIS_IOS_HARNESS_DATA_ROOT": args.data_root,
+        "IRIS_UI_TEST_BYPASS_KEYCHAIN": "1",
     }
     if args.run_id:
         env_vars["IRIS_IOS_HARNESS_RUN_ID"] = args.run_id
+        env_vars["IRIS_UI_TEST_RUN_ID"] = args.run_id
     if args.service:
         env_vars["IRIS_IOS_HARNESS_SERVICE"] = args.service
     if args.reset:
         env_vars["IRIS_IOS_HARNESS_RESET"] = "1"
+        env_vars["IRIS_UI_TEST_RESET"] = "1"
 
     for item in args.arg:
         if "=" not in item:
