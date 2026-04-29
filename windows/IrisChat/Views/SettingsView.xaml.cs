@@ -10,6 +10,9 @@ namespace IrisChat.Views;
 
 public partial class SettingsView : UserControl
 {
+    private const string IrisSourceUrl =
+        "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs";
+
     private bool _suppressToggleDispatch;
 
     public SettingsView()
@@ -202,6 +205,12 @@ public partial class SettingsView : UserControl
         {
             App.CurrentManager.ShowToast("Could not save support bundle");
         }
+    }
+
+    private void OnSourceCode(object sender, RoutedEventArgs e)
+    {
+        if (!PlatformDocumentOpener.OpenUrl(IrisSourceUrl))
+            App.CurrentManager.ShowToast("Could not open source code");
     }
 
     private void OnLogout(object sender, RoutedEventArgs e)

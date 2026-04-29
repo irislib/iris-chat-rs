@@ -9,7 +9,7 @@ import PhotosUI
 #endif
 
 private let irisSourceURL = URL(string: "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs")!
-private let irisSourceLabel = "git.iris.to/iris-chat-rs"
+private let irisSourceLabel = "Iris Chat source code"
 private let disappearingMessageOptions: [(String, UInt64?)] = [
     ("Off", nil),
     ("5 minutes", 300),
@@ -3171,8 +3171,10 @@ private struct NotificationsSettingsSection: View {
     @ObservedObject var manager: AppManager
 
     private static let defaultServerUrl = "https://notifications.iris.to"
-    private static let projectUrl = URL(string: "https://github.com/mmalmi/nostr-notification-server")!
-    private static let projectLabel = "github.com/mmalmi/nostr-notification-server"
+    private static let projectUrl = URL(
+        string: "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-notification-server"
+    )!
+    private static let projectLabel = "Notification server source code"
 
     var body: some View {
         Toggle("Enabled", isOn: enabled)

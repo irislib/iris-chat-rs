@@ -10,6 +10,9 @@ use crate::platform::startup;
 use crate::screens::confirm_delete_app_data;
 use crate::widgets::{image_cache, qr};
 
+const IRIS_SOURCE_URL: &str =
+    "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs";
+
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let page = adw::PreferencesPage::new();
 
@@ -431,6 +434,29 @@ fn security_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
 
 fn about_group(state: &AppState) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder().title("About").build();
+
+    let source = adw::ActionRow::builder()
+        .title("Source code")
+        .subtitle("Iris Chat source code")
+        .activatable(true)
+        .build();
+    let icon = gtk::Image::from_icon_name("code-context-symbolic");
+    source.add_prefix(&icon);
+    source.connect_activated(|row| {
+        let parent = row
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok());
+        gtk::UriLauncher::new(IRIS_SOURCE_URL).launch(
+            parent.as_ref(),
+            gtk::gio::Cancellable::NONE,
+            |result| {
+                if let Err(err) = result {
+                    eprintln!("Could not open source link: {err}");
+                }
+            },
+        );
+    });
+    group.add(&source);
 
     let version = adw::ActionRow::builder()
         .title("Version")

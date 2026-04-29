@@ -71,10 +71,11 @@ import to.iris.chat.ui.theme.IrisTheme
 private const val IrisSourceUrl =
     "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs"
 private const val IrisSourceLabel =
-    "git.iris.to/iris-chat-rs"
+    "Iris Chat source code"
 private const val NotificationsServerDefault = "https://notifications.iris.to"
-private const val NotificationsServerProjectUrl = "https://github.com/mmalmi/nostr-notification-server"
-private const val NotificationsServerProjectLabel = "github.com/mmalmi/nostr-notification-server"
+private const val NotificationsServerProjectUrl =
+    "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-notification-server"
+private const val NotificationsServerProjectLabel = "Notification server source code"
 
 private enum class SecretExportKind {
     Owner,

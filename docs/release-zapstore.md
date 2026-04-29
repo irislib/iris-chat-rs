@@ -1,14 +1,14 @@
 # Local Zapstore Release
 
 This project publishes the Android APK to Zapstore from a local machine. Do not
-publish from GitHub Actions for now. The release private keys stay on your own
+publish from hosted CI for now. The release private keys stay on your own
 computer and in your own password manager.
 
 ## App Identity
 
 - App name: `Iris Chat`
 - Android application ID: `to.iris.chat`
-- Repository: `https://github.com/lauri000/iris-chat-rs`
+- Repository: `https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs`
 - Zapstore channel: `main`
 - Listing summary: `Alpha release of Iris Chat, a secure Nostr messenger built on Nostr Double Ratchet.`
 
@@ -85,7 +85,7 @@ Suggested fields:
 
 ```text
 Android app ID: to.iris.chat
-GitHub repo: https://github.com/lauri000/iris-chat-rs
+Primary repo: https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs
 Keystore file: attach iris-chat-release.jks
 Keystore alias: iris-chat-upload
 Keystore password: <from release.env>
@@ -145,7 +145,7 @@ Use the same key in your browser signer.
 1. Clone the repo:
 
 ```bash
-git clone git@github.com:lauri000/iris-chat-rs.git
+git clone htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs
 cd iris-chat-rs
 ```
 
