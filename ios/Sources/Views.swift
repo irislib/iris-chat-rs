@@ -1365,10 +1365,18 @@ private struct NearbyIrisScreen: View {
                 .frame(height: 1)
 
             if service.peers.isEmpty {
-                Text("No one nearby")
-                    .font(.system(.body, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.muted)
+                if service.isVisible {
+                    Text(service.sidebarSubtitle)
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    Button("Click to enable") {
+                        service.setVisible(true)
+                    }
+                    .buttonStyle(IrisPrimaryButtonStyle())
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             } else {
                 peerStrip
                 Spacer(minLength: 0)

@@ -142,12 +142,7 @@ fun ChatListScreen(
                     Column(modifier = Modifier.fillMaxWidth()) {
                         IrisChatListRow(
                             title = "Nearby",
-                            preview =
-                                if (nearbySnapshot.visible && nearbySnapshot.peerCount > 0) {
-                                    if (nearbySnapshot.peerCount == 1) "1 nearby" else "${nearbySnapshot.peerCount} nearby"
-                                } else {
-                                    nearbySnapshot.status
-                                },
+                            preview = nearbyPreview(nearbySnapshot),
                             timeLabel = null,
                             leadingContent = {
                                 NearbyChatIcon(visible = nearbySnapshot.visible)
@@ -259,6 +254,23 @@ private fun NearbyPeerStrip(
         }
     }
 }
+
+private fun nearbyPreview(snapshot: IrisNearbyService.Snapshot): String =
+    when {
+        !snapshot.visible -> "Click to enable"
+        snapshot.peerCount == 1 -> "1 nearby"
+        snapshot.peerCount > 1 -> "${snapshot.peerCount} nearby"
+        snapshot.status in nearbyBlockingStatuses -> snapshot.status
+        else -> "No users nearby"
+    }
+
+private val nearbyBlockingStatuses =
+    setOf(
+        "No Bluetooth access",
+        "Bluetooth off",
+        "Bluetooth unavailable",
+        "Advertise unavailable",
+    )
 
 @Composable
 private fun NearbyPeerChip(

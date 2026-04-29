@@ -53,12 +53,21 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     var sidebarSubtitle: String {
         if !isVisible {
-            return "Off"
+            return "Click to enable"
         }
-        if peers.isEmpty {
-            return status
+        if peers.count == 1 { return "1 nearby" }
+        if peers.count > 1 { return "\(peers.count) nearby" }
+        if Self.isBlockingStatus(status) { return status }
+        return "No users nearby"
+    }
+
+    private static func isBlockingStatus(_ status: String) -> Bool {
+        switch status {
+        case "No Bluetooth access", "Bluetooth off", "Bluetooth unavailable", "Advertise failed":
+            return true
+        default:
+            return false
         }
-        return peers.count == 1 ? "1 nearby" : "\(peers.count) nearby"
     }
 
     func toggleVisibility() {
