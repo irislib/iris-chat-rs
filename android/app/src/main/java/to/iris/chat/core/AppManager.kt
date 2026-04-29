@@ -63,6 +63,26 @@ interface RustAppClient {
 
     fun ingestNearbyEventJson(eventJson: String): Boolean
 
+    fun buildNearbyPresenceEventJson(
+        peerId: String,
+        myNonce: String,
+        theirNonce: String,
+        profileEventId: String,
+    ): String
+
+    fun verifyNearbyPresenceEventJson(
+        eventJson: String,
+        peerId: String,
+        myNonce: String,
+        theirNonce: String,
+    ): String
+
+    fun nearbyEncodeFrame(envelopeJson: String): ByteArray
+
+    fun nearbyDecodeFrame(frame: ByteArray): String
+
+    fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int
+
     fun exportSupportBundleJson(): String
 
     fun listenForUpdates(reconciler: AppReconciler)
@@ -83,6 +103,41 @@ private class LiveRustAppClient(
     }
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = ffi.ingestNearbyEventJson(eventJson)
+
+    override fun buildNearbyPresenceEventJson(
+        peerId: String,
+        myNonce: String,
+        theirNonce: String,
+        profileEventId: String,
+    ): String =
+        ffi.buildNearbyPresenceEventJson(
+            peerId = peerId,
+            myNonce = myNonce,
+            theirNonce = theirNonce,
+            profileEventId = profileEventId,
+        )
+
+    override fun verifyNearbyPresenceEventJson(
+        eventJson: String,
+        peerId: String,
+        myNonce: String,
+        theirNonce: String,
+    ): String =
+        ffi.verifyNearbyPresenceEventJson(
+            eventJson = eventJson,
+            peerId = peerId,
+            myNonce = myNonce,
+            theirNonce = theirNonce,
+        )
+
+    override fun nearbyEncodeFrame(envelopeJson: String): ByteArray =
+        ffi.nearbyEncodeFrame(envelopeJson = envelopeJson)
+
+    override fun nearbyDecodeFrame(frame: ByteArray): String =
+        ffi.nearbyDecodeFrame(frame = frame)
+
+    override fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int =
+        ffi.nearbyFrameBodyLenFromHeader(header = header)
 
     override fun exportSupportBundleJson(): String = ffi.exportSupportBundleJson()
 
@@ -264,6 +319,49 @@ class AppManager(
 
     fun ingestNearbyEventJson(eventJson: String): Boolean =
         runCatching { rust.ingestNearbyEventJson(eventJson) }.getOrDefault(false)
+
+    fun buildNearbyPresenceEventJson(
+        peerId: String,
+        myNonce: String,
+        theirNonce: String,
+        profileEventId: String?,
+    ): String =
+        runCatching {
+            rust.buildNearbyPresenceEventJson(
+                peerId = peerId,
+                myNonce = myNonce,
+                theirNonce = theirNonce,
+                profileEventId = profileEventId.orEmpty(),
+            )
+        }.getOrDefault("")
+
+    fun verifyNearbyPresenceEventJson(
+        eventJson: String,
+        peerId: String,
+        myNonce: String,
+        theirNonce: String,
+    ): String =
+        runCatching {
+            rust.verifyNearbyPresenceEventJson(
+                eventJson = eventJson,
+                peerId = peerId,
+                myNonce = myNonce,
+                theirNonce = theirNonce,
+            )
+        }.getOrDefault("")
+
+    fun encodeNearbyFrame(envelope: JSONObject): ByteArray? =
+        runCatching {
+            rust.nearbyEncodeFrame(envelope.toString()).takeIf { it.isNotEmpty() }
+        }.getOrNull()
+
+    fun decodeNearbyFrame(frame: ByteArray): JSONObject? =
+        runCatching {
+            rust.nearbyDecodeFrame(frame).takeIf { it.isNotBlank() }?.let(::JSONObject)
+        }.getOrNull()
+
+    fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int =
+        runCatching { rust.nearbyFrameBodyLenFromHeader(header) }.getOrDefault(-1)
 
     fun appForegrounded() {
         appInForeground = true

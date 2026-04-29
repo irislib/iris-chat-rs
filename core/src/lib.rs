@@ -2,6 +2,7 @@ mod actions;
 mod core;
 pub mod image_proxy;
 pub mod local_relay;
+mod nearby_wire;
 pub mod perflog;
 mod qr;
 mod state;
@@ -10,6 +11,7 @@ mod updates;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{panic, panic::AssertUnwindSafe};
 
 use flume::{Receiver, Sender};
@@ -107,6 +109,56 @@ impl FfiApp {
             .is_ok()
     }
 
+    pub fn build_nearby_presence_event_json(
+        &self,
+        peer_id: String,
+        my_nonce: String,
+        their_nonce: String,
+        profile_event_id: String,
+    ) -> String {
+        let (reply_tx, reply_rx) = flume::bounded(1);
+        if self
+            .core_tx
+            .send(CoreMsg::BuildNearbyPresenceEvent {
+                peer_id,
+                my_nonce,
+                their_nonce,
+                profile_event_id,
+                reply_tx,
+            })
+            .is_err()
+        {
+            return String::new();
+        }
+        reply_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap_or_default()
+    }
+
+    pub fn verify_nearby_presence_event_json(
+        &self,
+        event_json: String,
+        peer_id: String,
+        my_nonce: String,
+        their_nonce: String,
+    ) -> String {
+        verify_nearby_presence_event_json(&event_json, &peer_id, &my_nonce, &their_nonce)
+    }
+
+    pub fn nearby_encode_frame(&self, envelope_json: String) -> Vec<u8> {
+        nearby_wire::encode_frame_json(&envelope_json).unwrap_or_default()
+    }
+
+    pub fn nearby_decode_frame(&self, frame: Vec<u8>) -> String {
+        nearby_wire::decode_frame_json(&frame).unwrap_or_default()
+    }
+
+    pub fn nearby_frame_body_len_from_header(&self, header: Vec<u8>) -> i32 {
+        nearby_wire::frame_body_len_from_header(&header)
+            .and_then(|len| i32::try_from(len).ok())
+            .unwrap_or(-1)
+    }
+
     pub fn export_support_bundle_json(&self) -> String {
         let (reply_tx, reply_rx) = flume::bounded(1);
         if self
@@ -189,6 +241,66 @@ impl FfiApp {
             }
         });
     }
+}
+
+fn verify_nearby_presence_event_json(
+    event_json: &str,
+    peer_id: &str,
+    my_nonce: &str,
+    their_nonce: &str,
+) -> String {
+    let Ok(event) = serde_json::from_str::<nostr_sdk::prelude::Event>(event_json) else {
+        return String::new();
+    };
+    if event.verify().is_err() || event.kind.as_u16() != crate::core::NEARBY_PRESENCE_KIND {
+        return String::new();
+    }
+    let Ok(content) = serde_json::from_str::<serde_json::Value>(&event.content) else {
+        return String::new();
+    };
+    let get = |key: &str| {
+        content
+            .get(key)
+            .and_then(|value| value.as_str())
+            .unwrap_or("")
+    };
+    if get("protocol") != "iris-nearby-v1"
+        || get("transport") != "ble"
+        || get("peer_id") != peer_id.trim()
+        || get("my_nonce") != their_nonce.trim()
+        || get("their_nonce") != my_nonce.trim()
+    {
+        return String::new();
+    }
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let expires_at = content
+        .get("expires_at")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0);
+    let created_at = event.created_at.as_secs();
+    if expires_at < now
+        || expires_at > now.saturating_add(300)
+        || created_at.saturating_add(300) < now
+        || created_at > now.saturating_add(300)
+    {
+        return String::new();
+    }
+
+    let profile_event_id = get("profile_event_id");
+    let profile_event_id = if profile_event_id.len() == 64 {
+        profile_event_id
+    } else {
+        ""
+    };
+    serde_json::json!({
+        "owner_pubkey_hex": event.pubkey.to_hex(),
+        "profile_event_id": profile_event_id,
+    })
+    .to_string()
 }
 
 impl Drop for FfiApp {

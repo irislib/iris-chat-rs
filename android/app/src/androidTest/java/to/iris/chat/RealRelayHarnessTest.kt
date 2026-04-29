@@ -21,6 +21,7 @@ import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.rust.peerInputToHex
+import to.iris.chat.nearby.IrisNearbyService
 import java.io.File
 
 @RunWith(AndroidJUnit4::class)
@@ -36,6 +37,9 @@ class RealRelayHarnessTest {
 
     private fun appManager(): AppManager =
         (instrumentation.targetContext.applicationContext as IrisChatApp).container.appManager
+
+    private fun nearbyService(): IrisNearbyService =
+        (instrumentation.targetContext.applicationContext as IrisChatApp).container.nearbyIrisService
 
     private fun appFilesDir(): File = instrumentation.targetContext.filesDir
 
@@ -73,6 +77,48 @@ class RealRelayHarnessTest {
             "authorization_state" to account.authorizationState.name,
             "app_package" to appPackageName(),
             "data_dir" to appFilesDir().absolutePath,
+        )
+    }
+
+    @Test
+    fun enable_nearby_and_report_peers() {
+        ensureLoggedIn()
+        withActivity {
+            nearbyService().setVisible(true)
+        }
+        SystemClock.sleep(1_000)
+        reportNearbySnapshot(nearbyService().snapshot)
+    }
+
+    @Test
+    fun wait_for_nearby_peer_profile_from_args() {
+        ensureLoggedIn()
+        val peerOwnerHex = peerInputToHex(requiredArg("peer_input")).ifBlank {
+            normalizePeerInput(requiredArg("peer_input"))
+        }
+        withActivity {
+            nearbyService().setVisible(true)
+        }
+        val timeoutMs =
+            (optionalArg("timeout_ms")?.toLongOrNull() ?: NEARBY_PROFILE_TIMEOUT_MS)
+                .coerceIn(1_000, NEARBY_PROFILE_TIMEOUT_MS)
+        val peer =
+            waitForState("nearby peer profile $peerOwnerHex", timeoutMs = timeoutMs) {
+                nearbyService()
+                    .snapshot
+                    .peers
+                    .firstOrNull { nearby ->
+                        nearby.ownerPubkeyHex?.equals(peerOwnerHex, ignoreCase = true) == true
+                    }
+            }
+        reportStatus(
+            "nearby_visible" to nearbyService().snapshot.visible.toString(),
+            "nearby_status" to nearbyService().snapshot.status,
+            "nearby_peer_count" to nearbyService().snapshot.peerCount.toString(),
+            "nearby_peer_id" to peer.id,
+            "nearby_peer_name" to peer.name,
+            "nearby_peer_owner_hex" to (peer.ownerPubkeyHex ?: ""),
+            "nearby_peer_profile_event_id" to (peer.profileEventId ?: ""),
         )
     }
 
@@ -753,9 +799,9 @@ class RealRelayHarnessTest {
     fun wait_for_message_from_args() {
         ensureLoggedIn()
         val expectedMessage = requiredArg("message")
-        val peerInput = arguments.getString("peer_input").orEmpty()
-        val expectedChatId = arguments.getString("chat_id").orEmpty().takeIf { it.isNotBlank() }
-        val direction = arguments.getString("direction").orEmpty().lowercase()
+        val peerInput = optionalArg("peer_input").orEmpty()
+        val expectedChatId = optionalArg("chat_id")?.takeIf { it.isNotBlank() }
+        val direction = optionalArg("direction").orEmpty().lowercase()
         val expectedCount = optionalArg("expected_count")?.toIntOrNull()
         val seededChat =
             when {
@@ -1765,6 +1811,25 @@ class RealRelayHarnessTest {
         return sum
     }
 
+    private fun reportNearbySnapshot(snapshot: IrisNearbyService.Snapshot) {
+        val peers = JSONArray()
+        snapshot.peers.forEach { peer ->
+            peers.put(
+                JSONObject()
+                    .put("id", peer.id)
+                    .put("name", peer.name)
+                    .put("owner_pubkey_hex", peer.ownerPubkeyHex ?: "")
+                    .put("profile_event_id", peer.profileEventId ?: ""),
+            )
+        }
+        reportStatus(
+            "nearby_visible" to snapshot.visible.toString(),
+            "nearby_status" to snapshot.status,
+            "nearby_peer_count" to snapshot.peerCount.toString(),
+            "nearby_peers" to peers.toString(),
+        )
+    }
+
     private fun reportStatus(vararg fields: Pair<String, String>) {
         val bundle = Bundle()
         fields.forEach { (key, value) -> bundle.putString(key, value) }
@@ -1787,5 +1852,6 @@ class RealRelayHarnessTest {
     private companion object {
         const val DEBUG_SNAPSHOT_FILENAME = "iris_chat_runtime_debug.json"
         const val PERSISTED_STATE_FILENAME = "iris_chat_core_state.json"
+        const val NEARBY_PROFILE_TIMEOUT_MS = 20_000L
     }
 }

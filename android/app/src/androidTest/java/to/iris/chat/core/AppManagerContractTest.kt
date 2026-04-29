@@ -515,6 +515,26 @@ private class MockRustAppClient(
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = true
 
+    override fun buildNearbyPresenceEventJson(
+        peerId: String,
+        myNonce: String,
+        theirNonce: String,
+        profileEventId: String,
+    ): String = ""
+
+    override fun verifyNearbyPresenceEventJson(
+        eventJson: String,
+        peerId: String,
+        myNonce: String,
+        theirNonce: String,
+    ): String = ""
+
+    override fun nearbyEncodeFrame(envelopeJson: String): ByteArray = ByteArray(0)
+
+    override fun nearbyDecodeFrame(frame: ByteArray): String = ""
+
+    override fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int = -1
+
     override fun exportSupportBundleJson(): String = """{"ok":true}"""
 
     override fun listenForUpdates(reconciler: AppReconciler) {

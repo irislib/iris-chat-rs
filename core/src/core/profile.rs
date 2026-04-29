@@ -165,7 +165,7 @@ impl AppCore {
     }
 }
 
-fn fallback_profile_name_for_identity(identity: &str) -> String {
+pub(super) fn fallback_profile_name_for_identity(identity: &str) -> String {
     const ADJECTIVES: [&str; 12] = [
         "Amber", "Bright", "Calm", "Clear", "Golden", "Lunar", "Nova", "Quiet", "Silver", "Solar",
         "Velvet", "Wild",

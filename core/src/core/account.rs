@@ -8,12 +8,18 @@ impl AppCore {
 
         let owner_keys = Keys::generate();
         let device_keys = Keys::generate();
+        let owner_hex = owner_keys.public_key().to_hex();
         let trimmed_name = name.trim().to_string();
 
         if let Err(error) = self.start_primary_session(owner_keys, device_keys, false, false) {
             self.state.toast = Some(error.to_string());
-        } else if !trimmed_name.is_empty() {
-            self.set_local_profile_name(&trimmed_name);
+        } else {
+            let profile_name = if trimmed_name.is_empty() {
+                super::profile::fallback_profile_name_for_identity(&owner_hex)
+            } else {
+                trimmed_name
+            };
+            self.set_local_profile_name(&profile_name);
             self.republish_local_identity_artifacts();
         }
 

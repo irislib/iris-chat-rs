@@ -25,6 +25,13 @@ pub enum AppUpdate {
 pub(crate) enum CoreMsg {
     Action(AppAction),
     Internal(Box<InternalEvent>),
+    BuildNearbyPresenceEvent {
+        peer_id: String,
+        my_nonce: String,
+        their_nonce: String,
+        profile_event_id: String,
+        reply_tx: Sender<String>,
+    },
     ExportSupportBundle(Sender<String>),
     Shutdown(Option<Sender<()>>),
 }

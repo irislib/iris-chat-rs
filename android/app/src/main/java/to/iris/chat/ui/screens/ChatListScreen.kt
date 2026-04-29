@@ -270,6 +270,9 @@ private val nearbyBlockingStatuses =
         "Bluetooth off",
         "Bluetooth unavailable",
         "Advertise unavailable",
+        "Advertise failed",
+        "Scan failed",
+        "Connect failed",
     )
 
 @Composable

@@ -138,6 +138,11 @@ protocol RustAppClient: AnyObject {
     func state() -> AppState
     func dispatch(action: AppAction) throws
     func ingestNearbyEventJson(eventJson: String) -> Bool
+    func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String
+    func verifyNearbyPresenceEventJson(eventJson: String, peerID: String, myNonce: String, theirNonce: String) -> String
+    func nearbyEncodeFrame(envelopeJson: String) -> Data
+    func nearbyDecodeFrame(frame: Data) -> String
+    func nearbyFrameBodyLenFromHeader(header: Data) -> Int
     func exportSupportBundleJson() -> String
     func listenForUpdates(reconciler: AppReconciler)
 }
@@ -159,6 +164,36 @@ final class LiveRustAppClient: RustAppClient {
 
     func ingestNearbyEventJson(eventJson: String) -> Bool {
         ffi.ingestNearbyEventJson(eventJson: eventJson)
+    }
+
+    func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String {
+        ffi.buildNearbyPresenceEventJson(
+            peerId: peerID,
+            myNonce: myNonce,
+            theirNonce: theirNonce,
+            profileEventId: profileEventID
+        )
+    }
+
+    func verifyNearbyPresenceEventJson(eventJson: String, peerID: String, myNonce: String, theirNonce: String) -> String {
+        ffi.verifyNearbyPresenceEventJson(
+            eventJson: eventJson,
+            peerId: peerID,
+            myNonce: myNonce,
+            theirNonce: theirNonce
+        )
+    }
+
+    func nearbyEncodeFrame(envelopeJson: String) -> Data {
+        ffi.nearbyEncodeFrame(envelopeJson: envelopeJson)
+    }
+
+    func nearbyDecodeFrame(frame: Data) -> String {
+        ffi.nearbyDecodeFrame(frame: frame)
+    }
+
+    func nearbyFrameBodyLenFromHeader(header: Data) -> Int {
+        Int(ffi.nearbyFrameBodyLenFromHeader(header: header))
     }
 
     func exportSupportBundleJson() -> String {
@@ -328,6 +363,33 @@ final class AppManager: ObservableObject {
 #if os(iOS) || os(macOS)
         nearbyIris.ingestEventJson = { [weak self] eventJson in
             self?.rust.ingestNearbyEventJson(eventJson: eventJson) ?? false
+        }
+        nearbyIris.buildPresenceEventJson = { [weak self] peerID, myNonce, theirNonce, profileEventID in
+            self?.rust.buildNearbyPresenceEventJson(
+                peerID: peerID,
+                myNonce: myNonce,
+                theirNonce: theirNonce,
+                profileEventID: profileEventID ?? ""
+            ) ?? ""
+        }
+        nearbyIris.verifyPresenceEventJson = { [weak self] eventJson, peerID, myNonce, theirNonce in
+            self?.rust.verifyNearbyPresenceEventJson(
+                eventJson: eventJson,
+                peerID: peerID,
+                myNonce: myNonce,
+                theirNonce: theirNonce
+            ) ?? ""
+        }
+        nearbyIris.encodeFrameJson = { [weak self] envelopeJson in
+            guard let self else { return nil }
+            let frame = self.rust.nearbyEncodeFrame(envelopeJson: envelopeJson)
+            return frame.isEmpty ? nil : frame
+        }
+        nearbyIris.decodeFrame = { [weak self] frame in
+            self?.rust.nearbyDecodeFrame(frame: frame) ?? ""
+        }
+        nearbyIris.frameBodyLength = { [weak self] header in
+            self?.rust.nearbyFrameBodyLenFromHeader(header: header) ?? -1
         }
 #endif
 

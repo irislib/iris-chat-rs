@@ -130,6 +130,117 @@ fn local_identity_artifacts_offer_profile_metadata_to_nearby() {
 }
 
 #[test]
+fn create_account_without_name_still_offers_profile_metadata_to_nearby() {
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    core.create_account("");
+
+    let account = core.state.account.as_ref().expect("account");
+    let profile = core
+        .owner_profiles
+        .get(&account.public_key_hex)
+        .expect("local profile record");
+    assert_eq!(
+        profile.display_name.as_deref(),
+        Some(account.display_name.as_str())
+    );
+
+    let profile_event_json = update_rx
+        .try_iter()
+        .filter_map(|update| match update {
+            AppUpdate::NearbyPublishedEvent {
+                kind, event_json, ..
+            } if kind == 0 => Some(event_json),
+            _ => None,
+        })
+        .last()
+        .expect("profile event");
+    let profile_event: Event = serde_json::from_str(&profile_event_json).expect("profile event");
+    assert_eq!(profile_event.pubkey.to_hex(), account.public_key_hex);
+}
+
+#[test]
+fn nearby_presence_event_binds_owner_to_ble_nonce_pair() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let device_id = device.public_key().to_hex();
+    let invite =
+        Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
+    let runtime = NdrRuntime::new(
+        device.public_key(),
+        device.secret_key().to_secret_bytes(),
+        device_id,
+        owner.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    runtime.init().expect("runtime init");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: runtime,
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+
+    let event_json = core.build_nearby_presence_event_json(
+        "peer-a",
+        "nonce-a",
+        "nonce-b",
+        "f".repeat(64).as_str(),
+    );
+    let event: Event = serde_json::from_str(&event_json).expect("presence event");
+    assert_eq!(event.kind.as_u16(), NEARBY_PRESENCE_KIND);
+    event.verify().expect("valid signature");
+    assert_eq!(event.pubkey, owner.public_key());
+
+    let content: serde_json::Value = serde_json::from_str(&event.content).expect("content");
+    assert_eq!(content["protocol"], "iris-nearby-v1");
+    assert_eq!(content["peer_id"], "peer-a");
+    assert_eq!(content["my_nonce"], "nonce-a");
+    assert_eq!(content["their_nonce"], "nonce-b");
+    assert_eq!(content["profile_event_id"], "f".repeat(64));
+
+    let verified =
+        crate::verify_nearby_presence_event_json(&event_json, "peer-a", "nonce-b", "nonce-a");
+    let verified: serde_json::Value = serde_json::from_str(&verified).expect("verified presence");
+    assert_eq!(verified["owner_pubkey_hex"], owner.public_key().to_hex());
+    assert_eq!(verified["profile_event_id"], "f".repeat(64));
+
+    assert!(crate::verify_nearby_presence_event_json(
+        &event_json,
+        "peer-a",
+        "wrong-receiver-nonce",
+        "nonce-a",
+    )
+    .is_empty());
+    assert!(crate::verify_nearby_presence_event_json(
+        &event_json,
+        "wrong-peer",
+        "nonce-b",
+        "nonce-a",
+    )
+    .is_empty());
+}
+
+#[test]
 fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

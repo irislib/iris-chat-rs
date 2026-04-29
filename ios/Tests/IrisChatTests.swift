@@ -100,6 +100,26 @@ private final class MockRustApp: RustAppClient {
         true
     }
 
+    func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String {
+        ""
+    }
+
+    func verifyNearbyPresenceEventJson(eventJson: String, peerID: String, myNonce: String, theirNonce: String) -> String {
+        ""
+    }
+
+    func nearbyEncodeFrame(envelopeJson: String) -> Data {
+        Data()
+    }
+
+    func nearbyDecodeFrame(frame: Data) -> String {
+        ""
+    }
+
+    func nearbyFrameBodyLenFromHeader(header: Data) -> Int {
+        -1
+    }
+
     func exportSupportBundleJson() -> String {
         supportBundleJson
     }

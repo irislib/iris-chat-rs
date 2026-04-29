@@ -98,12 +98,27 @@ impl AppCore {
                 }
                 InternalEvent::SyncComplete => "SyncComplete",
             },
+            CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
             CoreMsg::Shutdown(_) => "Shutdown",
         };
         match msg {
             CoreMsg::Action(action) => self.handle_action(action),
             CoreMsg::Internal(event) => self.handle_internal(*event),
+            CoreMsg::BuildNearbyPresenceEvent {
+                peer_id,
+                my_nonce,
+                their_nonce,
+                profile_event_id,
+                reply_tx,
+            } => {
+                let _ = reply_tx.send(self.build_nearby_presence_event_json(
+                    &peer_id,
+                    &my_nonce,
+                    &their_nonce,
+                    &profile_event_id,
+                ));
+            }
             CoreMsg::ExportSupportBundle(reply_tx) => {
                 let _ = reply_tx.send(self.export_support_bundle_json());
             }

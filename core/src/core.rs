@@ -68,6 +68,8 @@ mod support;
 #[cfg(test)]
 mod tests;
 
+pub(crate) const NEARBY_PRESENCE_KIND: u16 = 22242;
+
 type OwnerPubkey = PublicKey;
 type DevicePubkey = PublicKey;
 

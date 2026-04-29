@@ -1,6 +1,5 @@
 import Combine
 import CoreBluetooth
-import Compression
 import Foundation
 #if os(iOS)
 import UIKit
@@ -29,7 +28,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
     fileprivate static let fragmentTTL: TimeInterval = 30
     fileprivate static let maxEventBytes = 128 * 1024
     fileprivate static let maxMailbagEvents = 500
-    fileprivate static let maxFrameBytes = 256 * 1024
+    private static let nearbyPresenceKind: UInt32 = 22242
+    private static let nonIrisBackoff: TimeInterval = 60
+    private static let maxSimultaneousPeripherals = 4
 
     private let peerID = UUID().uuidString.lowercased()
     private var centralManager: CBCentralManager?
@@ -43,13 +44,21 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var pendingNotifications: [(data: Data, channel: IrisNearbyCentralChannel?)] = []
     private var peerIDByPeripheral: [UUID: String] = [:]
     private var peerIDByCentral: [UUID: String] = [:]
+    private var peerNonces: [String: String] = [:]
+    private var ignoredPeripherals: [UUID: Date] = [:]
     private var ownOutbound: [String: IrisNearbyStoredEvent] = [:]
     private var forwarded: [String: IrisNearbyStoredEvent] = [:]
     private var knownProfiles: [String: IrisNearbyProfileEvent] = [:]
     private var incomingFragments: [String: IrisNearbyIncomingFragment] = [:]
+    private var localNonce = UUID().uuidString.lowercased()
     private var ownProfileEventID: String?
 
     var ingestEventJson: ((String) -> Bool)?
+    var buildPresenceEventJson: ((String, String, String, String?) -> String)?
+    var verifyPresenceEventJson: ((String, String, String, String) -> String)?
+    var encodeFrameJson: ((String) -> Data?)?
+    var decodeFrame: ((Data) -> String)?
+    var frameBodyLength: ((Data) -> Int)?
 
     var sidebarSubtitle: String {
         if !isVisible {
@@ -63,7 +72,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private static func isBlockingStatus(_ status: String) -> Bool {
         switch status {
-        case "No Bluetooth access", "Bluetooth off", "Bluetooth unavailable", "Advertise failed":
+        case "No Bluetooth access", "Bluetooth off", "Bluetooth unavailable", "Bluetooth failed", "Bluetooth reset", "Advertise failed":
             return true
         default:
             return false
@@ -84,6 +93,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         isVisible = visible
         if visible {
             NSLog("Iris nearby: visible on")
+            localNonce = UUID().uuidString.lowercased()
             start()
         } else {
             NSLog("Iris nearby: visible off")
@@ -157,6 +167,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
         pendingNotifications.removeAll()
         peerIDByPeripheral.removeAll()
         peerIDByCentral.removeAll()
+        peerNonces.removeAll()
+        ignoredPeripherals.removeAll()
         incomingFragments.removeAll()
         peers.removeAll()
     }
@@ -214,16 +226,47 @@ final class IrisNearbyService: NSObject, ObservableObject {
         sendInventory(excludingPeerID: nil)
     }
 
+    private func shouldConnect(to peripheralID: UUID, advertisementData: [String: Any]) -> Bool {
+        if let ignoredUntil = ignoredPeripherals[peripheralID] {
+            if ignoredUntil > Date() {
+                return false
+            }
+            ignoredPeripherals.removeValue(forKey: peripheralID)
+        }
+        guard peripherals.count < Self.maxSimultaneousPeripherals else {
+            return false
+        }
+        guard let serviceUUIDs = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID],
+              !serviceUUIDs.isEmpty else {
+            return true
+        }
+        return serviceUUIDs.contains(Self.serviceUUID)
+    }
+
+    private func rejectNonIrisPeripheral(_ peripheral: CBPeripheral, reason: String) {
+        NSLog("Iris nearby: \(reason)")
+        ignoredPeripherals[peripheral.identifier] = Date().addingTimeInterval(Self.nonIrisBackoff)
+        peripherals.removeValue(forKey: peripheral.identifier)
+        writableCharacteristics.removeValue(forKey: peripheral.identifier)
+        peripheralAssemblers.removeValue(forKey: peripheral.identifier)
+        if let peerID = peerIDByPeripheral.removeValue(forKey: peripheral.identifier) {
+            peers.removeAll { $0.id == peerID }
+            peerNonces.removeValue(forKey: peerID)
+        }
+        centralManager?.cancelPeripheralConnection(peripheral)
+        if isVisible {
+            status = peers.isEmpty ? "Scanning" : sidebarSubtitle
+        }
+    }
+
     private func sendHello(excludingPeerID: String?) {
-        var envelope: [String: Any] = [
+        let envelope: [String: Any] = [
             "v": 1,
             "type": "hello",
             "peer_id": peerID,
+            "nonce": localNonce,
             "name": localDeviceName
         ]
-        if let ownProfileEventID {
-            envelope["profile_event_id"] = ownProfileEventID
-        }
         sendEnvelope(envelope, excludingPeerID: excludingPeerID)
     }
 
@@ -275,17 +318,34 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func sendEvent(_ record: IrisNearbyStoredEvent, excludingPeerID: String?) {
+        sendEventJson(record.eventJson, excludingPeerID: excludingPeerID)
+    }
+
+    private func sendEventJson(_ eventJson: String, excludingPeerID: String?) {
         let envelope: [String: Any] = [
             "v": 1,
             "type": "event",
             "peer_id": peerID,
-            "event_json": record.eventJson
+            "event_json": eventJson
         ]
-        if let frame = IrisNearbyFrame.encode(envelope), frame.count <= Self.singleFrameBytes {
+        if let frame = encodeFrame(envelope), frame.count <= Self.singleFrameBytes {
             sendFrame(frame, excludingPeerID: excludingPeerID)
         } else {
-            sendEventFragments(record, excludingPeerID: excludingPeerID)
+            if let record = IrisNearbyStoredEvent.fromEventJson(eventJson) {
+                sendEventFragments(record, excludingPeerID: excludingPeerID)
+            }
         }
+    }
+
+    private func sendPresence(remotePeerID: String, remoteNonce: String) {
+        let eventJson = buildPresenceEventJson?(
+            peerID,
+            localNonce,
+            remoteNonce,
+            ownProfileEventID
+        ) ?? ""
+        guard !eventJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        sendEventJson(eventJson, excludingPeerID: nil)
     }
 
     private func sendEventFragments(_ record: IrisNearbyStoredEvent, excludingPeerID: String?) {
@@ -314,8 +374,28 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func sendEnvelope(_ object: [String: Any], excludingPeerID: String?) {
-        guard isVisible, let frame = IrisNearbyFrame.encode(object) else { return }
+        guard isVisible, let frame = encodeFrame(object) else { return }
         sendFrame(frame, excludingPeerID: excludingPeerID)
+    }
+
+    private func encodeFrame(_ object: [String: Any]) -> Data? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let json = String(data: data, encoding: .utf8) else { return nil }
+        return encodeFrameJson?(json)
+    }
+
+    private func decodeFrameJson(_ frame: Data) -> [String: Any]? {
+        guard let json = decodeFrame?(frame),
+              !json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let data = json.data(using: .utf8) else { return nil }
+        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    }
+
+    private func newFrameAssembler() -> IrisNearbyFrameAssembler {
+        IrisNearbyFrameAssembler { [weak self] header in
+            self?.frameBodyLength?(header) ?? -1
+        }
     }
 
     private func sendFrame(_ frame: Data, excludingPeerID: String?) {
@@ -368,7 +448,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func ingestFrame(_ frame: Data, source: IrisNearbySource) {
-        guard let envelope = IrisNearbyFrame.decode(frame),
+        guard let envelope = decodeFrameJson(frame),
               let type = envelope["type"] as? String else { return }
         let remotePeerID = (envelope["peer_id"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
         if remotePeerID == peerID {
@@ -378,12 +458,17 @@ final class IrisNearbyService: NSObject, ObservableObject {
         switch type {
         case "hello":
             guard let remotePeerID, !remotePeerID.isEmpty else { return }
+            let remoteNonce = sanitizedNonce(envelope["nonce"] as? String)
             rememberPeer(
                 remotePeerID,
                 name: envelope["name"] as? String,
-                profileEventID: envelope["profile_event_id"] as? String,
+                profileEventID: nil,
                 source: source
             )
+            if let remoteNonce {
+                peerNonces[remotePeerID] = remoteNonce
+                sendPresence(remotePeerID: remotePeerID, remoteNonce: remoteNonce)
+            }
             sendInventory(excludingPeerID: nil)
         case "inv":
             handleInventory(envelope)
@@ -471,6 +556,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private func handleEventJson(_ eventJson: String, remotePeerID: String?) {
         guard eventJson.utf8.count <= Self.maxEventBytes,
               let record = IrisNearbyStoredEvent.fromEventJson(eventJson) else { return }
+        if record.kind == Self.nearbyPresenceKind {
+            if handlePresenceEvent(eventJson, remotePeerID: remotePeerID) {
+                NSLog("Iris nearby: accepted presence")
+            }
+            return
+        }
         if let existing = ownOutbound[record.id] ?? forwarded[record.id] {
             rememberProfile(from: existing.eventJson, remotePeerID: remotePeerID)
             return
@@ -482,6 +573,29 @@ final class IrisNearbyService: NSObject, ObservableObject {
         pruneMailbags()
         sendInventory(excludingPeerID: remotePeerID)
         NSLog("Iris nearby: accepted event kind %u %@", record.kind, record.id)
+    }
+
+    private func handlePresenceEvent(_ eventJson: String, remotePeerID: String?) -> Bool {
+        guard let remotePeerID, !remotePeerID.isEmpty,
+              let remoteNonce = peerNonces[remotePeerID] else { return false }
+        let result = verifyPresenceEventJson?(
+            eventJson,
+            remotePeerID,
+            localNonce,
+            remoteNonce
+        ) ?? ""
+        guard let data = result.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let ownerPubkeyHex = object["owner_pubkey_hex"] as? String,
+              ownerPubkeyHex.count == 64 else {
+            return false
+        }
+        rememberPresence(
+            peerID: remotePeerID,
+            ownerPubkeyHex: ownerPubkeyHex,
+            profileEventID: sanitizedEventID(object["profile_event_id"] as? String)
+        )
+        return true
     }
 
     private func pruneIncomingFragments() {
@@ -578,10 +692,34 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
+    private func rememberPresence(peerID: String, ownerPubkeyHex: String, profileEventID: String?) {
+        guard let index = peers.firstIndex(where: { $0.id == peerID }) else { return }
+        let nextProfileEventID = profileEventID ?? peers[index].profileEventID
+        peers[index].ownerPubkeyHex = ownerPubkeyHex
+        peers[index].profileEventID = nextProfileEventID
+        peers[index].lastSeen = Date()
+        if let nextProfileEventID, let profile = knownProfiles[nextProfileEventID] {
+            applyAdvertisedProfile(profile, toPeerID: peerID)
+        } else if let nextProfileEventID,
+                  ownOutbound[nextProfileEventID] == nil,
+                  forwarded[nextProfileEventID] == nil {
+            sendWant([nextProfileEventID], excludingPeerID: nil)
+        }
+        sortPeers()
+        status = sidebarSubtitle
+    }
+
     private func applyAdvertisedProfile(_ profile: IrisNearbyProfileEvent, toPeerID peerID: String) {
-        guard let index = peers.firstIndex(where: { $0.id == peerID }),
-              peers[index].profileEventID == profile.id else { return }
+        guard let index = peers.firstIndex(where: { $0.id == peerID }) else { return }
+        guard let ownerPubkeyHex = peers[index].ownerPubkeyHex,
+              ownerPubkeyHex.caseInsensitiveCompare(profile.ownerPubkeyHex) == .orderedSame else {
+            return
+        }
+        if let profileEventID = peers[index].profileEventID, profileEventID != profile.id {
+            return
+        }
         peers[index].ownerPubkeyHex = profile.ownerPubkeyHex
+        peers[index].profileEventID = profile.id
         if let displayName = profile.displayName {
             peers[index].name = displayName
         }
@@ -613,6 +751,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return trimmed.count == 64 ? trimmed : nil
     }
 
+    private func sanitizedNonce(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return (16...128).contains(trimmed.count) ? trimmed : nil
+    }
+
     private func bluetoothStatus(_ state: CBManagerState) -> String {
         switch state {
         case .poweredOff: return "Bluetooth off"
@@ -642,6 +785,7 @@ extension IrisNearbyService: CBCentralManagerDelegate {
         rssi RSSI: NSNumber
     ) {
         guard isVisible, peripherals[peripheral.identifier] == nil else { return }
+        guard shouldConnect(to: peripheral.identifier, advertisementData: advertisementData) else { return }
         peripherals[peripheral.identifier] = peripheral
         peripheral.delegate = self
         status = "Connecting"
@@ -660,6 +804,7 @@ extension IrisNearbyService: CBCentralManagerDelegate {
         peripheralAssemblers.removeValue(forKey: peripheral.identifier)
         if let peerID = peerIDByPeripheral.removeValue(forKey: peripheral.identifier) {
             peers.removeAll { $0.id == peerID }
+            peerNonces.removeValue(forKey: peerID)
         }
         if isVisible {
             status = peers.isEmpty ? "Scanning" : sidebarSubtitle
@@ -670,21 +815,42 @@ extension IrisNearbyService: CBCentralManagerDelegate {
 
 extension IrisNearbyService: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        guard error == nil, let services = peripheral.services else { return }
+        guard error == nil, let services = peripheral.services else {
+            rejectNonIrisPeripheral(peripheral, reason: "service discovery failed")
+            return
+        }
+        var foundService = false
         for service in services where service.uuid == Self.serviceUUID {
+            foundService = true
             peripheral.discoverCharacteristics([Self.characteristicUUID], for: service)
+        }
+        if !foundService {
+            rejectNonIrisPeripheral(peripheral, reason: "missing Iris service")
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         guard error == nil,
               let characteristic = service.characteristics?.first(where: { $0.uuid == Self.characteristicUUID }) else {
+            rejectNonIrisPeripheral(peripheral, reason: "missing Iris characteristic")
             return
         }
         writableCharacteristics[peripheral.identifier] = characteristic
-        peripheralAssemblers[peripheral.identifier] = IrisNearbyFrameAssembler()
+        peripheralAssemblers[peripheral.identifier] = newFrameAssembler()
         if characteristic.properties.contains(.notify) {
             peripheral.setNotifyValue(true, for: characteristic)
+        } else {
+            sendHello(excludingPeerID: nil)
+            sendInventory(excludingPeerID: nil)
+        }
+    }
+
+    func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
+        guard characteristic.uuid == Self.characteristicUUID else { return }
+        if let error {
+            NSLog("Iris nearby: notification setup failed \(error.localizedDescription)")
+        } else {
+            NSLog("Iris nearby: notifications ready")
         }
         sendHello(excludingPeerID: nil)
         sendInventory(excludingPeerID: nil)
@@ -692,7 +858,7 @@ extension IrisNearbyService: CBPeripheralDelegate {
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard error == nil, let value = characteristic.value else { return }
-        var assembler = peripheralAssemblers[peripheral.identifier] ?? IrisNearbyFrameAssembler()
+        var assembler = peripheralAssemblers[peripheral.identifier] ?? newFrameAssembler()
         let frames = assembler.append(value)
         peripheralAssemblers[peripheral.identifier] = assembler
         for frame in frames {
@@ -730,7 +896,7 @@ extension IrisNearbyService: CBPeripheralManagerDelegate {
         guard let mutableCharacteristic = characteristic as? CBMutableCharacteristic else { return }
         let channel = IrisNearbyCentralChannel(central: central, characteristic: mutableCharacteristic)
         subscribedCentrals[central.identifier] = channel
-        centralAssemblers[central.identifier] = IrisNearbyFrameAssembler()
+        centralAssemblers[central.identifier] = newFrameAssembler()
         sendHello(excludingPeerID: nil)
         sendInventory(excludingPeerID: nil)
     }
@@ -744,6 +910,7 @@ extension IrisNearbyService: CBPeripheralManagerDelegate {
         centralAssemblers.removeValue(forKey: central.identifier)
         if let peerID = peerIDByCentral.removeValue(forKey: central.identifier) {
             peers.removeAll { $0.id == peerID }
+            peerNonces.removeValue(forKey: peerID)
         }
         status = peers.isEmpty ? "Visible" : sidebarSubtitle
     }
@@ -756,7 +923,7 @@ extension IrisNearbyService: CBPeripheralManagerDelegate {
                 continue
             }
             let central = request.central
-            var assembler = centralAssemblers[central.identifier] ?? IrisNearbyFrameAssembler()
+            var assembler = centralAssemblers[central.identifier] ?? newFrameAssembler()
             let frames = assembler.append(value)
             centralAssemblers[central.identifier] = assembler
             for frame in frames {
@@ -850,118 +1017,30 @@ private struct IrisNearbyIncomingFragment {
     let remotePeerID: String?
 }
 
-private enum IrisNearbyFrame {
-    static let magic = Data([0x49, 0x52, 0x49, 0x53])
-    private static let compressedFlag: UInt8 = 0x01
-    private static let headerSize = 13
-    private static let compressionThreshold = 100
-
-    static func encode(_ object: [String: Any]) -> Data? {
-        guard JSONSerialization.isValidJSONObject(object),
-              let payload = try? JSONSerialization.data(withJSONObject: object),
-              payload.count <= IrisNearbyService.maxFrameBytes else { return nil }
-        let compressed = compressIfBeneficial(payload)
-        let body = compressed ?? payload
-        let flags: UInt8 = compressed == nil ? 0 : compressedFlag
-        guard body.count <= IrisNearbyService.maxFrameBytes else { return nil }
-        var data = Data()
-        data.append(magic)
-        data.append(flags)
-        data.append(contentsOf: UInt32(body.count).bigEndianBytes)
-        data.append(contentsOf: UInt32(payload.count).bigEndianBytes)
-        data.append(body)
-        return data
-    }
-
-    static func decode(_ frame: Data) -> [String: Any]? {
-        guard frame.count >= headerSize, Data(frame.prefix(4)) == magic else { return nil }
-        let header = Array(frame.prefix(headerSize))
-        let flags = header[4]
-        let payload = Data(frame.dropFirst(headerSize))
-        let originalSize = Int(UInt32(bigEndianBytes: header[9..<13]))
-        if (flags & compressedFlag) != 0 {
-            guard let decompressed = decompress(payload, originalSize: originalSize) else {
-                return nil
-            }
-            return try? JSONSerialization.jsonObject(with: decompressed) as? [String: Any]
-        }
-        return try? JSONSerialization.jsonObject(with: payload) as? [String: Any]
-    }
-
-    private static func compressIfBeneficial(_ data: Data) -> Data? {
-        guard data.count >= compressionThreshold else { return nil }
-        let destinationSize = data.count + 64
-        let destination = UnsafeMutablePointer<UInt8>.allocate(capacity: destinationSize)
-        defer { destination.deallocate() }
-        let compressedSize = data.withUnsafeBytes { sourceBuffer -> Int in
-            guard let source = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else { return 0 }
-            return compression_encode_buffer(
-                destination,
-                destinationSize,
-                source,
-                data.count,
-                nil,
-                COMPRESSION_ZLIB
-            )
-        }
-        guard compressedSize > 0, compressedSize < data.count else { return nil }
-        return Data(bytes: destination, count: compressedSize)
-    }
-
-    private static func decompress(_ data: Data, originalSize: Int) -> Data? {
-        guard originalSize > 0, originalSize <= IrisNearbyService.maxFrameBytes else { return nil }
-        let destination = UnsafeMutablePointer<UInt8>.allocate(capacity: originalSize)
-        defer { destination.deallocate() }
-        let decodedSize = data.withUnsafeBytes { sourceBuffer -> Int in
-            guard let source = sourceBuffer.bindMemory(to: UInt8.self).baseAddress else { return 0 }
-            return compression_decode_buffer(
-                destination,
-                originalSize,
-                source,
-                data.count,
-                nil,
-                COMPRESSION_ZLIB
-            )
-        }
-        guard decodedSize == originalSize else { return nil }
-        return Data(bytes: destination, count: decodedSize)
-    }
-}
-
 private struct IrisNearbyFrameAssembler {
+    private static let headerSize = 13
+
+    private let bodyLengthFromHeader: (Data) -> Int
     private var buffer = Data()
+
+    init(bodyLengthFromHeader: @escaping (Data) -> Int) {
+        self.bodyLengthFromHeader = bodyLengthFromHeader
+    }
 
     mutating func append(_ chunk: Data) -> [Data] {
         buffer.append(chunk)
         var frames: [Data] = []
-        while buffer.count >= 13 {
-            if Data(buffer.prefix(4)) != IrisNearbyFrame.magic {
+        while buffer.count >= Self.headerSize {
+            let length = bodyLengthFromHeader(Data(buffer.prefix(Self.headerSize)))
+            if length <= 0 {
                 buffer.removeFirst()
                 continue
             }
-            let header = Array(buffer.prefix(13))
-            let length = Int(UInt32(bigEndianBytes: header[5..<9]))
-            if length <= 0 || length > IrisNearbyService.maxFrameBytes {
-                buffer.removeFirst()
-                continue
-            }
-            let frameLength = 13 + length
+            let frameLength = Self.headerSize + length
             guard buffer.count >= frameLength else { break }
             frames.append(Data(buffer.prefix(frameLength)))
             buffer.removeFirst(frameLength)
         }
         return frames
-    }
-}
-
-private extension FixedWidthInteger {
-    var bigEndianBytes: [UInt8] {
-        withUnsafeBytes(of: self.bigEndian) { Array($0) }
-    }
-}
-
-private extension UInt32 {
-    init<S: Sequence>(bigEndianBytes bytes: S) where S.Element == UInt8 {
-        self = bytes.reduce(0) { ($0 << 8) | UInt32($1) }
     }
 }

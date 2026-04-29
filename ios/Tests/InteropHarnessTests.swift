@@ -72,6 +72,31 @@ final class InteropHarnessTests: XCTestCase {
         case "create_account_and_report_identity", "report_logged_in_identity":
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
             reportIdentity(snapshot)
+        case "enable_nearby_and_report_peers":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            manager.nearbyIris.setVisible(true)
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+            reportNearbySnapshot(manager: manager)
+        case "wait_for_nearby_peer_profile_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let peerOwnerHex = resolvePeerOwnerHex(
+                manager: manager,
+                peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env)
+            )
+            manager.nearbyIris.setVisible(true)
+            let timeout = nearbyProfileTimeout(env: env)
+            let peer = try await waitFor(label: "nearby peer profile \(peerOwnerHex)", timeout: timeout) {
+                manager.nearbyIris.peers.first(where: { nearby in
+                    nearby.ownerPubkeyHex?.caseInsensitiveCompare(peerOwnerHex) == .orderedSame
+                })
+            }
+            status("nearby_visible", String(manager.nearbyIris.isVisible))
+            status("nearby_status", manager.nearbyIris.status)
+            status("nearby_peer_count", String(manager.nearbyIris.peers.count))
+            status("nearby_peer_id", peer.id)
+            status("nearby_peer_name", peer.name)
+            status("nearby_peer_owner_hex", peer.ownerPubkeyHex ?? "")
+            status("nearby_peer_profile_event_id", peer.profileEventID ?? "")
         case "report_runtime_debug_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             reportRuntimeDebugSnapshot(manager: manager, dataDir: dataDir)
@@ -801,6 +826,23 @@ final class InteropHarnessTests: XCTestCase {
         status("authorization_state", String(describing: snapshot.authorizationState))
     }
 
+    private func reportNearbySnapshot(manager: AppManager) {
+        let peers = manager.nearbyIris.peers.map { peer in
+            [
+                "id": peer.id,
+                "name": peer.name,
+                "owner_pubkey_hex": peer.ownerPubkeyHex ?? "",
+                "profile_event_id": peer.profileEventID ?? "",
+            ]
+        }
+        let peersData = try? JSONSerialization.data(withJSONObject: peers)
+        let peersJson = peersData.flatMap { String(data: $0, encoding: .utf8) } ?? "[]"
+        status("nearby_visible", String(manager.nearbyIris.isVisible))
+        status("nearby_status", manager.nearbyIris.status)
+        status("nearby_peer_count", String(manager.nearbyIris.peers.count))
+        status("nearby_peers", peersJson)
+    }
+
     private func reportRuntimeDebugSnapshot(manager: AppManager, dataDir: URL) {
         let state = manager.state
         let debug = readJsonObject(at: dataDir.appendingPathComponent(debugSnapshotFilename))
@@ -1159,6 +1201,11 @@ final class InteropHarnessTests: XCTestCase {
 
     private func sameIdentifier(_ lhs: String, _ rhs: String) -> Bool {
         lhs.caseInsensitiveCompare(rhs) == .orderedSame
+    }
+
+    private func nearbyProfileTimeout(env: [String: String]) -> TimeInterval {
+        let requested = Double(env["IRIS_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 20
+        return min(max(requested, 1), 20)
     }
 
     private func status(_ key: String, _ value: String) {
