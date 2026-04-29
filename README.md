@@ -1,7 +1,6 @@
-# Iris Chat
+# iris chat
 
-Alpha encrypted chat app using Nostr Double Ratchet. Shared Rust core, native
-UIs.
+Encrypted chat app using Nostr Double Ratchet. Shared Rust core, native UIs.
 
 Primary development is on hashtree:
 https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs
@@ -17,7 +16,7 @@ https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsd
 - Current app features: encrypted direct and group chats, device linking,
   QR/link invites, offline queueing, relay sync, attachments, profile pictures,
   notifications, share targets, and desktop open-at-login.
-- Android, iOS, and macOS expose Iris Chat as a share destination. The share
+- Android, iOS, and macOS expose iris chat as a share destination. The share
   picker supports search and multiple recipients; iOS also donates recent chats
   for share-sheet suggestions.
 
