@@ -29,6 +29,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
+import java.util.concurrent.ConcurrentHashMap
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppState
@@ -279,9 +280,32 @@ private fun NearbyChatIcon(visible: Boolean) {
 internal fun rememberNhashImageData(
     appManager: AppManager,
     pictureUrl: String?,
-) = produceState<ByteArray?>(initialValue = null, pictureUrl) {
+) = produceState(
+    initialValue = parseNhashUri(pictureUrl)?.let { NhashImageDataCache.get(it) },
+    pictureUrl,
+) {
     val nhash = parseNhashUri(pictureUrl)
-    value = if (nhash == null) null else appManager.resolveHashtreePictureBytes(nhash)
+    if (nhash == null) {
+        value = null
+        return@produceState
+    }
+    NhashImageDataCache.get(nhash)?.let {
+        value = it
+        return@produceState
+    }
+    value =
+        appManager.resolveHashtreePictureBytes(nhash)
+            ?.also { NhashImageDataCache.put(nhash, it) }
+}
+
+private object NhashImageDataCache {
+    private val images = ConcurrentHashMap<String, ByteArray>()
+
+    fun get(nhash: String): ByteArray? = images[nhash]
+
+    fun put(nhash: String, data: ByteArray) {
+        images[nhash] = data
+    }
 }
 
 internal fun parseNhashUri(value: String?): String? {

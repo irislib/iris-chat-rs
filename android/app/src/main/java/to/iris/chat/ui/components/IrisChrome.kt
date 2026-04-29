@@ -90,6 +90,7 @@ import to.iris.chat.ui.theme.IrisTheme
 import to.iris.chat.ui.theme.Sky500
 import java.net.URL
 import java.text.SimpleDateFormat
+import java.util.concurrent.ConcurrentHashMap
 import java.util.Date
 import java.util.Locale
 import kotlin.math.abs
@@ -259,19 +260,33 @@ fun IrisAvatar(
     imageData: ByteArray? = null,
 ) {
     val palette = IrisTheme.palette
+    val dataBitmap = remember(imageData) {
+        imageData?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
+    }
     val avatarBitmap =
-        produceState<android.graphics.Bitmap?>(initialValue = null, imageUrl) {
+        produceState(
+            initialValue = imageUrl?.trim()?.let { IrisAvatarBitmapCache.get(it) },
+            imageUrl,
+        ) {
             val url = imageUrl?.trim().orEmpty()
-            value =
-                if (url.startsWith("https://") || url.startsWith("http://")) {
-                    withContext(Dispatchers.IO) {
-                        runCatching {
-                            URL(url).openStream().use { BitmapFactory.decodeStream(it) }
-                        }.getOrNull()
-                    }
-                } else {
-                    null
+            if (!url.startsWith("https://") && !url.startsWith("http://")) {
+                value = null
+                return@produceState
+            }
+            IrisAvatarBitmapCache.get(url)?.let { cached ->
+                value = cached
+                return@produceState
+            }
+            val bitmap =
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        URL(url).openStream().use { BitmapFactory.decodeStream(it) }
+                    }.getOrNull()
                 }
+            if (bitmap != null) {
+                IrisAvatarBitmapCache.put(url, bitmap)
+            }
+            value = bitmap
         }
     Box(
         modifier =
@@ -282,9 +297,6 @@ fun IrisAvatar(
                 .border(1.dp, palette.border, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        val dataBitmap = remember(imageData) {
-            imageData?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }
-        }
         dataBitmap?.let { bitmap ->
             Image(
                 bitmap = bitmap.asImageBitmap(),
@@ -305,6 +317,16 @@ fun IrisAvatar(
             color = if (emphasize) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.Bold,
         )
+    }
+}
+
+private object IrisAvatarBitmapCache {
+    private val bitmaps = ConcurrentHashMap<String, android.graphics.Bitmap>()
+
+    fun get(key: String): android.graphics.Bitmap? = bitmaps[key]
+
+    fun put(key: String, bitmap: android.graphics.Bitmap) {
+        bitmaps[key] = bitmap
     }
 }
 

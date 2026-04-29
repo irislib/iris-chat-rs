@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.IO;
+using System.Net.Http;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,6 +12,10 @@ namespace IrisChat.Chrome;
 
 public partial class Avatar : UserControl
 {
+    private static readonly ConcurrentDictionary<string, ImageSource> ImageCache = new();
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private string? _loadingKey;
+
     public static readonly DependencyProperty LabelProperty =
         DependencyProperty.Register(nameof(Label), typeof(string), typeof(Avatar),
             new PropertyMetadata(string.Empty, OnLabelChanged));
@@ -77,36 +83,27 @@ public partial class Avatar : UserControl
         var url = PictureUrl?.Trim();
         if (string.IsNullOrEmpty(url))
         {
+            _loadingKey = null;
             ImageHost.Visibility = Visibility.Collapsed;
             return;
         }
 
+        var key = CacheKey(url);
+        _loadingKey = key;
+        if (ImageCache.TryGetValue(key, out var cached))
+        {
+            ImageBrush.ImageSource = cached;
+            ImageHost.Visibility = Visibility.Visible;
+            return;
+        }
+
+        ImageHost.Visibility = Visibility.Collapsed;
+
         try
         {
-            byte[]? data = null;
+            var data = await LoadImageBytesAsync(url);
 
-            if (url.StartsWith("htree://", StringComparison.OrdinalIgnoreCase))
-            {
-                // Strip the htree:// prefix and any trailing path/filename, keep
-                // the nhash component (the leading host segment).
-                var noScheme = url.Substring("htree://".Length);
-                var nhash = noScheme.Split('/')[0];
-                if (Application.Current is App app && app.Manager != null)
-                {
-                    data = await app.Manager.ResolveProfilePictureAsync(nhash);
-                }
-            }
-            else if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
-                     url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
-            {
-                using var http = new System.Net.Http.HttpClient();
-                http.Timeout = TimeSpan.FromSeconds(15);
-                data = await http.GetByteArrayAsync(url);
-            }
-            else if (File.Exists(url))
-            {
-                data = await File.ReadAllBytesAsync(url);
-            }
+            if (_loadingKey != key) return;
 
             if (data == null || data.Length == 0)
             {
@@ -122,13 +119,53 @@ public partial class Avatar : UserControl
             bmp.EndInit();
             bmp.Freeze();
 
+            ImageCache[key] = bmp;
             ImageBrush.ImageSource = bmp;
             ImageHost.Visibility = Visibility.Visible;
         }
         catch
         {
-            ImageHost.Visibility = Visibility.Collapsed;
+            if (_loadingKey == key)
+            {
+                ImageHost.Visibility = Visibility.Collapsed;
+            }
         }
+    }
+
+    private static async Task<byte[]?> LoadImageBytesAsync(string url)
+    {
+        if (TryParseNhash(url, out var nhash))
+        {
+            return Application.Current is App app && app.Manager != null
+                ? await app.Manager.ResolveProfilePictureAsync(nhash)
+                : null;
+        }
+        if (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return await Http.GetByteArrayAsync(url);
+        }
+        return File.Exists(url) ? await File.ReadAllBytesAsync(url) : null;
+    }
+
+    private static string CacheKey(string url) =>
+        TryParseNhash(url, out var nhash) ? $"htree:{nhash}" : url;
+
+    private static bool TryParseNhash(string url, out string nhash)
+    {
+        var trimmed = url.Trim();
+        if (trimmed.StartsWith("htree://", StringComparison.OrdinalIgnoreCase))
+        {
+            nhash = trimmed.Substring("htree://".Length).Split('/')[0];
+            return !string.IsNullOrWhiteSpace(nhash);
+        }
+        if (trimmed.StartsWith("nhash://", StringComparison.OrdinalIgnoreCase))
+        {
+            nhash = trimmed.Substring("nhash://".Length).Split('/')[0];
+            return !string.IsNullOrWhiteSpace(nhash);
+        }
+        nhash = string.Empty;
+        return false;
     }
 
     private static string ComputeInitials(string label)

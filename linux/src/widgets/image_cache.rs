@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::{LazyLock, Mutex};
 use std::thread;
@@ -9,6 +10,12 @@ static BYTES_CACHE: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 static IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
+
+type ImageLoadCallback = Box<dyn FnOnce(&[u8]) + 'static>;
+
+thread_local! {
+    static WAITERS: RefCell<HashMap<String, Vec<ImageLoadCallback>>> = RefCell::new(HashMap::new());
+}
 
 pub fn fetch_into_picture(picture: &gtk::Picture, url: &str) {
     let pic = picture.clone();
@@ -44,11 +51,21 @@ where
     }
 
     let url_owned = url.to_string();
-    {
+    let should_start = {
         let mut in_flight = IN_FLIGHT.lock().unwrap();
-        if !in_flight.insert(url_owned.clone()) {
-            return;
-        }
+        in_flight.insert(url_owned.clone())
+    };
+
+    WAITERS.with(|waiters| {
+        waiters
+            .borrow_mut()
+            .entry(url_owned.clone())
+            .or_default()
+            .push(Box::new(on_loaded));
+    });
+
+    if !should_start {
+        return;
     }
 
     let (tx, rx) = async_channel::bounded::<Option<Vec<u8>>>(1);
@@ -71,7 +88,19 @@ where
                 .lock()
                 .unwrap()
                 .insert(url_for_main.clone(), bytes.clone());
-            on_loaded(&bytes);
+            let callbacks = WAITERS.with(|waiters| {
+                waiters
+                    .borrow_mut()
+                    .remove(&url_for_main)
+                    .unwrap_or_default()
+            });
+            for callback in callbacks {
+                callback(&bytes);
+            }
+        } else {
+            WAITERS.with(|waiters| {
+                waiters.borrow_mut().remove(&url_for_main);
+            });
         }
         IN_FLIGHT.lock().unwrap().remove(&url_for_main);
     });

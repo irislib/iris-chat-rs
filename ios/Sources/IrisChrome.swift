@@ -1,3 +1,4 @@
+import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(PhotosUI)
@@ -358,6 +359,53 @@ func irisHttpAvatarURL(
     )
 }
 
+private enum IrisAvatarImageSource: Equatable {
+    case hashtree(String)
+    case http(String)
+
+    var cacheKey: String {
+        switch self {
+        case .hashtree(let nhash): return "htree:\(nhash)"
+        case .http(let url): return "http:\(url)"
+        }
+    }
+}
+
+private enum IrisAvatarImageCache {
+    private static let lock = NSLock()
+    private static var dataByKey: [String: Data] = [:]
+
+    static func data(for key: String) -> Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return dataByKey[key]
+    }
+
+    static func store(_ data: Data, for key: String) {
+        lock.lock()
+        defer { lock.unlock() }
+        dataByKey[key] = data
+        while dataByKey.count > 128, let firstKey = dataByKey.keys.first {
+            dataByKey.removeValue(forKey: firstKey)
+        }
+    }
+}
+
+private func irisAvatarImageSource(
+    pictureUrl: String?,
+    preferences: PreferencesSnapshot?,
+    pixelSize: CGFloat
+) -> IrisAvatarImageSource? {
+    if let nhash = irisHtreeNhash(from: pictureUrl) {
+        return .hashtree(nhash)
+    }
+    guard let preferences,
+          let httpURL = irisHttpAvatarURL(pictureUrl, preferences: preferences, pixelSize: pixelSize) else {
+        return nil
+    }
+    return .http(httpURL)
+}
+
 struct IrisAvatar: View {
     @Environment(\.irisPalette) private var palette
 
@@ -369,7 +417,7 @@ struct IrisAvatar: View {
     let manager: AppManager?
     let loadedImageIdentifier: String?
 
-    @State private var htreeData: Data?
+    @State private var imageData: Data?
 
     init(
         label: String,
@@ -387,6 +435,12 @@ struct IrisAvatar: View {
         self.preferences = preferences
         self.manager = manager
         self.loadedImageIdentifier = loadedImageIdentifier
+        let source = irisAvatarImageSource(
+            pictureUrl: pictureUrl,
+            preferences: preferences,
+            pixelSize: size * 2
+        )
+        _imageData = State(initialValue: source.flatMap { IrisAvatarImageCache.data(for: $0.cacheKey) })
     }
 
     var body: some View {
@@ -395,7 +449,7 @@ struct IrisAvatar: View {
                 .fill(emphasize ? palette.accent : palette.panelAlt)
                 .overlay(Circle().stroke(palette.border, lineWidth: 1))
 
-            if let htreeData, let image = PlatformImage(data: htreeData) {
+            if let imageData, let image = PlatformImage(data: imageData) {
                 Image(platformImage: image)
                     .resizable()
                     .scaledToFill()
@@ -406,35 +460,66 @@ struct IrisAvatar: View {
                         .accessibilityIdentifier(loadedImageIdentifier)
                         .allowsHitTesting(false)
                 }
-            } else if let httpURL, let url = URL(string: httpURL) {
-                AsyncImage(url: url) { phase in
-                    switch phase {
-                    case .success(let image):
-                        image
-                            .resizable()
-                            .scaledToFill()
-                    default:
-                        avatarInitial
-                    }
-                }
-                .clipShape(Circle())
             } else {
                 avatarInitial
             }
         }
         .frame(width: size, height: size)
-        .task(id: pictureUrl) {
-            guard let manager, let nhash = irisHtreeNhash(from: pictureUrl) else {
-                htreeData = nil
-                return
-            }
-            htreeData = await manager.resolveHashtreePictureBytes(nhash: nhash)
+        .task(id: imageSourceKey) {
+            await loadAvatarImage()
         }
     }
 
-    private var httpURL: String? {
-        guard let preferences else { return nil }
-        return irisHttpAvatarURL(pictureUrl, preferences: preferences, pixelSize: size * 2)
+    private var imageSource: IrisAvatarImageSource? {
+        irisAvatarImageSource(
+            pictureUrl: pictureUrl,
+            preferences: preferences,
+            pixelSize: size * 2
+        )
+    }
+
+    private var imageSourceKey: String? {
+        imageSource?.cacheKey
+    }
+
+    private func loadAvatarImage() async {
+        guard let source = imageSource else {
+            imageData = nil
+            return
+        }
+        let key = source.cacheKey
+        if let cached = IrisAvatarImageCache.data(for: key) {
+            imageData = cached
+            return
+        }
+
+        let loaded: Data?
+        switch source {
+        case .hashtree(let nhash):
+            guard let manager else {
+                imageData = nil
+                return
+            }
+            loaded = await manager.resolveHashtreePictureBytes(nhash: nhash)
+        case .http(let urlString):
+            guard let url = URL(string: urlString) else {
+                imageData = nil
+                return
+            }
+            if let response = try? await URLSession.shared.data(from: url) {
+                loaded = response.0
+            } else {
+                loaded = nil
+            }
+        }
+
+        guard imageSourceKey == key else { return }
+        guard let loaded, !loaded.isEmpty else {
+            imageData = nil
+            return
+        }
+        IrisAvatarImageCache.store(loaded, for: key)
+        imageData = loaded
     }
 
     private var avatarInitial: some View {
