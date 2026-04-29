@@ -51,11 +51,34 @@ git_commit_timestamp_utc() {
   fi
 }
 
+semantic_version_code() {
+  local version="$1"
+  local core major minor patch
+
+  core="${version%%[-+]*}"
+  if [[ ! "$core" =~ ^([0-9]+)(\.([0-9]+))?(\.([0-9]+))?$ ]]; then
+    return 1
+  fi
+
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[3]:-0}"
+  patch="${BASH_REMATCH[5]:-0}"
+
+  printf '%d\n' "$((10#$major * 10000 + 10#$minor * 1000 + 10#$patch * 100))"
+}
+
 resolve_shared_build_metadata() {
   local root="$1"
+  local derived_version_code
 
   IRIS_APP_VERSION_NAME="${IRIS_APP_VERSION_NAME:-0.1.0}"
-  IRIS_APP_VERSION_CODE="${IRIS_APP_VERSION_CODE:-1}"
+  derived_version_code="$(semantic_version_code "$IRIS_APP_VERSION_NAME" || true)"
+  if [[ -z "${IRIS_APP_VERSION_CODE:-}" ]]; then
+    IRIS_APP_VERSION_CODE="${derived_version_code:-1}"
+  elif [[ -n "${derived_version_code:-}" && "$IRIS_APP_VERSION_CODE" != "$derived_version_code" ]] && ! bool_is_true "${IRIS_APP_VERSION_CODE_MANUAL:-false}"; then
+    echo "Using derived version code $derived_version_code for $IRIS_APP_VERSION_NAME (was $IRIS_APP_VERSION_CODE)." >&2
+    IRIS_APP_VERSION_CODE="$derived_version_code"
+  fi
   IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-$(git_short_sha "$root")}"
 
   if [[ -z "${IRIS_BUILD_TIMESTAMP_UTC:-}" ]]; then
