@@ -139,7 +139,9 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 fn action_for(input: String) -> AppAction {
     let lower = input.to_lowercase();
     if lower.contains("://") && lower.contains("#") {
-        AppAction::AcceptInvite { invite_input: input }
+        AppAction::AcceptInvite {
+            invite_input: input,
+        }
     } else {
         AppAction::CreateChat { peer_input: input }
     }

@@ -14,7 +14,9 @@ struct IrisChatApp: App {
                     appDelegate.manager = manager
                 }
                 .onOpenURL { url in
-                    manager.handleChatLink(url)
+                    if !manager.handleShareURL(url) {
+                        manager.handleChatLink(url)
+                    }
                 }
                 .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                     guard let url = activity.webpageURL else {

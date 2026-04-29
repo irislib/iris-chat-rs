@@ -17,6 +17,17 @@ struct StagedAttachment: Identifiable, Equatable {
     let filename: String
 }
 
+struct PendingShareAttachment: Codable, Equatable {
+    let path: String
+    let filename: String
+}
+
+struct PendingShare: Codable, Identifiable, Equatable {
+    let id: String
+    let text: String
+    let attachments: [PendingShareAttachment]
+}
+
 private struct ClientDebugLogEntry {
     let timestampSecs: UInt64
     let category: String
@@ -309,6 +320,7 @@ final class AppManager: ObservableObject {
 
     @Published private(set) var state: AppState
     @Published private(set) var bootstrapInFlight = true
+    @Published private(set) var pendingShare: PendingShare?
     @Published var toastMessage: String?
 
     private let rust: RustAppClient
@@ -363,6 +375,9 @@ final class AppManager: ObservableObject {
         self.lastRevApplied = initialState.rev
 
         resolvedRust.listenForUpdates(reconciler: reconciler)
+        if AppPaths.testRunId(environment: environment) == nil {
+            syncStartupAtLoginPreference(initialState.preferences.startupAtLoginEnabled)
+        }
 
 #if os(iOS) || os(macOS)
         nearbyIris.ingestEventJson = { [weak self] eventJson in
@@ -457,6 +472,66 @@ final class AppManager: ObservableObject {
                 return
             }
         }
+    }
+
+    func handleShareURL(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "irischat",
+              url.host?.lowercased() == "share",
+              let shareID = url.pathComponents.dropFirst().first,
+              !shareID.isEmpty else {
+            return false
+        }
+        loadPendingShare(id: shareID)
+        return true
+    }
+
+    func clearPendingShare() {
+        pendingShare = nil
+    }
+
+    func sendPendingShare(to chatId: String) {
+        let trimmedChatId = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let share = pendingShare, !trimmedChatId.isEmpty else {
+            return
+        }
+        if share.attachments.isEmpty {
+            dispatchToRust(.sendMessage(chatId: trimmedChatId, text: share.text))
+        } else {
+            dispatchToRust(
+                .sendAttachments(
+                    chatId: trimmedChatId,
+                    attachments: share.attachments.map {
+                        OutgoingAttachment(filePath: $0.path, filename: $0.filename)
+                    },
+                    caption: share.text
+                )
+            )
+        }
+        dispatchToRust(.openChat(chatId: trimmedChatId))
+        pendingShare = nil
+    }
+
+    private func loadPendingShare(id: String) {
+#if os(iOS) || os(macOS)
+        guard let dir = fileManager
+            .containerURL(forSecurityApplicationGroupIdentifier: AppPaths.appGroupIdentifier)?
+            .appendingPathComponent("pending-shares", isDirectory: true) else {
+            showToast("Sharing unavailable")
+            return
+        }
+        let url = dir.appendingPathComponent(id).appendingPathExtension("json")
+        do {
+            let data = try Data(contentsOf: url)
+            let share = try JSONDecoder().decode(PendingShare.self, from: data)
+            pendingShare = share
+            try? fileManager.removeItem(at: url)
+            dispatchToRust(.updateScreenStack(stack: []))
+        } catch {
+            showToast("Sharing unavailable")
+        }
+#else
+        _ = id
+#endif
     }
 
 #if os(iOS)
@@ -639,6 +714,13 @@ final class AppManager: ObservableObject {
         } catch {
             showToast("Startup setting unavailable")
         }
+    }
+
+    private func syncStartupAtLoginPreference(_ enabled: Bool) {
+        guard PlatformStartupAtLogin.isSupported else {
+            return
+        }
+        try? PlatformStartupAtLogin.setEnabled(enabled)
     }
 
     func createAccount(name: String) {

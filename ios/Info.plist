@@ -20,6 +20,17 @@
   <string>$(MARKETING_VERSION)</string>
   <key>CFBundleVersion</key>
   <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key>
+      <string>to.iris.chat</string>
+      <key>CFBundleURLSchemes</key>
+      <array>
+        <string>irischat</string>
+      </array>
+    </dict>
+  </array>
   <key>LSRequiresIPhoneOS</key>
   <true/>
   <key>ITSAppUsesNonExemptEncryption</key>

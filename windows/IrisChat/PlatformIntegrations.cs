@@ -108,6 +108,7 @@ public static class PlatformStartupAtLogin
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string ValueName = "IrisChat";
+    public const string BackgroundLaunchArgument = "--background";
 
     public static bool IsSupported => true;
 
@@ -135,7 +136,7 @@ public static class PlatformStartupAtLogin
             {
                 throw new InvalidOperationException("Cannot resolve current executable path");
             }
-            key.SetValue(ValueName, $"\"{exePath}\"", RegistryValueKind.String);
+            key.SetValue(ValueName, $"\"{exePath}\" {BackgroundLaunchArgument}", RegistryValueKind.String);
         }
         else
         {

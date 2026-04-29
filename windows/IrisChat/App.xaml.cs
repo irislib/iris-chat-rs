@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Windows;
 
 namespace IrisChat;
@@ -27,6 +28,11 @@ public partial class App : Application
         Directory.CreateDirectory(dataDir);
 
         Manager = new AppManager(dataDir);
+        var startMinimized = e.Args.Any(arg =>
+            string.Equals(arg, PlatformStartupAtLogin.BackgroundLaunchArgument, StringComparison.OrdinalIgnoreCase));
+        var window = new MainWindow(startMinimized);
+        MainWindow = window;
+        window.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)

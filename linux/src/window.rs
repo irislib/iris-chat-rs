@@ -16,8 +16,11 @@ use crate::widgets::image_cache;
 
 const APP_ID: &str = "to.iris.chat";
 
-pub fn build_ui(app: &adw::Application) {
-    if let Some(window) = app.active_window() {
+pub fn build_ui(app: &adw::Application, present_on_create: bool) {
+    if let Some(window) = app
+        .active_window()
+        .or_else(|| app.windows().into_iter().next())
+    {
         window.present();
         return;
     }
@@ -104,9 +107,7 @@ pub fn build_ui(app: &adw::Application) {
                     },
                 });
             } else {
-                let parent = btn
-                    .root()
-                    .and_then(|r| r.downcast::<gtk::Window>().ok());
+                let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
                 crate::screens::chat::present_chat_info(
                     parent.as_ref(),
                     crate::screens::chat::ChatInfoSnapshot {
@@ -161,10 +162,8 @@ pub fn build_ui(app: &adw::Application) {
                 let mut slot = current_for_updates.borrow_mut();
                 if state.rev >= slot.rev {
                     let prev_chat_list = slot.chat_list.clone();
-                    let prev_focused_chat_id = slot
-                        .current_chat
-                        .as_ref()
-                        .map(|c| c.chat_id.clone());
+                    let prev_focused_chat_id =
+                        slot.current_chat.as_ref().map(|c| c.chat_id.clone());
                     *slot = state;
                     apply_state(
                         &content_for_updates,
@@ -174,7 +173,11 @@ pub fn build_ui(app: &adw::Application) {
                     );
                     show_toast_if_changed(&toast_for_updates, &last_toast_for_updates, &slot.toast);
                     if slot.preferences.desktop_notifications_enabled {
-                        notify_new_messages(&prev_chat_list, &slot.chat_list, prev_focused_chat_id.as_deref());
+                        notify_new_messages(
+                            &prev_chat_list,
+                            &slot.chat_list,
+                            prev_focused_chat_id.as_deref(),
+                        );
                     }
                 }
             }
@@ -188,7 +191,9 @@ pub fn build_ui(app: &adw::Application) {
         }
     });
 
-    window.present();
+    if present_on_create {
+        window.present();
+    }
 }
 
 fn show_toast_if_changed(
@@ -235,16 +240,19 @@ fn apply_state(
     }
 
     let screen = current_screen(state);
-    header.back.set_visible(!state.router.screen_stack.is_empty());
+    header
+        .back
+        .set_visible(!state.router.screen_stack.is_empty());
     header
         .new_chat
         .set_visible(matches!(screen, Screen::ChatList));
-    let show_settings =
-        matches!(screen, Screen::ChatList) && state.account.is_some();
+    let show_settings = matches!(screen, Screen::ChatList) && state.account.is_some();
     header.settings.set_visible(show_settings);
     if show_settings {
         if let Some(account) = state.account.as_ref() {
-            header.settings.set_child(Some(&build_own_avatar(account, state)));
+            header
+                .settings
+                .set_child(Some(&build_own_avatar(account, state)));
         }
     } else {
         header.settings.set_child(gtk::Widget::NONE);
@@ -253,7 +261,8 @@ fn apply_state(
         .chat_info
         .set_visible(matches!(screen, Screen::Chat { .. }));
 
-    let title_text = chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());
+    let title_text =
+        chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());
     header.title.set_label(&title_text);
 
     // Tear down any avatar from a previous render.
@@ -271,7 +280,12 @@ fn apply_state(
             attach_chat_title_click(&header.title_slot, manager, chat);
         }
     } else {
-        for ctrl in header.title_slot.observe_controllers().into_iter().flatten() {
+        for ctrl in header
+            .title_slot
+            .observe_controllers()
+            .into_iter()
+            .flatten()
+        {
             if let Ok(ev) = ctrl.downcast::<gtk::EventController>() {
                 if ev.is::<gtk::GestureClick>() {
                     header.title_slot.remove_controller(&ev);
@@ -329,11 +343,7 @@ fn build_chat_header_avatar(chat: &CurrentChatSnapshot, state: &AppState) -> gtk
     avatar.upcast()
 }
 
-fn attach_chat_title_click(
-    slot: &gtk::Box,
-    manager: &Rc<AppManager>,
-    chat: &CurrentChatSnapshot,
-) {
+fn attach_chat_title_click(slot: &gtk::Box, manager: &Rc<AppManager>, chat: &CurrentChatSnapshot) {
     for ctrl in slot.observe_controllers().into_iter().flatten() {
         if let Ok(ev) = ctrl.downcast::<gtk::EventController>() {
             if ev.is::<gtk::GestureClick>() {

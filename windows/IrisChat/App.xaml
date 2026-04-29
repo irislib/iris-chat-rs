@@ -1,8 +1,7 @@
 <Application x:Class="IrisChat.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:local="clr-namespace:IrisChat"
-             StartupUri="MainWindow.xaml">
+             xmlns:local="clr-namespace:IrisChat">
     <Application.Resources>
         <ResourceDictionary>
             <!-- iOS dark palette (IrisPalette.dark in IrisChrome.swift) -->

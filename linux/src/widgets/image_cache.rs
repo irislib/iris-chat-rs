@@ -8,8 +8,7 @@ use gtk::glib;
 static BYTES_CACHE: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-static IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+static IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
 pub fn fetch_into_picture(picture: &gtk::Picture, url: &str) {
     let pic = picture.clone();

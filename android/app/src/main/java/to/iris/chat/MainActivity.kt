@@ -2,21 +2,28 @@ package to.iris.chat
 
 import android.Manifest
 import android.content.Intent
-import android.net.Uri
-import android.os.Bundle
-import android.os.Build
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.os.Parcelable
 import android.util.Log
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppContainer
 import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.OutgoingAttachment
 import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.navigation.NdrApp
+import to.iris.chat.ui.screens.copyAttachmentToCache
 import to.iris.chat.ui.theme.IrisChatTheme
 
 class MainActivity : ComponentActivity() {
@@ -77,10 +84,75 @@ class MainActivity : ComponentActivity() {
             container.appManager.dispatch(AppAction.UpdateScreenStack(emptyList()))
             return
         }
+        if (intent?.action == Intent.ACTION_SEND || intent?.action == Intent.ACTION_SEND_MULTIPLE) {
+            handleShareIntent(intent)
+            return
+        }
         if (intent?.action == Intent.ACTION_VIEW) {
             handleChatLink(intent.data)
         }
     }
+
+    private fun handleShareIntent(intent: Intent) {
+        val text = shareTextFromIntent(intent)
+        val streamUris = streamUrisFromIntent(intent)
+        if (text.isBlank() && streamUris.isEmpty()) {
+            return
+        }
+        lifecycleScope.launch {
+            val attachments =
+                withContext(Dispatchers.IO) {
+                    streamUris.mapNotNull { uri ->
+                        copyAttachmentToCache(this@MainActivity, uri)?.let { attachment ->
+                            OutgoingAttachment(
+                                filePath = attachment.path,
+                                filename = attachment.filename,
+                            )
+                        }
+                    }
+                }
+            container.appManager.receiveShare(text, attachments)
+        }
+    }
+
+    private fun shareTextFromIntent(intent: Intent): String {
+        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString().orEmpty()
+        if (text.isNotBlank()) {
+            return text
+        }
+        return intent.getCharSequenceExtra(Intent.EXTRA_SUBJECT)?.toString().orEmpty()
+    }
+
+    private fun streamUrisFromIntent(intent: Intent): List<Uri> {
+        val uris = mutableListOf<Uri>()
+        if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            uris += intent.parcelableArrayListExtraCompat<Uri>(Intent.EXTRA_STREAM).orEmpty()
+        } else {
+            intent.parcelableExtraCompat<Uri>(Intent.EXTRA_STREAM)?.let { uris += it }
+        }
+        intent.clipData?.let { clipData ->
+            for (index in 0 until clipData.itemCount) {
+                clipData.getItemAt(index).uri?.let { uris += it }
+            }
+        }
+        return uris.distinctBy { it.toString() }
+    }
+
+    private inline fun <reified T : Parcelable> Intent.parcelableExtraCompat(name: String): T? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableExtra(name, T::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableExtra(name) as? T
+        }
+
+    private inline fun <reified T : Parcelable> Intent.parcelableArrayListExtraCompat(name: String): ArrayList<T>? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            getParcelableArrayListExtra(name, T::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            getParcelableArrayListExtra(name)
+        }
 
     private fun handleChatLink(uri: Uri?) {
         val raw = uri?.toString()?.trim().orEmpty()

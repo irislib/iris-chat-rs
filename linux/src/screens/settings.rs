@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -5,6 +6,7 @@ use iris_chat_core::{AppAction, AppState, PreferencesSnapshot, Screen};
 
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;
+use crate::platform::startup;
 use crate::screens::confirm_delete_app_data;
 use crate::widgets::{image_cache, qr};
 
@@ -143,21 +145,23 @@ fn profile_group(
     change_pic.set_valign(gtk::Align::Center);
     let manager_for_pic = manager.clone();
     change_pic.connect_clicked(move |btn| {
-        let parent = btn
-            .root()
-            .and_then(|r| r.downcast::<gtk::Window>().ok());
+        let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
         let dialog = gtk::FileDialog::builder()
             .title("Choose profile picture")
             .build();
         let manager = manager_for_pic.clone();
-        dialog.open(parent.as_ref(), gtk::gio::Cancellable::NONE, move |result| {
-            let Ok(file) = result else { return };
-            if let Some(path) = file.path() {
-                manager.dispatch(AppAction::UploadProfilePicture {
-                    file_path: path.to_string_lossy().to_string(),
-                });
-            }
-        });
+        dialog.open(
+            parent.as_ref(),
+            gtk::gio::Cancellable::NONE,
+            move |result| {
+                let Ok(file) = result else { return };
+                if let Some(path) = file.path() {
+                    manager.dispatch(AppAction::UploadProfilePicture {
+                        file_path: path.to_string_lossy().to_string(),
+                    });
+                }
+            },
+        );
     });
     avatar_row.add_suffix(&change_pic);
     group.add(&avatar_row);
@@ -209,9 +213,7 @@ fn profile_group(
     let npub = account.npub.clone();
     let display_name = account.display_name.clone();
     qr_row.connect_activated(move |row| {
-        let parent = row
-            .root()
-            .and_then(|r| r.downcast::<gtk::Window>().ok());
+        let parent = row.root().and_then(|r| r.downcast::<gtk::Window>().ok());
         present_qr_dialog(parent.as_ref(), &display_name, &npub);
     });
     group.add(&qr_row);
@@ -298,6 +300,28 @@ fn messaging_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw
     }
     group.add(&receipts);
 
+    if startup::is_supported() {
+        let startup_row = adw::SwitchRow::builder().title("Open at login").build();
+        startup_row.set_active(prefs.startup_at_login_enabled);
+        {
+            let manager = manager.clone();
+            let reverting = Rc::new(Cell::new(false));
+            startup_row.connect_active_notify(move |row| {
+                if reverting.replace(false) {
+                    return;
+                }
+                let enabled = row.is_active();
+                if startup::set_enabled(enabled).is_ok() {
+                    manager.dispatch(AppAction::SetStartupAtLoginEnabled { enabled });
+                } else {
+                    reverting.set(true);
+                    row.set_active(!enabled);
+                }
+            });
+        }
+        group.add(&startup_row);
+    }
+
     let notifications = adw::SwitchRow::builder().title("Notifications").build();
     notifications.set_active(prefs.desktop_notifications_enabled);
     {
@@ -314,7 +338,9 @@ fn messaging_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw
 }
 
 fn relays_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Message servers").build();
+    let group = adw::PreferencesGroup::builder()
+        .title("Message servers")
+        .build();
 
     for url in &prefs.nostr_relay_urls {
         let row = adw::ActionRow::builder().title(url).build();
@@ -392,7 +418,9 @@ fn security_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
     {
         let manager = manager.clone();
         logout.connect_activated(move |row| {
-            let parent = row.root().and_then(|root| root.downcast::<gtk::Window>().ok());
+            let parent = row
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok());
             confirm_delete_app_data(parent.as_ref(), &manager);
         });
     }

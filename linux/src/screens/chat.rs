@@ -370,7 +370,8 @@ fn render_message(
     let gesture = gtk::GestureClick::new();
     gesture.set_button(3);
     gesture.connect_pressed(move |_, _, x, y| {
-        popover_for_gesture.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover_for_gesture
+            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         popover_for_gesture.popup();
     });
     bubble.add_controller(gesture);
@@ -404,10 +405,7 @@ fn render_message(
     row.upcast()
 }
 
-fn build_message_popover(
-    message: &ChatMessageSnapshot,
-    manager: &Rc<AppManager>,
-) -> gtk::Popover {
+fn build_message_popover(message: &ChatMessageSnapshot, manager: &Rc<AppManager>) -> gtk::Popover {
     let popover = gtk::Popover::new();
     popover.set_has_arrow(false);
     popover.set_position(gtk::PositionType::Top);
@@ -559,7 +557,10 @@ fn attachment_summary(attachments: &[&MessageAttachmentSnapshot]) -> String {
     format!("📎 {} attachments", attachments.len())
 }
 
-fn image_bubble(attachment: &MessageAttachmentSnapshot, prefs: &PreferencesSnapshot) -> gtk::Widget {
+fn image_bubble(
+    attachment: &MessageAttachmentSnapshot,
+    prefs: &PreferencesSnapshot,
+) -> gtk::Widget {
     let picture = gtk::Picture::new();
     picture.set_can_shrink(true);
     picture.set_size_request(220, 220);
@@ -606,34 +607,36 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     let preview_row_for_attach = preview_row.clone();
     let preview_scroll_for_attach = preview_scroll.clone();
     attach.connect_clicked(move |btn| {
-        let parent = btn
-            .root()
-            .and_then(|r| r.downcast::<gtk::Window>().ok());
+        let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
         let dialog = gtk::FileDialog::builder().title("Attach file").build();
         let manager = manager_for_attach.clone();
         let chat_id = chat_id_for_attach.clone();
         let preview_row = preview_row_for_attach.clone();
         let preview_scroll = preview_scroll_for_attach.clone();
-        dialog.open(parent.as_ref(), gtk::gio::Cancellable::NONE, move |result| {
-            let Ok(file) = result else { return };
-            let path = match file.path() {
-                Some(p) => p.to_string_lossy().to_string(),
-                None => return,
-            };
-            let filename = file
-                .basename()
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_else(|| "attachment".to_string());
-            manager.stage_attachment(
-                &chat_id,
-                OutgoingAttachment {
-                    file_path: path,
-                    filename,
-                },
-            );
-            rebuild_attachment_previews(&preview_row, &manager, &chat_id);
-            preview_scroll.set_visible(preview_row.first_child().is_some());
-        });
+        dialog.open(
+            parent.as_ref(),
+            gtk::gio::Cancellable::NONE,
+            move |result| {
+                let Ok(file) = result else { return };
+                let path = match file.path() {
+                    Some(p) => p.to_string_lossy().to_string(),
+                    None => return,
+                };
+                let filename = file
+                    .basename()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "attachment".to_string());
+                manager.stage_attachment(
+                    &chat_id,
+                    OutgoingAttachment {
+                        file_path: path,
+                        filename,
+                    },
+                );
+                rebuild_attachment_previews(&preview_row, &manager, &chat_id);
+                preview_scroll.set_visible(preview_row.first_child().is_some());
+            },
+        );
     });
     row.append(&attach);
 
@@ -714,11 +717,7 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     outer.upcast()
 }
 
-fn rebuild_attachment_previews(
-    row: &gtk::Box,
-    manager: &Rc<AppManager>,
-    chat_id: &str,
-) {
+fn rebuild_attachment_previews(row: &gtk::Box, manager: &Rc<AppManager>, chat_id: &str) {
     while let Some(child) = row.first_child() {
         row.remove(&child);
     }
@@ -780,10 +779,7 @@ fn attachment_chip(
 
 fn attachment_icon_name(filename: &str) -> &'static str {
     let lower = filename.to_ascii_lowercase();
-    let ext = lower
-        .rsplit_once('.')
-        .map(|(_, e)| e)
-        .unwrap_or("");
+    let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
     match ext {
         "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "heic" | "heif" => "image-x-generic",
         "mp4" | "mov" | "mkv" | "webm" | "avi" => "video-x-generic",
@@ -794,12 +790,7 @@ fn attachment_icon_name(filename: &str) -> &'static str {
     }
 }
 
-fn dispatch_send(
-    manager: &Rc<AppManager>,
-    chat_id: &str,
-    text: String,
-    ttl_seconds: Option<u64>,
-) {
+fn dispatch_send(manager: &Rc<AppManager>, chat_id: &str, text: String, ttl_seconds: Option<u64>) {
     let staged = manager.take_staged_attachments(chat_id);
     if !staged.is_empty() {
         manager.dispatch(AppAction::SendAttachments {

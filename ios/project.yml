@@ -43,6 +43,7 @@ targets:
       - framework: Frameworks/IrisChatCore.xcframework
         embed: false
       - target: NotificationService
+      - target: ShareExtension
 
   NotificationService:
     type: app-extension
@@ -64,6 +65,20 @@ targets:
     dependencies:
       - framework: Frameworks/IrisChatCore.xcframework
         embed: false
+
+  ShareExtension:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: ShareExtension/ShareViewController.swift
+    settings:
+      base:
+        PRODUCT_NAME: ShareExtension
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.ShareExtension
+        DEVELOPMENT_TEAM: J8PPJKD7TA
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        SKIP_INSTALL: YES
 
   IrisChatTests:
     type: bundle.unit-test

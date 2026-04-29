@@ -20,7 +20,9 @@ pub fn render(_state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     {
         let manager = manager.clone();
         cancel.connect_clicked(move |button| {
-            let parent = button.root().and_then(|root| root.downcast::<gtk::Window>().ok());
+            let parent = button
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok());
             confirm_delete_app_data(parent.as_ref(), &manager);
         });
     }

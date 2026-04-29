@@ -48,6 +48,7 @@ public sealed class AppManager : INotifyPropertyChanged
         _lastRevApplied = _state.rev;
 
         _ffi.ListenForUpdates(new Reconciler(this));
+        SyncStartupAtLoginPreference();
 
         TryRestorePersistedSession();
     }
@@ -337,6 +338,13 @@ public sealed class AppManager : INotifyPropertyChanged
         {
             ShowToast("Startup setting unavailable");
         }
+    }
+
+    private void SyncStartupAtLoginPreference()
+    {
+        if (!PlatformStartupAtLogin.IsSupported) return;
+        try { PlatformStartupAtLogin.SetEnabled(_state.preferences.startupAtLoginEnabled); }
+        catch { }
     }
 
     public void AddNostrRelay(string url) =>

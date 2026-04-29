@@ -243,7 +243,7 @@ pub(super) struct PersistedPreferences {
     pub(super) desktop_notifications_enabled: bool,
     #[serde(default = "default_true")]
     pub(super) invite_acceptance_notifications_enabled: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(super) startup_at_login_enabled: bool,
     #[serde(default = "default_nostr_relay_urls")]
     pub(super) nostr_relay_urls: Vec<String>,

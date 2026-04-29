@@ -57,6 +57,11 @@ impl AppManager {
             tx,
             secret_store: secret_store.clone(),
         }));
+        if crate::platform::startup::is_supported() {
+            let _ = crate::platform::startup::set_enabled(
+                ffi.state().preferences.startup_at_login_enabled,
+            );
+        }
 
         if let Some(bundle) = secret_store.load() {
             ffi.dispatch(AppAction::RestoreAccountBundle {

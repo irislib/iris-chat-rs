@@ -139,6 +139,27 @@ struct RootView: View {
                 .irisDismissOnMacOutsideClick { showingNearbyIris = false }
         }
 #endif
+#if os(iOS) || os(macOS)
+        .sheet(
+            item: Binding(
+                get: { manager.pendingShare },
+                set: { value in
+                    if value == nil {
+                        manager.clearPendingShare()
+                    }
+                }
+            )
+        ) { share in
+#if os(iOS)
+            ShareTargetSheet(manager: manager, share: share)
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+#elseif os(macOS)
+            ShareTargetSheet(manager: manager, share: share)
+                .frame(minWidth: 380, minHeight: 420)
+#endif
+        }
+#endif
     }
 
     private var usesDesktopChatShell: Bool {
@@ -309,6 +330,64 @@ struct RootView: View {
 #endif
     }
 }
+
+#if os(iOS) || os(macOS)
+private struct ShareTargetSheet: View {
+    @ObservedObject var manager: AppManager
+    let share: PendingShare
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if manager.state.chatList.isEmpty {
+                    VStack(spacing: 18) {
+                        Text("Start a chat first")
+                            .font(.headline)
+                        Button("New chat") {
+                            manager.clearPendingShare()
+                            manager.dispatch(.pushScreen(screen: .newChat))
+                            dismiss()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(manager.state.chatList, id: \.chatId) { chat in
+                        Button {
+                            manager.sendPendingShare(to: chat.chatId)
+                            dismiss()
+                        } label: {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(chat.displayName)
+                                    .foregroundStyle(.primary)
+                                if let subtitle = chat.subtitle, !subtitle.isEmpty {
+                                    Text(subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .listStyle(.plain)
+                }
+            }
+            .navigationTitle("Share to")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        manager.clearPendingShare()
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+}
+#endif
 
 struct NavigationShell<Content: View>: View {
     let title: String

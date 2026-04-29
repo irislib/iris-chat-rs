@@ -157,6 +157,11 @@ data class NearbyPublishedEvent(
     val eventJson: String,
 )
 
+data class PendingShare(
+    val text: String,
+    val attachments: List<OutgoingAttachment>,
+)
+
 class AppManager(
     context: Context,
     private val applicationScope: CoroutineScope,
@@ -221,6 +226,8 @@ class AppManager(
     val preferences: StateFlow<PreferencesSnapshot> =
         slice("preferences") { it.preferences }
     val toast: StateFlow<String?> = slice("toast") { it.toast }
+    private val mutablePendingShare = MutableStateFlow<PendingShare?>(null)
+    val pendingShare: StateFlow<PendingShare?> = mutablePendingShare.asStateFlow()
 
     @Suppress("unused") // tag is helpful for tracing during perf work
     private fun <T> slice(
@@ -480,6 +487,41 @@ class AppManager(
 
     fun pushScreen(screen: Screen) {
         dispatchToRust(AppAction.PushScreen(screen))
+    }
+
+    fun receiveShare(
+        text: String,
+        attachments: List<OutgoingAttachment>,
+    ) {
+        val trimmedText = text.trim()
+        val outgoing =
+            attachments
+                .map {
+                    OutgoingAttachment(
+                        filePath = it.filePath.trim(),
+                        filename = it.filename.trim(),
+                    )
+                }.filter { it.filePath.isNotEmpty() && it.filename.isNotEmpty() }
+        if (trimmedText.isEmpty() && outgoing.isEmpty()) {
+            return
+        }
+        mutablePendingShare.value = PendingShare(trimmedText, outgoing)
+        dispatchToRust(AppAction.UpdateScreenStack(emptyList()))
+    }
+
+    fun clearPendingShare() {
+        mutablePendingShare.value = null
+    }
+
+    fun sendPendingShareToChat(chatId: String) {
+        val share = mutablePendingShare.value ?: return
+        if (share.attachments.isEmpty()) {
+            sendText(chatId, share.text)
+        } else {
+            sendAttachments(chatId, share.attachments, share.text)
+        }
+        openChat(chatId)
+        clearPendingShare()
     }
 
     fun sendText(

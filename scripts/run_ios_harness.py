@@ -78,6 +78,9 @@ def find_xctestrun() -> Path | None:
         path for path in products_dir.glob("*.xctestrun")
         if ".harness" not in path.name
     )
+    simulator_matches = [path for path in matches if "iphonesimulator" in path.name]
+    if simulator_matches:
+        return simulator_matches[0]
     return matches[0] if matches else None
 
 

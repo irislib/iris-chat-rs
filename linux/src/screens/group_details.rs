@@ -80,15 +80,23 @@ fn settings_card(
 ) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder()
         .title("Group settings")
-        .description(format!("Created by {}. Revision {}.", details.created_by_display_name, details.revision))
+        .description(format!(
+            "Created by {}. Revision {}.",
+            details.created_by_display_name, details.revision
+        ))
         .build();
 
     let avatar_row = adw::ActionRow::new();
     avatar_row.set_activatable(false);
     let avatar = adw::Avatar::new(48, Some(&details.name), true);
     if let Some(url) = details.picture_url.as_ref() {
-        let proxied =
-            proxied_image_url(url.clone(), state.preferences.clone(), Some(96), Some(96), true);
+        let proxied = proxied_image_url(
+            url.clone(),
+            state.preferences.clone(),
+            Some(96),
+            Some(96),
+            true,
+        );
         image_cache::fetch_into_avatar(&avatar, &proxied);
     }
     avatar_row.add_prefix(&avatar);
@@ -102,27 +110,29 @@ fn settings_card(
         let manager_for_change = manager.clone();
         let group_id_owned = group_id.to_string();
         change.connect_clicked(move |btn| {
-            let parent = btn
-                .root()
-                .and_then(|r| r.downcast::<gtk::Window>().ok());
+            let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
             let dialog = gtk::FileDialog::builder()
                 .title("Choose group photo")
                 .build();
             let manager = manager_for_change.clone();
             let group_id = group_id_owned.clone();
-            dialog.open(parent.as_ref(), gtk::gio::Cancellable::NONE, move |result| {
-                let Ok(file) = result else { return };
-                let Some(path) = file.path() else { return };
-                let filename = file
-                    .basename()
-                    .map(|p| p.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "image".to_string());
-                manager.dispatch(AppAction::UpdateGroupPicture {
-                    group_id: group_id.clone(),
-                    file_path: path.to_string_lossy().to_string(),
-                    filename,
-                });
-            });
+            dialog.open(
+                parent.as_ref(),
+                gtk::gio::Cancellable::NONE,
+                move |result| {
+                    let Ok(file) = result else { return };
+                    let Some(path) = file.path() else { return };
+                    let filename = file
+                        .basename()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "image".to_string());
+                    manager.dispatch(AppAction::UpdateGroupPicture {
+                        group_id: group_id.clone(),
+                        file_path: path.to_string_lossy().to_string(),
+                        filename,
+                    });
+                },
+            );
         });
         avatar_row.add_suffix(&change);
     }

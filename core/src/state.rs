@@ -68,7 +68,7 @@ impl Default for PreferencesSnapshot {
             send_read_receipts: true,
             desktop_notifications_enabled: true,
             invite_acceptance_notifications_enabled: true,
-            startup_at_login_enabled: false,
+            startup_at_login_enabled: true,
             nostr_relay_urls: crate::core::configured_relays(),
             image_proxy_enabled: true,
             image_proxy_url: crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string(),

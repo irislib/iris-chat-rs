@@ -33,11 +33,27 @@ targets:
         PRODUCT_NAME: Iris Chat
         PRODUCT_MODULE_NAME: IrisChatMac
         DEFINES_MODULE: YES
+        CODE_SIGN_ENTITLEMENTS: IrisChatMac.entitlements
         INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Iris Chat
     dependencies:
       - framework: Frameworks/IrisChatCore.xcframework
         embed: false
+      - target: ShareExtension
+
+  ShareExtension:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: ShareExtension/ShareViewController.swift
+    settings:
+      base:
+        PRODUCT_NAME: ShareExtension
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.macos.ShareExtension
+        DEVELOPMENT_TEAM: J8PPJKD7TA
+        CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+        INFOPLIST_FILE: ShareExtension/Info.plist
+        SKIP_INSTALL: YES
 
   IrisChatMacUITests:
     type: bundle.ui-testing

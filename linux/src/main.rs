@@ -47,16 +47,17 @@ const CUSTOM_CSS: &str = r#"
 
 fn main() -> glib::ExitCode {
     bootstrap_session_bus();
+    let start_in_background = std::env::args().any(|arg| arg == platform::startup::BACKGROUND_ARG);
 
-    let app = adw::Application::builder()
-        .application_id(APP_ID)
-        .build();
+    let app = adw::Application::builder().application_id(APP_ID).build();
 
     app.connect_startup(|_| {
         install_css();
         gtk::Window::set_default_icon_name("iris-chat");
     });
-    app.connect_activate(window::build_ui);
+    app.connect_activate(move |app| {
+        window::build_ui(app, !start_in_background);
+    });
     app.run()
 }
 
@@ -72,10 +73,7 @@ fn bootstrap_session_bus() {
     }
     let socket = "/tmp/iris-dbus.sock";
     if std::path::Path::new(socket).exists() {
-        std::env::set_var(
-            "DBUS_SESSION_BUS_ADDRESS",
-            format!("unix:path={}", socket),
-        );
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", format!("unix:path={}", socket));
     }
 }
 

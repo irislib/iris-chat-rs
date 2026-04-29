@@ -2,7 +2,17 @@ package to.iris.chat.ui.navigation
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -11,11 +21,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
 import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.ui.components.IrisOfflineBannerState
 import to.iris.chat.ui.components.LocalIrisOfflineBannerState
@@ -47,6 +60,7 @@ fun NdrApp(
     val splashViewModel = remember { SplashViewModel(appManager) }
     val bootstrapState by splashViewModel.bootstrapState.collectAsStateWithLifecycle()
     val appState by appManager.state.collectAsStateWithLifecycle()
+    val pendingShare by appManager.pendingShare.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showingNearbyIris by remember { mutableStateOf(false) }
     var offlineNowSecs by remember { mutableStateOf(System.currentTimeMillis() / 1_000L) }
@@ -235,8 +249,82 @@ fun NdrApp(
                     onDismiss = { showingNearbyIris = false },
                 )
             }
+
+            if (pendingShare != null && bootstrapState is AccountBootstrapState.LoggedIn) {
+                ShareTargetDialog(
+                    chats = appState.chatList,
+                    onSend = { chatId -> appManager.sendPendingShareToChat(chatId) },
+                    onNewChat = {
+                        appManager.clearPendingShare()
+                        appManager.pushScreen(Screen.NewChat)
+                    },
+                    onDismiss = { appManager.clearPendingShare() },
+                )
+            }
         }
     }
+}
+
+@Composable
+private fun ShareTargetDialog(
+    chats: List<ChatThreadSnapshot>,
+    onSend: (String) -> Unit,
+    onNewChat: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    if (chats.isEmpty()) {
+        AlertDialog(
+            onDismissRequest = onDismiss,
+            title = { Text("Start a chat first") },
+            confirmButton = {
+                TextButton(onClick = onNewChat) {
+                    Text("New chat")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
+            },
+        )
+        return
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Share to") },
+        text = {
+            LazyColumn {
+                items(chats, key = { it.chatId }) { chat ->
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { onSend(chat.chatId) }
+                                .padding(vertical = 12.dp),
+                    ) {
+                        Text(
+                            text = chat.displayName,
+                            style = MaterialTheme.typography.bodyLarge,
+                        )
+                        val subtitle = chat.subtitle
+                        if (subtitle?.isNotBlank() == true) {
+                            Text(
+                                text = subtitle,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancel")
+            }
+        },
+    )
 }
 
 private fun Long.saturatingSubtract(other: Long): Long =

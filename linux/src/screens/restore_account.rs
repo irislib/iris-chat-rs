@@ -26,7 +26,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&nsec);
 
     let busy = state.busy.restoring_session;
-    let submit = primary_button(if busy { "Restoring…" } else { "Restore account" });
+    let submit = primary_button(if busy {
+        "Restoring…"
+    } else {
+        "Restore account"
+    });
     submit.set_sensitive(!busy);
 
     let manager_for_submit = manager.clone();

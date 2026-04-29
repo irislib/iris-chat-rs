@@ -1063,6 +1063,12 @@ fn typing_indicators_default_to_opt_in() {
 }
 
 #[test]
+fn startup_at_login_defaults_to_enabled() {
+    assert!(PersistedPreferences::default().startup_at_login_enabled);
+    assert!(AppState::empty().preferences.startup_at_login_enabled);
+}
+
+#[test]
 fn app_keys_device_projection_is_deterministic() {
     let owner = Keys::generate().public_key();
     let device_a = Keys::generate().public_key();

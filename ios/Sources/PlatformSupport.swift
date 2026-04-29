@@ -1,10 +1,6 @@
 import SwiftUI
 import UserNotifications
 
-#if os(macOS)
-import ServiceManagement
-#endif
-
 #if os(iOS)
 import UIKit
 import WebKit
@@ -478,6 +474,8 @@ final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
 }
 
 enum PlatformStartupAtLogin {
+    static let backgroundLaunchArgument = "--background"
+
     static var isSupported: Bool {
         #if os(macOS)
         true
@@ -488,14 +486,76 @@ enum PlatformStartupAtLogin {
 
     static func setEnabled(_ enabled: Bool) throws {
         #if os(macOS)
-        let service = SMAppService.mainApp
         if enabled {
-            if service.status != .enabled {
-                try service.register()
-            }
-        } else if service.status == .enabled {
-            try service.unregister()
+            try writeLaunchAgent()
+        } else {
+            try removeLaunchAgent()
         }
         #endif
     }
+
+    #if os(macOS)
+    private static let launchAgentLabel = "to.iris.chat.login"
+
+    private static var launchAgentURL: URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents", isDirectory: true)
+            .appendingPathComponent("\(launchAgentLabel).plist")
+    }
+
+    private static func writeLaunchAgent() throws {
+        guard let executable = Bundle.main.executableURL?.path else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        let url = launchAgentURL
+        try FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try launchAgentPlist(executable: executable).write(
+            to: url,
+            atomically: true,
+            encoding: .utf8
+        )
+    }
+
+    private static func removeLaunchAgent() throws {
+        let url = launchAgentURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return
+        }
+        try FileManager.default.removeItem(at: url)
+    }
+
+    private static func launchAgentPlist(executable: String) -> String {
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>Label</key>
+          <string>\(xmlEscape(launchAgentLabel))</string>
+          <key>ProgramArguments</key>
+          <array>
+            <string>\(xmlEscape(executable))</string>
+            <string>\(xmlEscape(backgroundLaunchArgument))</string>
+          </array>
+          <key>RunAtLoad</key>
+          <true/>
+          <key>LimitLoadToSessionType</key>
+          <string>Aqua</string>
+        </dict>
+        </plist>
+        """
+    }
+
+    private static func xmlEscape(_ value: String) -> String {
+        value
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&apos;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
+    }
+    #endif
 }

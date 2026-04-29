@@ -24,7 +24,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&name);
 
     let busy = state.busy.creating_account;
-    let submit = primary_button(if busy { "Creating…" } else { "Create account" });
+    let submit = primary_button(if busy {
+        "Creating…"
+    } else {
+        "Create account"
+    });
     submit.set_sensitive(!busy);
 
     let manager_for_submit = manager.clone();

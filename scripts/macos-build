@@ -218,6 +218,7 @@ run_macos_build() {
     -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
     -scheme IrisChatMac \
     -destination "platform=macOS,arch=$host_arch" \
+    CODE_SIGNING_ALLOWED=NO \
     build
 }
 
@@ -230,6 +231,7 @@ run_macos_test() {
     -project "$MACOS_DIR/IrisChatMac.xcodeproj" \
     -scheme IrisChatMac \
     -destination "platform=macOS,arch=$host_arch" \
+    CODE_SIGNING_ALLOWED=NO \
     test
 }
 

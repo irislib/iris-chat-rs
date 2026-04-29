@@ -4,6 +4,10 @@ use std::rc::Rc;
 use adw::prelude::*;
 
 #[cfg(target_os = "linux")]
+use gtk::{gdk, glib};
+#[cfg(target_os = "linux")]
+use image::ImageReader;
+#[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
 #[cfg(target_os = "linux")]
 use std::sync::Arc;
@@ -12,17 +16,7 @@ use std::thread;
 #[cfg(target_os = "linux")]
 use std::time::Duration;
 #[cfg(target_os = "linux")]
-use gtk::{gdk, glib};
-#[cfg(target_os = "linux")]
-use image::ImageReader;
-#[cfg(target_os = "linux")]
-use v4l::{
-    buffer::Type,
-    io::traits::CaptureStream,
-    prelude::*,
-    video::Capture,
-    Device, FourCC,
-};
+use v4l::{buffer::Type, io::traits::CaptureStream, prelude::*, video::Capture, Device, FourCC};
 
 pub fn decode_image_file(path: &Path) -> Option<String> {
     let img = image::open(path).ok()?;
@@ -232,11 +226,7 @@ fn capture_loop(
 }
 
 #[cfg(target_os = "linux")]
-fn decode_frame(
-    buffer: &[u8],
-    format: &v4l::Format,
-    is_mjpeg: bool,
-) -> Option<image::RgbImage> {
+fn decode_frame(buffer: &[u8], format: &v4l::Format, is_mjpeg: bool) -> Option<image::RgbImage> {
     if is_mjpeg {
         let cursor = std::io::Cursor::new(buffer);
         let dynamic = ImageReader::with_format(cursor, image::ImageFormat::Jpeg)
