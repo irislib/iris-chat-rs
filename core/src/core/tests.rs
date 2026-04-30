@@ -1618,6 +1618,52 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
 }
 
 #[test]
+fn recent_protocol_filters_include_runtime_invite_response_backfill() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let core = logged_in_test_core("protocol-backfill-invite-response", &owner, &device);
+    let invite_response_pubkey = core
+        .logged_in
+        .as_ref()
+        .expect("logged in")
+        .local_invite
+        .inviter_ephemeral_public_key
+        .to_hex();
+
+    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let response_filter = filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .find(|filter| {
+            let has_response_kind = filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|kind| kind.as_u64() == Some(INVITE_RESPONSE_KIND as u64))
+                });
+            let has_invite_pubkey = filter
+                .get("#p")
+                .and_then(|pubkeys| pubkeys.as_array())
+                .is_some_and(|pubkeys| {
+                    pubkeys
+                        .iter()
+                        .any(|pubkey| pubkey.as_str() == Some(invite_response_pubkey.as_str()))
+                });
+            has_response_kind && has_invite_pubkey
+        })
+        .expect("invite response backfill filter");
+
+    assert_eq!(
+        response_filter
+            .get("since")
+            .and_then(|since| since.as_u64()),
+        Some(1_777_159_500 - DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS)
+    );
+}
+
+#[test]
 fn queued_runtime_publish_completion_uses_inner_message_id() {
     let owner = Keys::generate();
     let peer = Keys::generate();

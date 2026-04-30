@@ -65,19 +65,6 @@ impl AppCore {
         owners
     }
 
-    pub(super) fn protocol_invite_author_hexes(&self) -> HashSet<String> {
-        let mut authors = self.protocol_owner_hexes();
-        for app_keys in self.app_keys.values() {
-            for device in &app_keys.devices {
-                authors.insert(device.identity_pubkey_hex.clone());
-            }
-        }
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            authors.insert(logged_in.device_keys.public_key().to_hex());
-        }
-        authors
-    }
-
     pub(super) fn schedule_tracked_peer_catch_up(&self, after: Duration) {
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
@@ -166,6 +153,27 @@ impl AppCore {
         }
     }
 
+    pub(super) fn recent_protocol_filters(&self, now: UnixSeconds) -> Vec<Filter> {
+        let owners = self
+            .protocol_owner_hexes()
+            .into_iter()
+            .filter_map(|hex| PublicKey::parse(&hex).ok())
+            .collect::<Vec<_>>();
+        let mut filters = if owners.is_empty() {
+            Vec::new()
+        } else {
+            vec![Filter::new().kind(Kind::Metadata).authors(owners.clone())]
+        };
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            let mut options = NdrProtocolBackfillOptions::new(now.get());
+            options.owner_pubkeys = owners;
+            options.invite_lookback_seconds = DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS;
+            options.message_lookback_seconds = CATCH_UP_LOOKBACK_SECS;
+            filters.extend(logged_in.ndr_runtime.protocol_backfill_filters(options));
+        }
+        filters
+    }
+
     pub(super) fn fetch_recent_protocol_state(&mut self) {
         let Some(client) = self
             .logged_in
@@ -176,44 +184,7 @@ impl AppCore {
             return;
         };
         let now = unix_now();
-        let owners = self
-            .protocol_owner_hexes()
-            .into_iter()
-            .filter_map(|hex| PublicKey::parse(&hex).ok())
-            .collect::<Vec<_>>();
-        let invite_authors = self
-            .protocol_invite_author_hexes()
-            .into_iter()
-            .filter_map(|hex| PublicKey::parse(&hex).ok())
-            .collect::<Vec<_>>();
-        let invite_response_pubkeys = self
-            .logged_in
-            .as_ref()
-            .and_then(|logged_in| {
-                logged_in
-                    .ndr_runtime
-                    .current_device_invite_response_pubkey()
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
-        let message_authors = self
-            .direct_message_subscriptions
-            .tracked_authors()
-            .into_iter()
-            .chain(
-                self.logged_in
-                    .as_ref()
-                    .map(|logged_in| logged_in.ndr_runtime.group_known_sender_event_pubkeys())
-                    .unwrap_or_default(),
-            )
-            .collect::<Vec<_>>();
-        let filters = recent_protocol_filters(
-            owners,
-            invite_authors,
-            invite_response_pubkeys,
-            message_authors,
-            now,
-        );
+        let filters = self.recent_protocol_filters(now);
         if filters.is_empty() {
             return;
         }
