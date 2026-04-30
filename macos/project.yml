@@ -34,6 +34,7 @@ targets:
         PRODUCT_MODULE_NAME: IrisChatMac
         DEFINES_MODULE: YES
         CODE_SIGN_ENTITLEMENTS: IrisChatMac.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: $(IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER)
         INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Iris Chat
     dependencies:
@@ -52,6 +53,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: to.iris.chat.macos.ShareExtension
         DEVELOPMENT_TEAM: J8PPJKD7TA
         CODE_SIGN_ENTITLEMENTS: ShareExtension/ShareExtension.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: $(IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER)
         INFOPLIST_FILE: ShareExtension/Info.plist
         SKIP_INSTALL: YES
 

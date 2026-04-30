@@ -255,6 +255,8 @@ run_macos_app() {
       echo "macos-app: signing identity not found in login keychain: $identity" >&2
       exit 1
     fi
+    require_var IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER
+    require_var IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER
     local team_id
     team_id="$(extract_team_id "$identity")"
     local entitlements="$MACOS_DIR/Release.entitlements"
@@ -262,6 +264,8 @@ run_macos_app() {
       CODE_SIGN_STYLE=Manual
       CODE_SIGN_IDENTITY="$identity"
       "DEVELOPMENT_TEAM=${team_id}"
+      "IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER=$IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER"
+      "IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER=$IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER"
       "CODE_SIGN_ENTITLEMENTS=$entitlements"
       ENABLE_HARDENED_RUNTIME=YES
       CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
@@ -312,11 +316,24 @@ run_macos_app() {
 submit_notarization() {
   local artifact="$1"
   local label="$2"
-  local profile="${MACOS_NOTARY_PROFILE:-}"
   local submit_output
 
+  local notary_args=()
+  if [[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" && -n "${IRIS_ASC_AUTH_KEY_ID:-}" && -n "${IRIS_ASC_AUTH_KEY_ISSUER_ID:-}" ]]; then
+    notary_args=(
+      --key "$IRIS_ASC_AUTH_KEY_PATH"
+      --key-id "$IRIS_ASC_AUTH_KEY_ID"
+      --issuer "$IRIS_ASC_AUTH_KEY_ISSUER_ID"
+    )
+  elif [[ -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
+    notary_args=(--keychain-profile "$MACOS_NOTARY_PROFILE")
+  else
+    echo "$label: no notarization credentials configured; skipping notarization" >&2
+    return 0
+  fi
+
   if ! submit_output="$(xcrun notarytool submit "$artifact" \
-        --keychain-profile "$profile" \
+        "${notary_args[@]}" \
         --wait \
         --output-format json 2>&1)"; then
     echo "$submit_output" >&2
@@ -330,10 +347,16 @@ submit_notarization() {
   if [[ "$status" != "Accepted" ]]; then
     echo "$label: notarization status was '$status' (expected 'Accepted')" >&2
     if [[ -n "$submission_id" ]]; then
-      xcrun notarytool log "$submission_id" --keychain-profile "$profile" >&2 || true
+      xcrun notarytool log "$submission_id" "${notary_args[@]}" >&2 || true
     fi
     exit 1
   fi
+}
+
+has_macos_notary_credentials() {
+  [[ -n "${MACOS_NOTARY_PROFILE:-}" ]] || {
+    [[ -n "${IRIS_ASC_AUTH_KEY_PATH:-}" && -n "${IRIS_ASC_AUTH_KEY_ID:-}" && -n "${IRIS_ASC_AUTH_KEY_ISSUER_ID:-}" ]]
+  }
 }
 
 run_macos_notarize() {
@@ -342,8 +365,7 @@ run_macos_notarize() {
     run_macos_app >/dev/null
   fi
 
-  local profile="${MACOS_NOTARY_PROFILE:-}"
-  if [[ -z "$profile" ]]; then
+  if ! has_macos_notary_credentials; then
     echo "macos-notarize: MACOS_NOTARY_PROFILE not set; skipping notarization (the .app will install but show Gatekeeper warnings)" >&2
     return 0
   fi
@@ -370,7 +392,7 @@ run_macos_dmg() {
   local app="$MACOS_DIST_DIR/$MACOS_APP_NAME"
   run_macos_app >/dev/null
 
-  if [[ -n "${MACOS_SIGNING_IDENTITY:-}" && -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
+  if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]] && has_macos_notary_credentials; then
     if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
       run_macos_notarize >/dev/null
     fi
@@ -401,7 +423,7 @@ run_macos_dmg() {
 
   rm -rf "$stage"
 
-  if [[ -n "${MACOS_SIGNING_IDENTITY:-}" && -n "${MACOS_NOTARY_PROFILE:-}" ]]; then
+  if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]] && has_macos_notary_credentials; then
     submit_notarization "$dmg" "macos-dmg"
     xcrun stapler staple "$dmg"
     xcrun stapler validate "$dmg"
