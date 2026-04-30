@@ -454,6 +454,7 @@ pub fn build_mobile_push_list_subscriptions_request(
 }
 
 #[uniffi::export]
+#[allow(clippy::too_many_arguments)]
 pub fn build_mobile_push_create_subscription_request(
     owner_nsec: String,
     platform_key: String,

@@ -265,8 +265,10 @@ fn create_account_without_name_still_offers_profile_metadata_to_nearby() {
         .try_iter()
         .filter_map(|update| match update {
             AppUpdate::NearbyPublishedEvent {
-                kind, event_json, ..
-            } if kind == 0 => Some(event_json),
+                kind: 0,
+                event_json,
+                ..
+            } => Some(event_json),
             _ => None,
         })
         .last()
@@ -2255,6 +2257,78 @@ fn web_runtime_chat_settings_create_system_notice() {
 }
 
 #[test]
+fn web_runtime_chat_settings_update_and_clear_ttl() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("web-runtime-chat-settings-ttl", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let set_content = serde_json::json!({
+        "content": serde_json::json!({
+            "type": "chat-settings",
+            "v": 1,
+            "messageTtlSeconds": 3600u64,
+        }).to_string(),
+        "kind": CHAT_SETTINGS_KIND,
+        "created_at": 1_777_159_483u64,
+        "tags": [],
+        "pubkey": "0".repeat(64),
+        "id": "a".repeat(64),
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        set_content,
+        Some("b".repeat(64)),
+    );
+
+    assert_eq!(
+        core.chat_message_ttl_seconds.get(&chat_id),
+        Some(&3600),
+        "incoming settings set chat ttl"
+    );
+    assert_eq!(stored_chat_ttl(&core, &chat_id), Some(3600));
+    let thread = core.threads.get(&chat_id).expect("thread");
+    assert!(thread
+        .messages
+        .last()
+        .expect("system notice")
+        .body
+        .contains("1 hour"));
+
+    let clear_content = serde_json::json!({
+        "content": "0",
+        "kind": CHAT_SETTINGS_KIND,
+        "created_at": 1_777_159_484u64,
+        "tags": [],
+        "pubkey": "0".repeat(64),
+        "id": "c".repeat(64),
+    })
+    .to_string();
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        clear_content,
+        Some("d".repeat(64)),
+    );
+
+    assert!(
+        !core.chat_message_ttl_seconds.contains_key(&chat_id),
+        "incoming settings clear chat ttl"
+    );
+    assert_eq!(stored_chat_ttl(&core, &chat_id), None);
+    let thread = core.threads.get(&chat_id).expect("thread after clear");
+    assert!(thread
+        .messages
+        .last()
+        .expect("clear notice")
+        .body
+        .contains("Off"));
+}
+
+#[test]
 fn web_runtime_chat_message_expiration_tag_is_persisted() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -2285,6 +2359,45 @@ fn web_runtime_chat_message_expiration_tag_is_persisted() {
 }
 
 #[test]
+fn group_runtime_chat_message_expiration_tag_is_persisted() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender_owner = Keys::generate();
+    let sender_device = Keys::generate();
+    let mut core = logged_in_test_core("group-runtime-expiring-message", &owner, &device);
+    core.preferences.send_read_receipts = false;
+    let group_id = "group-expiring-message".to_string();
+    let chat_id = group_chat_id(&group_id);
+    let mut inner = EventBuilder::new(Kind::from(CHAT_MESSAGE_KIND as u16), "group secret")
+        .custom_created_at(Timestamp::from(1_777_159_483u64))
+        .tag(nostr::Tag::parse(["expiration", "1777159543"]).expect("expiration tag"))
+        .build(sender_owner.public_key());
+    inner.ensure_id();
+    let inner_id = inner.id.as_ref().expect("inner id").to_string();
+
+    core.apply_group_decrypted_event(GroupDecryptedEvent {
+        group_id,
+        sender_event_pubkey: sender_device.public_key(),
+        sender_device_pubkey: sender_device.public_key(),
+        sender_owner_pubkey: Some(sender_owner.public_key()),
+        outer_event_id: "f".repeat(64),
+        outer_created_at: 1_777_159_484,
+        key_id: 0,
+        message_number: 0,
+        inner,
+    });
+
+    let thread = core.threads.get(&chat_id).expect("group thread");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].body, "group secret");
+    assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
+    assert_eq!(
+        stored_message_expiration(&core, &chat_id, &inner_id),
+        Some(1_777_159_543)
+    );
+}
+
+#[test]
 fn chat_ttl_applies_to_outgoing_message_expiration() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -2306,6 +2419,101 @@ fn chat_ttl_applies_to_outgoing_message_expiration() {
     let expires_at = message.expires_at_secs.expect("message expiration");
     assert!(expires_at >= before.saturating_add(60));
     assert!(expires_at <= after.saturating_add(60));
+}
+
+#[test]
+fn set_chat_message_ttl_action_sets_clears_and_persists() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_string_lossy().to_string();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core_at_data_dir(&owner, &device, data_dir.clone());
+
+    core.handle_action(AppAction::CreateChat {
+        peer_input: chat_id.clone(),
+    });
+    core.handle_action(AppAction::SetChatMessageTtl {
+        chat_id: chat_id.clone(),
+        ttl_seconds: Some(3600),
+    });
+
+    assert_eq!(core.chat_message_ttl_seconds.get(&chat_id), Some(&3600));
+    assert_eq!(stored_chat_ttl(&core, &chat_id), Some(3600));
+    assert_eq!(
+        core.state
+            .current_chat
+            .as_ref()
+            .expect("current chat")
+            .message_ttl_seconds,
+        Some(3600)
+    );
+    let mut restarted = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir.clone(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let loaded = restarted
+        .load_persisted()
+        .expect("load persisted")
+        .expect("persisted state");
+    assert_eq!(loaded.chat_message_ttl_seconds.get(&chat_id), Some(&3600));
+
+    core.handle_action(AppAction::SetChatMessageTtl {
+        chat_id: chat_id.clone(),
+        ttl_seconds: None,
+    });
+
+    assert!(!core.chat_message_ttl_seconds.contains_key(&chat_id));
+    assert_eq!(stored_chat_ttl(&core, &chat_id), None);
+    let mut restarted = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir,
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let loaded = restarted
+        .load_persisted()
+        .expect("load persisted after clear")
+        .expect("persisted state after clear");
+    assert!(
+        !loaded.chat_message_ttl_seconds.contains_key(&chat_id),
+        "cleared ttl is not restored"
+    );
+}
+
+#[test]
+fn send_disappearing_message_action_uses_explicit_expiration_and_persists() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core("send-disappearing-message-action", &owner, &device);
+    let expires_at = unix_now().get().saturating_add(600);
+
+    core.handle_action(AppAction::SendDisappearingMessage {
+        chat_id: chat_id.clone(),
+        text: "secret".to_string(),
+        expires_at_secs: expires_at,
+    });
+
+    let thread = core.threads.get(&chat_id).expect("thread");
+    let message = thread
+        .messages
+        .iter()
+        .find(|message| message.body == "secret")
+        .expect("disappearing message");
+    assert_eq!(message.expires_at_secs, Some(expires_at));
+    assert_eq!(
+        stored_message_expiration(&core, &chat_id, &message.id),
+        Some(expires_at)
+    );
+    assert!(
+        core.message_expiry_token > 0,
+        "expiring sends schedule message pruning"
+    );
 }
 
 #[test]
@@ -2860,10 +3068,93 @@ fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
     );
 }
 
+#[test]
+fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core("message-expiry-internal-event", &owner, &device);
+    let now = unix_now().get();
+    core.active_chat_id = Some(chat_id.clone());
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 1,
+            updated_at_secs: now,
+            messages: vec![
+                ChatMessageSnapshot {
+                    id: "expired".to_string(),
+                    chat_id: chat_id.clone(),
+                    kind: ChatMessageKind::User,
+                    author: chat_id.clone(),
+                    body: "gone".to_string(),
+                    attachments: Vec::new(),
+                    reactions: Vec::new(),
+                    reactors: Vec::new(),
+                    is_outgoing: false,
+                    created_at_secs: now.saturating_sub(20),
+                    expires_at_secs: Some(now.saturating_sub(1)),
+                    delivery: DeliveryState::Received,
+                    source_event_id: None,
+                },
+                ChatMessageSnapshot {
+                    id: "future".to_string(),
+                    chat_id: chat_id.clone(),
+                    kind: ChatMessageKind::User,
+                    author: chat_id.clone(),
+                    body: "stays".to_string(),
+                    attachments: Vec::new(),
+                    reactions: Vec::new(),
+                    reactors: Vec::new(),
+                    is_outgoing: false,
+                    created_at_secs: now,
+                    expires_at_secs: Some(now.saturating_add(3600)),
+                    delivery: DeliveryState::Received,
+                    source_event_id: None,
+                },
+            ],
+        },
+    );
+    core.persist_best_effort_inner();
+    assert_eq!(stored_message_count(&core), 2);
+
+    core.handle_prune_expired_messages(core.message_expiry_token.wrapping_add(1));
+
+    assert_eq!(stored_message_count(&core), 2, "stale token ignored");
+    assert_eq!(
+        core.threads
+            .get(&chat_id)
+            .expect("thread after stale token")
+            .messages
+            .len(),
+        2
+    );
+
+    let valid_token = core.message_expiry_token;
+    core.handle_prune_expired_messages(valid_token);
+
+    assert_eq!(stored_message_count(&core), 1);
+    let thread = core.threads.get(&chat_id).expect("thread after prune");
+    assert_eq!(thread.unread_count, 0);
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].body, "stays");
+    assert_eq!(
+        core.state
+            .current_chat
+            .as_ref()
+            .expect("current chat after prune")
+            .messages
+            .len(),
+        1
+    );
+}
+
 fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
-    let mut core = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
+    logged_in_test_core_at_data_dir(
+        owner,
+        device,
         std::env::temp_dir()
             .join(format!(
                 "iris-chat-rs-test-{label}-{}",
@@ -2871,6 +3162,14 @@ fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
             ))
             .to_string_lossy()
             .to_string(),
+    )
+}
+
+fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String) -> AppCore {
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir,
         Arc::new(RwLock::new(AppState::empty())),
     );
     let device_id = device.public_key().to_hex();
@@ -2920,6 +3219,18 @@ fn stored_message_expiration(core: &AppCore, chat_id: &str, message_id: &str) ->
         )
         .unwrap();
     expires_at.map(|secs| secs as u64)
+}
+
+fn stored_chat_ttl(core: &AppCore, chat_id: &str) -> Option<u64> {
+    let conn = core.app_store.shared();
+    let conn = conn.lock().unwrap();
+    let mut stmt = conn
+        .prepare("SELECT ttl_seconds FROM chat_message_ttls WHERE chat_id = ?1")
+        .unwrap();
+    let mut rows = stmt.query([chat_id]).unwrap();
+    rows.next()
+        .unwrap()
+        .map(|row| row.get::<_, i64>(0).unwrap() as u64)
 }
 
 fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {

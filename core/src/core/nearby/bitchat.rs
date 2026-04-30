@@ -252,7 +252,7 @@ impl AnnouncementPacket {
                     key.copy_from_slice(value);
                     signing_public_key = Some(key);
                 }
-                0x04 if !value.is_empty() && value.len() % PEER_ID_SIZE == 0 => {
+                0x04 if !value.is_empty() && value.len().is_multiple_of(PEER_ID_SIZE) => {
                     direct_neighbors.clear();
                     for chunk in value.chunks_exact(PEER_ID_SIZE) {
                         let mut peer_id = [0u8; PEER_ID_SIZE];
@@ -409,7 +409,7 @@ fn pad_to_optimal_size(mut data: Vec<u8>) -> Vec<u8> {
     if padding_needed == 0 || padding_needed > u8::MAX as usize {
         return data;
     }
-    data.extend(std::iter::repeat(padding_needed as u8).take(padding_needed));
+    data.extend(std::iter::repeat_n(padding_needed as u8, padding_needed));
     data
 }
 

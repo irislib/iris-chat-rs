@@ -1109,6 +1109,7 @@ mod tests {
         (tmp, AppStore::new(conn))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn empty_snapshot<'a>(
         active_chat_id: Option<&'a str>,
         next_message_id: u64,
