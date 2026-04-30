@@ -359,33 +359,24 @@ final class InteropHarnessTests: XCTestCase {
             let direction = (env["IRIS_IOS_HARNESS_DIRECTION"] ?? "any").lowercased()
             let requestedChatID = env["IRIS_IOS_HARNESS_CHAT_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
             let peerInput = env["IRIS_IOS_HARNESS_PEER_INPUT"]?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let resolvedChatID: String?
-
-            if let requestedChatID, !requestedChatID.isEmpty {
-                resolvedChatID = try await ensureChatOpen(manager: manager, dataDir: dataDir, chatID: requestedChatID, peerInput: nil)
-            } else if let peerInput, !peerInput.isEmpty {
-                resolvedChatID = try await ensureChatOpen(manager: manager, dataDir: dataDir, chatID: nil, peerInput: peerInput)
-            } else {
-                resolvedChatID = nil
-            }
+            let expectedChatID = requestedChatID?.isEmpty == false ? requestedChatID : nil
 
             let matchedChatID = try await waitFor(label: "message \(message)", timeout: 180) {
                 let state = manager.state
                 if let current = state.currentChat,
-                   self.chatMatchesExpectedChat(chatId: current.chatId, peerInput: peerInput, expectedChatID: resolvedChatID),
+                   self.chatMatchesExpectedChat(chatId: current.chatId, peerInput: peerInput, expectedChatID: expectedChatID),
                    current.messages.contains(where: { $0.body == message && self.directionMatches(isOutgoing: $0.isOutgoing, direction: direction) }) {
                     return current.chatId
                 }
                 if let thread = state.chatList.first(where: {
                     $0.lastMessagePreview == message &&
-                    self.chatMatchesExpectedChat(chatId: $0.chatId, peerInput: peerInput, expectedChatID: resolvedChatID)
+                    self.chatMatchesExpectedChat(chatId: $0.chatId, peerInput: peerInput, expectedChatID: expectedChatID)
                 }) {
-                    manager.dispatch(.openChat(chatId: thread.chatId))
                     return thread.chatId
                 }
                 if let chatID = self.splitPersistenceThreadWithMessage(
                     dataDir: dataDir,
-                    chatID: resolvedChatID,
+                    chatID: expectedChatID,
                     expectedMessage: message,
                     direction: direction,
                     peerInput: peerInput
@@ -395,6 +386,7 @@ final class InteropHarnessTests: XCTestCase {
                 return nil
             }
 
+            manager.dispatch(.openChat(chatId: matchedChatID))
             status("chat_id", matchedChatID)
             status("message", message)
         case "create_group_from_args":

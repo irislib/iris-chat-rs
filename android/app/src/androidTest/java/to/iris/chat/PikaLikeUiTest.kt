@@ -327,7 +327,9 @@ class PikaLikeUiTest {
         composeRule.waitForTag("restoreAccountScreen")
         composeRule.onNodeWithTag("importKeyField", useUnmergedTree = true)
             .performTextInput(VALID_OWNER_NSEC)
-        composeRule.onNodeWithTag("importKeyButton", useUnmergedTree = true).performClick()
+        if (!composeRule.hasTag("chatListNewChatButton", timeoutMillis = 5_000)) {
+            composeRule.onNodeWithTag("importKeyButton", useUnmergedTree = true).performClick()
+        }
 
         composeRule.waitForTag("chatListNewChatButton")
     }
@@ -506,6 +508,17 @@ class PikaLikeUiTest {
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.hasTag(tag: String): Boolean =
         onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.hasTag(
+        tag: String,
+        timeoutMillis: Long,
+    ): Boolean =
+        runCatching {
+            waitUntil(timeoutMillis) {
+                hasTag(tag)
+            }
+            true
+        }.getOrDefault(false)
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.hideKeyboard() {
         runOnUiThread {

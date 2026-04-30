@@ -15,6 +15,7 @@ import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import to.iris.chat.IrisChatApp
@@ -48,6 +49,9 @@ class FirebaseChatNotificationE2eTest {
     fun report_last_push_resolution() {
         val snapshot = PushNotificationProbe.snapshot(context)
         val rawPayload = snapshot.optString("raw_payload_json")
+        if (rawPayload.isBlank() && arguments.getString("class").isNullOrBlank()) {
+            assumeTrue("Push resolution report requires a recorded push payload", false)
+        }
         assertTrue("No recorded push payload", rawPayload.isNotBlank())
         val appManager = (context as IrisChatApp).container.appManager
         val resolution =
@@ -239,7 +243,12 @@ class FirebaseChatNotificationE2eTest {
 
     private fun requiredArg(name: String): String =
         arguments.getString(name)?.takeIf { it.isNotBlank() }
-            ?: throw AssertionError("Missing instrumentation argument `$name`")
+            ?: run {
+                if (arguments.getString("class").isNullOrBlank()) {
+                    assumeTrue("Push harness action requires instrumentation argument: $name", false)
+                }
+                throw AssertionError("Missing instrumentation argument `$name`")
+            }
 
     private fun optionalArg(name: String): String? = arguments.getString(name)?.takeIf { it.isNotBlank() }
 

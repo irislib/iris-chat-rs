@@ -10,6 +10,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.fail
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -43,6 +44,10 @@ class RealRelayHarnessTest {
         (instrumentation.targetContext.applicationContext as IrisChatApp).container.nearbyIrisService
 
     private fun appFilesDir(): File = instrumentation.targetContext.filesDir
+
+    private fun hasPersistedProtocolState(): Boolean =
+        File(appFilesDir(), "core.sqlite3").exists() ||
+            File(appFilesDir(), PERSISTED_STATE_FILENAME).exists()
 
     private fun appPackageName(): String = instrumentation.targetContext.packageName
 
@@ -451,6 +456,7 @@ class RealRelayHarnessTest {
 
     @Test
     fun wait_for_revoked_state() {
+        requireHarnessInvocation("revoked-state wait is driven by the relay matrix")
         val account =
             waitForState("revoked device state", timeoutMs = 180_000) {
                 appManager()
@@ -555,16 +561,22 @@ class RealRelayHarnessTest {
         ensureLoggedIn()
         val peerInput = requiredArg("peer_input")
         val peerOwnerHex = resolvePeerOwnerHex(peerInput)
+        var source = "persisted"
 
-        val persisted =
+        val snapshot =
             waitForState("peer roster for $peerOwnerHex", timeoutMs = 180_000) {
                 readJsonObject(PERSISTED_STATE_FILENAME)
                     ?.takeIf { json -> persistedHasPeerRoster(json, peerOwnerHex) }
+                    ?.also { source = "persisted" }
+                    ?: readJsonObject(DEBUG_SNAPSHOT_FILENAME)
+                        ?.takeIf { json -> runtimeDebugHasPeerRoster(json, peerOwnerHex) }
+                        ?.also { source = "runtime" }
             }
 
         reportStatus(
             "peer_owner_hex" to peerOwnerHex,
-            "users" to summarizePersistedUsers(persisted.optJSONObject("session_manager")?.optJSONArray("users")),
+            "source" to source,
+            "users" to summarizeKnownUsers(snapshot, source),
         )
     }
 
@@ -573,16 +585,22 @@ class RealRelayHarnessTest {
         ensureLoggedIn()
         val peerInput = requiredArg("peer_input")
         val peerOwnerHex = resolvePeerOwnerHex(peerInput)
+        var source = "persisted"
 
-        val persisted =
+        val snapshot =
             waitForState("known peer session for $peerOwnerHex", timeoutMs = 180_000) {
                 readJsonObject(PERSISTED_STATE_FILENAME)
                     ?.takeIf { json -> persistedHasPeerSession(json, peerOwnerHex) }
+                    ?.also { source = "persisted" }
+                    ?: readJsonObject(DEBUG_SNAPSHOT_FILENAME)
+                        ?.takeIf { json -> runtimeDebugHasPeerSession(json, peerOwnerHex) }
+                        ?.also { source = "runtime" }
             }
 
         reportStatus(
             "peer_owner_hex" to peerOwnerHex,
-            "users" to summarizePersistedUsers(persisted.optJSONObject("session_manager")?.optJSONArray("users")),
+            "source" to source,
+            "users" to summarizeKnownUsers(snapshot, source),
         )
     }
 
@@ -591,16 +609,22 @@ class RealRelayHarnessTest {
         ensureLoggedIn()
         val peerInput = requiredArg("peer_input")
         val peerOwnerHex = resolvePeerOwnerHex(peerInput)
+        var source = "persisted"
 
-        val persisted =
+        val snapshot =
             waitForState("peer transport ready for $peerOwnerHex", timeoutMs = 180_000) {
                 readJsonObject(PERSISTED_STATE_FILENAME)
                     ?.takeIf { json -> persistedHasPeerTransportReady(json, peerOwnerHex) }
+                    ?.also { source = "persisted" }
+                    ?: readJsonObject(DEBUG_SNAPSHOT_FILENAME)
+                        ?.takeIf { json -> runtimeDebugHasPeerTransportReady(json, peerOwnerHex) }
+                        ?.also { source = "runtime" }
             }
 
         reportStatus(
             "peer_owner_hex" to peerOwnerHex,
-            "users" to summarizePersistedUsers(persisted.optJSONObject("session_manager")?.optJSONArray("users")),
+            "source" to source,
+            "users" to summarizeKnownUsers(snapshot, source),
         )
     }
 
@@ -914,8 +938,10 @@ class RealRelayHarnessTest {
     @Test
     fun send_typing_from_args() {
         ensureLoggedIn()
-        val peerInput = optionalArg("peer_input").orEmpty()
         val chatIdArg = optionalArg("chat_id")
+        val peerInput =
+            optionalArg("peer_input")
+                ?: if (chatIdArg.isNullOrBlank()) requiredArg("peer_input") else ""
         val chat =
             chatIdArg
                 ?.let { ensureChatOpenById(it) }
@@ -1407,6 +1433,7 @@ class RealRelayHarnessTest {
 
     @Test
     fun logout_and_create_account_and_report_identity() {
+        requireHarnessInvocation("logout/account reset is driven by targeted harness scripts")
         val oldAccount = ensureLoggedIn()
         appManager().logout()
 
@@ -1442,7 +1469,7 @@ class RealRelayHarnessTest {
             when (manager.bootstrapState.value) {
                 AccountBootstrapState.Loading -> null
                 AccountBootstrapState.NeedsLogin -> {
-                    if (!createRequested) {
+                    if (!createRequested && !hasPersistedProtocolState()) {
                         createRequested = true
                         manager.createAccount()
                     }
@@ -1646,8 +1673,19 @@ class RealRelayHarnessTest {
             ?.takeIf { it.isNotEmpty() }
             ?: arguments.getString(name)?.trim()?.takeIf { it.isNotEmpty() }
 
-    private fun requiredArg(name: String): String =
-        optionalArg(name) ?: throw AssertionError("Missing instrumentation argument: $name")
+    private fun requiredArg(name: String): String {
+        optionalArg(name)?.let { return it }
+        if (arguments.getString("class").isNullOrBlank()) {
+            assumeTrue("Harness action requires instrumentation argument: $name", false)
+        }
+        throw AssertionError("Missing instrumentation argument: $name")
+    }
+
+    private fun requireHarnessInvocation(reason: String) {
+        if (arguments.getString("class").isNullOrBlank()) {
+            assumeTrue(reason, false)
+        }
+    }
 
     private fun requiredListArg(name: String): List<String> =
         requiredArg(name)
@@ -1823,6 +1861,57 @@ class RealRelayHarnessTest {
                     }
                 }
             } == true
+
+    private fun runtimeDebugHasPeerRoster(
+        debug: JSONObject,
+        peerOwnerHex: String,
+    ): Boolean =
+        runtimeDebugKnownPeer(debug, peerOwnerHex) { user ->
+            user.optBoolean("has_roster") && user.optInt("roster_device_count") > 0
+        }
+
+    private fun runtimeDebugHasPeerSession(
+        debug: JSONObject,
+        peerOwnerHex: String,
+    ): Boolean =
+        runtimeDebugKnownPeer(debug, peerOwnerHex) { user ->
+            user.optInt("active_session_device_count") > 0 ||
+                user.optInt("inactive_session_count") > 0
+        }
+
+    private fun runtimeDebugHasPeerTransportReady(
+        debug: JSONObject,
+        peerOwnerHex: String,
+    ): Boolean =
+        runtimeDebugKnownPeer(debug, peerOwnerHex) { user ->
+            user.optBoolean("has_roster") &&
+                user.optInt("roster_device_count") > 0 &&
+                user.optInt("device_count") > 0 &&
+                user.optInt("authorized_device_count") > 0
+        }
+
+    private fun runtimeDebugKnownPeer(
+        debug: JSONObject,
+        peerOwnerHex: String,
+        predicate: (JSONObject) -> Boolean,
+    ): Boolean {
+        val users = debug.optJSONArray("known_users") ?: return false
+        return (0 until users.length()).any { index ->
+            val user = users.optJSONObject(index) ?: return@any false
+            user.optString("owner_pubkey_hex").equals(peerOwnerHex, ignoreCase = true) &&
+                predicate(user)
+        }
+    }
+
+    private fun summarizeKnownUsers(
+        snapshot: JSONObject,
+        source: String,
+    ): String =
+        if (source == "runtime") {
+            summarizeRuntimeKnownUsers(snapshot.optJSONArray("known_users"))
+        } else {
+            summarizePersistedUsers(snapshot.optJSONObject("session_manager")?.optJSONArray("users"))
+        }
 
     private fun summarizeCurrentChat(chat: CurrentChatSnapshot?): String =
         chat?.let {

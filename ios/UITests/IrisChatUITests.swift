@@ -438,6 +438,7 @@ final class IrisChatUITests: XCTestCase {
     private func typeText(_ text: String, into target: XCUIElement, app: XCUIApplication) {
 #if os(macOS)
         app.activate()
+        let target = target.identifier.isEmpty ? target : element(app, target.identifier)
 #endif
         target.tap()
         target.typeText(text)

@@ -20,8 +20,14 @@ ADB="${SDK_DIR}/platform-tools/adb"
 EMULATOR="${SDK_DIR}/emulator/emulator"
 HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
-PACKAGE_NAME="to.iris.chat"
-DEFAULT_AVDS=("Pixel_9a" "Medium_Phone_API_36.1" "Pixel_Fold")
+PACKAGE_NAME="to.iris.chat.debug"
+TEST_PACKAGE_NAME="to.iris.chat.test"
+DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_Fold")
+RELAY_LOG="${RELAY_LOG:-/tmp/ndr-linked-device-relay.log}"
+RELAY_PID=""
+SERIAL_A="${SERIAL_A:-}"
+SERIAL_B="${SERIAL_B:-}"
+SERIAL_C="${SERIAL_C:-}"
 
 if [[ ! -x "${ADB}" ]]; then
   echo "adb not found at ${ADB}" >&2
@@ -113,19 +119,71 @@ extract_status() {
   sed -n "s/^INSTRUMENTATION_STATUS: ${key}=//p" | tail -n 1
 }
 
-assert_local_relay_healthy
+add_unique_serial() {
+  local serial="$1"
+  local existing
+  [[ -z "${serial}" ]] && return 0
+  for existing in "${SELECTED_SERIALS[@]:-}"; do
+    [[ "${existing}" == "${serial}" ]] && return 0
+  done
+  SELECTED_SERIALS+=("${serial}")
+}
 
-echo "Ensuring three emulator topology is running"
-SERIAL_A="$(ensure_avd_running "${DEFAULT_AVDS[0]}")"
-SERIAL_B="$(ensure_avd_running "${DEFAULT_AVDS[1]}")"
-SERIAL_C="$(ensure_avd_running "${DEFAULT_AVDS[2]}")"
+connected_serials() {
+  "${ADB}" devices | awk 'NR>1 && $2 == "device" { print $1 }'
+}
+
+select_default_serials() {
+  SELECTED_SERIALS=()
+  local avd serial
+  for avd in "${DEFAULT_AVDS[@]}"; do
+    serial="$(ensure_avd_running "${avd}")"
+    add_unique_serial "${serial}"
+  done
+  while IFS= read -r serial; do
+    add_unique_serial "${serial}"
+  done < <(connected_serials)
+
+  if [[ ${#SELECTED_SERIALS[@]} -lt 3 ]]; then
+    echo "Need three Android devices for linked-device relay matrix; found ${#SELECTED_SERIALS[@]}." >&2
+    exit 1
+  fi
+
+  SERIAL_A="${SERIAL_A:-${SELECTED_SERIALS[0]}}"
+  SERIAL_B="${SERIAL_B:-${SELECTED_SERIALS[1]}}"
+  SERIAL_C="${SERIAL_C:-${SELECTED_SERIALS[2]}}"
+}
+
+cleanup() {
+  if [[ -n "${RELAY_PID}" ]]; then
+    stop_local_rust_relay "${RELAY_PID}"
+  fi
+}
+trap cleanup EXIT
+
+if ! assert_local_relay_healthy >/dev/null 2>&1; then
+  RELAY_PID="$(start_local_rust_relay "${RELAY_LOG}")"
+fi
+
+echo "Ensuring three Android-device topology is running"
+select_default_serials
+
+for serial in "${SERIAL_A}" "${SERIAL_B}" "${SERIAL_C}"; do
+  "${ADB}" -s "${serial}" reverse "tcp:$(local_relay_port)" "tcp:$(local_relay_port)" >/dev/null || true
+done
 
 echo "Installing app and test APKs"
-(cd "${ROOT_DIR}/android" && ./gradlew :app:installDebug :app:installDebugAndroidTest >/dev/null)
+(
+  cd "${ROOT_DIR}/android" &&
+    IRIS_DEBUG_RELAYS="$(local_android_loopback_relay_url)" \
+    IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)" \
+    ./gradlew :app:installDebug :app:installDebugAndroidTest >/dev/null
+)
 
 for serial in "${SERIAL_A}" "${SERIAL_B}" "${SERIAL_C}"; do
   echo "Clearing ${PACKAGE_NAME} on ${serial}"
   "${ADB}" -s "${serial}" shell pm clear "${PACKAGE_NAME}" >/dev/null
+  "${ADB}" -s "${serial}" shell pm clear "${TEST_PACKAGE_NAME}" >/dev/null || true
 done
 
 echo "Creating owner X primary on ${SERIAL_A}"

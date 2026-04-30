@@ -1661,7 +1661,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64",
- "flate2",
  "flume",
  "futures-util",
  "hashtree-blossom",
@@ -2019,10 +2018,11 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.126"
+version = "0.0.127"
 dependencies = [
  "base64",
  "crossbeam-channel",
+ "flate2",
  "hex",
  "hkdf",
  "nostr 0.44.2",

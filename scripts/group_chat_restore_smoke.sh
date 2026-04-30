@@ -30,8 +30,10 @@ fi
 
 RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
 CLASS="to.iris.chat.RealRelayHarnessTest"
-PACKAGE_NAME="to.iris.chat"
+PACKAGE_NAME="to.iris.chat.debug"
 TEST_PACKAGE_NAME="to.iris.chat.test"
+RELAY_LOG="${RELAY_LOG:-/tmp/ndr-group-restore-relay.log}"
+RELAY_PID=""
 
 PRIMARY_SERIAL="${PRIMARY_SERIAL:-emulator-5554}"
 LINKED_SERIAL="${LINKED_SERIAL:-emulator-5556}"
@@ -109,7 +111,19 @@ for serial in "${PRIMARY_SERIAL}" "${LINKED_SERIAL}" "${ADMIN_SERIAL}"; do
   fi
 done
 
-assert_local_relay_healthy
+cleanup() {
+  if [[ -n "${RELAY_PID}" ]]; then
+    stop_local_rust_relay "${RELAY_PID}"
+  fi
+}
+
+if ! assert_local_relay_healthy >/dev/null 2>&1; then
+  RELAY_PID="$(start_local_rust_relay "${RELAY_LOG}")"
+fi
+
+for serial in "${PRIMARY_SERIAL}" "${LINKED_SERIAL}" "${ADMIN_SERIAL}"; do
+  "${ADB}" -s "${serial}" reverse "tcp:$(local_relay_port)" "tcp:$(local_relay_port)" >/dev/null || true
+done
 
 run_test() {
   local serial="$1"
@@ -157,6 +171,7 @@ dump_debug_on_error() {
 }
 
 trap dump_debug_on_error ERR
+trap cleanup EXIT
 
 if [[ "${CLEAR_STATE}" -eq 1 ]]; then
   for serial in "${PRIMARY_SERIAL}" "${LINKED_SERIAL}" "${ADMIN_SERIAL}"; do
@@ -167,7 +182,12 @@ if [[ "${CLEAR_STATE}" -eq 1 ]]; then
 fi
 
 echo "Installing app and test APKs"
-(cd "${ROOT_DIR}/android" && ./gradlew :app:installDebug :app:installDebugAndroidTest >/dev/null)
+(
+  cd "${ROOT_DIR}/android" &&
+    IRIS_DEBUG_RELAYS="$(local_android_loopback_relay_url)" \
+    IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)" \
+    ./gradlew :app:installDebug :app:installDebugAndroidTest >/dev/null
+)
 
 echo "Creating primary owner on ${PRIMARY_SERIAL}"
 PRIMARY_IDENTITY="$(run_test "${PRIMARY_SERIAL}" create_account_and_report_identity)"

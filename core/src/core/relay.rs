@@ -194,6 +194,7 @@ impl AppCore {
                 SessionManagerEvent::PublishSignedForInnerEvent {
                     event,
                     inner_event_id,
+                    ..
                 } => {
                     let event_id = event.id.to_string();
                     let completion = self.runtime_publish_completion(

@@ -133,12 +133,13 @@ run_android_test() {
 
   local output
   output="$("${cmd[@]}" 2>&1)" || {
-    printf '%s\n' "${output}"
+    printf '%s\n' "${output}" >&2
     return 1
   }
   printf '%s\n' "${output}"
   if ! printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_CODE: -1$'; then
     echo "Android harness ${test_name} did not report success on ${serial}" >&2
+    printf '%s\n' "${output}" >&2
     return 1
   fi
 }
@@ -169,12 +170,13 @@ run_ios_test() {
 
   local output
   output="$("${cmd[@]}" 2>&1)" || {
-    printf '%s\n' "${output}"
+    printf '%s\n' "${output}" >&2
     return 1
   }
   printf '%s\n' "${output}"
   if ! printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_CODE: -1$'; then
     echo "iOS harness ${action} did not report success on ${udid}" >&2
+    printf '%s\n' "${output}" >&2
     return 1
   fi
 }
@@ -211,16 +213,33 @@ cleanup() {
   fi
   exit "${exit_code}"
 }
+report_error() {
+  local exit_code=$?
+  echo "Mixed-platform matrix failed near line ${BASH_LINENO[0]} while running: ${BASH_COMMAND}" >&2
+  return "${exit_code}"
+}
+trap report_error ERR
 trap cleanup EXIT
 
 if [[ -z "${ANDROID_ADMIN_SERIAL}" || -z "${ANDROID_MEMBER_SERIAL}" ]]; then
-  android_boot_output="$("${ROOT_DIR}/scripts/run_android_emulators.sh" --headless "${ANDROID_ADMIN_AVD}" "${ANDROID_MEMBER_AVD}")"
+  android_boot_avds=()
+  admin_boot_index=-1
+  member_boot_index=-1
+  if [[ -z "${ANDROID_ADMIN_SERIAL}" ]]; then
+    admin_boot_index=${#android_boot_avds[@]}
+    android_boot_avds+=("${ANDROID_ADMIN_AVD}")
+  fi
+  if [[ -z "${ANDROID_MEMBER_SERIAL}" ]]; then
+    member_boot_index=${#android_boot_avds[@]}
+    android_boot_avds+=("${ANDROID_MEMBER_AVD}")
+  fi
+  android_boot_output="$("${ROOT_DIR}/scripts/run_android_emulators.sh" --headless "${android_boot_avds[@]}")"
   old_ifs="${IFS}"
   IFS=$'\n'
   android_boot=(${android_boot_output})
   IFS="${old_ifs}"
-  [[ -z "${ANDROID_ADMIN_SERIAL}" ]] && ANDROID_ADMIN_SERIAL="$(printf '%s\n' "${android_boot[0]}" | awk '{print $2}')"
-  [[ -z "${ANDROID_MEMBER_SERIAL}" ]] && ANDROID_MEMBER_SERIAL="$(printf '%s\n' "${android_boot[1]}" | awk '{print $2}')"
+  [[ ${admin_boot_index} -ge 0 ]] && ANDROID_ADMIN_SERIAL="$(printf '%s\n' "${android_boot[${admin_boot_index}]}" | awk '{print $2}')"
+  [[ ${member_boot_index} -ge 0 ]] && ANDROID_MEMBER_SERIAL="$(printf '%s\n' "${android_boot[${member_boot_index}]}" | awk '{print $2}')"
 fi
 
 for serial in "${ANDROID_ADMIN_SERIAL}" "${ANDROID_MEMBER_SERIAL}"; do
@@ -246,10 +265,14 @@ require_value "ios_member_udid" "${IOS_MEMBER_UDID}"
 RELAY_PID="$(start_local_rust_relay "${RELAY_LOG}")"
 assert_local_relay_healthy
 
-echo "Building Android debug apps against $(local_android_relay_url) ($(local_relay_set_id))"
+for serial in "${ANDROID_ADMIN_SERIAL}" "${ANDROID_MEMBER_SERIAL}"; do
+  "${ADB}" -s "${serial}" reverse "tcp:$(local_relay_port)" "tcp:$(local_relay_port)" >/dev/null || true
+done
+
+echo "Building Android debug apps against $(local_android_loopback_relay_url) ($(local_relay_set_id))"
 (
   cd "${ROOT_DIR}/android" &&
-    IRIS_DEBUG_RELAYS="$(local_android_relay_url)" \
+    IRIS_DEBUG_RELAYS="$(local_android_loopback_relay_url)" \
     IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)" \
     ./gradlew :app:installDebug :app:installDebugAndroidTest
 )
@@ -342,9 +365,13 @@ run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" wait_for_peer_transport
 run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" wait_for_peer_transport_ready_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
 
 echo "Seeding direct chat for iOS-created group"
+echo "Sending iOS-created seed to Android member"
 run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" send_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_ios_to_android" >/dev/null
+echo "Waiting for Android member seed from iOS creator"
 run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_message_from_args peer_input "${IOS_MEMBER_NPUB}" message "seed_ios_to_android" direction "incoming" >/dev/null
+echo "Sending iOS-created seed to iOS member"
 run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" send_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_ios_to_ios" >/dev/null
+echo "Waiting for iOS member seed from iOS creator"
 run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_message_from_args peer_input "${IOS_MEMBER_NPUB}" message "seed_ios_to_ios" direction "incoming" >/dev/null
 
 echo "Creating iOS-owned mixed group"

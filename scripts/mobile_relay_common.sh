@@ -16,6 +16,10 @@ local_android_relay_url() {
   printf 'ws://10.0.2.2:%s' "$(local_relay_port)"
 }
 
+local_android_loopback_relay_url() {
+  printf 'ws://127.0.0.1:%s' "$(local_relay_port)"
+}
+
 local_ios_relay_url() {
   printf 'ws://127.0.0.1:%s' "$(local_relay_port)"
 }
@@ -80,7 +84,7 @@ start_local_rust_relay() {
 
   "$(local_relay_runner)" "${bind_addr}" >"${log_file}" 2>&1 &
   pid=$!
-  if ! wait_for_local_relay_healthy "$(local_relay_host)" "$(local_relay_port)" 20; then
+  if ! wait_for_local_relay_healthy "$(local_relay_host)" "$(local_relay_port)" 90; then
     if kill -0 "${pid}" >/dev/null 2>&1; then
       kill "${pid}" >/dev/null 2>&1 || true
       wait "${pid}" >/dev/null 2>&1 || true

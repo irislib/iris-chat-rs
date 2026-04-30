@@ -436,6 +436,8 @@ class AppManagerContractTest {
                     desktopNotificationsEnabled = true,
                     inviteAcceptanceNotificationsEnabled = true,
                     startupAtLoginEnabled = false,
+                    nearbyBluetoothEnabled = false,
+                    nearbyLanEnabled = false,
                     nostrRelayUrls =
                         listOf(
                             "wss://relay.damus.io",
@@ -588,6 +590,8 @@ private object AppManagerContractDefaults {
                     desktopNotificationsEnabled = true,
                     inviteAcceptanceNotificationsEnabled = true,
                     startupAtLoginEnabled = false,
+                    nearbyBluetoothEnabled = false,
+                    nearbyLanEnabled = false,
                     nostrRelayUrls =
                         listOf(
                             "wss://relay.damus.io",
