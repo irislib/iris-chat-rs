@@ -54,7 +54,9 @@ public partial class ChatView : UserControl
         }
 
         HeaderTitle.Text = chat.displayName;
-        HeaderSubtitle.Text = chat.subtitle ?? string.Empty;
+        HeaderSubtitle.Text = chat.isMuted ? string.Empty : chat.subtitle ?? string.Empty;
+        HeaderSubtitle.Visibility = chat.isMuted ? Visibility.Collapsed : Visibility.Visible;
+        HeaderMutedStatus.Visibility = chat.isMuted ? Visibility.Visible : Visibility.Collapsed;
         HeaderAvatar.Label = chat.displayName;
         HeaderAvatar.PictureUrl = chat.pictureUrl;
         MuteChatButton.Visibility = Visibility.Visible;

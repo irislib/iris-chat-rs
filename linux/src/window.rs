@@ -39,10 +39,25 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     title_label.add_css_class("heading");
     title_label.set_xalign(0.0);
     title_label.set_halign(gtk::Align::Start);
+    let title_status = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    title_status.set_halign(gtk::Align::Start);
+    title_status.set_visible(false);
+    let title_status_icon = gtk::Image::from_icon_name("notifications-disabled-symbolic");
+    title_status_icon.add_css_class("dim-label");
+    title_status.append(&title_status_icon);
+    let title_status_label = gtk::Label::new(Some("muted"));
+    title_status_label.add_css_class("caption");
+    title_status_label.add_css_class("dim-label");
+    title_status.append(&title_status_label);
+    let title_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    title_column.set_valign(gtk::Align::Center);
+    title_column.set_halign(gtk::Align::Start);
+    title_column.append(&title_label);
+    title_column.append(&title_status);
     let title_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title_slot.set_valign(gtk::Align::Center);
     title_slot.set_halign(gtk::Align::Start);
-    title_slot.append(&title_label);
+    title_slot.append(&title_column);
     // Use an empty title so the header bar doesn't reserve centered space
     // for it; we pack the avatar+name on the left edge instead.
     let empty_title = gtk::Label::new(None);
@@ -145,6 +160,8 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         settings: settings_button.clone(),
         chat_info: chat_info_button.clone(),
         title: title_label.clone(),
+        title_column: title_column.clone(),
+        title_status: title_status.clone(),
         title_slot: title_slot.clone(),
     };
     apply_state(&content_slot, &header_widgets, &manager, &current.borrow());
@@ -227,6 +244,8 @@ struct HeaderWidgets {
     settings: gtk::Button,
     chat_info: gtk::Button,
     title: gtk::Label,
+    title_column: gtk::Box,
+    title_status: gtk::Box,
     title_slot: gtk::Box,
 }
 
@@ -265,11 +284,19 @@ fn apply_state(
     let title_text =
         chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());
     header.title.set_label(&title_text);
+    header.title_status.set_visible(
+        matches!(screen, Screen::Chat { .. })
+            && state
+                .current_chat
+                .as_ref()
+                .map(|chat| chat.is_muted)
+                .unwrap_or(false),
+    );
 
     // Tear down any avatar from a previous render.
     while let Some(child) = header.title_slot.first_child() {
-        if child == header.title.clone().upcast::<gtk::Widget>() {
-            // Keep the heading label in place.
+        if child == header.title_column.clone().upcast::<gtk::Widget>() {
+            // Keep the heading column in place.
             break;
         }
         header.title_slot.remove(&child);

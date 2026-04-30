@@ -84,6 +84,12 @@ fn row_for(
         suffix.append(&badge);
     }
 
+    if chat.is_muted {
+        let muted = gtk::Image::from_icon_name("notifications-disabled-symbolic");
+        muted.add_css_class("dim-label");
+        muted.set_tooltip_text(Some("muted"));
+        row.add_suffix(&muted);
+    }
     row.add_suffix(&suffix);
 
     let manager = manager.clone();

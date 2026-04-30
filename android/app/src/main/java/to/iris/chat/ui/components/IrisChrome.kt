@@ -79,6 +79,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -114,6 +115,8 @@ val LocalIrisOfflineBannerState =
 fun IrisTopBar(
     title: String,
     modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    subtitleIcon: ImageVector? = null,
     onBack: (() -> Unit)? = null,
     backBadgeCount: ULong = 0uL,
     leading: (@Composable RowScope.() -> Unit)? = null,
@@ -204,11 +207,41 @@ fun IrisTopBar(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     titleAccessoryLeading?.invoke()
-                    Text(
-                        text = title,
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(1.dp),
+                    ) {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+
+                        if (!subtitle.isNullOrBlank()) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                if (subtitleIcon != null) {
+                                    Icon(
+                                        imageVector = subtitleIcon,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(12.dp),
+                                        tint = palette.muted,
+                                    )
+                                }
+                                Text(
+                                    text = subtitle,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = palette.muted,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
                 }
 
                 Row(
@@ -428,6 +461,7 @@ fun IrisInlineAction(
 @Composable
 fun IrisChatListRow(
     title: String,
+    isMuted: Boolean = false,
     preview: String,
     timeLabel: String?,
     imageUrl: String? = null,
@@ -460,13 +494,27 @@ fun IrisChatListRow(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    text = title,
+                Row(
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = title,
+                        modifier = Modifier.weight(1f, fill = false),
+                        style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (isMuted) {
+                        Icon(
+                            imageVector = IrisIcons.NotificationsOff,
+                            contentDescription = "muted",
+                            modifier = Modifier.size(14.dp),
+                            tint = palette.muted,
+                        )
+                    }
+                }
                 if (timeLabel != null) {
                     Text(
                         text = timeLabel,

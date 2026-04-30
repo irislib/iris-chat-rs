@@ -56,6 +56,7 @@ public partial class ChatRow : UserControl
         NameText.Text = string.IsNullOrEmpty(chat.displayName)
             ? "Iris user"
             : chat.displayName;
+        MutedBellText.Visibility = chat.isMuted ? Visibility.Visible : Visibility.Collapsed;
 
         if (chat.lastMessageAtSecs is { } secs && secs > 0)
         {

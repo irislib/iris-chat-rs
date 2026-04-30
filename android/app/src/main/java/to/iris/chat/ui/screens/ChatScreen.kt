@@ -249,6 +249,8 @@ fun ChatScreen(
                             "${chat.displayName} · ${chat.subtitle}"
                         else -> chat?.displayName ?: "Chat"
                     },
+                subtitle = if (chat?.isMuted == true) "muted" else null,
+                subtitleIcon = if (chat?.isMuted == true) IrisIcons.NotificationsOff else null,
                 onBack = {
                     appManager.dispatch(
                         AppAction.UpdateScreenStack(router.screenStack.dropLast(1)),

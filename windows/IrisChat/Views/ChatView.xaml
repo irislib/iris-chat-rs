@@ -32,6 +32,20 @@
                                Foreground="{StaticResource TextMuted}"
                                FontSize="12"
                                TextTrimming="CharacterEllipsis" />
+                    <StackPanel x:Name="HeaderMutedStatus"
+                                Orientation="Horizontal"
+                                Visibility="Collapsed">
+                        <TextBlock Text="&#xE7ED;"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   Foreground="{StaticResource TextMuted}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,4,0" />
+                        <TextBlock Text="muted"
+                                   Foreground="{StaticResource TextMuted}"
+                                   FontSize="12"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Style="{StaticResource GhostButton}"
