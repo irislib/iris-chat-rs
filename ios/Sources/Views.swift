@@ -346,6 +346,7 @@ struct RootView: View {
 
     private func openNearbyIris() {
 #if os(iOS) || os(macOS)
+        manager.prepareNearbyForUserTap()
         showingNearbyIris = true
 #endif
     }

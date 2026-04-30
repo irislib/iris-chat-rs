@@ -133,6 +133,22 @@ enum PlatformDocumentOpener {
     }
 }
 
+enum PlatformAppSettings {
+    static func open() {
+        #if os(iOS)
+        guard let url = URL(string: UIApplication.openSettingsURLString) else {
+            return
+        }
+        UIApplication.shared.open(url)
+        #elseif os(macOS)
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy") else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+        #endif
+    }
+}
+
 enum PlatformDeviceLabels {
     static var currentDeviceLabel: String {
         #if os(iOS)

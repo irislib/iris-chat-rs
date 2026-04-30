@@ -140,8 +140,8 @@ final class IrisNearbyLanService {
                 switch state {
                 case .ready:
                     self.updateStatus(self.connections.isEmpty ? "Visible" : "Connected")
-                case .failed:
-                    self.updateStatus("Local network failed")
+                case .failed(let error):
+                    self.updateStatus(Self.failureStatus(for: error))
                 case .cancelled:
                     break
                 default:
@@ -151,7 +151,7 @@ final class IrisNearbyLanService {
             listener.start(queue: queue)
             self.listener = listener
         } catch {
-            updateStatus("Local network unavailable")
+            updateStatus(Self.failureStatus(for: error, fallback: "Local network unavailable"))
         }
     }
 
@@ -165,8 +165,8 @@ final class IrisNearbyLanService {
         }
         browser.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
-            if case .failed = state {
-                self.updateStatus("Local network failed")
+            if case .failed(let error) = state {
+                self.updateStatus(Self.failureStatus(for: error))
             }
         }
         browser.start(queue: queue)
@@ -242,6 +242,31 @@ final class IrisNearbyLanService {
         DispatchQueue.main.async {
             self.onStatus(status)
         }
+    }
+
+    private static func failureStatus(for error: Error, fallback: String = "Local network failed") -> String {
+        isLocalNetworkPermissionError(error) ? "No local network access" : fallback
+    }
+
+    private static func isLocalNetworkPermissionError(_ error: Error) -> Bool {
+        if let nwError = error as? NWError {
+            switch nwError {
+            case .posix(let code):
+                if code == .EACCES || code == .EPERM {
+                    return true
+                }
+            default:
+                break
+            }
+        }
+        if let posixError = error as? POSIXError,
+           posixError.code == .EACCES || posixError.code == .EPERM {
+            return true
+        }
+        let text = "\(String(describing: error)) \(error.localizedDescription)"
+        return text.localizedCaseInsensitiveContains("PolicyDenied") ||
+            text.localizedCaseInsensitiveContains("policy denied") ||
+            text.contains("-65570")
     }
 
     private func tcpParameters(localHost: NWEndpoint.Host? = nil) -> NWParameters {

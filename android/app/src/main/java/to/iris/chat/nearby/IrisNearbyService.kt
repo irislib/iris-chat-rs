@@ -57,6 +57,7 @@ class IrisNearbyService(
         val bluetoothOn: Boolean,
         val bluetoothPermissionGranted: Boolean,
         val localNetworkVisible: Boolean,
+        val localNetworkPermissionGranted: Boolean,
         val localNetworkStatus: String,
         val peerCount: Int,
         val peers: List<Peer>,
@@ -116,22 +117,36 @@ class IrisNearbyService(
     private var maintenanceJob: Job? = null
 
     val snapshot: Snapshot
-        get() =
-            Snapshot(
+        get() {
+            val bluetoothPermissionGranted = hasBluetoothPermission()
+            val localNetworkPermissionGranted = hasLocalNetworkPermission()
+            return Snapshot(
                 visible = visible,
-                status = status,
+                status = if (!visible && !bluetoothPermissionGranted) "No Bluetooth access" else status,
                 bluetoothOn = isBluetoothOn(),
-                bluetoothPermissionGranted = hasBluetoothPermission(),
+                bluetoothPermissionGranted = bluetoothPermissionGranted,
                 localNetworkVisible = localNetworkVisible,
-                localNetworkStatus = if (localNetworkVisible) lanService.status else "Off",
+                localNetworkPermissionGranted = localNetworkPermissionGranted,
+                localNetworkStatus =
+                    when {
+                        localNetworkVisible -> lanService.status
+                        !localNetworkPermissionGranted -> "No local network access"
+                        else -> "Off"
+                    },
                 peerCount = peers.size,
                 peers =
                     peers.values
                         .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id }),
             )
+        }
 
     fun hasBluetoothPermission(): Boolean =
         nearbyPermissions().all {
+            ContextCompat.checkSelfPermission(appContext, it) == PackageManager.PERMISSION_GRANTED
+        }
+
+    fun hasLocalNetworkPermission(): Boolean =
+        localNetworkPermissions().all {
             ContextCompat.checkSelfPermission(appContext, it) == PackageManager.PERMISSION_GRANTED
         }
 
@@ -160,6 +175,13 @@ class IrisNearbyService(
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
+    private fun localNetworkPermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            arrayOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+        } else {
+            emptyArray()
+        }
+
     fun setVisible(nextVisible: Boolean) {
         if (visible == nextVisible) {
             if (visible) {
@@ -183,6 +205,11 @@ class IrisNearbyService(
             if (localNetworkVisible) {
                 announceToConnectedPeers()
             }
+            return
+        }
+        if (nextVisible && !hasLocalNetworkPermission()) {
+            localNetworkVisible = false
+            lanService.stop()
             return
         }
         localNetworkVisible = nextVisible

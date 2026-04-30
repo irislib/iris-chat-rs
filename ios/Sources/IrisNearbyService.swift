@@ -19,6 +19,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     @Published private(set) var isLanVisible = false
     @Published private(set) var status = "Off"
     @Published private(set) var lanStatus = "Off"
+    @Published private(set) var lanPermissionNeedsSettings = false
     @Published private(set) var peers: [IrisNearbyPeer] = []
 
     private static let serviceUUID = CBUUID(string: "8A0DAE01-D8E5-4F27-9F20-A616F1FBA6D0")
@@ -70,6 +71,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     var encodeFrameJson: ((String) -> Data?)?
     var decodeFrame: ((Data) -> String)?
     var frameBodyLength: ((Data) -> Int)?
+    var onBluetoothPermissionDenied: (() -> Void)?
+    var onLanPermissionDenied: (() -> Void)?
 
     override init() {
         super.init()
@@ -82,7 +85,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 self?.ingestFrame(frame, source: .lan(connectionID))
             },
             onStatus: { [weak self] status in
-                self?.lanStatus = status
+                self?.handleLanStatus(status)
                 if status == "Connected" {
                     self?.announceToConnectedPeers()
                 }
@@ -104,7 +107,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             return Self.nearbySummary(for: peers)
         }
         if !isLanVisible, Self.isBlockingStatus(status) { return status }
-        if isLanVisible, lanStatus == "Local network failed" || lanStatus == "Local network unavailable" {
+        if isLanVisible, Self.isBlockingLanStatus(lanStatus) {
             return lanStatus
         }
         return "No users nearby"
@@ -116,6 +119,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     var bluetoothPermissionGranted: Bool {
         CBManager.authorization == .allowedAlways
+    }
+
+    var bluetoothPermissionNeedsSettings: Bool {
+        switch CBManager.authorization {
+        case .denied, .restricted:
+            return true
+        default:
+            return false
+        }
     }
 
     var isBluetoothOn: Bool {
@@ -153,6 +165,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static func isBlockingStatus(_ status: String) -> Bool {
         switch status {
         case "No Bluetooth access", "Bluetooth off", "Bluetooth unavailable", "Bluetooth failed", "Bluetooth reset", "Advertise failed":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func isBlockingLanStatus(_ status: String) -> Bool {
+        switch status {
+        case "No local network access", "Local network failed", "Local network unavailable":
             return true
         default:
             return false
@@ -206,6 +227,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if visible {
             NSLog("Iris nearby LAN: visible on")
             localNonce = UUID().uuidString.lowercased()
+            if lanStatus != "No local network access" {
+                lanPermissionNeedsSettings = false
+            }
             lanStatus = "Starting"
             lanService?.start()
             startMaintenance()
@@ -218,6 +242,20 @@ final class IrisNearbyService: NSObject, ObservableObject {
             if !isNearbyActive {
                 stopMaintenance()
             }
+        }
+    }
+
+    func clearLanPermissionSettingsHint() {
+        lanPermissionNeedsSettings = false
+    }
+
+    private func handleLanStatus(_ status: String) {
+        lanStatus = status
+        if status == "No local network access" {
+            lanPermissionNeedsSettings = true
+            onLanPermissionDenied?()
+        } else if status == "Visible" || status == "Connected" {
+            lanPermissionNeedsSettings = false
         }
     }
 
@@ -1142,6 +1180,9 @@ extension IrisNearbyService: CBCentralManagerDelegate {
             startScanningIfReady()
         } else {
             status = bluetoothStatus(central.state)
+            if central.state == .unauthorized {
+                onBluetoothPermissionDenied?()
+            }
         }
     }
 
@@ -1263,6 +1304,9 @@ extension IrisNearbyService: CBPeripheralManagerDelegate {
             startAdvertisingIfReady()
         } else {
             status = bluetoothStatus(peripheral.state)
+            if peripheral.state == .unauthorized {
+                onBluetoothPermissionDenied?()
+            }
         }
     }
 

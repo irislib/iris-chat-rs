@@ -103,7 +103,12 @@ fun NearbyIrisSheet(
                         ) {
                             NearbyTransportRow(
                                 title = "Bluetooth",
-                                status = if (snapshot.visible) snapshot.status else "Off",
+                                status =
+                                    if (snapshot.visible || !snapshot.bluetoothPermissionGranted) {
+                                        snapshot.status
+                                    } else {
+                                        "Off"
+                                    },
                                 checked = snapshot.visible,
                                 onCheckedChange = onVisibleChange,
                                 modifier = Modifier.testTag("nearbyVisibilitySwitch"),
@@ -111,7 +116,12 @@ fun NearbyIrisSheet(
                             IrisDivider()
                             NearbyTransportRow(
                                 title = "Local network",
-                                status = if (snapshot.localNetworkVisible) snapshot.localNetworkStatus else "Off",
+                                status =
+                                    if (snapshot.localNetworkVisible || !snapshot.localNetworkPermissionGranted) {
+                                        snapshot.localNetworkStatus
+                                    } else {
+                                        "Off"
+                                    },
                                 checked = snapshot.localNetworkVisible,
                                 onCheckedChange = onLocalNetworkVisibleChange,
                                 modifier = Modifier.testTag("nearbyLanSwitch"),

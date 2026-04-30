@@ -392,6 +392,7 @@ final class AppManager: ObservableObject {
     private static let downloadedAttachmentCacheLimitBytes = 128 * 1024 * 1024
     private static let maxClientDebugLogEntries = 50
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
+    private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
 
     @Published private(set) var state: AppState
     @Published private(set) var bootstrapInFlight = true
@@ -415,6 +416,7 @@ final class AppManager: ObservableObject {
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
+    private var nearbySettingsWasOpened = false
     private lazy var reconciler = UpdateBridge(owner: self)
 
     init(
@@ -488,6 +490,12 @@ final class AppManager: ObservableObject {
         }
         nearbyIris.frameBodyLength = { [weak self] header in
             self?.rust.nearbyFrameBodyLenFromHeader(header: header) ?? -1
+        }
+        nearbyIris.onBluetoothPermissionDenied = { [weak self] in
+            self?.handleNearbyBluetoothPermissionDenied()
+        }
+        nearbyIris.onLanPermissionDenied = { [weak self] in
+            self?.handleNearbyLanPermissionDenied()
         }
         if initialState.preferences.nearbyBluetoothEnabled, nearbyIris.bluetoothPermissionGranted {
             nearbyIris.setVisible(true)
@@ -839,6 +847,10 @@ final class AppManager: ObservableObject {
 
     func setNearbyBluetoothEnabled(_ enabled: Bool) {
 #if os(iOS) || os(macOS)
+        if enabled, nearbyIris.bluetoothPermissionNeedsSettings {
+            showNearbySettingsHint("Allow Bluetooth in Settings")
+            return
+        }
         nearbyIris.setVisible(enabled)
         dispatchToRust(.setNearbyBluetoothEnabled(enabled: enabled))
 #endif
@@ -846,14 +858,36 @@ final class AppManager: ObservableObject {
 
     func setNearbyLanEnabled(_ enabled: Bool) {
 #if os(iOS) || os(macOS)
+        if enabled, nearbyIris.lanPermissionNeedsSettings {
+            showNearbySettingsHint("Allow local network in Settings")
+            return
+        }
+        if enabled {
+            markNearbyLanPermissionPromptAttempted()
+        }
         nearbyIris.setLanVisible(enabled)
         dispatchToRust(.setNearbyLanEnabled(enabled: enabled))
+#endif
+    }
+
+    func prepareNearbyForUserTap() {
+#if os(iOS) || os(macOS)
+        if state.preferences.nearbyBluetoothEnabled || nearbyIris.shouldShowBluetoothPermissionPrompt {
+            setNearbyBluetoothEnabled(true)
+        }
+        if state.preferences.nearbyLanEnabled || shouldRequestLanPermissionOnNearbyTap {
+            setNearbyLanEnabled(true)
+        }
 #endif
     }
 
     func appForegrounded() {
         dispatchToRust(.appForegrounded)
 #if os(iOS) || os(macOS)
+        if nearbySettingsWasOpened {
+            nearbySettingsWasOpened = false
+            nearbyIris.clearLanPermissionSettingsHint()
+        }
         if state.preferences.nearbyBluetoothEnabled,
            !nearbyIris.isVisible,
            nearbyIris.bluetoothPermissionGranted {
@@ -865,6 +899,39 @@ final class AppManager: ObservableObject {
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
 #endif
     }
+
+#if os(iOS) || os(macOS)
+    private var shouldRequestLanPermissionOnNearbyTap: Bool {
+        !UserDefaults.standard.bool(forKey: Self.nearbyLanPermissionPromptAttemptedKey) &&
+            !nearbyIris.lanPermissionNeedsSettings
+    }
+
+    private func markNearbyLanPermissionPromptAttempted() {
+        UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
+    }
+
+    private func handleNearbyBluetoothPermissionDenied() {
+        guard state.preferences.nearbyBluetoothEnabled else {
+            return
+        }
+        dispatchToRust(.setNearbyBluetoothEnabled(enabled: false), showsToastOnFailure: false)
+        showToast("Allow Bluetooth in Settings")
+    }
+
+    private func handleNearbyLanPermissionDenied() {
+        guard state.preferences.nearbyLanEnabled else {
+            return
+        }
+        dispatchToRust(.setNearbyLanEnabled(enabled: false), showsToastOnFailure: false)
+        showToast("Allow local network in Settings")
+    }
+
+    private func showNearbySettingsHint(_ message: String) {
+        showToast(message)
+        nearbySettingsWasOpened = true
+        PlatformAppSettings.open()
+    }
+#endif
 
     private func syncStartupAtLoginPreference(_ enabled: Bool) {
         guard PlatformStartupAtLogin.isSupported else {

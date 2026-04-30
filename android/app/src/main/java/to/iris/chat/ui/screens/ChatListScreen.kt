@@ -403,7 +403,9 @@ private fun ChatSwipeActionButton(
 private fun nearbyPreview(snapshot: IrisNearbyService.Snapshot): String =
     when {
         snapshot.peers.isNotEmpty() -> nearbyPeerSummary(snapshot.peers)
-        !snapshot.visible && !snapshot.localNetworkVisible && !snapshot.bluetoothPermissionGranted -> "Click to enable"
+        !snapshot.visible &&
+            !snapshot.localNetworkVisible &&
+            (!snapshot.bluetoothPermissionGranted || !snapshot.localNetworkPermissionGranted) -> "Click to enable"
         !snapshot.visible && !snapshot.localNetworkVisible -> "Off"
         snapshot.localNetworkVisible && snapshot.localNetworkStatus in nearbyLanBlockingStatuses -> snapshot.localNetworkStatus
         !snapshot.localNetworkVisible && snapshot.status in nearbyBlockingStatuses -> snapshot.status
@@ -437,6 +439,7 @@ private val nearbyBlockingStatuses =
 
 private val nearbyLanBlockingStatuses =
     setOf(
+        "No local network access",
         "Local network unavailable",
         "Local network failed",
     )

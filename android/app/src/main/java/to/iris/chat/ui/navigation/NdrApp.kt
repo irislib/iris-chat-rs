@@ -67,6 +67,7 @@ fun NdrApp(
         container.nearbyIrisService.setLocalNetworkVisible(visible)
         container.appManager.dispatch(AppAction.SetNearbyLanEnabled(visible))
     },
+    onNearbyOpen: () -> Unit = {},
 ) {
     val appManager = container.appManager
     val splashViewModel = remember { SplashViewModel(appManager) }
@@ -81,6 +82,7 @@ fun NdrApp(
             { container.nearbyIrisService.snapshot.bluetoothOn }
         }
     val openNearbyIris = {
+        onNearbyOpen()
         showingNearbyIris = true
     }
 
