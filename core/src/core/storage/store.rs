@@ -225,6 +225,34 @@ impl AppStore {
         load_recent_messages(&conn, chat_id, limit)
     }
 
+    pub(crate) fn message_exists(
+        &self,
+        chat_id: &str,
+        message_id: Option<&str>,
+        source_event_id: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        if message_id.is_none() && source_event_id.is_none() {
+            return Ok(false);
+        }
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let exists = conn
+            .query_row(
+                "SELECT 1 FROM messages
+                 WHERE chat_id = ?1
+                   AND ((?2 IS NOT NULL AND id = ?2)
+                        OR (?3 IS NOT NULL AND source_event_id = ?3))
+                 LIMIT 1",
+                params![chat_id, message_id, source_event_id],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        Ok(exists)
+    }
+
     pub(crate) fn delete_thread(&mut self, chat_id: &str) -> anyhow::Result<()> {
         let conn = self
             .conn
@@ -1216,6 +1244,45 @@ mod tests {
             loaded.authorization_state,
             Some(PersistedAuthorizationState::Authorized)
         ));
+    }
+
+    #[test]
+    fn message_exists_finds_stored_id_and_source_event() {
+        let (_tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let mut message = sample_message("m1", "hi", 99);
+        message.source_event_id = Some("outer-1".to_string());
+        let mut threads = BTreeMap::new();
+        threads.insert(
+            "chat".to_string(),
+            ThreadRecord {
+                chat_id: "chat".to_string(),
+                unread_count: 0,
+                updated_at_secs: 99,
+                messages: vec![message],
+            },
+        );
+        let snapshot = empty_snapshot(
+            None,
+            2,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        assert!(store.message_exists("chat", Some("m1"), None).unwrap());
+        assert!(store.message_exists("chat", None, Some("outer-1")).unwrap());
+        assert!(!store.message_exists("chat", Some("m2"), None).unwrap());
     }
 
     #[test]

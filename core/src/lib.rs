@@ -64,7 +64,7 @@ impl FfiApp {
                 let batch_size = batch.len();
                 let t0 = crate::perflog::now_ms();
                 crate::perflog!("core.batch.start size={batch_size}");
-                if !core.handle_messages(batch) {
+                if !handle_core_batch_responsive(&mut core, batch) {
                     break;
                 }
                 crate::perflog!(
@@ -241,6 +241,33 @@ impl FfiApp {
             }
         });
     }
+}
+
+fn handle_core_batch_responsive(core: &mut AppCore, messages: Vec<CoreMsg>) -> bool {
+    if messages.len() <= 1 || !messages.iter().any(is_foreground_core_msg) {
+        return core.handle_messages(messages);
+    }
+
+    let mut foreground = Vec::new();
+    let mut background = Vec::new();
+    for message in messages {
+        if is_foreground_core_msg(&message) {
+            foreground.push(message);
+        } else {
+            background.push(message);
+        }
+    }
+
+    for message in foreground {
+        if !core.handle_message(message) {
+            return false;
+        }
+    }
+    background.is_empty() || core.handle_messages(background)
+}
+
+fn is_foreground_core_msg(message: &CoreMsg) -> bool {
+    !matches!(message, CoreMsg::Internal(_))
 }
 
 fn verify_nearby_presence_event_json(

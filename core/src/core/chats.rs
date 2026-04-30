@@ -458,15 +458,30 @@ impl AppCore {
         author: Option<String>,
         source_event_id: Option<String>,
     ) {
-        let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
+        let message_id_ref = message_id.as_deref();
+        let source_event_id_ref = source_event_id.as_deref();
         if self.threads.get(chat_id).is_some_and(|thread| {
-            thread
-                .messages
-                .iter()
-                .any(|message| message.id == message_id)
+            thread.messages.iter().any(|message| {
+                message_id_ref.is_some_and(|id| message.id == id)
+                    || source_event_id_ref.is_some_and(|event_id| {
+                        message.source_event_id.as_deref() == Some(event_id)
+                    })
+            })
         }) {
             return;
         }
+        match self
+            .app_store
+            .message_exists(chat_id, message_id_ref, source_event_id_ref)
+        {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => self.push_debug_log(
+                "storage.message.exists.error",
+                format!("chat_id={chat_id} error={error}"),
+            ),
+        }
+        let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
         let author = author.unwrap_or_else(|| self.owner_display_label(chat_id));
         let should_count_unread = !self.is_chat_visible(chat_id);
         let (body, attachments) = extract_message_attachments(&body);

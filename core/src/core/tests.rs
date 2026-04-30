@@ -2650,6 +2650,79 @@ fn delete_chat_removes_thread_and_navigates_back() {
 }
 
 #[test]
+fn redelivered_persisted_message_after_restart_does_not_increment_unread() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core("redelivered-persisted-message", &owner, &device);
+    let old_message = ChatMessageSnapshot {
+        id: "old-message".to_string(),
+        chat_id: chat_id.clone(),
+        kind: ChatMessageKind::User,
+        author: chat_id.clone(),
+        body: "already read".to_string(),
+        attachments: Vec::new(),
+        reactions: Vec::new(),
+        reactors: Vec::new(),
+        is_outgoing: false,
+        created_at_secs: 100,
+        expires_at_secs: None,
+        delivery: DeliveryState::Seen,
+        source_event_id: Some("outer-old".to_string()),
+    };
+    let latest_message = ChatMessageSnapshot {
+        id: "latest-message".to_string(),
+        chat_id: chat_id.clone(),
+        kind: ChatMessageKind::User,
+        author: chat_id.clone(),
+        body: "latest preview".to_string(),
+        attachments: Vec::new(),
+        reactions: Vec::new(),
+        reactors: Vec::new(),
+        is_outgoing: false,
+        created_at_secs: 200,
+        expires_at_secs: None,
+        delivery: DeliveryState::Seen,
+        source_event_id: Some("outer-latest".to_string()),
+    };
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 0,
+            updated_at_secs: 200,
+            messages: vec![old_message, latest_message.clone()],
+        },
+    );
+    core.persist_best_effort_inner();
+    assert_eq!(stored_message_count(&core), 2);
+
+    // Restart restores only a preview for inactive chats. Catch-up can then
+    // redeliver older stored events that are not in memory anymore.
+    let thread = core.threads.get_mut(&chat_id).expect("thread");
+    thread.messages = vec![latest_message];
+    thread.unread_count = 0;
+    core.active_chat_id = None;
+    core.screen_stack.clear();
+
+    core.push_incoming_message_from(
+        &chat_id,
+        Some("old-message".to_string()),
+        "already read".to_string(),
+        100,
+        None,
+        Some(chat_id.clone()),
+        Some("outer-old".to_string()),
+    );
+
+    let thread = core.threads.get(&chat_id).expect("thread");
+    assert_eq!(thread.unread_count, 0);
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(stored_message_count(&core), 2);
+}
+
+#[test]
 fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
     let owner = Keys::generate();
     let device = Keys::generate();
