@@ -1646,42 +1646,38 @@ private struct SwipeableChatListRow<Row: View>: View {
     let onDelete: () -> Void
 
     @State private var restingOffset: CGFloat = 0
+    @State private var displayedOffset: CGFloat = 0
+    @State private var activeDragAxis: DragAxis?
     @State private var showingDeleteConfirmation = false
-    @GestureState private var dragTranslation: CGFloat = 0
+    @GestureState private var dragIsActive = false
 
     private let actionWidth: CGFloat = 152
     private let revealThreshold: CGFloat = 42
 
+    private enum DragAxis {
+        case horizontal
+        case vertical
+    }
+
     private var currentOffset: CGFloat {
-        min(0, max(-actionWidth, restingOffset + dragTranslation))
+        displayedOffset
+    }
+
+    private var snapAnimation: Animation {
+        .spring(response: 0.24, dampingFraction: 0.86)
     }
 
     var body: some View {
         ZStack(alignment: .trailing) {
             actions
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .allowsHitTesting(currentOffset < -1)
+                .accessibilityHidden(currentOffset >= -1)
 
             row
                 .background(palette.background)
                 .offset(x: currentOffset)
-                .highPriorityGesture(
-                    DragGesture(minimumDistance: 12, coordinateSpace: .local)
-                        .updating($dragTranslation) { value, state, _ in
-                            let translation = value.translation.width
-                            if abs(translation) > abs(value.translation.height) {
-                                state = translation
-                            }
-                        }
-                        .onEnded { value in
-                            let translation = value.translation.width
-                            let projectedOffset = min(0, max(-actionWidth, restingOffset + translation))
-                            let predictedOffset = min(0, max(-actionWidth, restingOffset + value.predictedEndTranslation.width))
-                            let shouldReveal = projectedOffset < -revealThreshold || predictedOffset < -actionWidth / 2
-                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
-                                restingOffset = translation > revealThreshold ? 0 : (shouldReveal ? -actionWidth : 0)
-                            }
-                        }
-                )
+                .highPriorityGesture(rowDragGesture)
                 .accessibilityAction(named: chat.isMuted ? "Unmute" : "Mute") {
                     onToggleMute()
                 }
@@ -1690,10 +1686,17 @@ private struct SwipeableChatListRow<Row: View>: View {
                 }
         }
         .clipped()
+        .onChange(of: dragIsActive) { isActive in
+            guard !isActive else { return }
+            activeDragAxis = nil
+            if displayedOffset != restingOffset {
+                displayOffset(restingOffset, animated: true)
+            }
+        }
         .alert("Delete chat?", isPresented: $showingDeleteConfirmation) {
             Button("Delete", role: .destructive) {
                 onDelete()
-                restingOffset = 0
+                setRestingOffset(0, animated: false)
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -1707,9 +1710,7 @@ private struct SwipeableChatListRow<Row: View>: View {
                 tint: palette.accentAlt
             ) {
                 onToggleMute()
-                withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
-                    restingOffset = 0
-                }
+                setRestingOffset(0, animated: true)
             }
             swipeButton(
                 title: "Delete",
@@ -1743,6 +1744,82 @@ private struct SwipeableChatListRow<Row: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    private var rowDragGesture: some Gesture {
+        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+            .updating($dragIsActive) { _, state, _ in
+                state = true
+            }
+            .onChanged { value in
+                let horizontal = abs(value.translation.width)
+                let vertical = abs(value.translation.height)
+
+                if activeDragAxis == nil {
+                    activeDragAxis = horizontal > vertical ? .horizontal : .vertical
+                }
+
+                guard activeDragAxis == .horizontal else { return }
+                displayOffset(restingOffset + value.translation.width, animated: false)
+            }
+            .onEnded { value in
+                guard activeDragAxis == .horizontal else {
+                    activeDragAxis = nil
+                    return
+                }
+
+                setRestingOffset(targetOffset(for: value), animated: true)
+                activeDragAxis = nil
+            }
+    }
+
+    private func targetOffset(for value: DragGesture.Value) -> CGFloat {
+        let projectedOffset = clampedOffset(restingOffset + value.translation.width)
+        let predictedOffset = clampedOffset(restingOffset + value.predictedEndTranslation.width)
+
+        if restingOffset < -actionWidth / 2 {
+            let shouldClose = projectedOffset > -actionWidth + revealThreshold || predictedOffset > -actionWidth / 2
+            return shouldClose ? 0 : -actionWidth
+        }
+
+        let shouldReveal = projectedOffset < -revealThreshold || predictedOffset < -actionWidth / 2
+        return shouldReveal ? -actionWidth : 0
+    }
+
+    private func setRestingOffset(_ offset: CGFloat, animated: Bool) {
+        let offset = clampedOffset(offset)
+        let changes = {
+            restingOffset = offset
+            displayedOffset = offset
+        }
+
+        if animated {
+            withAnimation(snapAnimation, changes)
+        } else {
+            withoutAnimation(changes)
+        }
+    }
+
+    private func displayOffset(_ offset: CGFloat, animated: Bool) {
+        let changes = {
+            displayedOffset = clampedOffset(offset)
+        }
+
+        if animated {
+            withAnimation(snapAnimation, changes)
+        } else {
+            withoutAnimation(changes)
+        }
+    }
+
+    private func withoutAnimation(_ changes: () -> Void) {
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction, changes)
+    }
+
+    private func clampedOffset(_ offset: CGFloat) -> CGFloat {
+        min(0, max(-actionWidth, offset))
     }
 }
 #endif
