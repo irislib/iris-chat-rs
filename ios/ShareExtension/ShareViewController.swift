@@ -1,5 +1,5 @@
 import Intents
-import Social
+import UIKit
 import UniformTypeIdentifiers
 
 private let appGroupIdentifier = "group.to.iris.chat"
@@ -16,23 +16,91 @@ private struct StoredSharePayload: Codable {
     let suggestedChatId: String?
 }
 
-final class ShareViewController: SLComposeServiceViewController {
-    override func isContentValid() -> Bool {
-        true
+final class ShareViewController: UIViewController {
+    private let statusLabel = UILabel()
+    private let chooseButton = UIButton(type: .system)
+    private let cancelButton = UIButton(type: .system)
+    private let activityIndicator = UIActivityIndicatorView(style: .medium)
+    private var stagedShareURL: URL?
+    private var didStart = false
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        configureView()
     }
 
-    override func didSelectPost() {
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !didStart else { return }
+        didStart = true
         Task {
-            await storeAndOpenShare()
+            await stageAndOpenShare()
         }
     }
 
-    private func storeAndOpenShare() async {
+    private func configureView() {
+        view.backgroundColor = .systemBackground
+
+        statusLabel.text = "Preparing..."
+        statusLabel.font = .preferredFont(forTextStyle: .headline)
+        statusLabel.textAlignment = .center
+        statusLabel.numberOfLines = 0
+
+        chooseButton.setTitle("Choose chat", for: .normal)
+        chooseButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        chooseButton.isHidden = true
+        chooseButton.addTarget(self, action: #selector(chooseChat), for: .touchUpInside)
+
+        cancelButton.setTitle("Cancel", for: .normal)
+        cancelButton.addTarget(self, action: #selector(cancelShare), for: .touchUpInside)
+
+        activityIndicator.startAnimating()
+
+        let stack = UIStackView(arrangedSubviews: [
+            activityIndicator,
+            statusLabel,
+            chooseButton,
+            cancelButton,
+        ])
+        stack.axis = .vertical
+        stack.alignment = .center
+        stack.spacing = 18
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+            stack.centerXAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: view.safeAreaLayoutGuide.centerYAnchor),
+            statusLabel.widthAnchor.constraint(lessThanOrEqualTo: view.safeAreaLayoutGuide.widthAnchor, constant: -48),
+            chooseButton.widthAnchor.constraint(greaterThanOrEqualToConstant: 180),
+        ])
+    }
+
+    private func stageAndOpenShare() async {
+        guard let shareURL = await storeShare() else {
+            statusLabel.text = "Nothing to share"
+            activityIndicator.stopAnimating()
+            chooseButton.isHidden = true
+            return
+        }
+        stagedShareURL = shareURL
+
+        if await openStagedShare() {
+            complete()
+        } else {
+            activityIndicator.stopAnimating()
+            statusLabel.text = "Choose a chat in iris chat"
+            chooseButton.isHidden = false
+        }
+    }
+
+    private func storeShare() async -> URL? {
         guard let container = FileManager.default.containerURL(
             forSecurityApplicationGroupIdentifier: appGroupIdentifier
         ) else {
-            complete()
-            return
+            return nil
         }
 
         let shareID = UUID().uuidString
@@ -42,15 +110,13 @@ final class ShareViewController: SLComposeServiceViewController {
         do {
             try FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
         } catch {
-            complete()
-            return
+            return nil
         }
 
         let collected = await collectSharedItems(filesDir: filesDir)
         let text = collected.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty || !collected.attachments.isEmpty else {
-            complete()
-            return
+            return nil
         }
 
         let payload = StoredSharePayload(
@@ -64,22 +130,34 @@ final class ShareViewController: SLComposeServiceViewController {
             let payloadURL = sharesDir.appendingPathComponent(shareID).appendingPathExtension("json")
             try data.write(to: payloadURL, options: .atomic)
         } catch {
-            complete()
-            return
+            return nil
         }
 
         donateSuggestedInteraction()
-        if let url = URL(string: "irischat://share/\(shareID)") {
-            await extensionContext?.open(url)
+        return URL(string: "irischat://share/\(shareID)")
+    }
+
+    @objc private func chooseChat() {
+        Task {
+            if await openStagedShare() {
+                complete()
+            }
         }
+    }
+
+    @objc private func cancelShare() {
         complete()
+    }
+
+    private func openStagedShare() async -> Bool {
+        guard let stagedShareURL else {
+            return false
+        }
+        return await extensionContext?.open(stagedShareURL) ?? false
     }
 
     private func collectSharedItems(filesDir: URL) async -> (text: String, attachments: [StoredShareAttachment]) {
         var textParts = [String]()
-        if let contentText, !contentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            textParts.append(contentText)
-        }
         var attachments = [StoredShareAttachment]()
 
         let inputItems = extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
