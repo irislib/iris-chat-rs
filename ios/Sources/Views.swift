@@ -290,7 +290,10 @@ struct RootView: View {
         AnyView(
             OfflineStatusBanner(
                 networkStatus: manager.state.networkStatus,
-                nearbyService: manager.nearbyIris
+                nearbyService: manager.nearbyIris,
+                onTap: {
+                    manager.dispatch(.pushScreen(screen: .settings))
+                }
             )
         )
 #else
@@ -527,27 +530,32 @@ private struct OfflineStatusBanner: View {
 
     let networkStatus: NetworkStatusSnapshot?
     @ObservedObject var nearbyService: IrisNearbyService
+    let onTap: () -> Void
 
     var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { timeline in
-            let text = bannerText(at: timeline.date)
-            VStack(spacing: 0) {
-                if let text {
-                    Text(text)
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .foregroundStyle(Color.white)
-                        .lineLimit(1)
-                        .frame(maxWidth: .infinity)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 6)
-                        .background(palette.accentAlt)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .accessibilityIdentifier("offlineStatusBanner")
+        Button(action: onTap) {
+            TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                let text = bannerText(at: timeline.date)
+                VStack(spacing: 0) {
+                    if let text {
+                        Text(text)
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .foregroundStyle(Color.white)
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                            .background(palette.accentAlt)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                            .accessibilityIdentifier("offlineStatusBanner")
+                    }
                 }
+                .clipped()
+                .animation(.easeInOut(duration: 0.22), value: text)
             }
-            .clipped()
-            .animation(.easeInOut(duration: 0.22), value: text)
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open settings")
     }
 
     private func bannerText(at date: Date) -> String? {
@@ -1177,10 +1185,13 @@ private func relayStatusColor(_ status: NetworkStatusSnapshot?, palette: IrisPal
     guard let status, !status.relayUrls.isEmpty else {
         return palette.muted.opacity(0.55)
     }
+    if status.connectedRelayCount > 0 {
+        return Color(red: 34.0 / 255.0, green: 197.0 / 255.0, blue: 94.0 / 255.0)
+    }
     if status.syncing || status.pendingOutboundCount > 0 || status.pendingGroupControlCount > 0 {
         return Color(red: 234.0 / 255.0, green: 179.0 / 255.0, blue: 8.0 / 255.0)
     }
-    return Color(red: 34.0 / 255.0, green: 197.0 / 255.0, blue: 94.0 / 255.0)
+    return Color(red: 239.0 / 255.0, green: 68.0 / 255.0, blue: 68.0 / 255.0)
 }
 
 private struct OwnerPresentation {
@@ -1584,11 +1595,29 @@ private struct ChatListRowContainer: View {
     @ObservedObject var manager: AppManager
     let chat: ChatThreadSnapshot
     let timeLabel: String?
-    @State private var showingDeleteConfirmation = false
 
     @ViewBuilder
     var body: some View {
-        let row = IrisChatRow(
+        let row = chatRow
+
+#if os(iOS)
+        SwipeableChatListRow(
+            chat: chat,
+            row: row,
+            onToggleMute: {
+                manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
+            },
+            onDelete: {
+                manager.dispatch(.deleteChat(chatId: chat.chatId))
+            }
+        )
+#else
+        row
+#endif
+    }
+
+    private var chatRow: some View {
+        IrisChatRow(
             title: chat.displayName,
             preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
             subtitle: nil,
@@ -1601,34 +1630,119 @@ private struct ChatListRowContainer: View {
                 manager.dispatch(.openChat(chatId: chat.chatId))
             }
         )
-
-#if os(iOS)
-        row
-            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                Button(role: .destructive) {
-                    showingDeleteConfirmation = true
-                } label: {
-                    Label("Delete", systemImage: "trash.fill")
-                }
-
-                Button {
-                    manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
-                } label: {
-                    Label(chat.isMuted ? "Unmute" : "Mute", systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill")
-                }
-                .tint(.orange)
-            }
-            .alert("Delete chat?", isPresented: $showingDeleteConfirmation) {
-                Button("Delete", role: .destructive) {
-                    manager.dispatch(.deleteChat(chatId: chat.chatId))
-                }
-                Button("Cancel", role: .cancel) {}
-            }
-#else
-        row
-#endif
     }
 }
+
+#if os(iOS)
+private struct SwipeableChatListRow<Row: View>: View {
+    @Environment(\.irisPalette) private var palette
+
+    let chat: ChatThreadSnapshot
+    let row: Row
+    let onToggleMute: () -> Void
+    let onDelete: () -> Void
+
+    @State private var restingOffset: CGFloat = 0
+    @State private var showingDeleteConfirmation = false
+    @GestureState private var dragTranslation: CGFloat = 0
+
+    private let actionWidth: CGFloat = 152
+    private let revealThreshold: CGFloat = 42
+
+    private var currentOffset: CGFloat {
+        min(0, max(-actionWidth, restingOffset + dragTranslation))
+    }
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            actions
+                .frame(maxWidth: .infinity, alignment: .trailing)
+
+            row
+                .background(palette.background)
+                .offset(x: currentOffset)
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 12, coordinateSpace: .local)
+                        .updating($dragTranslation) { value, state, _ in
+                            let translation = value.translation.width
+                            if abs(translation) > abs(value.translation.height) {
+                                state = translation
+                            }
+                        }
+                        .onEnded { value in
+                            let translation = value.translation.width
+                            let projectedOffset = min(0, max(-actionWidth, restingOffset + translation))
+                            let predictedOffset = min(0, max(-actionWidth, restingOffset + value.predictedEndTranslation.width))
+                            let shouldReveal = projectedOffset < -revealThreshold || predictedOffset < -actionWidth / 2
+                            withAnimation(.spring(response: 0.24, dampingFraction: 0.86)) {
+                                restingOffset = translation > revealThreshold ? 0 : (shouldReveal ? -actionWidth : 0)
+                            }
+                        }
+                )
+                .accessibilityAction(named: chat.isMuted ? "Unmute" : "Mute") {
+                    onToggleMute()
+                }
+                .accessibilityAction(named: "Delete") {
+                    showingDeleteConfirmation = true
+                }
+        }
+        .clipped()
+        .alert("Delete chat?", isPresented: $showingDeleteConfirmation) {
+            Button("Delete", role: .destructive) {
+                onDelete()
+                restingOffset = 0
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private var actions: some View {
+        HStack(spacing: 0) {
+            swipeButton(
+                title: chat.isMuted ? "Unmute" : "Mute",
+                systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill",
+                tint: palette.accentAlt
+            ) {
+                onToggleMute()
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+                    restingOffset = 0
+                }
+            }
+            swipeButton(
+                title: "Delete",
+                systemImage: "trash.fill",
+                tint: .red
+            ) {
+                showingDeleteConfirmation = true
+            }
+        }
+        .frame(width: actionWidth)
+    }
+
+    private func swipeButton(
+        title: String,
+        systemImage: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                Text(title)
+                    .font(.system(.caption2, design: .rounded, weight: .bold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(Color.white)
+            .frame(width: actionWidth / 2)
+            .frame(maxHeight: .infinity)
+            .background(tint)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+#endif
 
 #if os(iOS) || os(macOS)
 private struct NearbyChatListRow: View {
@@ -3195,7 +3309,7 @@ struct SettingsScreen: View {
                         if let networkStatus = manager.state.networkStatus {
                             Text(
                                 "Network \(networkStatus.syncing ? "syncing" : "idle") · " +
-                                    "\(networkStatus.relayUrls.count) servers · " +
+                                    "\(networkStatus.connectedRelayCount)/\(networkStatus.relayUrls.count) connected · " +
                                     "\(networkStatus.recentEventCount) updates"
                             )
                             .font(.system(.body, design: .rounded))

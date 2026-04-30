@@ -107,6 +107,20 @@ fn network_status_marks_configured_session_offline_until_a_relay_connects() {
 }
 
 #[test]
+fn relay_status_events_match_normalized_relay_urls() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("relay-status-normalized", &owner, &device);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.example".to_string()];
+
+    core.handle_relay_status_changed("wss://relay.example/".to_string(), RelayStatus::Connected);
+
+    assert!(core.debug_log.iter().any(|entry| {
+        entry.category == "relay.status" && entry.detail.starts_with("url=wss://relay.example ")
+    }));
+}
+
+#[test]
 fn ndr_runtime_invite_session_round_trips_text() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

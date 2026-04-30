@@ -264,7 +264,8 @@ impl AppCore {
         };
         let relays = self.runtime.block_on(client.relays());
         for (relay_url, relay) in relays {
-            let relay_url = relay_url.to_string();
+            let relay_url = normalize_nostr_relay_url(&relay_url.to_string())
+                .unwrap_or_else(|_| relay_url.to_string());
             if !self.relay_status_watch_urls.insert(relay_url.clone()) {
                 continue;
             }
@@ -448,10 +449,19 @@ impl AppCore {
     }
 
     pub(super) fn handle_relay_status_changed(&mut self, relay_url: String, status: RelayStatus) {
-        if !self.preferences.nostr_relay_urls.contains(&relay_url) {
+        let normalized_relay_url =
+            normalize_nostr_relay_url(&relay_url).unwrap_or_else(|_| relay_url.clone());
+        if !self
+            .preferences
+            .nostr_relay_urls
+            .contains(&normalized_relay_url)
+        {
             return;
         }
-        self.push_debug_log("relay.status", format!("url={relay_url} status={status}"));
+        self.push_debug_log(
+            "relay.status",
+            format!("url={normalized_relay_url} status={status}"),
+        );
         match status {
             RelayStatus::Connected => {
                 self.reconcile_protocol_subscriptions("relay_connected", false);

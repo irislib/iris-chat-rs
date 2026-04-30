@@ -333,8 +333,14 @@ impl AppCore {
         };
 
         if should_refresh {
+            let configured_relays = self
+                .preferences
+                .nostr_relay_urls
+                .iter()
+                .filter_map(|url| normalize_nostr_relay_url(url).ok())
+                .collect::<HashSet<_>>();
             self.relay_status_watch_urls
-                .retain(|url| self.preferences.nostr_relay_urls.contains(url));
+                .retain(|url| configured_relays.contains(url));
             self.start_relay_status_watchers();
             self.schedule_session_connect();
             self.request_protocol_subscription_refresh_forced();

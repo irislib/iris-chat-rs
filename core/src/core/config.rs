@@ -30,7 +30,7 @@ pub(super) const PERSISTED_STATE_VERSION: u32 = 12;
 
 pub(crate) fn configured_relays() -> Vec<String> {
     let compiled_defaults = compiled_default_relays();
-    match std::env::var("IRIS_DEMO_RELAYS") {
+    let raw_relays = match std::env::var("IRIS_DEMO_RELAYS") {
         Ok(value) => value
             .split(',')
             .map(str::trim)
@@ -38,7 +38,8 @@ pub(crate) fn configured_relays() -> Vec<String> {
             .map(ToOwned::to_owned)
             .collect(),
         Err(_) => compiled_defaults,
-    }
+    };
+    normalize_nostr_relay_urls(&raw_relays)
 }
 
 pub(super) fn relay_urls_from_strings(relays: &[String]) -> Vec<RelayUrl> {
@@ -176,5 +177,20 @@ mod tests {
     fn empty_relay_list_stays_disabled() {
         assert!(normalize_nostr_relay_urls(&[]).is_empty());
         assert!(relay_urls_from_strings(&[]).is_empty());
+    }
+
+    #[test]
+    fn relay_url_normalization_is_stable_for_comparisons() {
+        assert_eq!(
+            normalize_nostr_relay_urls(&[
+                " WSS://Relay.Example/ ".to_string(),
+                "wss://relay.example".to_string(),
+                "wss://relay.example/path/".to_string(),
+            ]),
+            vec![
+                "wss://relay.example".to_string(),
+                "wss://relay.example/path/".to_string(),
+            ]
+        );
     }
 }
