@@ -186,6 +186,16 @@ impl AppCore {
             .into_iter()
             .filter_map(|hex| PublicKey::parse(&hex).ok())
             .collect::<Vec<_>>();
+        let invite_response_pubkeys = self
+            .logged_in
+            .as_ref()
+            .and_then(|logged_in| {
+                logged_in
+                    .ndr_runtime
+                    .current_device_invite_response_pubkey()
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
         let message_authors = self
             .direct_message_subscriptions
             .tracked_authors()
@@ -197,7 +207,13 @@ impl AppCore {
                     .unwrap_or_default(),
             )
             .collect::<Vec<_>>();
-        let filters = recent_protocol_filters(owners, invite_authors, message_authors, now);
+        let filters = recent_protocol_filters(
+            owners,
+            invite_authors,
+            invite_response_pubkeys,
+            message_authors,
+            now,
+        );
         if filters.is_empty() {
             return;
         }
