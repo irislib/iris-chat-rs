@@ -35,6 +35,12 @@
   <string>Find nearby people.</string>
   <key>NSBluetoothPeripheralUsageDescription</key>
   <string>Find nearby people.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Find and message nearby people.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_iris-chat._tcp</string>
+  </array>
   <key>NSHighResolutionCapable</key>
   <true/>
 </dict>

@@ -492,6 +492,9 @@ final class AppManager: ObservableObject {
         if initialState.preferences.nearbyBluetoothEnabled, nearbyIris.bluetoothPermissionGranted {
             nearbyIris.setVisible(true)
         }
+        if initialState.preferences.nearbyLanEnabled {
+            nearbyIris.setLanVisible(true)
+        }
 #endif
 
         Task {
@@ -841,6 +844,13 @@ final class AppManager: ObservableObject {
 #endif
     }
 
+    func setNearbyLanEnabled(_ enabled: Bool) {
+#if os(iOS) || os(macOS)
+        nearbyIris.setLanVisible(enabled)
+        dispatchToRust(.setNearbyLanEnabled(enabled: enabled))
+#endif
+    }
+
     func appForegrounded() {
         dispatchToRust(.appForegrounded)
 #if os(iOS) || os(macOS)
@@ -848,6 +858,9 @@ final class AppManager: ObservableObject {
            !nearbyIris.isVisible,
            nearbyIris.bluetoothPermissionGranted {
             nearbyIris.setVisible(true)
+        }
+        if state.preferences.nearbyLanEnabled, !nearbyIris.isLanVisible {
+            nearbyIris.setLanVisible(true)
         }
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
 #endif
@@ -1179,6 +1192,7 @@ final class AppManager: ObservableObject {
             state = nextState
 #if os(iOS) || os(macOS)
             syncNearbyBluetoothPreference(from: oldState, to: nextState)
+            syncNearbyLanPreference(from: oldState, to: nextState)
 #endif
 #if os(iOS)
             shareSuggestionDonor.syncRecentChats(nextState.chatList)
@@ -1218,6 +1232,18 @@ final class AppManager: ObservableObject {
             }
         } else if wasEnabled, nearbyIris.isVisible {
             nearbyIris.setVisible(false)
+        }
+    }
+
+    private func syncNearbyLanPreference(from oldState: AppState, to nextState: AppState) {
+        let wasEnabled = oldState.preferences.nearbyLanEnabled
+        let isEnabled = nextState.preferences.nearbyLanEnabled
+        if isEnabled {
+            if !nearbyIris.isLanVisible {
+                nearbyIris.setLanVisible(true)
+            }
+        } else if wasEnabled, nearbyIris.isLanVisible {
+            nearbyIris.setLanVisible(false)
         }
     }
 #endif

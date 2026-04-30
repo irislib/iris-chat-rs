@@ -1905,26 +1905,17 @@ private struct NearbyIrisScreen: View {
                 .fill(palette.border)
                 .frame(height: 1)
 
+            transportControls
+
+            Rectangle()
+                .fill(palette.border)
+                .frame(height: 1)
+
             if service.peers.isEmpty {
-                if service.isVisible {
-                    Text(service.sidebarSubtitle)
-                        .font(.system(.body, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.muted)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    if service.shouldShowBluetoothPermissionPrompt {
-                        Button("Click to enable") {
-                            manager.setNearbyBluetoothEnabled(true)
-                        }
-                        .buttonStyle(IrisPrimaryButtonStyle())
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        Text(service.sidebarSubtitle)
-                            .font(.system(.body, design: .rounded, weight: .semibold))
-                            .foregroundStyle(palette.muted)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                }
+                Text(service.sidebarSubtitle)
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 peerStrip
                 Spacer(minLength: 0)
@@ -1949,11 +1940,6 @@ private struct NearbyIrisScreen: View {
 
             Spacer()
 
-            Toggle("", isOn: visibilityBinding)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .accessibilityLabel(service.isVisible ? "Visible" : "Hidden")
-
             IrisModalCloseButton(action: onClose)
                 .accessibilityIdentifier("nearbyCloseButton")
         }
@@ -1962,10 +1948,67 @@ private struct NearbyIrisScreen: View {
         .background(palette.toolbar)
     }
 
-    private var visibilityBinding: Binding<Bool> {
+    private var transportControls: some View {
+        VStack(spacing: 0) {
+            transportRow(
+                title: "Bluetooth",
+                subtitle: service.isBluetoothOn ? "On" : "Off",
+                isOn: bluetoothBinding,
+                accessibilityID: "nearbyBluetoothSwitch"
+            )
+
+            Rectangle()
+                .fill(palette.border)
+                .frame(height: 1)
+                .padding(.leading, 18)
+
+            transportRow(
+                title: "Local network",
+                subtitle: service.isLanVisible ? service.lanStatus : "Off",
+                isOn: lanBinding,
+                accessibilityID: "nearbyLanSwitch"
+            )
+        }
+        .background(palette.panel)
+    }
+
+    private func transportRow(
+        title: String,
+        subtitle: String,
+        isOn: Binding<Bool>,
+        accessibilityID: String
+    ) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                Text(subtitle)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityIdentifier(accessibilityID)
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 52)
+    }
+
+    private var bluetoothBinding: Binding<Bool> {
         Binding(
             get: { service.isVisible },
             set: { manager.setNearbyBluetoothEnabled($0) }
+        )
+    }
+
+    private var lanBinding: Binding<Bool> {
+        Binding(
+            get: { service.isLanVisible },
+            set: { manager.setNearbyLanEnabled($0) }
         )
     }
 
@@ -3450,7 +3493,7 @@ struct SettingsScreen: View {
                         }
 
 #if os(iOS) || os(macOS)
-                        BluetoothSettingsStatusRow(service: manager.nearbyIris)
+                        NearbySettingsRows(manager: manager, service: manager.nearbyIris)
 #endif
 
                         ShareLink(item: manager.supportBundleJson()) {
@@ -3541,18 +3584,61 @@ struct SettingsScreen: View {
 }
 
 #if os(iOS) || os(macOS)
-private struct BluetoothSettingsStatusRow: View {
+private struct NearbySettingsRows: View {
     @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
     @ObservedObject var service: IrisNearbyService
 
     var body: some View {
-        Text("Bluetooth \(service.isBluetoothOn ? "on" : "off")")
-            .font(.system(.body, design: .rounded))
-            .foregroundStyle(palette.muted)
-            .accessibilityIdentifier("myProfileBluetoothStatusValue")
-            .onAppear {
-                service.startBluetoothStateMonitoring()
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            settingsToggle(
+                title: "Bluetooth",
+                status: service.isBluetoothOn ? "on" : "off",
+                isOn: Binding(
+                    get: { manager.state.preferences.nearbyBluetoothEnabled },
+                    set: { manager.setNearbyBluetoothEnabled($0) }
+                ),
+                accessibilityID: "myProfileNearbyBluetoothSwitch",
+                statusAccessibilityID: "myProfileBluetoothStatusValue"
+            )
+
+            settingsToggle(
+                title: "Local network",
+                status: service.isLanVisible ? "on" : "off",
+                isOn: Binding(
+                    get: { manager.state.preferences.nearbyLanEnabled },
+                    set: { manager.setNearbyLanEnabled($0) }
+                ),
+                accessibilityID: "myProfileNearbyLanSwitch",
+                statusAccessibilityID: "myProfileLanStatusValue"
+            )
+        }
+        .onAppear {
+            service.startBluetoothStateMonitoring()
+        }
+    }
+
+    private func settingsToggle(
+        title: String,
+        status: String,
+        isOn: Binding<Bool>,
+        accessibilityID: String,
+        statusAccessibilityID: String
+    ) -> some View {
+        HStack(spacing: 12) {
+            Text(title)
+                .font(.system(.body, design: .rounded))
+                .foregroundStyle(palette.textPrimary)
+            Spacer()
+            Text(status)
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.muted)
+                .accessibilityIdentifier(statusAccessibilityID)
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .accessibilityIdentifier(accessibilityID)
+        }
     }
 }
 #endif

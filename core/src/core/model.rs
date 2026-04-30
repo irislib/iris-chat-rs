@@ -247,6 +247,8 @@ pub(super) struct PersistedPreferences {
     pub(super) startup_at_login_enabled: bool,
     #[serde(default)]
     pub(super) nearby_bluetooth_enabled: bool,
+    #[serde(default)]
+    pub(super) nearby_lan_enabled: bool,
     #[serde(default = "default_nostr_relay_urls")]
     pub(super) nostr_relay_urls: Vec<String>,
     #[serde(default = "default_true")]
@@ -274,6 +276,7 @@ impl Default for PersistedPreferences {
                 .invite_acceptance_notifications_enabled,
             startup_at_login_enabled: defaults.startup_at_login_enabled,
             nearby_bluetooth_enabled: defaults.nearby_bluetooth_enabled,
+            nearby_lan_enabled: defaults.nearby_lan_enabled,
             nostr_relay_urls: defaults.nostr_relay_urls,
             image_proxy_enabled: defaults.image_proxy_enabled,
             image_proxy_url: defaults.image_proxy_url,

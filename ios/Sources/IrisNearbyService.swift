@@ -16,7 +16,9 @@ struct IrisNearbyPeer: Identifiable, Equatable {
 
 final class IrisNearbyService: NSObject, ObservableObject {
     @Published private(set) var isVisible = false
+    @Published private(set) var isLanVisible = false
     @Published private(set) var status = "Off"
+    @Published private(set) var lanStatus = "Off"
     @Published private(set) var peers: [IrisNearbyPeer] = []
 
     private static let serviceUUID = CBUUID(string: "8A0DAE01-D8E5-4F27-9F20-A616F1FBA6D0")
@@ -60,6 +62,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var lastPeripheralStateLog: String?
     private var maintenanceTimer: Timer?
     private var lastHelloAt = Date.distantPast
+    private var lanService: IrisNearbyLanService?
 
     var ingestEventJson: ((String) -> Bool)?
     var buildPresenceEventJson: ((String, String, String, String?) -> String)?
@@ -68,8 +71,27 @@ final class IrisNearbyService: NSObject, ObservableObject {
     var decodeFrame: ((Data) -> String)?
     var frameBodyLength: ((Data) -> Int)?
 
+    override init() {
+        super.init()
+        lanService = IrisNearbyLanService(
+            peerID: peerID,
+            bodyLengthFromHeader: { [weak self] header in
+                self?.frameBodyLength?(header) ?? -1
+            },
+            onFrame: { [weak self] connectionID, frame in
+                self?.ingestFrame(frame, source: .lan(connectionID))
+            },
+            onStatus: { [weak self] status in
+                self?.lanStatus = status
+                if status == "Connected" {
+                    self?.announceToConnectedPeers()
+                }
+            }
+        )
+    }
+
     var sidebarSubtitle: String {
-        if !isVisible {
+        if !isNearbyActive {
             if shouldShowBluetoothPermissionPrompt {
                 return "Click to enable"
             }
@@ -81,7 +103,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if !peers.isEmpty {
             return Self.nearbySummary(for: peers)
         }
-        if Self.isBlockingStatus(status) { return status }
+        if !isLanVisible, Self.isBlockingStatus(status) { return status }
+        if isLanVisible, lanStatus == "Local network failed" || lanStatus == "Local network unavailable" {
+            return lanStatus
+        }
         return "No users nearby"
     }
 
@@ -134,6 +159,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
+    var isNearbyActive: Bool {
+        isVisible || isLanVisible
+    }
+
     func toggleVisibility() {
         setVisible(!isVisible)
     }
@@ -159,10 +188,36 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if visible {
             NSLog("Iris nearby: visible on")
             localNonce = UUID().uuidString.lowercased()
-            start()
+            startBluetooth()
         } else {
             NSLog("Iris nearby: visible off")
-            stop()
+            stopBluetooth()
+        }
+    }
+
+    func setLanVisible(_ visible: Bool) {
+        guard visible != isLanVisible else {
+            if visible {
+                announceToConnectedPeers()
+            }
+            return
+        }
+        isLanVisible = visible
+        if visible {
+            NSLog("Iris nearby LAN: visible on")
+            localNonce = UUID().uuidString.lowercased()
+            lanStatus = "Starting"
+            lanService?.start()
+            startMaintenance()
+        } else {
+            NSLog("Iris nearby LAN: visible off")
+            let lanPeerIDs = lanService?.peerIDs() ?? []
+            lanService?.stop()
+            lanStatus = "Off"
+            removeLanOnlyPeers(lanPeerIDs)
+            if !isNearbyActive {
+                stopMaintenance()
+            }
         }
     }
 
@@ -186,14 +241,14 @@ final class IrisNearbyService: NSObject, ObservableObject {
             knownProfiles[eventID] = profile
         }
         pruneMailbags()
-        guard isVisible else { return }
+        guard isNearbyActive else { return }
         if kind == 0 {
             sendHello(excludingPeerID: nil)
         }
         sendEvent(record, excludingPeerID: nil)
     }
 
-    private func start() {
+    private func startBluetooth() {
         status = "Starting"
         if centralManager == nil {
             centralManager = CBCentralManager(
@@ -222,9 +277,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
         startMaintenance()
     }
 
-    private func stop() {
+    private func stopBluetooth() {
         status = "Off"
-        stopMaintenance()
+        if !isLanVisible {
+            stopMaintenance()
+        }
         centralManager?.stopScan()
         peripheralManager?.stopAdvertising()
         peripheralManager?.removeAllServices()
@@ -239,12 +296,23 @@ final class IrisNearbyService: NSObject, ObservableObject {
         subscribedCentrals.removeAll()
         centralAssemblers.removeAll()
         pendingNotifications.removeAll()
+        let bluetoothPeerIDs = Set(peerIDByPeripheral.values).union(peerIDByCentral.values)
         peerIDByPeripheral.removeAll()
         peerIDByCentral.removeAll()
-        peerNonces.removeAll()
+        if isLanVisible {
+            let lanPeerIDs = lanService?.peerIDs() ?? []
+            peers.removeAll { bluetoothPeerIDs.contains($0.id) && !lanPeerIDs.contains($0.id) }
+            for peerID in bluetoothPeerIDs where !lanPeerIDs.contains(peerID) {
+                peerNonces.removeValue(forKey: peerID)
+            }
+        } else {
+            peerNonces.removeAll()
+            peers.removeAll()
+        }
         ignoredPeripherals.removeAll()
-        incomingFragments.removeAll()
-        peers.removeAll()
+        if !isLanVisible {
+            incomingFragments.removeAll()
+        }
     }
 
     private func startScanningIfReady() {
@@ -319,7 +387,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func runMaintenance() {
-        guard isVisible else { return }
+        guard isNearbyActive else { return }
         let now = Date()
         pruneStalePeers(now: now)
         if now.timeIntervalSince(lastHelloAt) >= Self.helloInterval {
@@ -432,7 +500,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             "event_json": eventJson
         ]
         if let frame = encodeFrame(envelope), frame.count <= Self.singleFrameBytes {
-            sendFrame(frame, excludingPeerID: excludingPeerID)
+            sendEncodedFrame(frame, excludingPeerID: excludingPeerID)
         } else {
             if let record = IrisNearbyStoredEvent.fromEventJson(eventJson) {
                 sendEventFragments(record, excludingPeerID: excludingPeerID)
@@ -477,8 +545,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func sendEnvelope(_ object: [String: Any], excludingPeerID: String?) {
-        guard isVisible, let frame = encodeFrame(object) else { return }
-        sendFrame(frame, excludingPeerID: excludingPeerID)
+        guard isNearbyActive, let frame = encodeFrame(object) else { return }
+        sendEncodedFrame(frame, excludingPeerID: excludingPeerID)
     }
 
     private func encodeFrame(_ object: [String: Any]) -> Data? {
@@ -501,10 +569,20 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
-    private func sendFrame(_ frame: Data, excludingPeerID: String?) {
+    private func sendEncodedFrame(_ frame: Data, excludingPeerID: String?) {
+        if isLanVisible {
+            lanService?.send(frame, excludingPeerID: excludingPeerID)
+        }
+        sendBluetoothFrame(frame, excludingPeerID: excludingPeerID)
+    }
+
+    private func sendBluetoothFrame(_ frame: Data, excludingPeerID: String?) {
         guard isVisible else { return }
         for (id, characteristic) in writableCharacteristics {
             if let remotePeerID = peerIDByPeripheral[id], remotePeerID == excludingPeerID {
+                continue
+            }
+            if let remotePeerID = peerIDByPeripheral[id], lanService?.hasPeer(remotePeerID) == true {
                 continue
             }
             guard let peripheral = peripherals[id] else { continue }
@@ -512,6 +590,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
         for (id, channel) in subscribedCentrals {
             if let remotePeerID = peerIDByCentral[id], remotePeerID == excludingPeerID {
+                continue
+            }
+            if let remotePeerID = peerIDByCentral[id], lanService?.hasPeer(remotePeerID) == true {
                 continue
             }
             notify(frame, to: channel)
@@ -805,6 +886,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
         NSLog("Iris nearby: expired stale peers \(stalePeerIDs.count)")
     }
 
+    private func removeLanOnlyPeers(_ lanPeerIDs: Set<String>) {
+        let bluetoothPeerIDs = Set(peerIDByPeripheral.values).union(peerIDByCentral.values)
+        peers.removeAll { lanPeerIDs.contains($0.id) && !bluetoothPeerIDs.contains($0.id) }
+        for peerID in lanPeerIDs where !bluetoothPeerIDs.contains(peerID) {
+            peerNonces.removeValue(forKey: peerID)
+        }
+        status = peers.isEmpty ? visibleIdleStatus : sidebarSubtitle
+    }
+
     private func restartScanningAfterPruning() {
         guard isVisible, let centralManager, centralManager.state == .poweredOn else { return }
         centralManager.stopScan()
@@ -825,6 +915,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
             peerIDByPeripheral[peripheral.identifier] = peerID
         case .central(let central):
             peerIDByCentral[central.identifier] = peerID
+        case .lan(let connectionID):
+            lanService?.markPeer(connectionID: connectionID, peerID: peerID)
         }
         let sanitizedProfileEventID = sanitizedEventID(profileEventID)
         let existing = peers.first(where: { $0.id == peerID })
@@ -1254,6 +1346,7 @@ private struct IrisNearbyPeripheralWriteQueue {
 private enum IrisNearbySource {
     case peripheral(CBPeripheral)
     case central(CBCentral)
+    case lan(String)
 }
 
 private struct IrisNearbyStoredEvent {

@@ -48,6 +48,7 @@ fun NearbyIrisSheet(
     appState: AppState,
     service: IrisNearbyService,
     onVisibleChange: (Boolean) -> Unit,
+    onLocalNetworkVisibleChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var tick by remember { mutableIntStateOf(0) }
@@ -100,34 +101,21 @@ fun NearbyIrisSheet(
                         IrisSectionCard(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                                ) {
-                                    val statusText = if (snapshot.visible) snapshot.status else "Off"
-                                    Text(
-                                        text = "Visible",
-                                        style = MaterialTheme.typography.titleMedium,
-                                    )
-                                    if (statusText != "Visible") {
-                                        Text(
-                                            text = statusText,
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            color = IrisTheme.palette.muted,
-                                        )
-                                    }
-                                }
-                                Switch(
-                                    checked = snapshot.visible,
-                                    onCheckedChange = onVisibleChange,
-                                    modifier = Modifier.testTag("nearbyVisibilitySwitch"),
-                                )
-                            }
+                            NearbyTransportRow(
+                                title = "Bluetooth",
+                                status = if (snapshot.visible) snapshot.status else "Off",
+                                checked = snapshot.visible,
+                                onCheckedChange = onVisibleChange,
+                                modifier = Modifier.testTag("nearbyVisibilitySwitch"),
+                            )
+                            IrisDivider()
+                            NearbyTransportRow(
+                                title = "Local network",
+                                status = if (snapshot.localNetworkVisible) snapshot.localNetworkStatus else "Off",
+                                checked = snapshot.localNetworkVisible,
+                                onCheckedChange = onLocalNetworkVisibleChange,
+                                modifier = Modifier.testTag("nearbyLanSwitch"),
+                            )
                         }
                     }
 
@@ -162,6 +150,46 @@ fun NearbyIrisSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NearbyTransportRow(
+    title: String,
+    status: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (status != "Visible") {
+                Text(
+                    text = status,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = IrisTheme.palette.muted,
+                )
+            }
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = modifier,
+        )
     }
 }
 

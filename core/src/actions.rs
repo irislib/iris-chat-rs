@@ -99,6 +99,9 @@ pub enum AppAction {
     SetNearbyBluetoothEnabled {
         enabled: bool,
     },
+    SetNearbyLanEnabled {
+        enabled: bool,
+    },
     AddNostrRelay {
         relay_url: String,
     },

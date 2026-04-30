@@ -63,6 +63,10 @@ import to.iris.chat.ui.screens.WelcomeScreen
 fun NdrApp(
     container: AppContainer,
     onNearbyVisibilityChange: (Boolean) -> Unit = { container.nearbyIrisService.setVisible(it) },
+    onNearbyLanVisibilityChange: (Boolean) -> Unit = { visible ->
+        container.nearbyIrisService.setLocalNetworkVisible(visible)
+        container.appManager.dispatch(AppAction.SetNearbyLanEnabled(visible))
+    },
 ) {
     val appManager = container.appManager
     val splashViewModel = remember { SplashViewModel(appManager) }
@@ -87,6 +91,10 @@ fun NdrApp(
         ) {
             container.nearbyIrisService.setVisible(true)
         }
+    }
+
+    LaunchedEffect(appState.preferences.nearbyLanEnabled) {
+        container.nearbyIrisService.setLocalNetworkVisible(appState.preferences.nearbyLanEnabled)
     }
 
     LaunchedEffect(appState.toast) {
@@ -217,6 +225,8 @@ fun NdrApp(
                                     preferences = appState.preferences,
                                     networkStatus = appState.networkStatus,
                                     bluetoothOnProvider = nearbyBluetoothOnProvider,
+                                    onNearbyBluetoothChange = onNearbyVisibilityChange,
+                                    onNearbyLanChange = onNearbyLanVisibilityChange,
                                     onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },
                                     onLogout = { appManager.logout() },
                                     onDismiss = {
@@ -268,6 +278,7 @@ fun NdrApp(
                     appState = appState,
                     service = container.nearbyIrisService,
                     onVisibleChange = onNearbyVisibilityChange,
+                    onLocalNetworkVisibleChange = onNearbyLanVisibilityChange,
                     onDismiss = { showingNearbyIris = false },
                 )
             }

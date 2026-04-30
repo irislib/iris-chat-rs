@@ -56,6 +56,8 @@ class IrisNearbyService(
         val status: String,
         val bluetoothOn: Boolean,
         val bluetoothPermissionGranted: Boolean,
+        val localNetworkVisible: Boolean,
+        val localNetworkStatus: String,
         val peerCount: Int,
         val peers: List<Peer>,
     )
@@ -73,6 +75,15 @@ class IrisNearbyService(
     private val bluetoothManager = appContext.getSystemService(BluetoothManager::class.java)
     private val adapter: BluetoothAdapter? = bluetoothManager?.adapter
     private val peerId = UUID.randomUUID().toString().lowercase()
+    private val lanService =
+        IrisNearbyLanService(
+            context = appContext,
+            applicationScope = applicationScope,
+            peerId = peerId,
+            frameBodyLength = { header -> appManager.nearbyFrameBodyLenFromHeader(header) },
+            onFrame = { connectionId, frame -> ingestFrame(frame, NearbySource.Lan(connectionId)) },
+            onConnected = { announceToConnectedPeers() },
+        )
     private val ownOutbound = linkedMapOf<String, StoredNearbyEvent>()
     private val forwarded = linkedMapOf<String, StoredNearbyEvent>()
     private val gatts = linkedMapOf<String, BluetoothGatt>()
@@ -91,8 +102,14 @@ class IrisNearbyService(
     private val incomingFragments = linkedMapOf<String, IncomingFragment>()
     private val sendMutex = Mutex()
 
+    private sealed interface NearbySource {
+        data class BluetoothAddress(val address: String?) : NearbySource
+        data class Lan(val connectionId: String) : NearbySource
+    }
+
     private var gattServer: BluetoothGattServer? = null
     private var visible = false
+    private var localNetworkVisible = false
     private var status = "Off"
     private var localNonce = newNonce()
     private var ownProfileEventId: String? = null
@@ -105,6 +122,8 @@ class IrisNearbyService(
                 status = status,
                 bluetoothOn = isBluetoothOn(),
                 bluetoothPermissionGranted = hasBluetoothPermission(),
+                localNetworkVisible = localNetworkVisible,
+                localNetworkStatus = if (localNetworkVisible) lanService.status else "Off",
                 peerCount = peers.size,
                 peers =
                     peers.values
@@ -159,9 +178,35 @@ class IrisNearbyService(
         }
     }
 
+    fun setLocalNetworkVisible(nextVisible: Boolean) {
+        if (localNetworkVisible == nextVisible) {
+            if (localNetworkVisible) {
+                announceToConnectedPeers()
+            }
+            return
+        }
+        localNetworkVisible = nextVisible
+        if (nextVisible) {
+            Log.d(TAG, "local network on")
+            localNonce = newNonce()
+            lanService.start()
+            startMaintenance()
+        } else {
+            Log.d(TAG, "local network off")
+            val lanPeerIds = lanService.peerIds()
+            lanService.stop()
+            removeLanOnlyPeers(lanPeerIds)
+            if (!nearbyActive()) {
+                stopMaintenance()
+            }
+        }
+    }
+
     fun toggleVisible() {
         setVisible(!visible)
     }
+
+    private fun nearbyActive(): Boolean = visible || localNetworkVisible
 
     private inline fun <T> guardBluetooth(
         operation: String,
@@ -224,8 +269,8 @@ class IrisNearbyService(
             }
         }
         pruneMailbags()
-        Log.d(TAG, "published event kind=${record.kind} id=${record.id} visible=$visible")
-        if (visible) {
+        Log.d(TAG, "published event kind=${record.kind} id=${record.id} visible=${nearbyActive()}")
+        if (nearbyActive()) {
             if (record.kind == 0L) {
                 sendHello(excludingPeerId = null)
             }
@@ -257,7 +302,9 @@ class IrisNearbyService(
     @SuppressLint("MissingPermission")
     private fun stop() {
         status = "Off"
-        stopMaintenance()
+        if (!localNetworkVisible) {
+            stopMaintenance()
+        }
         guardBluetooth("stop scan", Unit, statusOnFailure = null) {
             adapter?.bluetoothLeScanner?.stopScan(scanCallback)
         }
@@ -273,8 +320,20 @@ class IrisNearbyService(
         writableCharacteristics.clear()
         centralAssemblers.clear()
         serverAssemblers.clear()
+        val bluetoothPeerIds = peerIdsByAddress.values.toSet()
         peerIdsByAddress.clear()
-        peerNonces.clear()
+        if (localNetworkVisible) {
+            val lanPeerIds = lanService.peerIds()
+            bluetoothPeerIds
+                .filterNot { lanPeerIds.contains(it) }
+                .forEach { peerId ->
+                    peers.remove(peerId)
+                    peerNonces.remove(peerId)
+                }
+        } else {
+            peerNonces.clear()
+            peers.clear()
+        }
         mtuPayloadBytes.clear()
         subscribedServerAddresses.clear()
         pendingGattWrites.values.forEach { it.complete(BluetoothGatt.GATT_FAILURE) }
@@ -282,8 +341,9 @@ class IrisNearbyService(
         pendingNotifications.values.forEach { it.complete(BluetoothGatt.GATT_FAILURE) }
         pendingNotifications.clear()
         ignoredAddresses.clear()
-        incomingFragments.clear()
-        peers.clear()
+        if (!localNetworkVisible) {
+            incomingFragments.clear()
+        }
         guardBluetooth("close GATT server", Unit, statusOnFailure = null) {
             gattServer?.close()
         }
@@ -404,8 +464,10 @@ class IrisNearbyService(
         centralAssemblers.remove(address)
         mtuPayloadBytes.remove(address)
         peerIdsByAddress.remove(address)?.let {
-            peers.remove(it)
-            peerNonces.remove(it)
+            if (!lanService.hasPeer(it)) {
+                peers.remove(it)
+                peerNonces.remove(it)
+            }
         }
         guardBluetooth("close non-Iris GATT", Unit, statusOnFailure = null) {
             gatt.close()
@@ -437,7 +499,7 @@ class IrisNearbyService(
         maintenanceJob =
             applicationScope.launch {
                 var lastHelloMillis = 0L
-                while (visible) {
+                while (nearbyActive()) {
                     val nowMillis = System.currentTimeMillis()
                     pruneStalePeers(nowMillis)
                     if (nowMillis - lastHelloMillis >= HELLO_INTERVAL_MS) {
@@ -562,17 +624,13 @@ class IrisNearbyService(
             return
         }
         Log.d(TAG, "send event_frag count=${frames.size} event=${record.id} peers=${peers.size}")
-        launchBluetooth("send event fragments") {
-            sendMutex.withLock {
-                frames.forEach { frame ->
-                    sendFrame(frame, excludingPeerId)
-                }
-            }
+        frames.forEach { frame ->
+            sendFrame("event_frag", frame, excludingPeerId)
         }
     }
 
     private fun sendEnvelope(envelope: JSONObject, excludingPeerId: String?) {
-        if (!visible) {
+        if (!nearbyActive()) {
             return
         }
         val type = envelope.optString("type", "unknown")
@@ -581,19 +639,25 @@ class IrisNearbyService(
     }
 
     private fun sendFrame(type: String, frame: ByteArray, excludingPeerId: String?) {
-        if (!visible) {
+        if (!nearbyActive()) {
             return
         }
         Log.d(TAG, "send $type bytes=${frame.size} peers=${peers.size}")
+        if (localNetworkVisible) {
+            lanService.send(frame, excludingPeerId)
+        }
+        if (!visible) {
+            return
+        }
         launchBluetooth("send frame") {
             sendMutex.withLock {
-                sendFrame(frame, excludingPeerId)
+                sendBluetoothFrame(frame, excludingPeerId)
             }
         }
     }
 
     @SuppressLint("MissingPermission")
-    private suspend fun sendFrame(frame: ByteArray, excludingPeerId: String?) {
+    private suspend fun sendBluetoothFrame(frame: ByteArray, excludingPeerId: String?) {
         gattServer?.let { server ->
             val characteristic =
                 server.getService(SERVICE_UUID)?.getCharacteristic(CHARACTERISTIC_UUID) ?: return@let
@@ -614,6 +678,11 @@ class IrisNearbyService(
                 if (peerIdsByAddress[address] == excludingPeerId) {
                     return@forEach
                 }
+                peerIdsByAddress[address]?.let { remotePeerId ->
+                    if (lanService.hasPeer(remotePeerId)) {
+                        return@forEach
+                    }
+                }
                 notifyDevice(server, device, characteristic, frame)
             }
         }
@@ -621,6 +690,11 @@ class IrisNearbyService(
         writableCharacteristics.toList().forEach { (address, characteristic) ->
             if (peerIdsByAddress[address] == excludingPeerId) {
                 return@forEach
+            }
+            peerIdsByAddress[address]?.let { remotePeerId ->
+                if (lanService.hasPeer(remotePeerId)) {
+                    return@forEach
+                }
             }
             val gatt = gatts[address] ?: return@forEach
             if (!writeToGatt(gatt, characteristic, frame)) {
@@ -731,8 +805,10 @@ class IrisNearbyService(
         serverAssemblers.remove(address)
         mtuPayloadBytes.remove(address)
         peerIdsByAddress.remove(address)?.let {
-            peers.remove(it)
-            peerNonces.remove(it)
+            if (!lanService.hasPeer(it)) {
+                peers.remove(it)
+                peerNonces.remove(it)
+            }
         }
         status = if (peers.isEmpty()) "Visible" else "${peers.size} nearby"
     }
@@ -755,7 +831,7 @@ class IrisNearbyService(
         }
     }
 
-    private fun ingestFrame(frame: ByteArray, address: String?) {
+    private fun ingestFrame(frame: ByteArray, source: NearbySource) {
         val envelope = appManager.decodeNearbyFrame(frame) ?: return
         val type = envelope.optString("type")
         val remotePeerId = envelope.optString("peer_id").trim()
@@ -768,8 +844,11 @@ class IrisNearbyService(
         when (type) {
             "hello" -> {
                 if (remotePeerId.isNotEmpty()) {
-                    if (address != null) {
-                        peerIdsByAddress[address] = remotePeerId
+                    when (source) {
+                        is NearbySource.BluetoothAddress ->
+                            source.address?.let { peerIdsByAddress[it] = remotePeerId }
+                        is NearbySource.Lan ->
+                            lanService.markPeer(source.connectionId, remotePeerId)
                     }
                     val remoteNonce = envelope.optString("nonce").sanitizedNonce()
                     val previousNonce = peerNonces[remotePeerId]
@@ -972,6 +1051,21 @@ class IrisNearbyService(
         Log.d(TAG, "expired stale peers count=${stalePeerIds.size}")
     }
 
+    private fun removeLanOnlyPeers(lanPeerIds: Set<String>) {
+        if (lanPeerIds.isEmpty()) {
+            return
+        }
+        val bluetoothPeerIds = peerIdsByAddress.values.toSet()
+        lanPeerIds
+            .filterNot { bluetoothPeerIds.contains(it) }
+            .forEach { peerId ->
+                peers.remove(peerId)
+                peerNonces.remove(peerId)
+            }
+        pruneKnownProfiles()
+        status = nearbyStatusWhenVisible()
+    }
+
     private fun touchPeer(peerId: String) {
         val existing = peers[peerId] ?: return
         peers[peerId] = existing.copy(lastSeenMillis = System.currentTimeMillis())
@@ -981,6 +1075,7 @@ class IrisNearbyService(
         when {
             peers.size == 1 -> "1 nearby"
             peers.size > 1 -> "${peers.size} nearby"
+            localNetworkVisible && !visible -> "Visible"
             !hasBluetoothPermissions() -> "No Bluetooth access"
             isBluetoothOn() -> "Visible"
             else -> "Bluetooth off"
@@ -1425,7 +1520,7 @@ class IrisNearbyService(
     ) {
         val assembler = assemblers.getOrPut(address) { newFrameAssembler() }
         assembler.append(chunk).forEach { frame ->
-            ingestFrame(frame, address)
+            ingestFrame(frame, NearbySource.BluetoothAddress(address))
         }
     }
 

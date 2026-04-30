@@ -39,6 +39,12 @@
   <string>Find and message nearby people.</string>
   <key>NSBluetoothPeripheralUsageDescription</key>
   <string>Find and message nearby people.</string>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Find and message nearby people.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_iris-chat._tcp</string>
+  </array>
   <key>NSCameraUsageDescription</key>
   <string>Scan codes to link devices and add members.</string>
   <key>NSPhotoLibraryUsageDescription</key>

@@ -1098,6 +1098,12 @@ fn nearby_bluetooth_defaults_to_disabled() {
 }
 
 #[test]
+fn nearby_lan_defaults_to_disabled() {
+    assert!(!PersistedPreferences::default().nearby_lan_enabled);
+    assert!(!AppState::empty().preferences.nearby_lan_enabled);
+}
+
+#[test]
 fn app_keys_device_projection_is_deterministic() {
     let owner = Keys::generate().public_key();
     let device_a = Keys::generate().public_key();
@@ -2743,6 +2749,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
         core.seen_event_ids = core.seen_event_order.iter().cloned().collect();
         core.preferences.send_typing_indicators = true;
         core.preferences.nearby_bluetooth_enabled = true;
+        core.preferences.nearby_lan_enabled = true;
 
         core.persist_best_effort_inner();
     }
@@ -2763,6 +2770,7 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
     assert_eq!(loaded.active_chat_id.as_deref(), Some(chat_id.as_str()));
     assert!(loaded.preferences.send_typing_indicators);
     assert!(loaded.preferences.nearby_bluetooth_enabled);
+    assert!(loaded.preferences.nearby_lan_enabled);
     assert_eq!(loaded.threads.len(), 2);
     let dm_thread = loaded
         .threads

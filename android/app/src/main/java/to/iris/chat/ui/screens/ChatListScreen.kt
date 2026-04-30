@@ -166,7 +166,7 @@ fun ChatListScreen(
                             preview = nearbyPreview(nearbySnapshot),
                             timeLabel = null,
                             leadingContent = {
-                                NearbyChatIcon(visible = nearbySnapshot.visible)
+                                NearbyChatIcon(visible = nearbySnapshot.visible || nearbySnapshot.localNetworkVisible)
                             },
                             unreadCount = 0,
                             lastMessageMine = false,
@@ -402,10 +402,11 @@ private fun ChatSwipeActionButton(
 
 private fun nearbyPreview(snapshot: IrisNearbyService.Snapshot): String =
     when {
-        !snapshot.visible && !snapshot.bluetoothPermissionGranted -> "Click to enable"
-        !snapshot.visible -> "Off"
         snapshot.peers.isNotEmpty() -> nearbyPeerSummary(snapshot.peers)
-        snapshot.status in nearbyBlockingStatuses -> snapshot.status
+        !snapshot.visible && !snapshot.localNetworkVisible && !snapshot.bluetoothPermissionGranted -> "Click to enable"
+        !snapshot.visible && !snapshot.localNetworkVisible -> "Off"
+        snapshot.localNetworkVisible && snapshot.localNetworkStatus in nearbyLanBlockingStatuses -> snapshot.localNetworkStatus
+        !snapshot.localNetworkVisible && snapshot.status in nearbyBlockingStatuses -> snapshot.status
         else -> "No users nearby"
     }
 
@@ -432,6 +433,12 @@ private val nearbyBlockingStatuses =
         "Advertise failed",
         "Scan failed",
         "Connect failed",
+    )
+
+private val nearbyLanBlockingStatuses =
+    setOf(
+        "Local network unavailable",
+        "Local network failed",
     )
 
 @Composable

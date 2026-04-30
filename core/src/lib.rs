@@ -291,8 +291,9 @@ fn verify_nearby_presence_event_json(
             .and_then(|value| value.as_str())
             .unwrap_or("")
     };
+    let transport = get("transport");
     if get("protocol") != "iris-nearby-v1"
-        || get("transport") != "ble"
+        || !(transport == "ble" || transport == "nearby" || transport == "lan")
         || get("peer_id") != peer_id.trim()
         || get("my_nonce") != their_nonce.trim()
         || get("their_nonce") != my_nonce.trim()

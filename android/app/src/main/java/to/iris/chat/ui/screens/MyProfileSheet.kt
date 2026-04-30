@@ -102,6 +102,8 @@ fun MyProfileSheet(
     preferences: PreferencesSnapshot,
     networkStatus: NetworkStatusSnapshot?,
     bluetoothOnProvider: () -> Boolean,
+    onNearbyBluetoothChange: (Boolean) -> Unit,
+    onNearbyLanChange: (Boolean) -> Unit,
     onManageDevices: () -> Unit,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
@@ -405,6 +407,43 @@ fun MyProfileSheet(
 
             IrisSectionCard {
                 Text(
+                    text = "Nearby",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Bluetooth",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Switch(
+                        checked = preferences.nearbyBluetoothEnabled,
+                        onCheckedChange = onNearbyBluetoothChange,
+                        modifier = Modifier.testTag("myProfileNearbyBluetoothSwitch"),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Local network",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Switch(
+                        checked = preferences.nearbyLanEnabled,
+                        onCheckedChange = onNearbyLanChange,
+                        modifier = Modifier.testTag("myProfileNearbyLanSwitch"),
+                    )
+                }
+            }
+
+            IrisSectionCard {
+                Text(
                     text = "Notifications",
                     style = MaterialTheme.typography.titleMedium,
                 )
@@ -691,6 +730,12 @@ fun MyProfileSheet(
                     style = MaterialTheme.typography.bodySmall,
                     color = IrisTheme.palette.muted,
                     modifier = Modifier.testTag("myProfileBluetoothStatusValue"),
+                )
+                Text(
+                    text = "Local network ${if (preferences.nearbyLanEnabled) "on" else "off"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = IrisTheme.palette.muted,
+                    modifier = Modifier.testTag("myProfileLanStatusValue"),
                 )
                 if (canShareSupport) {
                     IrisPrimaryButton(
