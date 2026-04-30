@@ -92,6 +92,8 @@ struct RootView: View {
                 } else {
                     NavigationShell(
                         title: screenTitle(manager.activeScreen),
+                        subtitle: chatHeaderSubtitle,
+                        subtitleSystemImage: chatHeaderSubtitleSystemImage,
                         canGoBack: manager.canNavigateBack,
                         onBack: manager.navigateBack,
                         backBadgeCount: backUnreadCount,
@@ -288,6 +290,19 @@ struct RootView: View {
         }
     }
 
+    private var chatHeaderSubtitle: String? {
+        guard case .chat = manager.activeScreen,
+              let chat = manager.state.currentChat,
+              chat.isMuted else {
+            return nil
+        }
+        return "muted"
+    }
+
+    private var chatHeaderSubtitleSystemImage: String? {
+        chatHeaderSubtitle == nil ? nil : "bell.slash.fill"
+    }
+
     private var offlineBanner: AnyView {
 #if os(iOS)
         AnyView(
@@ -469,6 +484,8 @@ private struct ShareTargetSheet: View {
 
 struct NavigationShell<Content: View>: View {
     let title: String
+    let subtitle: String?
+    let subtitleSystemImage: String?
     let canGoBack: Bool
     let onBack: () -> Void
     let backBadgeCount: UInt64
@@ -481,6 +498,8 @@ struct NavigationShell<Content: View>: View {
 
     init(
         title: String,
+        subtitle: String? = nil,
+        subtitleSystemImage: String? = nil,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
         backBadgeCount: UInt64 = 0,
@@ -492,6 +511,8 @@ struct NavigationShell<Content: View>: View {
         @ViewBuilder content: @escaping () -> Content
     ) {
         self.title = title
+        self.subtitle = subtitle
+        self.subtitleSystemImage = subtitleSystemImage
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.backBadgeCount = backBadgeCount
@@ -507,6 +528,8 @@ struct NavigationShell<Content: View>: View {
         VStack(spacing: 0) {
             IrisTopBar(
                 title: title,
+                subtitle: subtitle,
+                subtitleSystemImage: subtitleSystemImage,
                 canGoBack: canGoBack,
                 onBack: onBack,
                 backBadgeCount: backBadgeCount,
@@ -645,7 +668,8 @@ private struct DesktopChatShell: View {
             let chat = manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
             DesktopPaneTopBar(
                 title: chat?.displayName ?? "Chat",
-                subtitle: chat?.subtitle,
+                subtitle: chat?.isMuted == true ? "muted" : chat?.subtitle,
+                subtitleSystemImage: chat?.isMuted == true ? "bell.slash.fill" : nil,
                 onTitleTap: chat.map { current in
                     {
                         if let groupId = current.groupId {
@@ -697,6 +721,7 @@ private struct DesktopPaneTopBar: View {
 
     let title: String
     let subtitle: String?
+    let subtitleSystemImage: String?
     let canGoBack: Bool
     let onBack: () -> Void
     let onTitleTap: (() -> Void)?
@@ -706,6 +731,7 @@ private struct DesktopPaneTopBar: View {
     init(
         title: String,
         subtitle: String? = nil,
+        subtitleSystemImage: String? = nil,
         canGoBack: Bool = false,
         onBack: @escaping () -> Void = {},
         onTitleTap: (() -> Void)? = nil,
@@ -714,6 +740,7 @@ private struct DesktopPaneTopBar: View {
     ) {
         self.title = title
         self.subtitle = subtitle
+        self.subtitleSystemImage = subtitleSystemImage
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.onTitleTap = onTitleTap
@@ -733,10 +760,17 @@ private struct DesktopPaneTopBar: View {
                     .lineLimit(1)
 
                 if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(.system(.caption, design: .rounded))
-                        .foregroundStyle(palette.muted)
-                        .lineLimit(1)
+                    HStack(spacing: 4) {
+                        if let subtitleSystemImage {
+                            Image(systemName: subtitleSystemImage)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+
+                        Text(subtitle)
+                            .font(.system(.caption, design: .rounded))
+                    }
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
                 }
             }
         }
@@ -1016,10 +1050,20 @@ private struct DesktopSidebarChatRow: View {
 
                 VStack(alignment: .leading, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(chat.displayName)
-                            .font(.system(.headline, design: .rounded, weight: chat.unreadCount > 0 ? .bold : .semibold))
-                            .foregroundStyle(palette.textPrimary)
-                            .lineLimit(1)
+                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                            Text(chat.displayName)
+                                .font(.system(.headline, design: .rounded, weight: chat.unreadCount > 0 ? .bold : .semibold))
+                                .foregroundStyle(palette.textPrimary)
+                                .lineLimit(1)
+
+                            if chat.isMuted {
+                                Image(systemName: "bell.slash.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(palette.muted)
+                                    .accessibilityLabel("muted")
+                            }
+                        }
+                        .layoutPriority(1)
 
                         Spacer(minLength: 8)
 
@@ -1622,6 +1666,7 @@ private struct ChatListRowContainer: View {
     private var chatRow: some View {
         IrisChatRow(
             title: chat.displayName,
+            isMuted: chat.isMuted,
             preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
             subtitle: nil,
             timeLabel: timeLabel,

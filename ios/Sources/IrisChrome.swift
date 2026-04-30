@@ -129,6 +129,8 @@ struct IrisTopBar: View {
     @Environment(\.irisPalette) private var palette
 
     let title: String
+    let subtitle: String?
+    let subtitleSystemImage: String?
     let canGoBack: Bool
     let onBack: () -> Void
     let backBadgeCount: UInt64
@@ -139,6 +141,8 @@ struct IrisTopBar: View {
 
     init(
         title: String,
+        subtitle: String? = nil,
+        subtitleSystemImage: String? = nil,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
         backBadgeCount: UInt64 = 0,
@@ -148,6 +152,8 @@ struct IrisTopBar: View {
         onTitleTap: (() -> Void)? = nil
     ) {
         self.title = title
+        self.subtitle = subtitle
+        self.subtitleSystemImage = subtitleSystemImage
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.backBadgeCount = backBadgeCount
@@ -161,10 +167,26 @@ struct IrisTopBar: View {
     private var titleContent: some View {
         HStack(spacing: 8) {
             titleAccessoryLeading
-            Text(title)
-                .font(.system(.title3, design: .rounded, weight: .bold))
-                .lineLimit(1)
-                .foregroundStyle(palette.textPrimary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .lineLimit(1)
+                    .foregroundStyle(palette.textPrimary)
+
+                if let subtitle, !subtitle.isEmpty {
+                    HStack(spacing: 4) {
+                        if let subtitleSystemImage {
+                            Image(systemName: subtitleSystemImage)
+                                .font(.system(size: 10, weight: .semibold))
+                        }
+
+                        Text(subtitle)
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                    }
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
+                }
+            }
         }
     }
 
@@ -751,6 +773,7 @@ struct IrisChatRow: View {
     @Environment(\.irisPalette) private var palette
 
     let title: String
+    let isMuted: Bool
     let preview: String
     let subtitle: String?
     let timeLabel: String?
@@ -762,6 +785,7 @@ struct IrisChatRow: View {
 
     init(
         title: String,
+        isMuted: Bool = false,
         preview: String,
         subtitle: String?,
         timeLabel: String?,
@@ -772,6 +796,7 @@ struct IrisChatRow: View {
         onTap: @escaping () -> Void
     ) {
         self.title = title
+        self.isMuted = isMuted
         self.preview = preview
         self.subtitle = subtitle
         self.timeLabel = timeLabel
@@ -795,10 +820,20 @@ struct IrisChatRow: View {
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(title)
-                            .font(.system(.headline, design: .rounded, weight: .semibold))
-                            .foregroundStyle(palette.textPrimary)
-                            .lineLimit(1)
+                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                            Text(title)
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(palette.textPrimary)
+                                .lineLimit(1)
+
+                            if isMuted {
+                                Image(systemName: "bell.slash.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(palette.muted)
+                                    .accessibilityLabel("muted")
+                            }
+                        }
+                        .layoutPriority(1)
 
                         Spacer(minLength: 8)
 
