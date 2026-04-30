@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 4;
+const SCHEMA_VERSION: u32 = 5;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS preferences (
     desktop_notifications_enabled INTEGER NOT NULL,
     invite_acceptance_notifications_enabled INTEGER NOT NULL DEFAULT 1,
     startup_at_login_enabled INTEGER NOT NULL,
+    nearby_bluetooth_enabled INTEGER NOT NULL DEFAULT 0,
     nostr_relay_urls_json TEXT NOT NULL,
     image_proxy_enabled INTEGER NOT NULL,
     image_proxy_url TEXT NOT NULL,
@@ -155,6 +156,26 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             tx.execute_batch(
                 "ALTER TABLE preferences
                  ADD COLUMN muted_chat_ids_json TEXT NOT NULL DEFAULT '[]';",
+            )?;
+        }
+    }
+    if current < 5 {
+        let has_column = {
+            let mut stmt = tx.prepare("PRAGMA table_info(preferences)")?;
+            let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+            let mut found = false;
+            for row in rows {
+                if row? == "nearby_bluetooth_enabled" {
+                    found = true;
+                    break;
+                }
+            }
+            found
+        };
+        if !has_column {
+            tx.execute_batch(
+                "ALTER TABLE preferences
+                 ADD COLUMN nearby_bluetooth_enabled INTEGER NOT NULL DEFAULT 0;",
             )?;
         }
     }

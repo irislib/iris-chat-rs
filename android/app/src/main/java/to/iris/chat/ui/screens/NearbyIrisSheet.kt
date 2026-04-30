@@ -52,7 +52,6 @@ fun NearbyIrisSheet(
 ) {
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(service) {
-        onVisibleChange(true)
         while (true) {
             delay(1_000L)
             tick += 1

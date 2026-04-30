@@ -80,6 +80,15 @@ fun NdrApp(
         showingNearbyIris = true
     }
 
+    LaunchedEffect(appState.preferences.nearbyBluetoothEnabled) {
+        if (
+            appState.preferences.nearbyBluetoothEnabled &&
+                container.nearbyIrisService.hasBluetoothPermission()
+        ) {
+            container.nearbyIrisService.setVisible(true)
+        }
+    }
+
     LaunchedEffect(appState.toast) {
         val message = appState.toast ?: return@LaunchedEffect
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()

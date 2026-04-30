@@ -70,13 +70,27 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     var sidebarSubtitle: String {
         if !isVisible {
-            return "Click to enable"
+            if shouldShowBluetoothPermissionPrompt {
+                return "Click to enable"
+            }
+            if !bluetoothPermissionGranted {
+                return "No Bluetooth access"
+            }
+            return "Off"
         }
         if !peers.isEmpty {
             return Self.nearbySummary(for: peers)
         }
         if Self.isBlockingStatus(status) { return status }
         return "No users nearby"
+    }
+
+    var shouldShowBluetoothPermissionPrompt: Bool {
+        CBManager.authorization == .notDetermined
+    }
+
+    var bluetoothPermissionGranted: Bool {
+        CBManager.authorization == .allowedAlways
     }
 
     var isBluetoothOn: Bool {

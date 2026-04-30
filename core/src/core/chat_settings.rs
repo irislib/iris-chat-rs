@@ -163,6 +163,16 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn set_nearby_bluetooth_enabled(&mut self, enabled: bool) {
+        if self.preferences.nearby_bluetooth_enabled == enabled {
+            return;
+        }
+        self.preferences.nearby_bluetooth_enabled = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn add_nostr_relay(&mut self, relay_url: &str) {
         let normalized = match normalize_nostr_relay_url(relay_url) {
             Ok(url) => url,

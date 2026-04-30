@@ -55,6 +55,7 @@ class IrisNearbyService(
         val visible: Boolean,
         val status: String,
         val bluetoothOn: Boolean,
+        val bluetoothPermissionGranted: Boolean,
         val peerCount: Int,
         val peers: List<Peer>,
     )
@@ -103,11 +104,17 @@ class IrisNearbyService(
                 visible = visible,
                 status = status,
                 bluetoothOn = isBluetoothOn(),
+                bluetoothPermissionGranted = hasBluetoothPermission(),
                 peerCount = peers.size,
                 peers =
                     peers.values
                         .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id }),
             )
+
+    fun hasBluetoothPermission(): Boolean =
+        nearbyPermissions().all {
+            ContextCompat.checkSelfPermission(appContext, it) == PackageManager.PERMISSION_GRANTED
+        }
 
     private fun isBluetoothOn(): Boolean =
         try {
@@ -121,6 +128,17 @@ class IrisNearbyService(
             }
         } catch (_: SecurityException) {
             false
+        }
+
+    private fun nearbyPermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_CONNECT,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+            )
+        } else {
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
     fun setVisible(nextVisible: Boolean) {

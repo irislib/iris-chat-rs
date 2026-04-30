@@ -259,6 +259,9 @@ impl AppCore {
             AppAction::SetStartupAtLoginEnabled { enabled } => {
                 self.set_startup_at_login_enabled(enabled)
             }
+            AppAction::SetNearbyBluetoothEnabled { enabled } => {
+                self.set_nearby_bluetooth_enabled(enabled)
+            }
             AppAction::AddNostrRelay { relay_url } => self.add_nostr_relay(&relay_url),
             AppAction::UpdateNostrRelay {
                 old_relay_url,

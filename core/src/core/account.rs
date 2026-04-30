@@ -464,6 +464,8 @@ impl AppCore {
                 .invite_acceptance_notifications_enabled;
             self.preferences.startup_at_login_enabled =
                 persisted.preferences.startup_at_login_enabled;
+            self.preferences.nearby_bluetooth_enabled =
+                persisted.preferences.nearby_bluetooth_enabled;
             self.preferences.nostr_relay_urls =
                 normalize_nostr_relay_urls(&persisted.preferences.nostr_relay_urls);
             self.preferences.image_proxy_enabled = persisted.preferences.image_proxy_enabled;

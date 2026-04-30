@@ -402,7 +402,8 @@ private fun ChatSwipeActionButton(
 
 private fun nearbyPreview(snapshot: IrisNearbyService.Snapshot): String =
     when {
-        !snapshot.visible -> "Click to enable"
+        !snapshot.visible && !snapshot.bluetoothPermissionGranted -> "Click to enable"
+        !snapshot.visible -> "Off"
         snapshot.peers.isNotEmpty() -> nearbyPeerSummary(snapshot.peers)
         snapshot.status in nearbyBlockingStatuses -> snapshot.status
         else -> "No users nearby"

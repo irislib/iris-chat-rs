@@ -489,6 +489,9 @@ final class AppManager: ObservableObject {
         nearbyIris.frameBodyLength = { [weak self] header in
             self?.rust.nearbyFrameBodyLenFromHeader(header: header) ?? -1
         }
+        if initialState.preferences.nearbyBluetoothEnabled, nearbyIris.bluetoothPermissionGranted {
+            nearbyIris.setVisible(true)
+        }
 #endif
 
         Task {
@@ -831,9 +834,21 @@ final class AppManager: ObservableObject {
         }
     }
 
+    func setNearbyBluetoothEnabled(_ enabled: Bool) {
+#if os(iOS) || os(macOS)
+        nearbyIris.setVisible(enabled)
+        dispatchToRust(.setNearbyBluetoothEnabled(enabled: enabled))
+#endif
+    }
+
     func appForegrounded() {
         dispatchToRust(.appForegrounded)
 #if os(iOS) || os(macOS)
+        if state.preferences.nearbyBluetoothEnabled,
+           !nearbyIris.isVisible,
+           nearbyIris.bluetoothPermissionGranted {
+            nearbyIris.setVisible(true)
+        }
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
 #endif
     }
@@ -1158,9 +1173,13 @@ final class AppManager: ObservableObject {
             guard nextState.rev > lastRevApplied else {
                 return
             }
+            let oldState = state
             lastRevApplied = nextState.rev
-            postDesktopNotifications(from: state, to: nextState)
+            postDesktopNotifications(from: oldState, to: nextState)
             state = nextState
+#if os(iOS) || os(macOS)
+            syncNearbyBluetoothPreference(from: oldState, to: nextState)
+#endif
 #if os(iOS)
             shareSuggestionDonor.syncRecentChats(nextState.chatList)
             mobilePushRuntime.sync(state: nextState, ownerNsec: secretStore.load()?.ownerNsec)
@@ -1188,6 +1207,20 @@ final class AppManager: ObservableObject {
             )
         )
     }
+
+#if os(iOS) || os(macOS)
+    private func syncNearbyBluetoothPreference(from oldState: AppState, to nextState: AppState) {
+        let wasEnabled = oldState.preferences.nearbyBluetoothEnabled
+        let isEnabled = nextState.preferences.nearbyBluetoothEnabled
+        if isEnabled {
+            if !nearbyIris.isVisible, nearbyIris.bluetoothPermissionGranted {
+                nearbyIris.setVisible(true)
+            }
+        } else if wasEnabled, nearbyIris.isVisible {
+            nearbyIris.setVisible(false)
+        }
+    }
+#endif
 
     @discardableResult
     private func dispatchToRust(

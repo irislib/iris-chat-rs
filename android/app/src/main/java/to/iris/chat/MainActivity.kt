@@ -35,6 +35,8 @@ class MainActivity : ComponentActivity() {
             pendingNearbyPermissionAction = null
             if (action != null && grants.isNotEmpty() && grants.values.all { it }) {
                 action()
+            } else if (action != null) {
+                container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
             }
         }
 
@@ -65,6 +67,7 @@ class MainActivity : ComponentActivity() {
         Log.d(TAG, "onStart")
         requestNotificationPermissionIfNeeded()
         container.appManager.appForegrounded()
+        restoreNearbyVisibilityPreference()
     }
 
     override fun onStop() {
@@ -243,10 +246,12 @@ class MainActivity : ComponentActivity() {
     private fun setNearbyVisible(visible: Boolean) {
         if (!visible) {
             container.nearbyIrisService.setVisible(false)
+            container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
             return
         }
         requestNearbyPermissionIfNeeded {
             container.nearbyIrisService.setVisible(true)
+            container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(true))
         }
     }
 
@@ -277,5 +282,15 @@ class MainActivity : ComponentActivity() {
         }
         pendingNearbyPermissionAction = onGranted
         nearbyPermissionLauncher.launch(missing.toTypedArray())
+    }
+
+    private fun restoreNearbyVisibilityPreference() {
+        if (!container.appManager.state.value.preferences.nearbyBluetoothEnabled) {
+            return
+        }
+        if (!container.nearbyIrisService.hasBluetoothPermission()) {
+            return
+        }
+        container.nearbyIrisService.setVisible(true)
     }
 }

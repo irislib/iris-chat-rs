@@ -96,6 +96,9 @@ pub enum AppAction {
     SetStartupAtLoginEnabled {
         enabled: bool,
     },
+    SetNearbyBluetoothEnabled {
+        enabled: bool,
+    },
     AddNostrRelay {
         relay_url: String,
     },

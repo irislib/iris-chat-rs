@@ -346,7 +346,6 @@ struct RootView: View {
 
     private func openNearbyIris() {
 #if os(iOS) || os(macOS)
-        manager.nearbyIris.setVisible(true)
         showingNearbyIris = true
 #endif
     }
@@ -1013,7 +1012,6 @@ private struct DesktopNearbyIrisRow: View {
             systemImage: "dot.radiowaves.left.and.right",
             selected: false
         ) {
-            service.setVisible(true)
             onOpen()
         }
     }
@@ -1886,7 +1884,6 @@ private struct NearbyChatListRow: View {
             preferences: manager.state.preferences,
             manager: manager,
             onTap: {
-                service.setVisible(true)
                 onOpen()
             }
         )
@@ -1915,11 +1912,18 @@ private struct NearbyIrisScreen: View {
                         .foregroundStyle(palette.muted)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    Button("Click to enable") {
-                        service.setVisible(true)
+                    if service.shouldShowBluetoothPermissionPrompt {
+                        Button("Click to enable") {
+                            manager.setNearbyBluetoothEnabled(true)
+                        }
+                        .buttonStyle(IrisPrimaryButtonStyle())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        Text(service.sidebarSubtitle)
+                            .font(.system(.body, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                    .buttonStyle(IrisPrimaryButtonStyle())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
                 peerStrip
@@ -1927,9 +1931,6 @@ private struct NearbyIrisScreen: View {
             }
         }
         .background(palette.background)
-        .onAppear {
-            service.setVisible(true)
-        }
     }
 
     private var header: some View {
@@ -1964,7 +1965,7 @@ private struct NearbyIrisScreen: View {
     private var visibilityBinding: Binding<Bool> {
         Binding(
             get: { service.isVisible },
-            set: { service.setVisible($0) }
+            set: { manager.setNearbyBluetoothEnabled($0) }
         )
     }
 
