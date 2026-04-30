@@ -36,6 +36,8 @@ Environment:
   IRIS_TESTFLIGHT_WHATS_NEW       optional "What to Test" text
   IRIS_TESTFLIGHT_WAIT_ATTEMPTS   default 20
   IRIS_TESTFLIGHT_WAIT_SECONDS    default 30
+  IRIS_ASC_API_IP                 optional api.appstoreconnect.apple.com IP override
+  IRIS_ASC_TLS_MAX                optional TLS cap, for example 1.2
 EOF
 }
 
@@ -68,6 +70,8 @@ python3 <<'PY'
 import base64
 import json
 import os
+import socket
+import ssl
 import sys
 import time
 import urllib.error
@@ -133,6 +137,23 @@ def create_token():
 
 
 TOKEN = create_token()
+ASC_API_HOST = "api.appstoreconnect.apple.com"
+ASC_API_IP = os.environ.get("IRIS_ASC_API_IP", "").strip()
+ASC_TLS_MAX = os.environ.get("IRIS_ASC_TLS_MAX", "").strip()
+
+if ASC_API_IP:
+    original_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo_override(host, port, *args, **kwargs):
+        if host == ASC_API_HOST:
+            return original_getaddrinfo(ASC_API_IP, port, *args, **kwargs)
+        return original_getaddrinfo(host, port, *args, **kwargs)
+
+    socket.getaddrinfo = getaddrinfo_override
+
+SSL_CONTEXT = ssl.create_default_context()
+if ASC_TLS_MAX in {"1.2", "TLS1.2", "TLSv1.2"}:
+    SSL_CONTEXT.maximum_version = ssl.TLSVersion.TLSv1_2
 
 
 def request(method, path_or_url, params=None, body=None):
@@ -154,7 +175,7 @@ def request(method, path_or_url, params=None, body=None):
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as response:
+        with urllib.request.urlopen(req, timeout=30, context=SSL_CONTEXT) as response:
             raw = response.read().decode("utf-8")
             return response.status, json.loads(raw) if raw else {}
     except urllib.error.HTTPError as error:
