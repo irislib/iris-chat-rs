@@ -267,9 +267,16 @@ pub struct GroupDetailsSnapshot {
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct RelayConnectionSnapshot {
+    pub url: String,
+    pub status: String,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct NetworkStatusSnapshot {
     pub relay_set_id: String,
     pub relay_urls: Vec<String>,
+    pub relay_connections: Vec<RelayConnectionSnapshot>,
     pub connected_relay_count: u64,
     pub all_relays_offline_since_secs: Option<u64>,
     pub syncing: bool,

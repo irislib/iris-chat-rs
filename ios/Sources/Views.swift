@@ -3734,6 +3734,13 @@ private struct NostrRelaySettingsSection: View {
 
                 Spacer(minLength: 8)
 
+                if let label = relayRowStatusLabel(relayURL, status: manager.state.networkStatus) {
+                    Text(label)
+                        .font(.system(.caption2, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
+
                 Button {
                     editingRelayURL = relayURL
                     editingRelayDraft = relayURL
@@ -3766,7 +3773,31 @@ private struct NostrRelaySettingsSection: View {
         guard let status, status.relayUrls.contains(relayURL) else {
             return palette.muted.opacity(0.55)
         }
-        return relayStatusColor(status, palette: palette)
+        switch relayConnection(relayURL, status: status)?.status {
+        case "connected":
+            return Color(red: 34.0 / 255.0, green: 197.0 / 255.0, blue: 94.0 / 255.0)
+        case "connecting", "sleeping":
+            return Color(red: 234.0 / 255.0, green: 179.0 / 255.0, blue: 8.0 / 255.0)
+        case "offline", "blocked":
+            return Color(red: 239.0 / 255.0, green: 68.0 / 255.0, blue: 68.0 / 255.0)
+        default:
+            return palette.muted.opacity(0.55)
+        }
+    }
+
+    private func relayRowStatusLabel(_ relayURL: String, status: NetworkStatusSnapshot?) -> String? {
+        switch relayConnection(relayURL, status: status)?.status {
+        case "connected": return "Online"
+        case "connecting": return "Connecting"
+        case "sleeping": return "Waiting"
+        case "offline": return "Offline"
+        case "blocked": return "Blocked"
+        default: return nil
+        }
+    }
+
+    private func relayConnection(_ relayURL: String, status: NetworkStatusSnapshot?) -> RelayConnectionSnapshot? {
+        status?.relayConnections.first { $0.url == relayURL }
     }
 }
 

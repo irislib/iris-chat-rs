@@ -606,6 +606,13 @@ fun MyProfileSheet(
                                         .weight(1f)
                                         .testTag("myProfileRelayRow"),
                             )
+                            relayStatusLabel(networkStatus, relayUrl)?.let { label ->
+                                Text(
+                                    text = label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = IrisTheme.palette.muted,
+                                )
+                            }
                             IconButton(
                                 onClick = {
                                     editingRelayUrl = relayUrl
@@ -859,14 +866,34 @@ private fun relayStatusColor(
     status: NetworkStatusSnapshot?,
     relayUrl: String,
 ): Color =
-    when {
-        status == null || !status.relayUrls.contains(relayUrl) ->
-            IrisTheme.palette.muted.copy(alpha = 0.55f)
-        status.connectedRelayCount > 0UL -> Color(0xFF22C55E)
-        status.syncing || status.pendingOutboundCount > 0UL || status.pendingGroupControlCount > 0UL ->
-            Color(0xFFEAB308)
-        else -> Color(0xFFEF4444)
+    when (relayConnectionStatus(status, relayUrl)) {
+        "connected" -> Color(0xFF22C55E)
+        "connecting", "sleeping" -> Color(0xFFEAB308)
+        "offline", "blocked" -> Color(0xFFEF4444)
+        else -> IrisTheme.palette.muted.copy(alpha = 0.55f)
     }
+
+private fun relayStatusLabel(
+    status: NetworkStatusSnapshot?,
+    relayUrl: String,
+): String? =
+    when (relayConnectionStatus(status, relayUrl)) {
+        "connected" -> "Online"
+        "connecting" -> "Connecting"
+        "sleeping" -> "Waiting"
+        "offline" -> "Offline"
+        "blocked" -> "Blocked"
+        else -> null
+    }
+
+private fun relayConnectionStatus(
+    status: NetworkStatusSnapshot?,
+    relayUrl: String,
+): String? =
+    status
+        ?.relayConnections
+        ?.firstOrNull { it.url == relayUrl }
+        ?.status
 
 @Composable
 private fun ProfilePictureDialog(

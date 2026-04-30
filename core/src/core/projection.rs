@@ -338,6 +338,7 @@ impl AppCore {
         NetworkStatusSnapshot {
             relay_set_id: RELAY_SET_ID.to_string(),
             relay_urls: self.preferences.nostr_relay_urls.clone(),
+            relay_connections: self.build_relay_connection_snapshots(),
             connected_relay_count: self.relay_connected_count,
             all_relays_offline_since_secs: self.all_relays_offline_since_secs,
             syncing: self.state.busy.syncing_network,
@@ -348,6 +349,40 @@ impl AppCore {
             last_debug_category: last_debug.map(|entry| entry.category.clone()),
             last_debug_detail: last_debug.map(|entry| entry.detail.clone()),
         }
+    }
+
+    fn build_relay_connection_snapshots(&self) -> Vec<RelayConnectionSnapshot> {
+        let relay_statuses = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| {
+                self.runtime.block_on(async {
+                    logged_in
+                        .client
+                        .relays()
+                        .await
+                        .into_iter()
+                        .map(|(url, relay)| {
+                            let url = normalize_nostr_relay_url(&url.to_string())
+                                .unwrap_or_else(|_| url.to_string());
+                            (url, relay_connection_status(relay.status()).to_string())
+                        })
+                        .collect::<BTreeMap<_, _>>()
+                })
+            })
+            .unwrap_or_default();
+
+        self.preferences
+            .nostr_relay_urls
+            .iter()
+            .map(|url| RelayConnectionSnapshot {
+                url: url.clone(),
+                status: relay_statuses
+                    .get(url)
+                    .cloned()
+                    .unwrap_or_else(|| "offline".to_string()),
+            })
+            .collect()
     }
 
     pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
@@ -538,6 +573,16 @@ impl AppCore {
             self.rebuild_state_inner();
             self.emit_state_inner();
         }
+    }
+}
+
+fn relay_connection_status(status: RelayStatus) -> &'static str {
+    match status {
+        RelayStatus::Connected => "connected",
+        RelayStatus::Initialized | RelayStatus::Pending | RelayStatus::Connecting => "connecting",
+        RelayStatus::Sleeping => "sleeping",
+        RelayStatus::Disconnected | RelayStatus::Terminated => "offline",
+        RelayStatus::Banned => "blocked",
     }
 }
 

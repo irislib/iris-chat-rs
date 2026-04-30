@@ -86,7 +86,7 @@ fn direct_message_with_no_relays_is_queued_locally() {
 }
 
 #[test]
-fn network_status_marks_configured_session_offline_until_a_relay_connects() {
+fn network_status_includes_configured_relay_connection_status() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let mut core = AppCore::new(
@@ -102,6 +102,13 @@ fn network_status_marks_configured_session_offline_until_a_relay_connects() {
 
     let status = core.state.network_status.as_ref().expect("network status");
     assert_eq!(status.relay_urls, vec!["wss://relay.invalid".to_string()]);
+    assert_eq!(status.relay_connections.len(), 1);
+    assert_eq!(status.relay_connections[0].url, "wss://relay.invalid");
+    assert!(
+        ["connecting", "offline"].contains(&status.relay_connections[0].status.as_str()),
+        "unexpected relay status: {}",
+        status.relay_connections[0].status
+    );
     assert_eq!(status.connected_relay_count, 0);
     assert!(status.all_relays_offline_since_secs.is_some());
 }
