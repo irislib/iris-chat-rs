@@ -55,6 +55,9 @@ pub(crate) enum InternalEvent {
         relay_url: String,
         status: RelayStatus,
     },
+    RelayConnectionChecked {
+        reason: String,
+    },
     DebugLog {
         category: String,
         detail: String,

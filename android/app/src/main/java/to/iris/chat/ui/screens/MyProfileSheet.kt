@@ -51,6 +51,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
@@ -100,6 +101,7 @@ fun MyProfileSheet(
     imageProxySaltHex: String,
     preferences: PreferencesSnapshot,
     networkStatus: NetworkStatusSnapshot?,
+    bluetoothOnProvider: () -> Boolean,
     onManageDevices: () -> Unit,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
@@ -108,6 +110,12 @@ fun MyProfileSheet(
     val context = LocalContext.current
     val canShareSupport = remember(context) { canShareText(context, "application/json") }
     val coroutineScope = rememberCoroutineScope()
+    val bluetoothOn by produceState(initialValue = bluetoothOnProvider(), key1 = bluetoothOnProvider) {
+        while (true) {
+            value = bluetoothOnProvider()
+            delay(1_000L)
+        }
+    }
     val profilePicturePicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) {
@@ -657,7 +665,8 @@ fun MyProfileSheet(
                     Text(
                         text =
                             "Network ${if (status.syncing) "syncing" else "idle"} · " +
-                                "${status.relayUrls.size} servers · ${status.recentEventCount} updates",
+                                "${status.connectedRelayCount}/${status.relayUrls.size} connected · " +
+                                "${status.recentEventCount} updates",
                         style = MaterialTheme.typography.bodySmall,
                         color = IrisTheme.palette.muted,
                         modifier = Modifier.testTag("myProfileNetworkStatusValue"),
@@ -670,6 +679,12 @@ fun MyProfileSheet(
                         )
                     }
                 }
+                Text(
+                    text = "Bluetooth ${if (bluetoothOn) "on" else "off"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = IrisTheme.palette.muted,
+                    modifier = Modifier.testTag("myProfileBluetoothStatusValue"),
+                )
                 if (canShareSupport) {
                     IrisPrimaryButton(
                         text = if (supportBusy) "Preparing…" else "Share support bundle",
@@ -847,9 +862,10 @@ private fun relayStatusColor(
     when {
         status == null || !status.relayUrls.contains(relayUrl) ->
             IrisTheme.palette.muted.copy(alpha = 0.55f)
+        status.connectedRelayCount > 0UL -> Color(0xFF22C55E)
         status.syncing || status.pendingOutboundCount > 0UL || status.pendingGroupControlCount > 0UL ->
             Color(0xFFEAB308)
-        else -> Color(0xFF22C55E)
+        else -> Color(0xFFEF4444)
     }
 
 @Composable

@@ -91,6 +91,7 @@ impl AppCore {
                 InternalEvent::PollPendingDeviceInvites { .. } => "PollPendingDeviceInvites",
                 InternalEvent::PruneExpiredMessages { .. } => "PruneExpiredMessages",
                 InternalEvent::RelayStatusChanged { .. } => "RelayStatusChanged",
+                InternalEvent::RelayConnectionChecked { .. } => "RelayConnectionChecked",
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
                 InternalEvent::PublishFinished { .. } => "PublishFinished",
@@ -375,6 +376,9 @@ impl AppCore {
             }
             InternalEvent::RelayStatusChanged { relay_url, status } => {
                 self.handle_relay_status_changed(relay_url, status);
+            }
+            InternalEvent::RelayConnectionChecked { reason } => {
+                self.handle_relay_connection_checked(reason);
             }
             InternalEvent::DebugLog { category, detail } => {
                 self.push_debug_log(&category, detail);

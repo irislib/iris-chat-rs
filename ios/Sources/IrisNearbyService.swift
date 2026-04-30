@@ -124,6 +124,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
         setVisible(!isVisible)
     }
 
+    func startBluetoothStateMonitoring() {
+        if centralManager == nil {
+            centralManager = CBCentralManager(
+                delegate: self,
+                queue: .main,
+                options: [CBCentralManagerOptionShowPowerAlertKey: false]
+            )
+        }
+    }
+
     func setVisible(_ visible: Bool) {
         guard visible != isVisible else {
             if visible {

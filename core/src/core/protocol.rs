@@ -308,10 +308,16 @@ impl AppCore {
         }
         let client = logged_in.client.clone();
         let relay_urls = logged_in.relay_urls.clone();
+        let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
                 .await;
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::RelayConnectionChecked {
+                    reason: "session_connect".to_string(),
+                },
+            )));
         });
     }
 
@@ -485,6 +491,24 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn handle_relay_connection_checked(&mut self, reason: String) {
+        let configured_relay_count = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.relay_urls.len())
+            .unwrap_or(0);
+        self.refresh_relay_connection_status();
+        self.push_debug_log(
+            "message_servers.connection",
+            format!(
+                "reason={reason} connected={}/{}",
+                self.relay_connected_count, configured_relay_count
+            ),
+        );
+        self.rebuild_state();
+        self.emit_state();
+    }
+
     pub(super) fn refresh_relay_connection_status(&mut self) {
         let configured_relay_count = self
             .logged_in
@@ -637,6 +661,11 @@ impl AppCore {
                     connected_after,
                 ),
             })));
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::RelayConnectionChecked {
+                    reason: format!("subscription_{reason}"),
+                },
+            )));
         });
     }
 

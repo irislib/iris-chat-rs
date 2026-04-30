@@ -159,6 +159,9 @@ struct RootView: View {
                 .frame(minWidth: 380, minHeight: 420)
 #endif
         }
+        .onAppear {
+            manager.nearbyIris.startBluetoothStateMonitoring()
+        }
 #endif
     }
 
@@ -3323,6 +3326,10 @@ struct SettingsScreen: View {
                             }
                         }
 
+#if os(iOS) || os(macOS)
+                        BluetoothSettingsStatusRow(service: manager.nearbyIris)
+#endif
+
                         ShareLink(item: manager.supportBundleJson()) {
                             HStack(spacing: 8) {
                                 Image(systemName: "square.and.arrow.up")
@@ -3409,6 +3416,23 @@ struct SettingsScreen: View {
     }
 
 }
+
+#if os(iOS) || os(macOS)
+private struct BluetoothSettingsStatusRow: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var service: IrisNearbyService
+
+    var body: some View {
+        Text("Bluetooth \(service.isBluetoothOn ? "on" : "off")")
+            .font(.system(.body, design: .rounded))
+            .foregroundStyle(palette.muted)
+            .accessibilityIdentifier("myProfileBluetoothStatusValue")
+            .onAppear {
+                service.startBluetoothStateMonitoring()
+            }
+    }
+}
+#endif
 
 private struct NotificationsSettingsSection: View {
     @ObservedObject var manager: AppManager

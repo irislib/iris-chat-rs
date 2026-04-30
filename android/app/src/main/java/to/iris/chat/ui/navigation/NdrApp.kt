@@ -72,6 +72,10 @@ fun NdrApp(
     val context = LocalContext.current
     var showingNearbyIris by remember { mutableStateOf(false) }
     var offlineNowSecs by remember { mutableStateOf(System.currentTimeMillis() / 1_000L) }
+    val nearbyBluetoothOnProvider =
+        remember(container.nearbyIrisService) {
+            { container.nearbyIrisService.snapshot.bluetoothOn }
+        }
     val openNearbyIris = {
         showingNearbyIris = true
     }
@@ -100,7 +104,7 @@ fun NdrApp(
             offlineSinceSecs != null &&
             offlineNowSecs.saturatingSubtract(offlineSinceSecs) >= 5L
         ) {
-            val bluetoothState = if (container.nearbyIrisService.snapshot.bluetoothOn) "on" else "off"
+            val bluetoothState = if (nearbyBluetoothOnProvider()) "on" else "off"
             IrisOfflineBannerState("Offline, Bluetooth $bluetoothState")
         } else {
             null
@@ -203,6 +207,7 @@ fun NdrApp(
                                     imageProxySaltHex = appState.preferences.imageProxySaltHex,
                                     preferences = appState.preferences,
                                     networkStatus = appState.networkStatus,
+                                    bluetoothOnProvider = nearbyBluetoothOnProvider,
                                     onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },
                                     onLogout = { appManager.logout() },
                                     onDismiss = {
