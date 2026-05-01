@@ -94,6 +94,7 @@ class IrisNearbyService(
     private val centralAssemblers = linkedMapOf<String, FrameAssembler>()
     private val serverAssemblers = linkedMapOf<String, FrameAssembler>()
     private val peerIdsByAddress = linkedMapOf<String, String>()
+    private val bluetoothPeerLastSeenMillis = linkedMapOf<String, Long>()
     private val peerNonces = linkedMapOf<String, String>()
     private val peers = linkedMapOf<String, Peer>()
     private val knownProfiles = linkedMapOf<String, NearbyProfileEvent>()
@@ -125,7 +126,7 @@ class IrisNearbyService(
             val sortedPeers =
                 peers.values
                     .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id })
-            val bluetoothPeerIds = peerIdsByAddress.values.toSet()
+            val bluetoothPeerIds = recentBluetoothPeerIds()
             val localNetworkPeerIds = lanService.peerIds()
             return Snapshot(
                 visible = visible,
@@ -354,8 +355,9 @@ class IrisNearbyService(
         writableCharacteristics.clear()
         centralAssemblers.clear()
         serverAssemblers.clear()
-        val bluetoothPeerIds = peerIdsByAddress.values.toSet()
+        val bluetoothPeerIds = recentBluetoothPeerIds()
         peerIdsByAddress.clear()
+        bluetoothPeerLastSeenMillis.clear()
         if (localNetworkVisible) {
             val lanPeerIds = lanService.peerIds()
             bluetoothPeerIds
@@ -497,12 +499,7 @@ class IrisNearbyService(
         writableCharacteristics.remove(address)
         centralAssemblers.remove(address)
         mtuPayloadBytes.remove(address)
-        peerIdsByAddress.remove(address)?.let {
-            if (!lanService.hasPeer(it)) {
-                peers.remove(it)
-                peerNonces.remove(it)
-            }
-        }
+        peerIdsByAddress.remove(address)
         guardBluetooth("close non-Iris GATT", Unit, statusOnFailure = null) {
             gatt.close()
         }
@@ -838,12 +835,7 @@ class IrisNearbyService(
         pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
         serverAssemblers.remove(address)
         mtuPayloadBytes.remove(address)
-        peerIdsByAddress.remove(address)?.let {
-            if (!lanService.hasPeer(it)) {
-                peers.remove(it)
-                peerNonces.remove(it)
-            }
-        }
+        peerIdsByAddress.remove(address)
         status = if (peers.isEmpty()) "Visible" else "${peers.size} nearby"
     }
 
@@ -874,16 +866,11 @@ class IrisNearbyService(
         }
         if (remotePeerId.isNotEmpty()) {
             touchPeer(remotePeerId)
+            markTransportPeer(remotePeerId, source)
         }
         when (type) {
             "hello" -> {
                 if (remotePeerId.isNotEmpty()) {
-                    when (source) {
-                        is NearbySource.BluetoothAddress ->
-                            source.address?.let { peerIdsByAddress[it] = remotePeerId }
-                        is NearbySource.Lan ->
-                            lanService.markPeer(source.connectionId, remotePeerId)
-                    }
                     val remoteNonce = envelope.optString("nonce").sanitizedNonce()
                     val previousNonce = peerNonces[remotePeerId]
                     val wasNew = rememberPeer(
@@ -1045,6 +1032,7 @@ class IrisNearbyService(
 
     @SuppressLint("MissingPermission")
     private fun pruneStalePeers(nowMillis: Long) {
+        bluetoothPeerLastSeenMillis.entries.removeAll { nowMillis - it.value > PEER_TTL_MS }
         val stalePeerIds =
             peers.values
                 .filter { nowMillis - it.lastSeenMillis > PEER_TTL_MS }
@@ -1056,6 +1044,7 @@ class IrisNearbyService(
 
         stalePeerIds.forEach { peerId ->
             peers.remove(peerId)
+            bluetoothPeerLastSeenMillis.remove(peerId)
             peerNonces.remove(peerId)
         }
 
@@ -1089,7 +1078,7 @@ class IrisNearbyService(
         if (lanPeerIds.isEmpty()) {
             return
         }
-        val bluetoothPeerIds = peerIdsByAddress.values.toSet()
+        val bluetoothPeerIds = recentBluetoothPeerIds()
         lanPeerIds
             .filterNot { bluetoothPeerIds.contains(it) }
             .forEach { peerId ->
@@ -1099,6 +1088,25 @@ class IrisNearbyService(
         pruneKnownProfiles()
         status = nearbyStatusWhenVisible()
     }
+
+    private fun markTransportPeer(
+        peerId: String,
+        source: NearbySource,
+    ) {
+        when (source) {
+            is NearbySource.BluetoothAddress -> {
+                bluetoothPeerLastSeenMillis[peerId] = System.currentTimeMillis()
+                source.address?.let { peerIdsByAddress[it] = peerId }
+            }
+            is NearbySource.Lan -> lanService.markPeer(source.connectionId, peerId)
+        }
+    }
+
+    private fun recentBluetoothPeerIds(nowMillis: Long = System.currentTimeMillis()): Set<String> =
+        bluetoothPeerLastSeenMillis
+            .filterValues { nowMillis - it <= PEER_TTL_MS }
+            .keys
+            .toSet()
 
     private fun touchPeer(peerId: String) {
         val existing = peers[peerId] ?: return
@@ -1175,7 +1183,22 @@ class IrisNearbyService(
         ownerPubkeyHex: String,
         profileEventId: String?,
     ) {
-        val existing = peers[peerId] ?: return
+        val existing =
+            peers[peerId]
+                ?: Peer(
+                    id = peerId,
+                    name =
+                        nearbyPeerName(
+                            advertisedName = null,
+                            ownerPubkeyHex = ownerPubkeyHex,
+                            profileDisplayName = null,
+                            existingName = null,
+                        ),
+                    ownerPubkeyHex = null,
+                    pictureUrl = null,
+                    profileEventId = null,
+                    lastSeenMillis = System.currentTimeMillis(),
+                )
         val nextProfileEventId = profileEventId ?: existing.profileEventId
         peers[peerId] =
             existing.copy(
@@ -1427,10 +1450,7 @@ class IrisNearbyService(
                         writableCharacteristics.remove(address)
                         centralAssemblers.remove(address)
                         mtuPayloadBytes.remove(address)
-                        peerIdsByAddress.remove(address)?.let {
-                            peers.remove(it)
-                            peerNonces.remove(it)
-                        }
+                        peerIdsByAddress.remove(address)
                         guardBluetooth("close GATT", Unit, statusOnFailure = null) {
                             gatt.close()
                         }
@@ -1569,10 +1589,7 @@ class IrisNearbyService(
                         subscribedServerAddresses.remove(address)
                         pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
                         pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
-                        peerIdsByAddress.remove(address)?.let {
-                            peers.remove(it)
-                            peerNonces.remove(it)
-                        }
+                        peerIdsByAddress.remove(address)
                     }
                 }
             }

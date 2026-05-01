@@ -51,6 +51,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var pendingNotifications: [(data: Data, channel: IrisNearbyCentralChannel?)] = []
     private var peerIDByPeripheral: [UUID: String] = [:]
     private var peerIDByCentral: [UUID: String] = [:]
+    private var bluetoothPeerLastSeen: [String: Date] = [:]
     private var peerNonces: [String: String] = [:]
     private var ignoredPeripherals: [UUID: Date] = [:]
     private var ownOutbound: [String: IrisNearbyStoredEvent] = [:]
@@ -158,7 +159,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     var bluetoothPeers: [IrisNearbyPeer] {
-        let peerIDs = bluetoothPeerIDs
+        let peerIDs = recentBluetoothPeerIDs
         return peers.filter { peerIDs.contains($0.id) }
     }
 
@@ -419,9 +420,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
         subscribedCentrals.removeAll()
         centralAssemblers.removeAll()
         pendingNotifications.removeAll()
-        let bluetoothPeerIDs = Set(peerIDByPeripheral.values).union(peerIDByCentral.values)
+        let bluetoothPeerIDs = recentBluetoothPeerIDs
         peerIDByPeripheral.removeAll()
         peerIDByCentral.removeAll()
+        bluetoothPeerLastSeen.removeAll()
         if isLanVisible {
             let lanPeerIDs = lanService?.peerIDs() ?? []
             peers.removeAll { bluetoothPeerIDs.contains($0.id) && !lanPeerIDs.contains($0.id) }
@@ -543,10 +545,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         writableCharacteristics.removeValue(forKey: peripheral.identifier)
         peripheralAssemblers.removeValue(forKey: peripheral.identifier)
         peripheralWriteQueues.removeValue(forKey: peripheral.identifier)
-        if let peerID = peerIDByPeripheral.removeValue(forKey: peripheral.identifier) {
-            peers.removeAll { $0.id == peerID }
-            peerNonces.removeValue(forKey: peerID)
-        }
+        peerIDByPeripheral.removeValue(forKey: peripheral.identifier)
         centralManager?.cancelPeripheralConnection(peripheral)
         if isVisible {
             status = peers.isEmpty ? "Scanning" : sidebarSubtitle
@@ -810,6 +809,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
         if let remotePeerID, !remotePeerID.isEmpty {
             touchPeer(remotePeerID)
+            markTransportPeer(remotePeerID, source: source)
         }
 
         switch type {
@@ -965,6 +965,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func pruneStalePeers(now: Date) {
+        bluetoothPeerLastSeen = bluetoothPeerLastSeen.filter { now.timeIntervalSince($0.value) <= Self.peerTTL }
         let stalePeerIDs = Set(
             peers
                 .filter { now.timeIntervalSince($0.lastSeen) > Self.peerTTL }
@@ -974,6 +975,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
         peers.removeAll { stalePeerIDs.contains($0.id) }
         for peerID in stalePeerIDs {
+            bluetoothPeerLastSeen.removeValue(forKey: peerID)
             peerNonces.removeValue(forKey: peerID)
         }
 
@@ -1010,6 +1012,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func removeLanOnlyPeers(_ lanPeerIDs: Set<String>) {
+        let bluetoothPeerIDs = recentBluetoothPeerIDs
         peers.removeAll { lanPeerIDs.contains($0.id) && !bluetoothPeerIDs.contains($0.id) }
         for peerID in lanPeerIDs where !bluetoothPeerIDs.contains(peerID) {
             peerNonces.removeValue(forKey: peerID)
@@ -1017,8 +1020,22 @@ final class IrisNearbyService: NSObject, ObservableObject {
         status = peers.isEmpty ? visibleIdleStatus : sidebarSubtitle
     }
 
-    private var bluetoothPeerIDs: Set<String> {
-        Set(peerIDByPeripheral.values).union(peerIDByCentral.values)
+    private var recentBluetoothPeerIDs: Set<String> {
+        let cutoff = Date().addingTimeInterval(-Self.peerTTL)
+        return Set(bluetoothPeerLastSeen.filter { $0.value >= cutoff }.keys)
+    }
+
+    private func markTransportPeer(_ peerID: String, source: IrisNearbySource) {
+        switch source {
+        case .peripheral(let peripheral):
+            peerIDByPeripheral[peripheral.identifier] = peerID
+            bluetoothPeerLastSeen[peerID] = Date()
+        case .central(let central):
+            peerIDByCentral[central.identifier] = peerID
+            bluetoothPeerLastSeen[peerID] = Date()
+        case .lan(let connectionID):
+            lanService?.markPeer(connectionID: connectionID, peerID: peerID)
+        }
     }
 
     private func restartScanningAfterPruning() {
@@ -1036,14 +1053,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         profileEventID: String?,
         source: IrisNearbySource
     ) {
-        switch source {
-        case .peripheral(let peripheral):
-            peerIDByPeripheral[peripheral.identifier] = peerID
-        case .central(let central):
-            peerIDByCentral[central.identifier] = peerID
-        case .lan(let connectionID):
-            lanService?.markPeer(connectionID: connectionID, peerID: peerID)
-        }
+        markTransportPeer(peerID, source: source)
         let sanitizedProfileEventID = sanitizedEventID(profileEventID)
         let existing = peers.first(where: { $0.id == peerID })
         let peer = IrisNearbyPeer(
@@ -1160,6 +1170,23 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func rememberPresence(peerID: String, ownerPubkeyHex: String, profileEventID: String?) {
+        if peers.firstIndex(where: { $0.id == peerID }) == nil {
+            peers.append(
+                IrisNearbyPeer(
+                    id: peerID,
+                    name: Self.nearbyPeerName(
+                        advertisedName: nil,
+                        ownerPubkeyHex: ownerPubkeyHex,
+                        profileDisplayName: nil,
+                        existingName: nil
+                    ),
+                    ownerPubkeyHex: nil,
+                    pictureURL: nil,
+                    profileEventID: nil,
+                    lastSeen: Date()
+                )
+            )
+        }
         guard let index = peers.firstIndex(where: { $0.id == peerID }) else { return }
         let nextProfileEventID = profileEventID ?? peers[index].profileEventID
         peers[index].ownerPubkeyHex = ownerPubkeyHex
@@ -1313,10 +1340,7 @@ extension IrisNearbyService: CBCentralManagerDelegate {
         writableCharacteristics.removeValue(forKey: peripheral.identifier)
         peripheralAssemblers.removeValue(forKey: peripheral.identifier)
         peripheralWriteQueues.removeValue(forKey: peripheral.identifier)
-        if let peerID = peerIDByPeripheral.removeValue(forKey: peripheral.identifier) {
-            peers.removeAll { $0.id == peerID }
-            peerNonces.removeValue(forKey: peerID)
-        }
+        peerIDByPeripheral.removeValue(forKey: peripheral.identifier)
         if isVisible {
             status = peers.isEmpty ? "Scanning" : sidebarSubtitle
             startScanningIfReady()
@@ -1444,10 +1468,7 @@ extension IrisNearbyService: CBPeripheralManagerDelegate {
     ) {
         subscribedCentrals.removeValue(forKey: central.identifier)
         centralAssemblers.removeValue(forKey: central.identifier)
-        if let peerID = peerIDByCentral.removeValue(forKey: central.identifier) {
-            peers.removeAll { $0.id == peerID }
-            peerNonces.removeValue(forKey: peerID)
-        }
+        peerIDByCentral.removeValue(forKey: central.identifier)
         status = peers.isEmpty ? "Visible" : sidebarSubtitle
     }
 
