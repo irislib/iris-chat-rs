@@ -1,6 +1,6 @@
-# Iris Chat 3.0.8
+# Iris Chat 3.0.9
 
-- More reliable linked-device and group messaging.
-- Faster, safer restore after app restart.
-- Better local test coverage for Android, iOS, and multidevice chats.
+- Nearby is now available in the Windows and Linux desktop apps over Wi-Fi.
+- Opening Nearby enables Wi-Fi discovery on first use so the OS can request network access when needed.
+- Nearby and settings copy now uses simpler Wi-Fi labels.
 - Uses nostr-double-ratchet 0.0.127.
