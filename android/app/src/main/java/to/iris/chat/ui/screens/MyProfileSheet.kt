@@ -51,7 +51,6 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
@@ -101,7 +100,6 @@ fun MyProfileSheet(
     imageProxySaltHex: String,
     preferences: PreferencesSnapshot,
     networkStatus: NetworkStatusSnapshot?,
-    bluetoothOnProvider: () -> Boolean,
     onNearbyBluetoothChange: (Boolean) -> Unit,
     onNearbyLanChange: (Boolean) -> Unit,
     onManageDevices: () -> Unit,
@@ -112,12 +110,6 @@ fun MyProfileSheet(
     val context = LocalContext.current
     val canShareSupport = remember(context) { canShareText(context, "application/json") }
     val coroutineScope = rememberCoroutineScope()
-    val bluetoothOn by produceState(initialValue = bluetoothOnProvider(), key1 = bluetoothOnProvider) {
-        while (true) {
-            value = bluetoothOnProvider()
-            delay(1_000L)
-        }
-    }
     val profilePicturePicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) {
@@ -725,18 +717,6 @@ fun MyProfileSheet(
                         )
                     }
                 }
-                Text(
-                    text = "Bluetooth ${if (bluetoothOn) "on" else "off"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                    modifier = Modifier.testTag("myProfileBluetoothStatusValue"),
-                )
-                Text(
-                    text = "Local network ${if (preferences.nearbyLanEnabled) "on" else "off"}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                    modifier = Modifier.testTag("myProfileLanStatusValue"),
-                )
                 if (canShareSupport) {
                     IrisPrimaryButton(
                         text = if (supportBusy) "Preparing…" else "Share support bundle",

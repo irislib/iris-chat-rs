@@ -226,7 +226,6 @@ fun NdrApp(
                                     imageProxySaltHex = appState.preferences.imageProxySaltHex,
                                     preferences = appState.preferences,
                                     networkStatus = appState.networkStatus,
-                                    bluetoothOnProvider = nearbyBluetoothOnProvider,
                                     onNearbyBluetoothChange = onNearbyVisibilityChange,
                                     onNearbyLanChange = onNearbyLanVisibilityChange,
                                     onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },

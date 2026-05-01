@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -92,6 +93,11 @@ class PikaLikeUiTest {
         composeRule.waitForDisplayedTag("nearbyIrisSheet")
         composeRule.waitForDisplayedTag("nearbyCloseButton")
         composeRule.waitForDisplayedTag("nearbyVisibilitySwitch")
+        composeRule.waitForDisplayedTag("nearbyLanSwitch")
+        composeRule.onNodeWithTag("nearbyVisibilitySwitch", useUnmergedTree = true)
+            .assertIsOn()
+        composeRule.onNodeWithTag("nearbyLanSwitch", useUnmergedTree = true)
+            .assertIsOn()
 
         composeRule.onNodeWithTag("nearbyCloseButton", useUnmergedTree = true).performClick()
         composeRule.waitUntil(10_000) {
@@ -543,8 +549,14 @@ class PikaLikeUiTest {
             } else {
                 listOf(Manifest.permission.ACCESS_FINE_LOCATION)
             }
+        val localNetworkPermissions =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                listOf(Manifest.permission.NEARBY_WIFI_DEVICES)
+            } else {
+                emptyList()
+            }
         val uiAutomation = InstrumentationRegistry.getInstrumentation().uiAutomation
-        permissions.forEach { permission ->
+        (permissions + localNetworkPermissions).forEach { permission ->
             runCatching {
                 uiAutomation.grantRuntimePermission(packageName, permission)
             }

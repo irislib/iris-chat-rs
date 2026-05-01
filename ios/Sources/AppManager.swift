@@ -392,6 +392,7 @@ final class AppManager: ObservableObject {
     private static let downloadedAttachmentCacheLimitBytes = 128 * 1024 * 1024
     private static let maxClientDebugLogEntries = 50
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
+    private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
 
     @Published private(set) var state: AppState
@@ -873,10 +874,14 @@ final class AppManager: ObservableObject {
 
     func prepareNearbyForUserTap() {
 #if os(iOS) || os(macOS)
-        if state.preferences.nearbyBluetoothEnabled || nearbyIris.shouldShowBluetoothPermissionPrompt {
+        let firstNearbyOpen = !UserDefaults.standard.bool(forKey: Self.nearbyFirstOpenAttemptedKey)
+        if firstNearbyOpen {
+            UserDefaults.standard.set(true, forKey: Self.nearbyFirstOpenAttemptedKey)
+        }
+        if state.preferences.nearbyBluetoothEnabled || firstNearbyOpen || nearbyIris.shouldShowBluetoothPermissionPrompt {
             setNearbyBluetoothEnabled(true)
         }
-        if state.preferences.nearbyLanEnabled || shouldRequestLanPermissionOnNearbyTap {
+        if state.preferences.nearbyLanEnabled || firstNearbyOpen || shouldRequestLanPermissionOnNearbyTap {
             setNearbyLanEnabled(true)
         }
 #endif

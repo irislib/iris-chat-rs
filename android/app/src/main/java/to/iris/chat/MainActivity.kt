@@ -104,6 +104,7 @@ class MainActivity : ComponentActivity() {
         const val PERMISSION_PREFS = "iris_runtime_permissions"
         const val BLUETOOTH_PERMISSION_KEY = "nearby_bluetooth"
         const val LOCAL_NETWORK_PERMISSION_KEY = "nearby_local_network"
+        const val NEARBY_FIRST_OPEN_KEY = "nearby_first_open"
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
@@ -309,14 +310,20 @@ class MainActivity : ComponentActivity() {
 
     private fun prepareNearbyFromTap() {
         val preferences = container.appManager.state.value.preferences
+        val firstNearbyOpen = !permissionWasRequested(NEARBY_FIRST_OPEN_KEY)
         val startBluetooth =
             preferences.nearbyBluetoothEnabled ||
+                firstNearbyOpen ||
                 shouldRequestOnFirstNearbyTap(nearbyPermissions().toList(), BLUETOOTH_PERMISSION_KEY)
         val startLocalNetwork =
             preferences.nearbyLanEnabled ||
+                firstNearbyOpen ||
                 shouldRequestOnFirstNearbyTap(localNetworkPermissions().toList(), LOCAL_NETWORK_PERMISSION_KEY)
         if (!startBluetooth && !startLocalNetwork) {
             return
+        }
+        if (firstNearbyOpen) {
+            markPermissionRequested(NEARBY_FIRST_OPEN_KEY)
         }
         val permissions =
             buildList {

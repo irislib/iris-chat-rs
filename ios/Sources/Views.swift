@@ -3594,24 +3594,20 @@ private struct NearbySettingsRows: View {
         VStack(alignment: .leading, spacing: 4) {
             settingsToggle(
                 title: "Bluetooth",
-                status: service.isBluetoothOn ? "on" : "off",
                 isOn: Binding(
                     get: { manager.state.preferences.nearbyBluetoothEnabled },
                     set: { manager.setNearbyBluetoothEnabled($0) }
                 ),
-                accessibilityID: "myProfileNearbyBluetoothSwitch",
-                statusAccessibilityID: "myProfileBluetoothStatusValue"
+                accessibilityID: "myProfileNearbyBluetoothSwitch"
             )
 
             settingsToggle(
                 title: "Local network",
-                status: service.isLanVisible ? "on" : "off",
                 isOn: Binding(
                     get: { manager.state.preferences.nearbyLanEnabled },
                     set: { manager.setNearbyLanEnabled($0) }
                 ),
-                accessibilityID: "myProfileNearbyLanSwitch",
-                statusAccessibilityID: "myProfileLanStatusValue"
+                accessibilityID: "myProfileNearbyLanSwitch"
             )
         }
         .onAppear {
@@ -3621,20 +3617,14 @@ private struct NearbySettingsRows: View {
 
     private func settingsToggle(
         title: String,
-        status: String,
         isOn: Binding<Bool>,
-        accessibilityID: String,
-        statusAccessibilityID: String
+        accessibilityID: String
     ) -> some View {
         HStack(spacing: 12) {
             Text(title)
                 .font(.system(.body, design: .rounded))
                 .foregroundStyle(palette.textPrimary)
             Spacer()
-            Text(status)
-                .font(.system(.caption, design: .rounded, weight: .semibold))
-                .foregroundStyle(palette.muted)
-                .accessibilityIdentifier(statusAccessibilityID)
             Toggle("", isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
