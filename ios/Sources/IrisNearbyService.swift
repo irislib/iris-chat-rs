@@ -34,8 +34,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static let nearbyPresenceKind: UInt32 = 22242
     private static let nonIrisBackoff: TimeInterval = 60
     private static let helloInterval: TimeInterval = 5
+    private static let inventoryResendInterval: TimeInterval = 60
     private static let peerSweepInterval: TimeInterval = 1
     private static let peerTTL: TimeInterval = 15
+    private static let dedupeReconnectBackoff: TimeInterval = 30
     private static let maxSimultaneousPeripherals = 4
 
     private let peerID = UUID().uuidString.lowercased()
@@ -52,6 +54,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var peerIDByPeripheral: [UUID: String] = [:]
     private var peerIDByCentral: [UUID: String] = [:]
     private var bluetoothPeerLastSeen: [String: Date] = [:]
+    private var peerInventorySentAt: [String: Date] = [:]
+    private var suppressedPeripheralReconnectUntil: [UUID: Date] = [:]
     private var peerNonces: [String: String] = [:]
     private var ignoredPeripherals: [UUID: Date] = [:]
     private var ownOutbound: [String: IrisNearbyStoredEvent] = [:]
@@ -426,6 +430,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peerIDByPeripheral.removeAll()
         peerIDByCentral.removeAll()
         bluetoothPeerLastSeen.removeAll()
+        peerInventorySentAt.removeAll()
+        suppressedPeripheralReconnectUntil.removeAll()
         if isLanVisible {
             let lanPeerIDs = lanService?.peerIDs() ?? []
             peers.removeAll { bluetoothPeerIDs.contains($0.id) && !lanPeerIDs.contains($0.id) }
@@ -492,7 +498,6 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private func announceToConnectedPeers() {
         sendHello(excludingPeerID: nil)
-        sendInventory(excludingPeerID: nil)
     }
 
     private func startMaintenance() {
@@ -524,6 +529,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func shouldConnect(to peripheralID: UUID, advertisementData: [String: Any]) -> Bool {
+        if let suppressedUntil = suppressedPeripheralReconnectUntil[peripheralID] {
+            if suppressedUntil > Date() {
+                return false
+            }
+            suppressedPeripheralReconnectUntil.removeValue(forKey: peripheralID)
+        }
         if let ignoredUntil = ignoredPeripherals[peripheralID] {
             if ignoredUntil > Date() {
                 return false
@@ -597,6 +608,17 @@ final class IrisNearbyService: NSObject, ObservableObject {
             ],
             excludingPeerID: excludingPeerID
         )
+    }
+
+    private func sendInventoryAfterHelloIfNeeded(remotePeerID: String, force: Bool) {
+        let now = Date()
+        if !force,
+           let lastSent = peerInventorySentAt[remotePeerID],
+           now.timeIntervalSince(lastSent) < Self.inventoryResendInterval {
+            return
+        }
+        peerInventorySentAt[remotePeerID] = now
+        sendInventory(excludingPeerID: nil)
     }
 
     private func sendWant(_ ids: [String], excludingPeerID: String?) {
@@ -703,20 +725,14 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private func sendBluetoothFrame(_ frame: Data, excludingPeerID: String?) {
         guard isVisible else { return }
         for (id, characteristic) in writableCharacteristics {
-            if let remotePeerID = peerIDByPeripheral[id], remotePeerID == excludingPeerID {
-                continue
-            }
-            if let remotePeerID = peerIDByPeripheral[id], lanService?.hasPeer(remotePeerID) == true {
+            if !shouldSendViaOutgoingBluetoothRoute(peripheralID: id, excludingPeerID: excludingPeerID) {
                 continue
             }
             guard let peripheral = peripherals[id] else { continue }
             write(frame, to: peripheral, characteristic: characteristic)
         }
         for (id, channel) in subscribedCentrals {
-            if let remotePeerID = peerIDByCentral[id], remotePeerID == excludingPeerID {
-                continue
-            }
-            if let remotePeerID = peerIDByCentral[id], lanService?.hasPeer(remotePeerID) == true {
+            if !shouldSendViaIncomingBluetoothRoute(centralID: id, excludingPeerID: excludingPeerID) {
                 continue
             }
             notify(frame, to: channel)
@@ -818,17 +834,25 @@ final class IrisNearbyService: NSObject, ObservableObject {
         case "hello":
             guard let remotePeerID, !remotePeerID.isEmpty else { return }
             let remoteNonce = sanitizedNonce(envelope["nonce"] as? String)
+            let previousNonce = peerNonces[remotePeerID]
+            let wasNew = !peers.contains { $0.id == remotePeerID }
             rememberPeer(
                 remotePeerID,
                 name: envelope["name"] as? String,
                 profileEventID: nil,
                 source: source
             )
+            let nonceChanged = remoteNonce != nil && remoteNonce != previousNonce
+            if wasNew || nonceChanged {
+                sendHello(excludingPeerID: nil)
+            }
             if let remoteNonce {
                 peerNonces[remotePeerID] = remoteNonce
-                sendPresence(remotePeerID: remotePeerID, remoteNonce: remoteNonce)
+                if wasNew || nonceChanged {
+                    sendPresence(remotePeerID: remotePeerID, remoteNonce: remoteNonce)
+                }
             }
-            sendInventory(excludingPeerID: nil)
+            sendInventoryAfterHelloIfNeeded(remotePeerID: remotePeerID, force: wasNew || nonceChanged)
         case "inv":
             handleInventory(envelope)
         case "want":
@@ -978,6 +1002,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peers.removeAll { stalePeerIDs.contains($0.id) }
         for peerID in stalePeerIDs {
             bluetoothPeerLastSeen.removeValue(forKey: peerID)
+            peerInventorySentAt.removeValue(forKey: peerID)
             peerNonces.removeValue(forKey: peerID)
         }
 
@@ -1027,6 +1052,72 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return Set(bluetoothPeerLastSeen.filter { $0.value >= cutoff }.keys)
     }
 
+    private func shouldSendViaOutgoingBluetoothRoute(peripheralID: UUID, excludingPeerID: String?) -> Bool {
+        guard let remotePeerID = peerIDByPeripheral[peripheralID] else {
+            return true
+        }
+        if remotePeerID == excludingPeerID {
+            return false
+        }
+        if lanService?.hasPeer(remotePeerID) == true {
+            return false
+        }
+        if hasOutgoingBluetoothRoute(remotePeerID), hasIncomingBluetoothRoute(remotePeerID) {
+            return shouldUseOutgoingBluetoothRoute(remotePeerID)
+        }
+        return true
+    }
+
+    private func shouldSendViaIncomingBluetoothRoute(centralID: UUID, excludingPeerID: String?) -> Bool {
+        guard let remotePeerID = peerIDByCentral[centralID] else {
+            return true
+        }
+        if remotePeerID == excludingPeerID {
+            return false
+        }
+        if lanService?.hasPeer(remotePeerID) == true {
+            return false
+        }
+        if hasOutgoingBluetoothRoute(remotePeerID), hasIncomingBluetoothRoute(remotePeerID) {
+            return !shouldUseOutgoingBluetoothRoute(remotePeerID)
+        }
+        return true
+    }
+
+    private func shouldUseOutgoingBluetoothRoute(_ remotePeerID: String) -> Bool {
+        peerID < remotePeerID
+    }
+
+    private func hasOutgoingBluetoothRoute(_ remotePeerID: String) -> Bool {
+        writableCharacteristics.keys.contains { peerIDByPeripheral[$0] == remotePeerID }
+    }
+
+    private func hasIncomingBluetoothRoute(_ remotePeerID: String) -> Bool {
+        subscribedCentrals.keys.contains { peerIDByCentral[$0] == remotePeerID }
+    }
+
+    private func pruneDuplicateBluetoothRoutes(for remotePeerID: String) {
+        guard hasOutgoingBluetoothRoute(remotePeerID), hasIncomingBluetoothRoute(remotePeerID) else {
+            return
+        }
+        guard !shouldUseOutgoingBluetoothRoute(remotePeerID) else {
+            return
+        }
+        let peripheralIDs = peerIDByPeripheral
+            .filter { $0.value == remotePeerID }
+            .map(\.key)
+        for peripheralID in peripheralIDs {
+            suppressedPeripheralReconnectUntil[peripheralID] = Date().addingTimeInterval(Self.dedupeReconnectBackoff)
+            peerIDByPeripheral.removeValue(forKey: peripheralID)
+            writableCharacteristics.removeValue(forKey: peripheralID)
+            peripheralAssemblers.removeValue(forKey: peripheralID)
+            peripheralWriteQueues.removeValue(forKey: peripheralID)
+            if let peripheral = peripherals.removeValue(forKey: peripheralID) {
+                centralManager?.cancelPeripheralConnection(peripheral)
+            }
+        }
+    }
+
     private func markTransportPeer(_ peerID: String, source: IrisNearbySource) {
         switch source {
         case .peripheral(let peripheral):
@@ -1038,6 +1129,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         case .lan(let connectionID):
             lanService?.markPeer(connectionID: connectionID, peerID: peerID)
         }
+        pruneDuplicateBluetoothRoutes(for: peerID)
     }
 
     private func restartScanningAfterPruning() {
@@ -1338,11 +1430,16 @@ extension IrisNearbyService: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        let remotePeerID = peerIDByPeripheral[peripheral.identifier]
         peripherals.removeValue(forKey: peripheral.identifier)
         writableCharacteristics.removeValue(forKey: peripheral.identifier)
         peripheralAssemblers.removeValue(forKey: peripheral.identifier)
         peripheralWriteQueues.removeValue(forKey: peripheral.identifier)
         peerIDByPeripheral.removeValue(forKey: peripheral.identifier)
+        if let remotePeerID, !shouldUseOutgoingBluetoothRoute(remotePeerID) {
+            suppressedPeripheralReconnectUntil[peripheral.identifier] =
+                Date().addingTimeInterval(Self.dedupeReconnectBackoff)
+        }
         if isVisible {
             status = peers.isEmpty ? "Scanning" : sidebarSubtitle
             startScanningIfReady()
@@ -1399,7 +1496,6 @@ extension IrisNearbyService: CBPeripheralDelegate {
             peripheral.setNotifyValue(true, for: characteristic)
         } else {
             sendHello(excludingPeerID: nil)
-            sendInventory(excludingPeerID: nil)
         }
     }
 
@@ -1411,7 +1507,6 @@ extension IrisNearbyService: CBPeripheralDelegate {
             NSLog("Iris nearby: notifications ready")
         }
         sendHello(excludingPeerID: nil)
-        sendInventory(excludingPeerID: nil)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
@@ -1460,7 +1555,6 @@ extension IrisNearbyService: CBPeripheralManagerDelegate {
         subscribedCentrals[central.identifier] = channel
         centralAssemblers[central.identifier] = newFrameAssembler()
         sendHello(excludingPeerID: nil)
-        sendInventory(excludingPeerID: nil)
     }
 
     func peripheralManager(

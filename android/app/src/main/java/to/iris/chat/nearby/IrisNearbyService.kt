@@ -95,6 +95,8 @@ class IrisNearbyService(
     private val serverAssemblers = linkedMapOf<String, FrameAssembler>()
     private val peerIdsByAddress = linkedMapOf<String, String>()
     private val bluetoothPeerLastSeenMillis = linkedMapOf<String, Long>()
+    private val peerInventorySentMillis = linkedMapOf<String, Long>()
+    private val centralReconnectSuppressedUntilMillis = linkedMapOf<String, Long>()
     private val peerNonces = linkedMapOf<String, String>()
     private val peers = linkedMapOf<String, Peer>()
     private val knownProfiles = linkedMapOf<String, NearbyProfileEvent>()
@@ -358,6 +360,8 @@ class IrisNearbyService(
         val bluetoothPeerIds = recentBluetoothPeerIds()
         peerIdsByAddress.clear()
         bluetoothPeerLastSeenMillis.clear()
+        peerInventorySentMillis.clear()
+        centralReconnectSuppressedUntilMillis.clear()
         if (localNetworkVisible) {
             val lanPeerIds = lanService.peerIds()
             bluetoothPeerIds
@@ -469,9 +473,17 @@ class IrisNearbyService(
             guardBluetooth("read device address", null as String?, "Connect failed") {
                 device.address
             } ?: return
+        val nowMillis = SystemClock.elapsedRealtime()
         val ignoredUntil = ignoredAddresses[address]
-        if (ignoredUntil != null && ignoredUntil > SystemClock.elapsedRealtime()) {
+        if (ignoredUntil != null && ignoredUntil > nowMillis) {
             return
+        }
+        val suppressedUntil = centralReconnectSuppressedUntilMillis[address]
+        if (suppressedUntil != null && suppressedUntil > nowMillis) {
+            return
+        }
+        if (suppressedUntil != null) {
+            centralReconnectSuppressedUntilMillis.remove(address)
         }
         if (gatts.containsKey(address)) {
             return
@@ -580,6 +592,19 @@ class IrisNearbyService(
                 .put("peer_id", peerId)
                 .put("events", events)
         sendEnvelope(envelope, excludingPeerId)
+    }
+
+    private fun sendInventoryAfterHelloIfNeeded(
+        remotePeerId: String,
+        force: Boolean,
+    ) {
+        val nowMillis = System.currentTimeMillis()
+        val lastSentMillis = peerInventorySentMillis[remotePeerId]
+        if (!force && lastSentMillis != null && nowMillis - lastSentMillis < INVENTORY_RESEND_INTERVAL_MS) {
+            return
+        }
+        peerInventorySentMillis[remotePeerId] = nowMillis
+        sendInventory(excludingPeerId = null)
     }
 
     private fun sendWant(ids: List<String>, excludingPeerId: String?) {
@@ -706,26 +731,16 @@ class IrisNearbyService(
                 if (!subscribedServerAddresses.contains(address)) {
                     return@forEach
                 }
-                if (peerIdsByAddress[address] == excludingPeerId) {
+                if (!shouldSendViaServerBluetoothRoute(address, excludingPeerId)) {
                     return@forEach
-                }
-                peerIdsByAddress[address]?.let { remotePeerId ->
-                    if (lanService.hasPeer(remotePeerId)) {
-                        return@forEach
-                    }
                 }
                 notifyDevice(server, device, characteristic, frame)
             }
         }
 
         writableCharacteristics.toList().forEach { (address, characteristic) ->
-            if (peerIdsByAddress[address] == excludingPeerId) {
+            if (!shouldSendViaOutgoingBluetoothRoute(address, excludingPeerId)) {
                 return@forEach
-            }
-            peerIdsByAddress[address]?.let { remotePeerId ->
-                if (lanService.hasPeer(remotePeerId)) {
-                    return@forEach
-                }
             }
             val gatt = gatts[address] ?: return@forEach
             if (!writeToGatt(gatt, characteristic, frame)) {
@@ -835,7 +850,7 @@ class IrisNearbyService(
         pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
         serverAssemblers.remove(address)
         mtuPayloadBytes.remove(address)
-        peerIdsByAddress.remove(address)
+        removePeerAddressMappingIfUnused(address)
         status = if (peers.isEmpty()) "Visible" else "${peers.size} nearby"
     }
 
@@ -844,6 +859,7 @@ class IrisNearbyService(
         address: String,
         gatt: BluetoothGatt?,
         reason: String,
+        suppressReconnect: Boolean = false,
     ) {
         Log.d(TAG, "forget central GATT $address: $reason")
         pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
@@ -852,6 +868,10 @@ class IrisNearbyService(
         writableCharacteristics.remove(address)
         centralAssemblers.remove(address)
         mtuPayloadBytes.remove(address)
+        if (suppressReconnect) {
+            suppressCentralReconnect(address)
+        }
+        removePeerAddressMappingIfUnused(address)
         guardBluetooth("close stale GATT", Unit, statusOnFailure = null) {
             gatt?.close()
         }
@@ -878,19 +898,25 @@ class IrisNearbyService(
                         name = envelope.optString("name"),
                         profileEventId = null,
                     )
-                    if (wasNew || (remoteNonce != null && remoteNonce != previousNonce)) {
+                    val nonceChanged = remoteNonce != null && remoteNonce != previousNonce
+                    if (wasNew || nonceChanged) {
                         sendHello(excludingPeerId = null)
                     }
                     if (remoteNonce != null) {
                         peerNonces[remotePeerId] = remoteNonce
-                        sendPresence(remotePeerId, remoteNonce)
+                        if (wasNew || nonceChanged) {
+                            sendPresence(remotePeerId, remoteNonce)
+                        }
                     }
                     if (wasNew) {
                         Log.d(TAG, "peer nearby id=$remotePeerId")
                     }
+                    sendInventoryAfterHelloIfNeeded(
+                        remotePeerId = remotePeerId,
+                        force = wasNew || nonceChanged,
+                    )
                 }
                 status = if (peers.size == 1) "1 nearby" else "${peers.size} nearby"
-                sendInventory(excludingPeerId = null)
             }
             "inv" -> handleInventory(envelope)
             "want" -> handleWant(envelope)
@@ -1045,6 +1071,7 @@ class IrisNearbyService(
         stalePeerIds.forEach { peerId ->
             peers.remove(peerId)
             bluetoothPeerLastSeenMillis.remove(peerId)
+            peerInventorySentMillis.remove(peerId)
             peerNonces.remove(peerId)
         }
 
@@ -1100,6 +1127,7 @@ class IrisNearbyService(
             }
             is NearbySource.Lan -> lanService.markPeer(source.connectionId, peerId)
         }
+        pruneDuplicateBluetoothRoutes(peerId)
     }
 
     private fun recentBluetoothPeerIds(nowMillis: Long = System.currentTimeMillis()): Set<String> =
@@ -1107,6 +1135,115 @@ class IrisNearbyService(
             .filterValues { nowMillis - it <= PEER_TTL_MS }
             .keys
             .toSet()
+
+    private fun shouldSendViaOutgoingBluetoothRoute(
+        address: String,
+        excludingPeerId: String?,
+    ): Boolean {
+        val remotePeerId = peerIdsByAddress[address]
+        if (remotePeerId == excludingPeerId) {
+            return false
+        }
+        if (remotePeerId == null) {
+            return true
+        }
+        if (lanService.hasPeer(remotePeerId)) {
+            return false
+        }
+        if (hasOutgoingBluetoothRoute(remotePeerId) && hasServerBluetoothRoute(remotePeerId)) {
+            return shouldUseOutgoingBluetoothRoute(remotePeerId)
+        }
+        return true
+    }
+
+    private fun shouldSendViaServerBluetoothRoute(
+        address: String,
+        excludingPeerId: String?,
+    ): Boolean {
+        val remotePeerId = peerIdsByAddress[address]
+        if (remotePeerId == excludingPeerId) {
+            return false
+        }
+        if (remotePeerId == null) {
+            return true
+        }
+        if (lanService.hasPeer(remotePeerId)) {
+            return false
+        }
+        if (hasOutgoingBluetoothRoute(remotePeerId) && hasServerBluetoothRoute(remotePeerId)) {
+            return !shouldUseOutgoingBluetoothRoute(remotePeerId)
+        }
+        return true
+    }
+
+    private fun shouldUseOutgoingBluetoothRoute(remotePeerId: String): Boolean =
+        peerId < remotePeerId
+
+    private fun hasOutgoingBluetoothRoute(remotePeerId: String): Boolean =
+        writableCharacteristics.keys.any { peerIdsByAddress[it] == remotePeerId }
+
+    private fun hasServerBluetoothRoute(remotePeerId: String): Boolean =
+        subscribedServerAddresses.any { peerIdsByAddress[it] == remotePeerId }
+
+    private fun pruneDuplicateBluetoothRoutes(remotePeerId: String) {
+        if (!hasOutgoingBluetoothRoute(remotePeerId) || !hasServerBluetoothRoute(remotePeerId)) {
+            return
+        }
+        if (shouldUseOutgoingBluetoothRoute(remotePeerId)) {
+            peerIdsByAddress
+                .filterValues { it == remotePeerId }
+                .keys
+                .filter { subscribedServerAddresses.contains(it) }
+                .toList()
+                .forEach { closeDuplicateServerRoute(it, remotePeerId) }
+        } else {
+            peerIdsByAddress
+                .filterValues { it == remotePeerId }
+                .keys
+                .filter { writableCharacteristics.containsKey(it) || gatts.containsKey(it) }
+                .toList()
+                .forEach { address ->
+                    forgetCentralConnection(
+                        address = address,
+                        gatt = gatts[address],
+                        reason = "duplicate peer route",
+                        suppressReconnect = true,
+                    )
+                }
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun closeDuplicateServerRoute(
+        address: String,
+        remotePeerId: String,
+    ) {
+        Log.d(TAG, "close duplicate server GATT $address peer=$remotePeerId")
+        subscribedServerAddresses.remove(address)
+        pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
+        serverAssemblers.remove(address)
+        guardBluetooth("cancel duplicate server GATT", Unit, statusOnFailure = null) {
+            adapter?.getRemoteDevice(address)?.let { gattServer?.cancelConnection(it) }
+        }
+        removePeerAddressMappingIfUnused(address)
+    }
+
+    private fun removePeerAddressMappingIfUnused(address: String) {
+        if (!writableCharacteristics.containsKey(address) &&
+            !gatts.containsKey(address) &&
+            !subscribedServerAddresses.contains(address)
+        ) {
+            peerIdsByAddress.remove(address)
+        }
+    }
+
+    private fun suppressCentralReconnect(address: String) {
+        centralReconnectSuppressedUntilMillis[address] =
+            SystemClock.elapsedRealtime() + DEDUP_RECONNECT_BACKOFF_MS
+        while (centralReconnectSuppressedUntilMillis.size > MAX_SUPPRESSED_RECONNECT_ADDRESSES) {
+            centralReconnectSuppressedUntilMillis.remove(centralReconnectSuppressedUntilMillis.keys.first())
+        }
+    }
 
     private fun touchPeer(peerId: String) {
         val existing = peers[peerId] ?: return
@@ -1441,6 +1578,7 @@ class IrisNearbyService(
                             guardBluetooth("read disconnected GATT address", null as String?, statusOnFailure = null) {
                                 gatt.device.address
                             } ?: return
+                        val remotePeerId = peerIdsByAddress[address]
                         pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
                         pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
                         if (status != BluetoothGatt.GATT_SUCCESS && !peerIdsByAddress.containsKey(address)) {
@@ -1450,7 +1588,10 @@ class IrisNearbyService(
                         writableCharacteristics.remove(address)
                         centralAssemblers.remove(address)
                         mtuPayloadBytes.remove(address)
-                        peerIdsByAddress.remove(address)
+                        if (remotePeerId != null && !shouldUseOutgoingBluetoothRoute(remotePeerId)) {
+                            suppressCentralReconnect(address)
+                        }
+                        removePeerAddressMappingIfUnused(address)
                         guardBluetooth("close GATT", Unit, statusOnFailure = null) {
                             gatt.close()
                         }
@@ -1589,7 +1730,7 @@ class IrisNearbyService(
                         subscribedServerAddresses.remove(address)
                         pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
                         pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
-                        peerIdsByAddress.remove(address)
+                        removePeerAddressMappingIfUnused(address)
                     }
                 }
             }
@@ -1770,13 +1911,16 @@ class IrisNearbyService(
         const val MAX_INCOMING_FRAGMENT_SETS = 64
         const val FRAGMENT_TTL_MS = 30_000L
         const val HELLO_INTERVAL_MS = 5_000L
+        const val INVENTORY_RESEND_INTERVAL_MS = 60_000L
         const val PEER_SWEEP_INTERVAL_MS = 1_000L
         const val PEER_TTL_MS = 15_000L
         const val BLE_CHUNK_BYTES = 180
         const val BLE_WRITE_TIMEOUT_MS = 1_500L
         const val BLE_NOTIFY_TIMEOUT_MS = 1_500L
         const val NON_IRIS_BACKOFF_MS = 60_000L
+        const val DEDUP_RECONNECT_BACKOFF_MS = 30_000L
         const val MAX_IGNORED_ADDRESSES = 100
+        const val MAX_SUPPRESSED_RECONNECT_ADDRESSES = 100
         const val MAX_SIMULTANEOUS_GATTS = 4
         const val NEARBY_PRESENCE_KIND = 22242L
         const val MAX_EVENT_BYTES = 128 * 1024
