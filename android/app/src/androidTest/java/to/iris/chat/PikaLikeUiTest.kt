@@ -316,7 +316,9 @@ class PikaLikeUiTest {
     @Test
     fun link_device_shows_scannable_code() {
         composeRule.resetToWelcome()
-        composeRule.onNodeWithTag("welcomeAddDeviceAction", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("welcomeAddDeviceAction", useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
         composeRule.waitForTag("addDeviceScreen")
         composeRule.waitForTag("linkDeviceQrCode")
         composeRule.onNodeWithTag("linkDeviceQrCode", useUnmergedTree = true)
@@ -328,7 +330,9 @@ class PikaLikeUiTest {
     @Test
     fun restore_account_opens_chat_list() {
         composeRule.resetToWelcome()
-        composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
 
         composeRule.waitForTag("restoreAccountScreen")
         composeRule.onNodeWithTag("importKeyField", useUnmergedTree = true)
@@ -343,7 +347,9 @@ class PikaLikeUiTest {
     @Test
     fun restore_invalid_secret_key_shows_invalid_key() {
         composeRule.resetToWelcome()
-        composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
 
         composeRule.waitForTag("restoreAccountScreen")
         composeRule.onNodeWithTag("importKeyField", useUnmergedTree = true)
@@ -505,11 +511,11 @@ class PikaLikeUiTest {
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.resetToWelcome() {
-        runOnUiThread {
-            val activity = activity
-            (activity.application as IrisChatApp).container.appManager.logout()
-        }
-        waitForTag("welcomeCreateAction", timeoutMillis = 30_000)
+        (activity.application as IrisChatApp)
+            .container
+            .appManager
+            .resetForUiTestsBlocking()
+        waitForDisplayedTag("welcomeCreateAction", timeoutMillis = 30_000)
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.hasTag(tag: String): Boolean =

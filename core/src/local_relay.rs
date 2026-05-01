@@ -79,7 +79,13 @@ impl TestRelay {
                         }
                         accept_result = listener.accept() => {
                             let (stream, _) = accept_result.expect("accept relay client");
-                            let websocket = accept_async(stream).await.expect("accept websocket");
+                            let websocket = match accept_async(stream).await {
+                                Ok(websocket) => websocket,
+                                Err(error) => {
+                                    eprintln!("Ignoring failed test relay websocket handshake: {error}");
+                                    continue;
+                                }
+                            };
                             let state = state.clone();
                             let client_id = next_client_id.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                             tokio::spawn(async move {

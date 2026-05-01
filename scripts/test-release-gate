@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+MODE="${IRIS_TEST_GATE_MODE:-local}"
+RUN_NATIVE_CONTRACT="${IRIS_TEST_GATE_NATIVE_CONTRACT:-1}"
+RUN_INTEROP="${IRIS_TEST_GATE_INTEROP:-0}"
+RUN_ONDEVICE="${IRIS_TEST_GATE_ONDEVICE:-0}"
+RUN_NOTIFICATIONS="${IRIS_TEST_GATE_NOTIFICATIONS:-0}"
+RUN_LAN_AVAILABLE="${IRIS_TEST_GATE_LAN_AVAILABLE:-0}"
+
+usage() {
+  cat <<'EOF'
+usage: ./scripts/test-release-gate [options]
+
+Runs the release gate from one top-level command.
+
+Options:
+  --local              Fast local gate. Default.
+  --full               Include interop confidence checks.
+  --interop            Include mixed-platform interop confidence checks.
+  --on-device          Require Android + iPhone + Mac LAN visibility.
+  --lan-available      Run LAN visibility if at least two participants are available.
+  --notifications      Include Android notification decrypt / FCM checks.
+  --no-native-contract Skip Android native contract UI lane.
+  -h, --help           Show this help
+
+Environment:
+  IRIS_TEST_GATE_INTEROP=1
+  IRIS_TEST_GATE_ONDEVICE=1
+  IRIS_TEST_GATE_NOTIFICATIONS=1
+  IRIS_TEST_GATE_LAN_AVAILABLE=1
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --local)
+      MODE=local
+      shift
+      ;;
+    --full)
+      MODE=full
+      RUN_INTEROP=1
+      shift
+      ;;
+    --interop)
+      RUN_INTEROP=1
+      shift
+      ;;
+    --on-device)
+      RUN_ONDEVICE=1
+      shift
+      ;;
+    --lan-available)
+      RUN_LAN_AVAILABLE=1
+      shift
+      ;;
+    --notifications)
+      RUN_NOTIFICATIONS=1
+      shift
+      ;;
+    --no-native-contract)
+      RUN_NATIVE_CONTRACT=0
+      shift
+      ;;
+    -h|--help|help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+run_step() {
+  local name="$1"
+  shift
+  echo
+  echo "=== ${name} ==="
+  "$@"
+}
+
+echo "iris chat release gate (${MODE})"
+
+run_step "fast local tests" "${ROOT_DIR}/scripts/test_fast.sh"
+
+if [[ "${RUN_NATIVE_CONTRACT}" == "1" ]]; then
+  run_step "Android native contract/UI tests" env IRIS_SKIP_FAST=1 "${ROOT_DIR}/scripts/test_native_contract.sh"
+fi
+
+run_step "Rust crate package check" cargo package --manifest-path "${ROOT_DIR}/core/Cargo.toml" --locked --allow-dirty
+
+if [[ "${RUN_LAN_AVAILABLE}" == "1" ]]; then
+  run_step "LAN nearby visibility where available" \
+    "${ROOT_DIR}/scripts/nearby_lan_visibility_matrix.sh" --allow-skip
+fi
+
+if [[ "${RUN_INTEROP}" == "1" ]]; then
+  run_step "interop confidence" "${ROOT_DIR}/scripts/test_interop_confidence.sh"
+fi
+
+if [[ "${RUN_ONDEVICE}" == "1" ]]; then
+  run_step "on-device LAN visibility" \
+    "${ROOT_DIR}/scripts/nearby_lan_visibility_matrix.sh" --on-device
+fi
+
+if [[ "${RUN_NOTIFICATIONS}" == "1" ]]; then
+  run_step "notification decrypt e2e" "${ROOT_DIR}/scripts/notification_decrypt_e2e.sh"
+  run_step "Android Firebase notification e2e" "${ROOT_DIR}/scripts/android_firebase_chat_notification_e2e.sh"
+fi
+
+echo
+echo "Release gate passed."

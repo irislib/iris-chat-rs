@@ -13,6 +13,7 @@ https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsd
 - `iris` command line app for scripts, agents, and local devices that need to
   send messages.
 - Attachments, profile pictures, notifications, and support bundles.
+- Nearby chat over Wi-Fi/LAN and Bluetooth.
 - Desktop open-at-login on macOS, Linux, and Windows.
 - Share to iris chat from Android, iOS, and macOS.
 - Search and choose one or more recipients.
@@ -55,14 +56,17 @@ currently have a `just run-linux` shortcut.
 ## Check
 
 ```bash
+just test
+just release-gate
 just qa
 just test-all-platforms
 just qa-native-contract
 just qa-interop
+just qa-lan
 ```
 
-Use `just qa` for the normal local gate. Use the interop lanes before core or
-sync changes.
+Use `just test` for the normal release gate. Add `--full` or `--on-device` to
+`./scripts/test-release-gate` before release candidates.
 
 ## Build
 
@@ -86,7 +90,9 @@ Release helpers:
 ```
 
 `./scripts/release --publish` stages release artifacts under `dist/release/`
-and publishes the release tree to hashtree.
+and publishes the release tree to hashtree. It runs the release gate first,
+publishes a new `iris-chat` crate version when needed, and sends iOS builds to
+internal and public TestFlight unless skipped.
 
 ## Command Line
 

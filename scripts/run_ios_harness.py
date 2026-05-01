@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 import argparse
+import json
 import os
 import plistlib
 import re
@@ -21,7 +22,7 @@ STATUS_PATTERN = re.compile(r"^HARNESS_STATUS: ([^=]+)=(.*)$")
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the iOS interop harness with explicit xctestrun environment injection.")
-    parser.add_argument("--udid", help="Simulator UDID")
+    parser.add_argument("--udid", help="Device or simulator UDID")
     parser.add_argument("--simulator", default="Iris Chat iPhone", help="Simulator name if --udid is omitted")
     parser.add_argument("--action", required=True, help="Harness action name")
     parser.add_argument("--arg", action="append", default=[], help="Harness argument in KEY=VALUE form")
@@ -44,8 +45,25 @@ def resolve_udid(name: str) -> str:
     return match.group(1)
 
 
+def is_simulator_udid(udid: str) -> bool:
+    command = ["xcrun", "simctl", "list", "-j", "devices"]
+    completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    if completed.returncode != 0:
+        return False
+    try:
+        data = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        return False
+    for devices in data.get("devices", {}).values():
+        for device in devices:
+            if device.get("udid") == udid:
+                return True
+    return False
+
+
 def ensure_build(udid: str, rebuild: bool) -> Path:
-    xctestrun_path = find_xctestrun()
+    prefer_simulator = is_simulator_udid(udid)
+    xctestrun_path = find_xctestrun(prefer_simulator=prefer_simulator)
     if xctestrun_path is not None and not rebuild:
         return xctestrun_path
 
@@ -66,18 +84,23 @@ def ensure_build(udid: str, rebuild: bool) -> Path:
     if completed.returncode != 0:
         raise SystemExit(completed.returncode)
 
-    xctestrun_path = find_xctestrun()
+    xctestrun_path = find_xctestrun(prefer_simulator=prefer_simulator)
     if xctestrun_path is None:
         raise SystemExit("xctestrun file was not produced by build-for-testing.")
     return xctestrun_path
 
 
-def find_xctestrun() -> Path | None:
+def find_xctestrun(prefer_simulator: bool | None = None) -> Path | None:
     products_dir = DERIVED_DATA / "Build" / "Products"
     matches = sorted(
         path for path in products_dir.glob("*.xctestrun")
         if ".harness" not in path.name
     )
+    if prefer_simulator is not None:
+        platform = "iphonesimulator" if prefer_simulator else "iphoneos"
+        platform_matches = [path for path in matches if platform in path.name]
+        if platform_matches:
+            return platform_matches[0]
     simulator_matches = [path for path in matches if "iphonesimulator" in path.name]
     if simulator_matches:
         return simulator_matches[0]

@@ -45,6 +45,8 @@ info:
     @echo "Checks"
     @echo "  just doctor-ios"
     @echo "  just qa"
+    @echo "  just test"
+    @echo "  just release-gate"
     @echo "  just test-android"
     @echo "  just test-ios"
     @echo "  just test-macos"
@@ -53,6 +55,7 @@ info:
     @echo "  just test-all-platforms"
     @echo "  just qa-native-contract"
     @echo "  just qa-interop"
+    @echo "  just qa-lan"
 
 run-ios:
     ./tools/run-ios
@@ -159,6 +162,12 @@ doctor-ios:
 qa:
     ./scripts/test_fast.sh
 
+test:
+    ./scripts/test
+
+release-gate:
+    ./scripts/test-release-gate
+
 test-android:
     ./scripts/test-android
 
@@ -182,3 +191,6 @@ qa-native-contract:
 
 qa-interop:
     ./scripts/test_interop_confidence.sh
+
+qa-lan:
+    ./scripts/nearby_lan_visibility_matrix.sh --allow-skip

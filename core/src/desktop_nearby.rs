@@ -1547,6 +1547,76 @@ fn is_private_ipv4(ip: Ipv4Addr) -> bool {
 mod tests {
     use super::*;
 
+    struct NoopDesktopNearbyObserver;
+
+    impl DesktopNearbyObserver for NoopDesktopNearbyObserver {
+        fn desktop_nearby_changed(&self, _snapshot: DesktopNearbySnapshot) {}
+    }
+
+    #[test]
+    fn desktop_lan_services_discover_each_other_on_same_host() {
+        if private_local_ipv4().is_none() {
+            eprintln!("skipping LAN nearby smoke: no private local IPv4 route");
+            return;
+        }
+
+        let alice_dir = tempfile::TempDir::new().expect("alice temp dir");
+        let bob_dir = tempfile::TempDir::new().expect("bob temp dir");
+        let alice_app = FfiApp::new(
+            alice_dir.path().to_string_lossy().to_string(),
+            String::new(),
+            "test".to_string(),
+        );
+        let bob_app = FfiApp::new(
+            bob_dir.path().to_string_lossy().to_string(),
+            String::new(),
+            "test".to_string(),
+        );
+        let alice =
+            DesktopNearbyService::new(alice_app.clone(), Arc::new(NoopDesktopNearbyObserver));
+        let bob = DesktopNearbyService::new(bob_app.clone(), Arc::new(NoopDesktopNearbyObserver));
+
+        alice.start("Alice".to_string());
+        bob.start("Bob".to_string());
+
+        let started = Instant::now();
+        let mut alice_snapshot = alice.snapshot();
+        let mut bob_snapshot = bob.snapshot();
+        while started.elapsed() < Duration::from_secs(20) {
+            alice_snapshot = alice.snapshot();
+            bob_snapshot = bob.snapshot();
+            if alice_snapshot.status == "Local network unavailable"
+                || bob_snapshot.status == "Local network unavailable"
+            {
+                break;
+            }
+            if !alice_snapshot.peers.is_empty() && !bob_snapshot.peers.is_empty() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(250));
+        }
+
+        alice.stop();
+        bob.stop();
+        alice_app.shutdown();
+        bob_app.shutdown();
+
+        if alice_snapshot.status == "Local network unavailable"
+            || bob_snapshot.status == "Local network unavailable"
+        {
+            eprintln!(
+                "skipping LAN nearby smoke: local network unavailable (alice={}, bob={})",
+                alice_snapshot.status, bob_snapshot.status
+            );
+            return;
+        }
+
+        assert!(
+            !alice_snapshot.peers.is_empty() && !bob_snapshot.peers.is_empty(),
+            "LAN nearby peers should discover each other; alice={alice_snapshot:?} bob={bob_snapshot:?}"
+        );
+    }
+
     #[test]
     fn verified_nearby_identity_beats_advertised_device_name() {
         let owner = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";

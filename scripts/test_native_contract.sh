@@ -13,6 +13,25 @@ resolve_serial() {
     printf '%s\n' "${IRIS_ANDROID_SERIAL}"
     return 0
   fi
+  if [[ -n "${ANDROID_SERIAL:-}" ]]; then
+    printf '%s\n' "${ANDROID_SERIAL}"
+    return 0
+  fi
+
+  local sdk_dir adb_path attached_serial
+  sdk_dir="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+  if [[ -z "${sdk_dir}" && -f "${ANDROID_DIR}/local.properties" ]]; then
+    sdk_dir="$(sed -n 's/^sdk\.dir=//p' "${ANDROID_DIR}/local.properties" | tail -n 1)"
+  fi
+  adb_path="${sdk_dir}/platform-tools/adb"
+  if [[ -n "${sdk_dir}" && -x "${adb_path}" ]]; then
+    attached_serial="$("${adb_path}" devices -l 2>/dev/null |
+      awk 'NR > 1 && $2 == "device" && $1 !~ /^emulator-/ { print $1; exit }')"
+    if [[ -n "${attached_serial}" ]]; then
+      printf '%s\n' "${attached_serial}"
+      return 0
+    fi
+  fi
 
   local boot_output
   boot_output="$("${ROOT_DIR}/scripts/run_android_emulators.sh" "${ANDROID_TEST_AVD}")"
@@ -32,7 +51,9 @@ run_filtered_android_test() {
   )
 }
 
-"${ROOT_DIR}/scripts/test_fast.sh"
+if [[ "${IRIS_SKIP_FAST:-0}" != "1" ]]; then
+  "${ROOT_DIR}/scripts/test_fast.sh"
+fi
 
 ANDROID_SERIAL_VALUE="$(resolve_serial)"
 if [[ -z "${ANDROID_SERIAL_VALUE}" ]]; then

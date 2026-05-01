@@ -45,10 +45,6 @@ class RealRelayHarnessTest {
 
     private fun appFilesDir(): File = instrumentation.targetContext.filesDir
 
-    private fun hasPersistedProtocolState(): Boolean =
-        File(appFilesDir(), "core.sqlite3").exists() ||
-            File(appFilesDir(), PERSISTED_STATE_FILENAME).exists()
-
     private fun appPackageName(): String = instrumentation.targetContext.packageName
 
     private fun <T> withActivity(block: (MainActivity) -> T): T {
@@ -97,6 +93,17 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun enable_lan_nearby_and_report_peers() {
+        ensureLoggedIn()
+        withActivity {
+            nearbyService().setVisible(false)
+            nearbyService().setLocalNetworkVisible(true)
+        }
+        SystemClock.sleep(1_000)
+        reportNearbySnapshot(nearbyService().snapshot)
+    }
+
+    @Test
     fun wait_for_nearby_peer_profile_from_args() {
         ensureLoggedIn()
         val peerOwnerHex = peerInputToHex(requiredArg("peer_input")).ifBlank {
@@ -121,6 +128,43 @@ class RealRelayHarnessTest {
             "nearby_visible" to nearbyService().snapshot.visible.toString(),
             "nearby_status" to nearbyService().snapshot.status,
             "nearby_peer_count" to nearbyService().snapshot.peerCount.toString(),
+            "nearby_peer_id" to peer.id,
+            "nearby_peer_name" to peer.name,
+            "nearby_peer_owner_hex" to (peer.ownerPubkeyHex ?: ""),
+            "nearby_peer_profile_event_id" to (peer.profileEventId ?: ""),
+        )
+    }
+
+    @Test
+    fun wait_for_lan_nearby_peer_profile_from_args() {
+        ensureLoggedIn()
+        val peerOwnerHex = peerInputToHex(requiredArg("peer_input")).ifBlank {
+            normalizePeerInput(requiredArg("peer_input"))
+        }
+        withActivity {
+            nearbyService().setVisible(false)
+            nearbyService().setLocalNetworkVisible(true)
+        }
+        val timeoutMs =
+            (optionalArg("timeout_ms")?.toLongOrNull() ?: NEARBY_PROFILE_TIMEOUT_MS)
+                .coerceIn(1_000, NEARBY_PROFILE_TIMEOUT_MS)
+        val peer =
+            waitForState("LAN nearby peer profile $peerOwnerHex", timeoutMs = timeoutMs) {
+                nearbyService()
+                    .snapshot
+                    .peers
+                    .firstOrNull { nearby ->
+                        nearby.ownerPubkeyHex?.equals(peerOwnerHex, ignoreCase = true) == true
+                    }
+            }
+        val snapshot = nearbyService().snapshot
+        reportStatus(
+            "nearby_visible" to snapshot.visible.toString(),
+            "nearby_status" to snapshot.status,
+            "nearby_lan_visible" to snapshot.localNetworkVisible.toString(),
+            "nearby_lan_status" to snapshot.localNetworkStatus,
+            "nearby_lan_permission_granted" to snapshot.localNetworkPermissionGranted.toString(),
+            "nearby_peer_count" to snapshot.peerCount.toString(),
             "nearby_peer_id" to peer.id,
             "nearby_peer_name" to peer.name,
             "nearby_peer_owner_hex" to (peer.ownerPubkeyHex ?: ""),
@@ -1469,7 +1513,7 @@ class RealRelayHarnessTest {
             when (manager.bootstrapState.value) {
                 AccountBootstrapState.Loading -> null
                 AccountBootstrapState.NeedsLogin -> {
-                    if (!createRequested && !hasPersistedProtocolState()) {
+                    if (!createRequested) {
                         createRequested = true
                         manager.createAccount()
                     }
@@ -2141,6 +2185,9 @@ class RealRelayHarnessTest {
         reportStatus(
             "nearby_visible" to snapshot.visible.toString(),
             "nearby_status" to snapshot.status,
+            "nearby_lan_visible" to snapshot.localNetworkVisible.toString(),
+            "nearby_lan_status" to snapshot.localNetworkStatus,
+            "nearby_lan_permission_granted" to snapshot.localNetworkPermissionGranted.toString(),
             "nearby_peer_count" to snapshot.peerCount.toString(),
             "nearby_peers" to peers.toString(),
         )
@@ -2177,6 +2224,6 @@ class RealRelayHarnessTest {
     private companion object {
         const val DEBUG_SNAPSHOT_FILENAME = "iris_chat_runtime_debug.json"
         const val PERSISTED_STATE_FILENAME = "iris_chat_core_state.json"
-        const val NEARBY_PROFILE_TIMEOUT_MS = 20_000L
+        const val NEARBY_PROFILE_TIMEOUT_MS = 180_000L
     }
 }

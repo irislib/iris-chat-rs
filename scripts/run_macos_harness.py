@@ -65,6 +65,7 @@ def ensure_build(rebuild: bool) -> Path:
         str(DERIVED_DATA),
         "-only-testing:" + ONLY_TEST,
         "build-for-testing",
+        "CODE_SIGNING_ALLOWED=NO",
     ]
     completed = subprocess.run(
         command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

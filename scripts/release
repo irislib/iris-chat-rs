@@ -27,6 +27,10 @@ RELEASE_OWNER_NPUB_DEFAULT="npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvm
 PUBLISH=0
 DRY_RUN=0
 PUBLISH_ZAPSTORE=0
+PUBLISH_CARGO_CRATE=""
+TESTFLIGHT_MODE=""
+RELEASE_GATE=1
+RELEASE_GATE_ARGS=()
 RELEASE_TREE=""
 TAG_OVERRIDE=""
 ONLY_RAW=""
@@ -42,6 +46,14 @@ dist/release/<tag>/, and optionally publish it via htree.
 Options:
   --publish                Publish the staged tree with `htree add` + `htree release publish`
   --publish-zapstore       Also publish the signed Android APK to Zapstore
+  --publish-cargo-crate    Publish the iris-chat Rust crate if this version is new
+  --skip-cargo-crate       Do not publish the iris-chat Rust crate
+  --testflight             Upload iOS and attach internal + public TestFlight groups
+  --testflight-internal    Upload iOS and attach internal TestFlight groups
+  --testflight-public      Upload iOS and submit/attach public TestFlight groups
+  --skip-testflight        Do not send the iOS build to TestFlight
+  --gate <mode>            Release gate mode: local, full, on-device, none
+  --skip-gate              Do not run the release gate
   --tag <vX.Y.Z>           Override release tag (defaults to v$IRIS_APP_VERSION_NAME)
   --release-tree <name>    htree release tree name (default: releases/iris-chat-rs)
   --only <csv>             Only run named steps (macos,windows,android,linux,cli,ios)
@@ -53,6 +65,8 @@ Environment:
   IRIS_RELEASE_TREE         Default for --release-tree
   IRIS_CLI_TARGETS          Comma-separated CLI targets for the iris binary
   IRIS_RELEASE_ALLOW_DIRTY  Allow building from a dirty git tree
+  IRIS_RELEASE_GATE_ARGS    Extra/default args for scripts/test-release-gate
+  IRIS_RELEASE_TESTFLIGHT   both, internal, public, or 0
 EOF
 }
 
@@ -60,6 +74,23 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --publish) PUBLISH=1 ;;
     --publish-zapstore) PUBLISH_ZAPSTORE=1 ;;
+    --publish-cargo-crate) PUBLISH_CARGO_CRATE=1 ;;
+    --skip-cargo-crate) PUBLISH_CARGO_CRATE=0 ;;
+    --testflight) TESTFLIGHT_MODE="both" ;;
+    --testflight-internal) TESTFLIGHT_MODE="internal" ;;
+    --testflight-public) TESTFLIGHT_MODE="public" ;;
+    --skip-testflight) TESTFLIGHT_MODE="none" ;;
+    --gate)
+      case "$2" in
+        local) RELEASE_GATE=1; RELEASE_GATE_ARGS=(--local) ;;
+        full) RELEASE_GATE=1; RELEASE_GATE_ARGS=(--full) ;;
+        on-device) RELEASE_GATE=1; RELEASE_GATE_ARGS=(--full --on-device) ;;
+        none) RELEASE_GATE=0; RELEASE_GATE_ARGS=() ;;
+        *) echo "Unsupported --gate mode: $2" >&2; usage >&2; exit 2 ;;
+      esac
+      shift
+      ;;
+    --skip-gate) RELEASE_GATE=0 ;;
     --dry-run) DRY_RUN=1 ;;
     --tag) TAG_OVERRIDE="$2"; shift ;;
     --release-tree) RELEASE_TREE="$2"; shift ;;
@@ -70,6 +101,52 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ "${#RELEASE_GATE_ARGS[@]}" -eq 0 && -n "${IRIS_RELEASE_GATE_ARGS:-}" ]]; then
+  # shellcheck disable=SC2206
+  RELEASE_GATE_ARGS=(${IRIS_RELEASE_GATE_ARGS})
+fi
+if [[ "${#RELEASE_GATE_ARGS[@]}" -eq 0 ]]; then
+  if [[ "$PUBLISH" -eq 1 ]]; then
+    RELEASE_GATE_ARGS=(--full)
+  else
+    RELEASE_GATE_ARGS=(--local)
+  fi
+fi
+if bool_is_true "${IRIS_RELEASE_SKIP_GATE:-false}"; then
+  RELEASE_GATE=0
+fi
+
+if [[ -z "${PUBLISH_CARGO_CRATE}" ]]; then
+  PUBLISH_CARGO_CRATE=0
+  if bool_is_true "${IRIS_RELEASE_PUBLISH_CARGO_CRATE:-false}"; then
+    PUBLISH_CARGO_CRATE=1
+  elif [[ "$PUBLISH" -eq 1 ]] && ! bool_is_true "${IRIS_RELEASE_SKIP_CARGO_CRATE:-false}"; then
+    PUBLISH_CARGO_CRATE=1
+  fi
+fi
+
+if [[ -z "${TESTFLIGHT_MODE}" ]]; then
+  case "${IRIS_RELEASE_TESTFLIGHT:-}" in
+    both|internal|public|none)
+      TESTFLIGHT_MODE="${IRIS_RELEASE_TESTFLIGHT}"
+      ;;
+    0|false|FALSE|False|no|NO|No|off|OFF|Off)
+      TESTFLIGHT_MODE="none"
+      ;;
+    "")
+      if [[ "$PUBLISH" -eq 1 ]]; then
+        TESTFLIGHT_MODE="both"
+      else
+        TESTFLIGHT_MODE="none"
+      fi
+      ;;
+    *)
+      echo "Unsupported IRIS_RELEASE_TESTFLIGHT: ${IRIS_RELEASE_TESTFLIGHT}" >&2
+      exit 2
+      ;;
+  esac
+fi
 
 normalize_tag() {
   local v="$1"
@@ -566,13 +643,131 @@ build_cli() {
   fi
 }
 
+run_release_gate() {
+  if [[ "$RELEASE_GATE" -ne 1 ]]; then
+    echo "Release gate: skipped"
+    return 0
+  fi
+  if [[ "$DRY_RUN" -eq 1 ]]; then
+    echo "[dry-run] would run release gate: scripts/test-release-gate ${RELEASE_GATE_ARGS[*]}"
+    return 0
+  fi
+  echo
+  echo "Running release gate..."
+  "$ROOT/scripts/test-release-gate" "${RELEASE_GATE_ARGS[@]}"
+}
+
+core_crate_field() {
+  local field="$1"
+  sed -nE "s/^${field}[[:space:]]*=[[:space:]]*\"([^\"]+)\".*/\\1/p" "$ROOT/core/Cargo.toml" | head -n 1
+}
+
+crates_io_has_version() {
+  local name="$1"
+  local version="$2"
+  python3 - "$name" "$version" <<'PY'
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+name, version = sys.argv[1:3]
+url = "https://crates.io/api/v1/crates/{}/{}".format(
+    urllib.parse.quote(name, safe=""),
+    urllib.parse.quote(version, safe=""),
+)
+try:
+    with urllib.request.urlopen(url, timeout=20) as response:
+        sys.exit(0 if 200 <= response.status < 300 else 2)
+except urllib.error.HTTPError as error:
+    if error.code == 404:
+        sys.exit(1)
+    print(f"crates.io lookup failed: HTTP {error.code}", file=sys.stderr)
+    sys.exit(2)
+except Exception as error:
+    print(f"crates.io lookup failed: {error}", file=sys.stderr)
+    sys.exit(2)
+PY
+}
+
+publish_cargo_crate() {
+  if [[ "$PUBLISH_CARGO_CRATE" -ne 1 ]]; then
+    echo "Rust crate publish: skipped"
+    return 0
+  fi
+  local crate_name crate_version
+  crate_name="$(core_crate_field name)"
+  crate_version="$(core_crate_field version)"
+  if [[ -z "$crate_name" || -z "$crate_version" ]]; then
+    echo "Could not resolve core crate name/version." >&2
+    return 1
+  fi
+  echo
+  echo "Publishing Rust crate ${crate_name} ${crate_version}..."
+  set +e
+  crates_io_has_version "$crate_name" "$crate_version"
+  local lookup_status=$?
+  set -e
+  case "$lookup_status" in
+    0)
+      echo "crates.io already has ${crate_name} ${crate_version}; skipping."
+      return 0
+      ;;
+    1)
+      ;;
+    *)
+      return "$lookup_status"
+      ;;
+  esac
+  (cd "$ROOT/core" && cargo publish --locked)
+}
+
+publish_testflight() {
+  case "$TESTFLIGHT_MODE" in
+    none)
+      echo "TestFlight: skipped"
+      return 0
+      ;;
+    internal|public|both)
+      ;;
+    *)
+      echo "Unsupported TestFlight mode: $TESTFLIGHT_MODE" >&2
+      return 1
+      ;;
+  esac
+  if ! step_enabled ios; then
+    note_skipped "testflight: ios step disabled by --only/--skip"
+    return 0
+  fi
+  echo
+  echo "Uploading iOS build to TestFlight..."
+  IRIS_IOS_ATTACH_INTERNAL_AFTER_UPLOAD=false "$ROOT/scripts/ios-release" upload
+  case "$TESTFLIGHT_MODE" in
+    internal)
+      "$ROOT/scripts/testflight-internal" put
+      ;;
+    public)
+      "$ROOT/scripts/testflight-public" put
+      ;;
+    both)
+      "$ROOT/scripts/testflight-internal" put
+      "$ROOT/scripts/testflight-public" put
+      ;;
+  esac
+}
+
 # ---------- Run steps ----------
 echo "=== iris-chat release $TAG ==="
 echo "Release tree:    $RELEASE_TREE"
 echo "Stage dir:       $STAGE_DIR"
 echo "Version:         $IRIS_APP_VERSION_NAME ($IRIS_APP_VERSION_CODE)"
 echo "Git sha:         $IRIS_BUILD_GIT_SHA"
+echo "Gate:            $([[ "$RELEASE_GATE" -eq 1 ]] && printf '%s' "${RELEASE_GATE_ARGS[*]}" || printf skipped)"
+echo "Cargo crate:     $([[ "$PUBLISH_CARGO_CRATE" -eq 1 ]] && printf publish || printf skip)"
+echo "TestFlight:      $TESTFLIGHT_MODE"
 [[ "$DRY_RUN" -eq 1 ]] && echo "(dry-run; no commands executed)"
+
+run_release_gate
 
 run_step macos   build_macos
 run_step windows build_windows
@@ -675,6 +870,9 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_
 echo
 echo "Staged $TAG at: $STAGE_DIR"
 ls -la "$STAGE_DIR/assets"
+
+publish_cargo_crate
+publish_testflight
 
 # ---------- Publish ----------
 if [[ "$PUBLISH" -eq 1 ]]; then

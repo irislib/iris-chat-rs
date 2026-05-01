@@ -2,8 +2,9 @@ import Foundation
 import Network
 import Darwin
 
-final class IrisNearbyLanService {
+final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     private static let serviceType = "_iris-chat._tcp"
+    private static let netServiceType = "_iris-chat._tcp."
 
     private final class ConnectionSlot {
         let id: String
@@ -33,6 +34,7 @@ final class IrisNearbyLanService {
 
     private var listener: NWListener?
     private var browser: NWBrowser?
+    private var netService: NetService?
     private var connections: [String: ConnectionSlot] = [:]
     private var endpointIDs: Set<String> = []
     private var privateLocalHost: NWEndpoint.Host?
@@ -48,6 +50,7 @@ final class IrisNearbyLanService {
         self.bodyLengthFromHeader = bodyLengthFromHeader
         self.onFrame = onFrame
         self.onStatus = onStatus
+        super.init()
     }
 
     func start() {
@@ -71,14 +74,19 @@ final class IrisNearbyLanService {
             self.enabled = false
             self.listener?.cancel()
             self.browser?.cancel()
+            let service = self.netService
             self.listener = nil
             self.browser = nil
+            self.netService = nil
             self.privateLocalHost = nil
             self.endpointIDs.removeAll()
             for slot in self.connections.values {
                 slot.connection.cancel()
             }
             self.connections.removeAll()
+            DispatchQueue.main.async {
+                service?.stop()
+            }
             self.updateStatus("Off")
         }
     }
@@ -121,9 +129,9 @@ final class IrisNearbyLanService {
 
     private func startListener(localHost: NWEndpoint.Host) {
         do {
-            let parameters = tcpParameters(localHost: localHost)
+            let port = Self.randomPrivatePort()
+            let parameters = tcpParameters(localHost: localHost, localPort: port)
             let listener = try NWListener(using: parameters)
-            listener.service = NWListener.Service(name: peerID, type: Self.serviceType)
             listener.newConnectionHandler = { [weak self] connection in
                 guard let self else {
                     connection.cancel()
@@ -139,6 +147,7 @@ final class IrisNearbyLanService {
                 guard let self else { return }
                 switch state {
                 case .ready:
+                    self.publishService(port: port.rawValue)
                     self.updateStatus(self.connections.isEmpty ? "Visible" : "Connected")
                 case .failed(let error):
                     self.updateStatus(Self.failureStatus(for: error))
@@ -153,6 +162,33 @@ final class IrisNearbyLanService {
         } catch {
             updateStatus(Self.failureStatus(for: error, fallback: "Local network unavailable"))
         }
+    }
+
+    private func publishService(port: UInt16) {
+        let previous = netService
+        let service = NetService(
+            domain: "local.",
+            type: Self.netServiceType,
+            name: peerID,
+            port: Int32(port)
+        )
+        service.includesPeerToPeer = true
+        service.delegate = self
+        service.schedule(in: .main, forMode: .common)
+        netService = service
+        DispatchQueue.main.async {
+            previous?.stop()
+            service.publish()
+        }
+    }
+
+    func netServiceDidPublish(_ sender: NetService) {
+        NSLog("Iris nearby LAN: published \(sender.name).\(sender.type) port \(sender.port)")
+    }
+
+    func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
+        NSLog("Iris nearby LAN: publish failed \(errorDict)")
+        updateStatus("Local network failed")
     }
 
     private func startBrowser() {
@@ -269,17 +305,24 @@ final class IrisNearbyLanService {
             text.contains("-65570")
     }
 
-    private func tcpParameters(localHost: NWEndpoint.Host? = nil) -> NWParameters {
+    private func tcpParameters(
+        localHost: NWEndpoint.Host? = nil,
+        localPort: NWEndpoint.Port? = nil
+    ) -> NWParameters {
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         parameters.prohibitedInterfaceTypes = [.cellular]
         if let localHost {
             parameters.requiredLocalEndpoint = .hostPort(
                 host: localHost,
-                port: NWEndpoint.Port(rawValue: 0)!
+                port: localPort ?? NWEndpoint.Port(rawValue: 0)!
             )
         }
         return parameters
+    }
+
+    private static func randomPrivatePort() -> NWEndpoint.Port {
+        NWEndpoint.Port(rawValue: UInt16.random(in: 49_152...65_535))!
     }
 
     private func isOwnService(_ endpoint: NWEndpoint) -> Bool {
