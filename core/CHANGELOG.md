@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- Add `iris sync` for explicit CLI relay catch-up.
+- Add group delete, member removal, admin add/remove, and group reaction commands.
+- Add Iris CLI interop coverage against an independent `nostr-double-ratchet` protocol client.
+
 ## 0.1.2
 
 - Add a per-data-dir core lock so only one writer/ratcheting Iris core can use a data directory at a time.

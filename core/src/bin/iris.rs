@@ -40,6 +40,10 @@ enum Commands {
     Logout,
     Whoami,
     State,
+    Sync {
+        #[arg(long, default_value_t = 1500)]
+        wait_ms: u64,
+    },
     Search {
         query: String,
         #[arg(short, long, default_value_t = 50)]
@@ -187,9 +191,29 @@ enum GroupCommands {
         group: String,
         members: Vec<String>,
     },
+    Remove {
+        group: String,
+        members: Vec<String>,
+    },
+    AddAdmin {
+        group: String,
+        member: String,
+    },
+    RemoveAdmin {
+        group: String,
+        member: String,
+    },
     Rename {
         group: String,
         name: String,
+    },
+    React {
+        group: String,
+        message_id: String,
+        emoji: String,
+    },
+    Delete {
+        group: String,
     },
 }
 
@@ -379,6 +403,13 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
         }
         Commands::Whoami => Ok(account_json(&require_account(&cli.app.state())?)),
         Commands::State => Ok(state_json(&cli.app.state())),
+        Commands::Sync { wait_ms } => {
+            let state = cli.dispatch_and_wait(
+                AppAction::AppForegrounded,
+                Duration::from_millis(wait_ms.max(100)),
+            )?;
+            Ok(state_json(&state))
+        }
         Commands::Search { .. } | Commands::Tail { .. } | Commands::Listen { .. } => {
             unreachable!("read-only commands are handled before the app core starts")
         }
@@ -568,6 +599,29 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             )?;
             show_group(cli, &group_id)
         }
+        Commands::Group(GroupCommands::Remove { group, members }) => {
+            let group_id = resolve_group_id(&cli.app.state(), &group)?;
+            if members.is_empty() {
+                anyhow::bail!("At least one member is required.");
+            }
+            for member in members {
+                let owner_pubkey_hex = owner_input_to_hex(&member)?;
+                cli.dispatch_and_wait(
+                    AppAction::RemoveGroupMember {
+                        group_id: group_id.clone(),
+                        owner_pubkey_hex,
+                    },
+                    Duration::from_secs(3),
+                )?;
+            }
+            show_group(cli, &group_id)
+        }
+        Commands::Group(GroupCommands::AddAdmin { group, member }) => {
+            set_group_admin(cli, &group, &member, true)
+        }
+        Commands::Group(GroupCommands::RemoveAdmin { group, member }) => {
+            set_group_admin(cli, &group, &member, false)
+        }
         Commands::Group(GroupCommands::Rename { group, name }) => {
             let group_id = resolve_group_id(&cli.app.state(), &group)?;
             cli.dispatch_and_wait(
@@ -578,6 +632,22 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
                 Duration::from_secs(3),
             )?;
             show_group(cli, &group_id)
+        }
+        Commands::Group(GroupCommands::React {
+            group,
+            message_id,
+            emoji,
+        }) => react(cli, &normalize_group_chat(&group), &message_id, &emoji),
+        Commands::Group(GroupCommands::Delete { group }) => {
+            let group_id = resolve_group_id(&cli.app.state(), &group)?;
+            let chat_id = normalize_group_chat(&group_id);
+            cli.dispatch_and_wait(
+                AppAction::DeleteChat {
+                    chat_id: chat_id.clone(),
+                },
+                Duration::from_secs(2),
+            )?;
+            Ok(json!({ "chat_id": chat_id, "group_id": group_id, "deleted": true }))
         }
         Commands::Relay(RelayCommands::List) => {
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
@@ -801,6 +871,28 @@ fn show_group(cli: &CliApp, group: &str) -> Result<Value> {
     Ok(group_json(&details))
 }
 
+fn set_group_admin(cli: &CliApp, group: &str, member: &str, is_admin: bool) -> Result<Value> {
+    let group_id = resolve_group_id(&cli.app.state(), group)?;
+    let owner_pubkey_hex = owner_input_to_hex(member)?;
+    cli.dispatch_and_wait(
+        AppAction::SetGroupAdmin {
+            group_id: group_id.clone(),
+            owner_pubkey_hex,
+            is_admin,
+        },
+        Duration::from_secs(3),
+    )?;
+    show_group(cli, &group_id)
+}
+
+fn owner_input_to_hex(input: &str) -> Result<String> {
+    let hex = iris_chat_core::peer_input_to_hex(input.to_string());
+    if hex.is_empty() {
+        anyhow::bail!("Invalid user ID: {input}");
+    }
+    Ok(hex)
+}
+
 fn search_messages(data_dir: &Path, query: &str, limit: usize) -> Result<Value> {
     let conn = open_existing_db(data_dir)?;
     let pattern = format!("%{query}%");
@@ -1013,6 +1105,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Logout => "logout",
         Commands::Whoami => "whoami",
         Commands::State => "state",
+        Commands::Sync { .. } => "sync",
         Commands::Search { .. } => "search",
         Commands::Tail { .. } => "tail",
         Commands::Listen { .. } => "listen",

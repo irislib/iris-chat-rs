@@ -21,17 +21,19 @@ struct RelayState {
 
 enum RelayControl {
     ReplayStored,
+    Snapshot(std_mpsc::Sender<Vec<Value>>),
     Shutdown,
 }
 
 pub struct TestRelay {
     control_tx: mpsc::UnboundedSender<RelayControl>,
     join: Option<thread::JoinHandle<()>>,
+    url: String,
 }
 
 impl TestRelay {
     pub fn start() -> Self {
-        Self::start_with_bind("127.0.0.1:4848").expect("start relay")
+        Self::start_with_bind("127.0.0.1:0").expect("start relay")
     }
 
     pub fn start_with_bind(bind_addr: &str) -> Result<Self> {
@@ -50,15 +52,28 @@ impl TestRelay {
                     .await
                     .with_context(|| format!("bind relay listener {bind_addr}"))
                     .expect("bind relay listener");
+                let local_addr = listener.local_addr().expect("relay local addr");
                 let state = Arc::new(Mutex::new(RelayState::default()));
                 let next_client_id = Arc::new(std::sync::atomic::AtomicUsize::new(1));
-                ready_tx.send(()).expect("signal relay ready");
+                ready_tx
+                    .send(format!("ws://{local_addr}"))
+                    .expect("signal relay ready");
 
                 loop {
                     tokio::select! {
                         Some(control) = control_rx.recv() => {
                             match control {
                                 RelayControl::ReplayStored => replay_stored_events(&state),
+                                RelayControl::Snapshot(reply_tx) => {
+                                    let events = state
+                                        .lock()
+                                        .expect("relay state lock")
+                                        .events_by_id
+                                        .values()
+                                        .cloned()
+                                        .collect::<Vec<_>>();
+                                    let _ = reply_tx.send(events);
+                                }
                                 RelayControl::Shutdown => break,
                             }
                         }
@@ -76,18 +91,31 @@ impl TestRelay {
             });
         });
 
-        ready_rx
+        let url = ready_rx
             .recv_timeout(StdDuration::from_secs(5))
             .context("relay ready")?;
 
         Ok(Self {
             control_tx,
             join: Some(join),
+            url,
         })
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
     }
 
     pub fn replay_stored(&self) {
         let _ = self.control_tx.send(RelayControl::ReplayStored);
+    }
+
+    pub fn events(&self) -> Vec<Value> {
+        let (reply_tx, reply_rx) = std_mpsc::channel();
+        let _ = self.control_tx.send(RelayControl::Snapshot(reply_tx));
+        reply_rx
+            .recv_timeout(StdDuration::from_secs(5))
+            .unwrap_or_default()
     }
 }
 

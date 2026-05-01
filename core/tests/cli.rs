@@ -118,6 +118,12 @@ fn account_create_persists_and_restores_for_next_process() {
     assert_eq!(whoami["data"]["user_id"], created["data"]["user_id"]);
     assert_eq!(whoami["data"]["device_state"], "authorized");
 
+    let synced = run_iris(dir.path(), &["sync", "--wait-ms", "100"]);
+    assert_eq!(
+        synced["data"]["account"]["user_id"],
+        created["data"]["user_id"]
+    );
+
     let bundle = run_iris(dir.path(), &["account", "bundle"]);
     assert_eq!(bundle["data"]["has_owner_secret"], true);
     assert_eq!(bundle["data"]["has_device_secret"], true);
@@ -176,22 +182,56 @@ fn direct_chat_send_read_search_and_tail_work_offline() {
 #[test]
 fn invite_create_group_create_relays_and_logout_are_scriptable() {
     let dir = TempDir::new().unwrap();
+    let bob = TempDir::new().unwrap();
     run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
+    let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
+    let bob_user_id = bob_account["data"]["user_id"].as_str().unwrap();
     run_iris(dir.path(), &["relay", "set"]);
 
     let invite = run_iris(dir.path(), &["invite", "create"]);
     assert!(invite["data"]["url"].as_str().unwrap().contains("iris"));
 
-    let group = run_iris(dir.path(), &["group", "create", "Notes"]);
+    let group = run_iris(dir.path(), &["group", "create", "Notes", bob_user_id]);
     let chat_id = group["data"]["current_chat"]["chat_id"].as_str().unwrap();
     assert!(chat_id.starts_with("group:"));
 
     let group_id = group["data"]["current_chat"]["group_id"].as_str().unwrap();
     let sent = run_iris(dir.path(), &["group", "send", group_id, "group note"]);
     assert_eq!(sent["data"]["body"], "group note");
+    let message_id = sent["data"]["id"].as_str().unwrap();
+
+    let reacted = run_iris(dir.path(), &["group", "react", group_id, message_id, "+1"]);
+    assert_eq!(reacted["data"]["reactions"][0]["emoji"], "+1");
 
     let read = run_iris(dir.path(), &["group", "read", group_id]);
     assert_eq!(read["data"]["messages"][0]["body"], "group note");
+
+    let renamed = run_iris(dir.path(), &["group", "rename", group_id, "Renamed"]);
+    assert_eq!(renamed["data"]["name"], "Renamed");
+
+    let admin = run_iris(dir.path(), &["group", "add-admin", group_id, bob_user_id]);
+    assert!(admin["data"]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|member| member["user_id"] == bob_user_id && member["admin"] == true));
+
+    let member = run_iris(
+        dir.path(),
+        &["group", "remove-admin", group_id, bob_user_id],
+    );
+    assert!(member["data"]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|member| member["user_id"] == bob_user_id && member["admin"] == false));
+
+    let removed = run_iris(dir.path(), &["group", "remove", group_id, bob_user_id]);
+    assert!(!removed["data"]["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|member| member["user_id"] == bob_user_id));
 
     let relays = run_iris(
         dir.path(),
@@ -206,6 +246,9 @@ fn invite_create_group_create_relays_and_logout_are_scriptable() {
         relays["data"]["message_servers"].as_array().unwrap().len(),
         2
     );
+
+    let deleted = run_iris(dir.path(), &["group", "delete", group_id]);
+    assert_eq!(deleted["data"]["deleted"], true);
 
     let logout = run_iris(dir.path(), &["logout"]);
     assert_eq!(logout["data"]["logged_out"], true);
