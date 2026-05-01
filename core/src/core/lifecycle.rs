@@ -1,12 +1,22 @@
 use super::*;
 
 impl AppCore {
+    #[cfg(test)]
     pub fn new(
         update_tx: Sender<AppUpdate>,
         core_sender: Sender<CoreMsg>,
         data_dir: String,
         shared_state: Arc<RwLock<AppState>>,
     ) -> Self {
+        Self::try_new(update_tx, core_sender, data_dir, shared_state).expect("start app core")
+    }
+
+    pub fn try_new(
+        update_tx: Sender<AppUpdate>,
+        core_sender: Sender<CoreMsg>,
+        data_dir: String,
+        shared_state: Arc<RwLock<AppState>>,
+    ) -> anyhow::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -19,9 +29,10 @@ impl AppCore {
         }
 
         let data_dir = PathBuf::from(data_dir);
-        let app_store = AppStore::new(open_database(&data_dir).expect("open core.sqlite3"));
+        let data_dir_lock = DataDirLock::acquire(&data_dir)?;
+        let app_store = AppStore::new(open_database(&data_dir)?);
 
-        Self {
+        Ok(Self {
             update_tx,
             core_sender,
             shared_state,
@@ -62,10 +73,11 @@ impl AppCore {
             setup_user_done: HashSet::new(),
             last_emitted_state: None,
             app_store,
+            _data_dir_lock: data_dir_lock,
             cached_mobile_push: MobilePushSyncSnapshot::default(),
             // First rebuild populates the cache.
             mobile_push_dirty: true,
-        }
+        })
     }
 
     pub fn handle_message(&mut self, msg: CoreMsg) -> bool {

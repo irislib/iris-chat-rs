@@ -75,31 +75,45 @@ impl FfiApp {
 
         let core_tx_for_thread = core_tx.clone();
         let shared_for_thread = shared_state.clone();
-        thread::spawn(move || {
-            let mut core = AppCore::new(update_tx, core_tx_for_thread, data_dir, shared_for_thread);
-            // Drain whatever is already queued and process it as one batch so
-            // a flurry of relay events + user actions produces a single UI
-            // update instead of N. Without this, tapping a chat while a
-            // relay backlog drains can take seconds because OpenChat sits
-            // behind every queued event and the UI recomposes between each.
-            while let Ok(first) = core_rx.recv() {
-                let mut batch = Vec::with_capacity(8);
-                batch.push(first);
-                while let Ok(next) = core_rx.try_recv() {
-                    batch.push(next);
-                }
-                let batch_size = batch.len();
-                let t0 = crate::perflog::now_ms();
-                crate::perflog!("core.batch.start size={batch_size}");
-                if !handle_core_batch_responsive(&mut core, batch) {
-                    break;
-                }
-                crate::perflog!(
-                    "core.batch.end size={batch_size} elapsed_ms={}",
-                    crate::perflog::now_ms().saturating_sub(t0)
-                );
+        let update_tx_for_error = update_tx.clone();
+        match AppCore::try_new(update_tx, core_tx_for_thread, data_dir, shared_for_thread) {
+            Ok(mut core) => {
+                thread::spawn(move || {
+                    // Drain whatever is already queued and process it as one batch so
+                    // a flurry of relay events + user actions produces a single UI
+                    // update instead of N. Without this, tapping a chat while a
+                    // relay backlog drains can take seconds because OpenChat sits
+                    // behind every queued event and the UI recomposes between each.
+                    while let Ok(first) = core_rx.recv() {
+                        let mut batch = Vec::with_capacity(8);
+                        batch.push(first);
+                        while let Ok(next) = core_rx.try_recv() {
+                            batch.push(next);
+                        }
+                        let batch_size = batch.len();
+                        let t0 = crate::perflog::now_ms();
+                        crate::perflog!("core.batch.start size={batch_size}");
+                        if !handle_core_batch_responsive(&mut core, batch) {
+                            break;
+                        }
+                        crate::perflog!(
+                            "core.batch.end size={batch_size} elapsed_ms={}",
+                            crate::perflog::now_ms().saturating_sub(t0)
+                        );
+                    }
+                });
             }
-        });
+            Err(error) => {
+                let mut state = AppState::empty();
+                state.toast = Some(error.to_string());
+                state.rev = 1;
+                match shared_state.write() {
+                    Ok(mut slot) => *slot = state.clone(),
+                    Err(poison) => *poison.into_inner() = state.clone(),
+                }
+                let _ = update_tx_for_error.send(AppUpdate::FullState(state));
+            }
+        }
 
         Arc::new(Self {
             core_tx,

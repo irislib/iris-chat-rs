@@ -106,7 +106,7 @@ use payloads::*;
 use profile_helpers::*;
 use protocol_filters::*;
 use publish_helpers::*;
-use storage::{open_database, AppStore, SqliteStorageAdapter};
+use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
 
 pub struct AppCore {
     update_tx: Sender<AppUpdate>,
@@ -173,6 +173,10 @@ pub struct AppCore {
     /// SQLite-backed durable storage for app state and NDR ratchet
     /// state. See `core/storage/`.
     app_store: AppStore,
+    /// Process-wide writer/runtime guard for this data directory.
+    /// Read-only helpers deliberately skip it so notification previews
+    /// can inspect SQLite without racing the ratchet state.
+    _data_dir_lock: DataDirLock,
     /// Cached `MobilePushSyncSnapshot`. Computing it walks every NDR
     /// session state and runs `serde_json::to_string` on each — that
     /// was ~440 ms per `rebuild_state`, dominating tap-to-render. The

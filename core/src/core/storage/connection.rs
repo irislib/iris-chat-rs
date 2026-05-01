@@ -1,10 +1,51 @@
 use super::schema;
 use super::SharedConnection;
-use rusqlite::Connection;
+use rusqlite::{Connection, ErrorCode};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 pub(crate) const CORE_DB_FILENAME: &str = "core.sqlite3";
+pub(crate) const CORE_LOCK_DB_FILENAME: &str = "core.lock.sqlite3";
+
+pub(crate) struct DataDirLock {
+    _conn: Connection,
+}
+
+impl DataDirLock {
+    pub(crate) fn acquire(data_dir: &Path) -> anyhow::Result<Self> {
+        std::fs::create_dir_all(data_dir)?;
+        let path = data_dir.join(CORE_LOCK_DB_FILENAME);
+        let conn = Connection::open(&path)?;
+        conn.busy_timeout(Duration::from_millis(250))?;
+        conn.pragma_update(None, "journal_mode", "DELETE")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        match conn.execute_batch(
+            "BEGIN IMMEDIATE;
+             CREATE TABLE IF NOT EXISTS core_lock (
+                 id INTEGER PRIMARY KEY CHECK (id = 1),
+                 acquired_at_secs INTEGER NOT NULL
+             );
+             INSERT INTO core_lock(id, acquired_at_secs)
+             VALUES (1, strftime('%s', 'now'))
+             ON CONFLICT(id) DO UPDATE SET acquired_at_secs = excluded.acquired_at_secs;",
+        ) {
+            Ok(()) => Ok(Self { _conn: conn }),
+            Err(error) if is_lock_busy(&error) => {
+                Err(anyhow::anyhow!("Iris is already using this data folder."))
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+}
+
+fn is_lock_busy(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(inner, _)
+            if matches!(inner.code, ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
+}
 
 pub(crate) fn open_database(data_dir: &Path) -> anyhow::Result<SharedConnection> {
     std::fs::create_dir_all(data_dir)?;

@@ -2461,13 +2461,7 @@ fn set_chat_message_ttl_action_sets_clears_and_persists() {
             .message_ttl_seconds,
         Some(3600)
     );
-    let mut restarted = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        data_dir.clone(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-    let loaded = restarted
+    let loaded = core
         .load_persisted()
         .expect("load persisted")
         .expect("persisted state");
@@ -2480,13 +2474,7 @@ fn set_chat_message_ttl_action_sets_clears_and_persists() {
 
     assert!(!core.chat_message_ttl_seconds.contains_key(&chat_id));
     assert_eq!(stored_chat_ttl(&core, &chat_id), None);
-    let mut restarted = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        data_dir,
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-    let loaded = restarted
+    let loaded = core
         .load_persisted()
         .expect("load persisted after clear")
         .expect("persisted state after clear");

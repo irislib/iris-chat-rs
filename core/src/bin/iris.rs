@@ -281,10 +281,18 @@ fn run(cli: Cli) -> Result<()> {
     let data_dir = cli.data_dir.unwrap_or_else(default_data_dir);
     std::fs::create_dir_all(&data_dir)
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
-    let cli_app = CliApp::open(&data_dir)?;
     let command_name = command_name(&cli.command).to_string();
-    let data = handle_command(&cli_app, &data_dir, cli.command)?;
-    cli_app.app.shutdown();
+    let data = match cli.command {
+        Commands::Search { query, limit } => search_messages(&data_dir, &query, limit)?,
+        Commands::Tail { limit } => tail_messages(&data_dir, limit)?,
+        Commands::Listen { chat, interval_ms } => listen(&data_dir, chat.as_deref(), interval_ms)?,
+        command => {
+            let cli_app = CliApp::open(&data_dir)?;
+            let data = handle_command(&cli_app, &data_dir, command)?;
+            cli_app.app.shutdown();
+            data
+        }
+    };
     print_output(cli.json, &command_name, data)
 }
 
@@ -300,6 +308,7 @@ impl CliApp {
             updates: Mutex::new(Vec::new()),
         });
         app.listen_for_updates(Box::new(ReconcilerHandle(reconciler.clone())));
+        fail_on_toast(&app.state())?;
         let cli_app = Self { app, reconciler };
         if let Some(bundle) = read_account_bundle(data_dir)? {
             cli_app.dispatch_and_wait(
@@ -370,9 +379,9 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
         }
         Commands::Whoami => Ok(account_json(&require_account(&cli.app.state())?)),
         Commands::State => Ok(state_json(&cli.app.state())),
-        Commands::Search { query, limit } => search_messages(data_dir, &query, limit),
-        Commands::Tail { limit } => tail_messages(data_dir, limit),
-        Commands::Listen { chat, interval_ms } => listen(data_dir, chat.as_deref(), interval_ms),
+        Commands::Search { .. } | Commands::Tail { .. } | Commands::Listen { .. } => {
+            unreachable!("read-only commands are handled before the app core starts")
+        }
         Commands::Account(AccountCommands::Create { name }) => {
             cli.dispatch_and_wait(AppAction::CreateAccount { name }, Duration::from_secs(4))?;
             let state = cli.app.state();

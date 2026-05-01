@@ -4,6 +4,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use std::{io::BufRead, io::BufReader, process::Stdio};
 
+use iris_chat_core::FfiApp;
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -56,6 +57,27 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
     );
     serde_json::from_str(stdout.trim())
         .unwrap_or_else(|error| panic!("invalid json: {error}\nstdout={stdout}\nstderr={stderr}"))
+}
+
+fn run_iris_error(data_dir: &Path, args: &[&str]) -> Value {
+    let output = Command::new(iris_binary())
+        .arg("--json")
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args(args)
+        .output()
+        .expect("run iris");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "iris unexpectedly succeeded\nstdout={}\nstderr={}",
+        stdout,
+        stderr
+    );
+    serde_json::from_str(stdout.trim()).unwrap_or_else(|error| {
+        panic!("invalid error json: {error}\nstdout={stdout}\nstderr={stderr}")
+    })
 }
 
 fn start_iris(data_dir: &Path, args: &[&str]) -> std::process::Child {
@@ -214,6 +236,30 @@ fn listen_streams_new_sqlite_messages_for_agents() {
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+fn second_core_process_fails_while_data_dir_is_locked() {
+    let dir = TempDir::new().unwrap();
+    let app = FfiApp::new(
+        dir.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    );
+
+    let error = run_iris_error(dir.path(), &["whoami"]);
+    assert_eq!(error["status"], "error");
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("already using this data folder"),
+        "unexpected error: {error}"
+    );
+
+    app.shutdown();
+    let after = run_iris_error(dir.path(), &["whoami"]);
+    assert_eq!(after["error"], "Create or restore a profile first.");
 }
 
 #[test]

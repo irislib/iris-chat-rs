@@ -13,7 +13,7 @@ mod ndr_storage;
 mod schema;
 mod store;
 
-pub(crate) use connection::{open_database, CORE_DB_FILENAME};
+pub(crate) use connection::{open_database, DataDirLock, CORE_DB_FILENAME};
 pub(crate) use ndr_storage::SqliteStorageAdapter;
 pub(crate) use store::{AppStore, SaveSnapshot};
 

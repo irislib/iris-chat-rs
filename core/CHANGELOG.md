@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Add a per-data-dir core lock so only one writer/ratcheting Iris core can use a data directory at a time.
+- Keep `iris listen`, `iris search`, and `iris tail` read-only so they can inspect SQLite without owning the core lock.
+
 ## 0.1.1
 
 - Allow `iris send <user-id> ...` and related chat actions to accept direct user IDs without pre-creating a chat.
