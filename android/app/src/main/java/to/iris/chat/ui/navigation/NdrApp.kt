@@ -125,7 +125,7 @@ fun NdrApp(
             offlineNowSecs.saturatingSubtract(offlineSinceSecs) >= 5L
         ) {
             val nearbySnapshot = nearbySnapshotProvider()
-            val bluetoothState = if (nearbySnapshot.bluetoothOn) "on" else "off"
+            val bluetoothState = if (nearbyBluetoothEnabled(nearbySnapshot)) "on" else "off"
             val wifiState = if (nearbyWifiEnabled(nearbySnapshot)) "on" else "off"
             IrisOfflineBannerState("Offline, Bluetooth $bluetoothState, Wi-Fi $wifiState")
         } else {
@@ -445,6 +445,21 @@ private fun ChatThreadSnapshot.matchesShareQuery(query: String): Boolean =
 private fun nearbyWifiEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =
     snapshot.localNetworkVisible &&
         snapshot.localNetworkStatus !in nearbyWifiBlockingStatuses
+
+private fun nearbyBluetoothEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =
+    snapshot.visible &&
+        snapshot.status !in nearbyBluetoothBlockingStatuses
+
+private val nearbyBluetoothBlockingStatuses =
+    setOf(
+        "No Bluetooth access",
+        "Bluetooth off",
+        "Bluetooth unavailable",
+        "Advertise unavailable",
+        "Advertise failed",
+        "Scan failed",
+        "Connect failed",
+    )
 
 private val nearbyWifiBlockingStatuses =
     setOf(

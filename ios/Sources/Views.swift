@@ -628,19 +628,6 @@ private func mobileWifiEnabled(_ service: IrisNearbyService) -> Bool {
     service.isLanVisible && !mobileWifiBlockingStatuses.contains(service.lanStatus)
 }
 
-private func mobileWifiStatusLabel(_ status: String) -> String {
-    switch status {
-    case "No local network access":
-        return "No Wi-Fi access"
-    case "Local network unavailable":
-        return "Wi-Fi unavailable"
-    case "Local network failed":
-        return "Wi-Fi failed"
-    default:
-        return status
-    }
-}
-
 private let mobileWifiBlockingStatuses: Set<String> = [
     "No local network access",
     "Local network unavailable",
@@ -1980,7 +1967,7 @@ private struct NearbyIrisScreen: View {
         VStack(spacing: 0) {
             transportRow(
                 title: "Bluetooth",
-                subtitle: service.isBluetoothOn ? "On" : "Off",
+                subtitle: service.bluetoothTransportWarning,
                 isOn: bluetoothBinding,
                 accessibilityID: "nearbyBluetoothSwitch"
             )
@@ -1992,7 +1979,7 @@ private struct NearbyIrisScreen: View {
 
             transportRow(
                 title: "Wi-Fi",
-                subtitle: service.isLanVisible ? mobileWifiStatusLabel(service.lanStatus) : "Off",
+                subtitle: service.lanTransportWarning,
                 isOn: lanBinding,
                 accessibilityID: "nearbyLanSwitch"
             )
@@ -2002,7 +1989,7 @@ private struct NearbyIrisScreen: View {
 
     private func transportRow(
         title: String,
-        subtitle: String,
+        subtitle: String?,
         isOn: Binding<Bool>,
         accessibilityID: String
     ) -> some View {
@@ -2011,10 +1998,12 @@ private struct NearbyIrisScreen: View {
                 Text(title)
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
-                Text(subtitle)
-                    .font(.system(.caption, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.muted)
-                    .lineLimit(1)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
             }
             Spacer()
             Toggle("", isOn: isOn)

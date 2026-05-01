@@ -131,13 +131,30 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     var isBluetoothOn: Bool {
+        guard isVisible else {
+            return false
+        }
         if centralManager?.state == .poweredOn || peripheralManager?.state == .poweredOn {
             return true
         }
-        guard isVisible, status != "Off", !Self.isBlockingStatus(status) else {
+        guard status != "Off", !Self.isBlockingStatus(status) else {
             return false
         }
         return true
+    }
+
+    var bluetoothTransportWarning: String? {
+        guard isVisible, Self.isBlockingStatus(status) else {
+            return nil
+        }
+        return status
+    }
+
+    var lanTransportWarning: String? {
+        guard isLanVisible, Self.isBlockingLanStatus(lanStatus) else {
+            return nil
+        }
+        return Self.wifiStatusLabel(lanStatus)
     }
 
     private static func nearbySummary(for peers: [IrisNearbyPeer]) -> String {
@@ -263,6 +280,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func handleLanStatus(_ status: String) {
+        guard isLanVisible || status == "Off" else {
+            return
+        }
         lanStatus = status
         if status == "No local network access" {
             lanPermissionNeedsSettings = true

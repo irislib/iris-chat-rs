@@ -34,7 +34,13 @@ public partial class NearbyView : UserControl
         LanToggle.IsChecked = prefs.nearbyLanEnabled;
         _suppressToggleDispatch = false;
 
-        StatusText.Text = snapshot.visible ? WifiStatusLabel(snapshot.status) : "Off";
+        var statusText = snapshot.visible && IsWifiBlockingStatus(snapshot.status)
+            ? WifiStatusLabel(snapshot.status)
+            : "";
+        StatusText.Text = statusText;
+        StatusText.Visibility = string.IsNullOrWhiteSpace(statusText)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
         RebuildPeers(snapshot.peers ?? Array.Empty<DesktopNearbyPeerSnapshot>());
     }
 
@@ -109,4 +115,7 @@ public partial class NearbyView : UserControl
             "No local network access" => "No Wi-Fi access",
             _ => status,
         };
+
+    private static bool IsWifiBlockingStatus(string status) =>
+        status is "Local network unavailable" or "Local network failed" or "No local network access";
 }

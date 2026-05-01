@@ -70,12 +70,13 @@ fn refresh(
         list.remove(&child);
     }
 
-    let status_text = if snapshot.visible {
+    let status_text = if snapshot.visible && is_wifi_blocking_status(snapshot.status.as_str()) {
         wifi_status_label(snapshot.status.as_str())
     } else {
-        "Off".to_string()
+        String::new()
     };
     status.set_label(&status_text);
+    status.set_visible(!status_text.is_empty());
 
     if snapshot.peers.is_empty() {
         let row = adw::ActionRow::builder()
@@ -98,6 +99,13 @@ fn wifi_status_label(status: &str) -> String {
         "No local network access" => "No Wi-Fi access".to_string(),
         _ => status.to_string(),
     }
+}
+
+fn is_wifi_blocking_status(status: &str) -> bool {
+    matches!(
+        status,
+        "Local network unavailable" | "Local network failed" | "No local network access"
+    )
 }
 
 fn peer_row(peer: &DesktopNearbyPeerSnapshot, manager: &Rc<AppManager>) -> adw::ActionRow {

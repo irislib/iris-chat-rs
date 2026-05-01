@@ -917,17 +917,19 @@ final class AppManager: ObservableObject {
     }
 
     private func handleNearbyBluetoothPermissionDenied() {
-        guard state.preferences.nearbyBluetoothEnabled else {
+        guard state.preferences.nearbyBluetoothEnabled || nearbyIris.isVisible else {
             return
         }
+        nearbyIris.setVisible(false)
         dispatchToRust(.setNearbyBluetoothEnabled(enabled: false), showsToastOnFailure: false)
         showToast("Allow Bluetooth in Settings")
     }
 
     private func handleNearbyLanPermissionDenied() {
-        guard state.preferences.nearbyLanEnabled else {
+        guard state.preferences.nearbyLanEnabled || nearbyIris.isLanVisible else {
             return
         }
+        nearbyIris.setLanVisible(false)
         dispatchToRust(.setNearbyLanEnabled(enabled: false), showsToastOnFailure: false)
         showToast("Allow Wi-Fi in Settings")
     }

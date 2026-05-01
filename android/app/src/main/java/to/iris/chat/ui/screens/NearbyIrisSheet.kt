@@ -103,12 +103,7 @@ fun NearbyIrisSheet(
                         ) {
                             NearbyTransportRow(
                                 title = "Bluetooth",
-                                status =
-                                    if (snapshot.visible || !snapshot.bluetoothPermissionGranted) {
-                                        snapshot.status
-                                    } else {
-                                        "Off"
-                                    },
+                                status = nearbyBluetoothTransportStatus(snapshot),
                                 checked = snapshot.visible,
                                 onCheckedChange = onVisibleChange,
                                 modifier = Modifier.testTag("nearbyVisibilitySwitch"),
@@ -116,12 +111,7 @@ fun NearbyIrisSheet(
                             IrisDivider()
                             NearbyTransportRow(
                                 title = "Wi-Fi",
-                                status =
-                                    if (snapshot.localNetworkVisible || !snapshot.localNetworkPermissionGranted) {
-                                        nearbyWifiStatusLabel(snapshot.localNetworkStatus)
-                                    } else {
-                                        "Off"
-                                    },
+                                status = nearbyWifiTransportStatus(snapshot),
                                 checked = snapshot.localNetworkVisible,
                                 onCheckedChange = onLocalNetworkVisibleChange,
                                 modifier = Modifier.testTag("nearbyLanSwitch"),
@@ -166,7 +156,7 @@ fun NearbyIrisSheet(
 @Composable
 private fun NearbyTransportRow(
     title: String,
-    status: String,
+    status: String?,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -187,7 +177,7 @@ private fun NearbyTransportRow(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
             )
-            if (status != "Visible") {
+            if (status != null) {
                 Text(
                     text = status,
                     style = MaterialTheme.typography.bodyMedium,
@@ -202,6 +192,34 @@ private fun NearbyTransportRow(
         )
     }
 }
+
+private fun nearbyBluetoothTransportStatus(snapshot: IrisNearbyService.Snapshot): String? =
+    if (snapshot.visible && snapshot.status in nearbyBluetoothBlockingStatuses) snapshot.status else null
+
+private fun nearbyWifiTransportStatus(snapshot: IrisNearbyService.Snapshot): String? =
+    if (snapshot.localNetworkVisible && snapshot.localNetworkStatus in nearbyWifiBlockingStatuses) {
+        nearbyWifiStatusLabel(snapshot.localNetworkStatus)
+    } else {
+        null
+    }
+
+private val nearbyBluetoothBlockingStatuses =
+    setOf(
+        "No Bluetooth access",
+        "Bluetooth off",
+        "Bluetooth unavailable",
+        "Advertise unavailable",
+        "Advertise failed",
+        "Scan failed",
+        "Connect failed",
+    )
+
+private val nearbyWifiBlockingStatuses =
+    setOf(
+        "No local network access",
+        "Local network unavailable",
+        "Local network failed",
+    )
 
 private fun nearbyWifiStatusLabel(status: String): String =
     when (status) {
