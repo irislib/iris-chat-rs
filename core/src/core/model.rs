@@ -127,9 +127,13 @@ pub(super) struct PendingRelayPublish {
     pub(super) event_id: String,
     pub(super) label: String,
     pub(super) event_json: String,
+    pub(super) inner_event_id: Option<String>,
+    pub(super) target_device_id: Option<String>,
     pub(super) message_id: Option<String>,
     pub(super) chat_id: Option<String>,
     pub(super) created_at_secs: u64,
+    pub(super) attempt_count: u64,
+    pub(super) last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -329,7 +333,7 @@ pub(super) struct PersistedThread {
     pub(super) messages: Vec<PersistedMessage>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct PersistedMessage {
     pub(super) id: String,
     #[serde(alias = "peer_input")]
@@ -351,6 +355,10 @@ pub(super) struct PersistedMessage {
     pub(super) delivery: PersistedDeliveryState,
     #[serde(default)]
     pub(super) source_event_id: Option<String>,
+    #[serde(default)]
+    pub(super) recipient_deliveries: Vec<MessageRecipientDeliverySnapshot>,
+    #[serde(default)]
+    pub(super) delivery_trace: MessageDeliveryTraceSnapshot,
 }
 
 fn default_message_kind() -> ChatMessageKind {

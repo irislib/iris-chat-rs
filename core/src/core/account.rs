@@ -547,6 +547,8 @@ impl AppCore {
                                         created_at_secs: message.created_at_secs,
                                         expires_at_secs: message.expires_at_secs,
                                         delivery: message.delivery.clone().into(),
+                                        recipient_deliveries: message.recipient_deliveries.clone(),
+                                        delivery_trace: message.delivery_trace.clone(),
                                         source_event_id: message.source_event_id.clone(),
                                     }
                                 })
@@ -667,6 +669,17 @@ impl AppCore {
                     .into_iter()
                     .map(|pending| (pending.event_id.clone(), pending))
                     .collect();
+                for pending in self
+                    .pending_relay_publishes
+                    .values()
+                    .cloned()
+                    .collect::<Vec<_>>()
+                {
+                    if let (Some(chat_id), Some(message_id)) = (pending.chat_id, pending.message_id)
+                    {
+                        self.sync_message_delivery_trace(&chat_id, &message_id);
+                    }
+                }
             }
             Err(error) => {
                 self.push_debug_log("publish.runtime.queue", format!("load_failed={error}"));

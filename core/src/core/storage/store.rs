@@ -4,7 +4,10 @@ use super::super::{
     PersistedState, PersistedThread, ThreadRecord, PERSISTED_STATE_VERSION,
 };
 use super::SharedConnection;
-use crate::state::{ChatMessageKind, ChatMessageSnapshot, DeliveryState, PreferencesSnapshot};
+use crate::state::{
+    ChatMessageKind, ChatMessageSnapshot, DeliveryState, MessageDeliveryTraceSnapshot,
+    MessageRecipientDeliverySnapshot, PreferencesSnapshot,
+};
 use nostr_double_ratchet::GroupData;
 use rusqlite::{params, OptionalExtension, Row, Transaction};
 use std::collections::hash_map::DefaultHasher;
@@ -262,7 +265,9 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let mut stmt = conn.prepare(
-            "SELECT owner_pubkey_hex, event_id, label, event_json, message_id, chat_id, created_at_secs
+            "SELECT owner_pubkey_hex, event_id, label, event_json, inner_event_id,
+                    target_device_id, message_id, chat_id, created_at_secs,
+                    attempt_count, last_error
              FROM pending_relay_publishes
              WHERE owner_pubkey_hex = ?1
              ORDER BY created_at_secs ASC, event_id ASC",
@@ -273,9 +278,13 @@ impl AppStore {
                 event_id: row.get(1)?,
                 label: row.get(2)?,
                 event_json: row.get(3)?,
-                message_id: row.get(4)?,
-                chat_id: row.get(5)?,
-                created_at_secs: row.get::<_, i64>(6)?.max(0) as u64,
+                inner_event_id: row.get(4)?,
+                target_device_id: row.get(5)?,
+                message_id: row.get(6)?,
+                chat_id: row.get(7)?,
+                created_at_secs: row.get::<_, i64>(8)?.max(0) as u64,
+                attempt_count: row.get::<_, i64>(9)?.max(0) as u64,
+                last_error: row.get(10)?,
             })
         })?;
         let mut pending = Vec::new();
@@ -295,24 +304,33 @@ impl AppStore {
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         conn.execute(
             "INSERT INTO pending_relay_publishes(
-                event_id, owner_pubkey_hex, label, event_json, message_id, chat_id, created_at_secs
+                event_id, owner_pubkey_hex, label, event_json, inner_event_id,
+                target_device_id, message_id, chat_id, created_at_secs, attempt_count, last_error
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(event_id) DO UPDATE SET
                 owner_pubkey_hex = excluded.owner_pubkey_hex,
                 label = excluded.label,
                 event_json = excluded.event_json,
+                inner_event_id = COALESCE(excluded.inner_event_id, pending_relay_publishes.inner_event_id),
+                target_device_id = COALESCE(excluded.target_device_id, pending_relay_publishes.target_device_id),
                 message_id = COALESCE(excluded.message_id, pending_relay_publishes.message_id),
                 chat_id = COALESCE(excluded.chat_id, pending_relay_publishes.chat_id),
-                created_at_secs = excluded.created_at_secs",
+                created_at_secs = excluded.created_at_secs,
+                attempt_count = excluded.attempt_count,
+                last_error = excluded.last_error",
             params![
                 &pending.event_id,
                 &pending.owner_pubkey_hex,
                 &pending.label,
                 &pending.event_json,
+                &pending.inner_event_id,
+                &pending.target_device_id,
                 &pending.message_id,
                 &pending.chat_id,
                 pending.created_at_secs as i64,
+                pending.attempt_count as i64,
+                &pending.last_error,
             ],
         )?;
         Ok(())
@@ -637,6 +655,12 @@ fn hash_thread(thread: &ThreadRecord) -> u64 {
         if let Ok(bytes) = serde_json::to_vec(&message.reactors) {
             bytes.hash(&mut hasher);
         }
+        if let Ok(bytes) = serde_json::to_vec(&message.recipient_deliveries) {
+            bytes.hash(&mut hasher);
+        }
+        if let Ok(bytes) = serde_json::to_vec(&message.delivery_trace) {
+            bytes.hash(&mut hasher);
+        }
     }
     hasher.finish()
 }
@@ -703,8 +727,8 @@ fn upsert_message_row(
         "INSERT INTO messages(
             chat_id, id, kind, author, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
-            source_event_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            source_event_id, recipient_deliveries_json, delivery_trace_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT(chat_id, id) DO UPDATE SET
             kind = excluded.kind,
             author = excluded.author,
@@ -716,7 +740,9 @@ fn upsert_message_row(
             attachments_json = excluded.attachments_json,
             reactions_json = excluded.reactions_json,
             reactors_json = excluded.reactors_json,
-            source_event_id = excluded.source_event_id",
+            source_event_id = excluded.source_event_id,
+            recipient_deliveries_json = excluded.recipient_deliveries_json,
+            delivery_trace_json = excluded.delivery_trace_json",
         params![
             chat_id,
             message.id,
@@ -731,6 +757,8 @@ fn upsert_message_row(
             serde_json::to_string(&message.reactions)?,
             serde_json::to_string(&message.reactors)?,
             message.source_event_id,
+            serde_json::to_string(&message.recipient_deliveries)?,
+            serde_json::to_string(&message.delivery_trace)?,
         ],
     )?;
     Ok(())
@@ -745,8 +773,8 @@ fn upsert_notification_preview_message_row(
         "INSERT INTO messages(
             chat_id, id, kind, author, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
-            source_event_id
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            source_event_id, recipient_deliveries_json, delivery_trace_json
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
          ON CONFLICT(chat_id, id) DO UPDATE SET
             source_event_id = COALESCE(NULLIF(messages.source_event_id, ''), excluded.source_event_id)",
         params![
@@ -763,6 +791,8 @@ fn upsert_notification_preview_message_row(
             serde_json::to_string(&message.reactions)?,
             serde_json::to_string(&message.reactors)?,
             message.source_event_id,
+            serde_json::to_string(&message.recipient_deliveries)?,
+            serde_json::to_string(&message.delivery_trace)?,
         ],
     )?;
     Ok(())
@@ -1031,8 +1061,9 @@ fn load_threads(
 
     let mut messages_stmt = conn.prepare(
         "WITH ranked AS (
-             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
-                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+	             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+	                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+	                    recipient_deliveries_json, delivery_trace_json,
                     CASE
                         WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
                         ELSE 9223372036854775807
@@ -1048,8 +1079,9 @@ fn load_threads(
                     ) AS row_number
              FROM messages
          )
-         SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
-                delivery, attachments_json, reactions_json, reactors_json, source_event_id
+	         SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+	                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+	                recipient_deliveries_json, delivery_trace_json
          FROM ranked
          WHERE row_number <= CASE WHEN chat_id = ?1 THEN ?2 ELSE 1 END
          ORDER BY chat_id ASC, created_at_secs ASC, numeric_id ASC, id ASC",
@@ -1085,10 +1117,12 @@ fn load_recent_messages(
 ) -> anyhow::Result<Vec<PersistedMessage>> {
     let mut stmt = conn.prepare(
         "SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
-                delivery, attachments_json, reactions_json, reactors_json, source_event_id
+                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+                recipient_deliveries_json, delivery_trace_json
          FROM (
              SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
                     delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+                    recipient_deliveries_json, delivery_trace_json,
                     CASE
                         WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
                         ELSE 9223372036854775807
@@ -1124,6 +1158,14 @@ fn persisted_message_from_row(row: &Row<'_>) -> rusqlite::Result<PersistedMessag
         expires_at_secs: row.get::<_, Option<i64>>(7)?.map(|secs| secs as u64),
         delivery: parse_delivery(&row.get::<_, String>(8)?),
         source_event_id: row.get(12)?,
+        recipient_deliveries: serde_json::from_str::<Vec<MessageRecipientDeliverySnapshot>>(
+            &row.get::<_, String>(13)?,
+        )
+        .unwrap_or_default(),
+        delivery_trace: serde_json::from_str::<MessageDeliveryTraceSnapshot>(
+            &row.get::<_, String>(14)?,
+        )
+        .unwrap_or_default(),
     })
 }
 
@@ -1237,6 +1279,8 @@ mod tests {
             created_at_secs: ts,
             expires_at_secs: None,
             delivery: DeliveryState::Received,
+            recipient_deliveries: Vec::new(),
+            delivery_trace: Default::default(),
             source_event_id: None,
         }
     }

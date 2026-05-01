@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 7;
+const SCHEMA_VERSION: u32 = 8;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -77,6 +77,8 @@ CREATE TABLE IF NOT EXISTS messages (
     reactions_json TEXT NOT NULL DEFAULT '[]',
     reactors_json TEXT NOT NULL DEFAULT '[]',
     source_event_id TEXT,
+    recipient_deliveries_json TEXT NOT NULL DEFAULT '[]',
+    delivery_trace_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (chat_id, id)
 );
 
@@ -104,9 +106,13 @@ CREATE TABLE IF NOT EXISTS pending_relay_publishes (
     owner_pubkey_hex TEXT NOT NULL,
     label TEXT NOT NULL,
     event_json TEXT NOT NULL,
+    inner_event_id TEXT,
+    target_device_id TEXT,
     message_id TEXT,
     chat_id TEXT,
-    created_at_secs INTEGER NOT NULL
+    created_at_secs INTEGER NOT NULL,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT
 );
 
 CREATE INDEX IF NOT EXISTS pending_relay_publishes_owner_idx
@@ -213,7 +219,60 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             )?;
         }
     }
+    if current < 8 {
+        if !column_exists(&tx, "messages", "recipient_deliveries_json")? {
+            tx.execute_batch(
+                "ALTER TABLE messages
+                 ADD COLUMN recipient_deliveries_json TEXT NOT NULL DEFAULT '[]';",
+            )?;
+        }
+        if !column_exists(&tx, "messages", "delivery_trace_json")? {
+            tx.execute_batch(
+                "ALTER TABLE messages
+                 ADD COLUMN delivery_trace_json TEXT NOT NULL DEFAULT '{}';",
+            )?;
+        }
+        if !column_exists(&tx, "pending_relay_publishes", "inner_event_id")? {
+            tx.execute_batch(
+                "ALTER TABLE pending_relay_publishes
+                 ADD COLUMN inner_event_id TEXT;",
+            )?;
+        }
+        if !column_exists(&tx, "pending_relay_publishes", "target_device_id")? {
+            tx.execute_batch(
+                "ALTER TABLE pending_relay_publishes
+                 ADD COLUMN target_device_id TEXT;",
+            )?;
+        }
+        if !column_exists(&tx, "pending_relay_publishes", "attempt_count")? {
+            tx.execute_batch(
+                "ALTER TABLE pending_relay_publishes
+                 ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;",
+            )?;
+        }
+        if !column_exists(&tx, "pending_relay_publishes", "last_error")? {
+            tx.execute_batch(
+                "ALTER TABLE pending_relay_publishes
+                 ADD COLUMN last_error TEXT;",
+            )?;
+        }
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())
+}
+
+fn column_exists(
+    tx: &rusqlite::Transaction<'_>,
+    table_name: &str,
+    column_name: &str,
+) -> anyhow::Result<bool> {
+    let mut stmt = tx.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    for row in rows {
+        if row? == column_name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }

@@ -510,7 +510,7 @@ private struct ChatMessageRow: View {
                             onShowReactionPicker: { showReactionPicker = true },
                             onReply: onReply,
                             onCopyInfo: {
-                                PlatformClipboard.setString("Message \(message.id) · \(irisMessageClock(message.createdAtSecs))")
+                                PlatformClipboard.setString(messageInfoText(message))
                             },
                             onDelete: onDelete
                         )
@@ -601,7 +601,7 @@ private struct ChatMessageRow: View {
                             onShowReactionPicker: { showReactionPicker = true },
                             onReply: onReply,
                             onCopyInfo: {
-                                PlatformClipboard.setString("Message \(message.id) · \(irisMessageClock(message.createdAtSecs))")
+                                PlatformClipboard.setString(messageInfoText(message))
                             },
                             onDelete: onDelete
                         )
@@ -1432,4 +1432,52 @@ private func copyableMessageText(_ message: ChatMessageSnapshot) -> String {
     }
     pieces.append(contentsOf: message.attachments.map(\.htreeUrl))
     return pieces.joined(separator: "\n")
+}
+
+private func messageInfoText(_ message: ChatMessageSnapshot) -> String {
+    var lines: [String] = [
+        "Message \(message.id)",
+        "Time \(irisMessageClock(message.createdAtSecs))",
+        "Status \(irisDeliveryLabel(message.delivery))",
+    ]
+    let trace = message.deliveryTrace
+    if !trace.transportChannels.isEmpty {
+        lines.append("Channels \(trace.transportChannels.joined(separator: ", "))")
+    }
+    if !message.recipientDeliveries.isEmpty {
+        lines.append("Recipients")
+        lines.append(contentsOf: message.recipientDeliveries.map { recipient in
+            "- \(shortMessageIdentifier(recipient.ownerPubkeyHex)) \(irisDeliveryLabel(recipient.delivery))"
+        })
+    }
+    if !trace.outerEventIds.isEmpty {
+        lines.append("Network IDs \(shortMessageIdentifierList(trace.outerEventIds))")
+    }
+    if !trace.pendingRelayEventIds.isEmpty {
+        lines.append("Pending message servers \(shortMessageIdentifierList(trace.pendingRelayEventIds))")
+    }
+    if !trace.queuedProtocolTargets.isEmpty {
+        lines.append("Queued targets \(shortMessageIdentifierList(trace.queuedProtocolTargets))")
+    }
+    if !trace.targetDeviceIds.isEmpty {
+        lines.append("Devices \(shortMessageIdentifierList(trace.targetDeviceIds))")
+    }
+    if let lastError = trace.lastTransportError, !lastError.isEmpty {
+        lines.append("Last send error \(lastError)")
+    }
+    if let sourceEventId = message.sourceEventId, !sourceEventId.isEmpty {
+        lines.append("Received as \(shortMessageIdentifier(sourceEventId))")
+    }
+    return lines.joined(separator: "\n")
+}
+
+private func shortMessageIdentifierList(_ values: [String]) -> String {
+    values.map(shortMessageIdentifier).joined(separator: ", ")
+}
+
+private func shortMessageIdentifier(_ value: String) -> String {
+    guard value.count > 16 else {
+        return value
+    }
+    return "\(value.prefix(8))...\(value.suffix(8))"
 }

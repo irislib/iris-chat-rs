@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageKind
 import to.iris.chat.rust.ChatMessageSnapshot
+import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.rust.MessageReactionSnapshot
 import to.iris.chat.ui.components.DeliveryGlyph
@@ -118,7 +119,7 @@ internal fun MessageBubble(
                         onInfo = {
                             clipboard.setText(
                                 "Message info",
-                                "Message ${message.id} · ${formatMessageClock(message.createdAtSecs.toLong())}",
+                                messageInfoText(message),
                             )
                         },
                         onDelete = onDelete,
@@ -239,7 +240,7 @@ internal fun MessageBubble(
                         onInfo = {
                             clipboard.setText(
                                 "Message info",
-                                "Message ${message.id} · ${formatMessageClock(message.createdAtSecs.toLong())}",
+                                messageInfoText(message),
                             )
                         },
                         onDelete = onDelete,
@@ -629,6 +630,61 @@ private fun copyableMessageText(message: ChatMessageSnapshot): String {
     }
     return pieces.joinToString("\n")
 }
+
+private fun messageInfoText(message: ChatMessageSnapshot): String {
+    val trace = message.deliveryTrace
+    val lines =
+        mutableListOf(
+            "Message ${message.id}",
+            "Time ${formatMessageClock(message.createdAtSecs.toLong())}",
+            "Status ${deliveryLabel(message.delivery)}",
+        )
+    if (trace.transportChannels.isNotEmpty()) {
+        lines += "Channels ${trace.transportChannels.joinToString(", ")}"
+    }
+    if (message.recipientDeliveries.isNotEmpty()) {
+        lines += "Recipients"
+        lines +=
+            message.recipientDeliveries.map { recipient ->
+                "- ${shortMessageIdentifier(recipient.ownerPubkeyHex)} ${deliveryLabel(recipient.delivery)}"
+            }
+    }
+    if (trace.outerEventIds.isNotEmpty()) {
+        lines += "Network IDs ${shortMessageIdentifierList(trace.outerEventIds)}"
+    }
+    if (trace.pendingRelayEventIds.isNotEmpty()) {
+        lines += "Pending message servers ${shortMessageIdentifierList(trace.pendingRelayEventIds)}"
+    }
+    if (trace.queuedProtocolTargets.isNotEmpty()) {
+        lines += "Queued targets ${shortMessageIdentifierList(trace.queuedProtocolTargets)}"
+    }
+    if (trace.targetDeviceIds.isNotEmpty()) {
+        lines += "Devices ${shortMessageIdentifierList(trace.targetDeviceIds)}"
+    }
+    trace.lastTransportError?.takeIf { it.isNotBlank() }?.let { error ->
+        lines += "Last send error $error"
+    }
+    message.sourceEventId?.takeIf { it.isNotBlank() }?.let { sourceEventId ->
+        lines += "Received as ${shortMessageIdentifier(sourceEventId)}"
+    }
+    return lines.joinToString("\n")
+}
+
+private fun shortMessageIdentifierList(values: List<String>): String =
+    values.joinToString(", ") { shortMessageIdentifier(it) }
+
+private fun shortMessageIdentifier(value: String): String =
+    if (value.length <= 16) value else "${value.take(8)}...${value.takeLast(8)}"
+
+private fun deliveryLabel(delivery: DeliveryState): String =
+    when (delivery) {
+        DeliveryState.QUEUED -> "Queued"
+        DeliveryState.PENDING -> "Pending"
+        DeliveryState.SENT -> "Sent"
+        DeliveryState.RECEIVED -> "Received"
+        DeliveryState.SEEN -> "Seen"
+        DeliveryState.FAILED -> "Failed"
+    }
 
 private const val MessageClusterGapSecs = 60L
 internal fun startsMessageCluster(

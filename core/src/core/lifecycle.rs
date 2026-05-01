@@ -65,6 +65,7 @@ impl AppCore {
             all_relays_offline_since_secs: None,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
+            event_transport_channels: BTreeMap::new(),
             pending_mobile_push_events: VecDeque::new(),
             debug_log: VecDeque::new(),
             debug_event_counters: DebugEventCounters::default(),
@@ -349,13 +350,13 @@ impl AppCore {
     pub(super) fn handle_internal(&mut self, event: InternalEvent) {
         match event {
             InternalEvent::RelayEvent(event) => {
-                self.handle_relay_event(event);
+                self.handle_relay_event_with_channel(event, "message servers");
             }
             InternalEvent::NearbyEvent(event) => {
                 let event_id = event.id.to_string();
                 let kind = event.kind.as_u16() as u32;
                 self.push_debug_log("nearby.event", format!("kind_raw={kind} id={event_id}"));
-                self.handle_relay_event(event);
+                self.handle_relay_event_with_channel(event, "nearby");
             }
             InternalEvent::FetchTrackedPeerCatchUp => {
                 let now = unix_now();
@@ -425,9 +426,12 @@ impl AppCore {
                 message_id,
                 chat_id,
                 success,
+                relay_urls,
                 detail,
             } => {
-                self.handle_relay_publish_finished(event_id, message_id, chat_id, success, detail);
+                self.handle_relay_publish_finished(
+                    event_id, message_id, chat_id, success, relay_urls, detail,
+                );
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);

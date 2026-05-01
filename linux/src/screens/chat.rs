@@ -4,7 +4,7 @@ use adw::prelude::*;
 use iris_chat_core::{
     proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot,
     CurrentChatSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot, OutgoingAttachment,
-    PreferencesSnapshot,
+    PreferencesSnapshot, DeliveryState,
 };
 
 use crate::app_manager::AppManager;
@@ -467,6 +467,17 @@ fn build_message_popover(message: &ChatMessageSnapshot, manager: &Rc<AppManager>
     });
     column.append(&copy);
 
+    let copy_info = gtk::Button::with_label("Copy info");
+    copy_info.add_css_class("flat");
+    copy_info.set_halign(gtk::Align::Fill);
+    let info = message_info_text(message);
+    let popover_for_info = popover.clone();
+    copy_info.connect_clicked(move |_| {
+        crate::platform::clipboard::copy(&info);
+        popover_for_info.popdown();
+    });
+    column.append(&copy_info);
+
     let delete = gtk::Button::with_label("Delete locally");
     delete.add_css_class("flat");
     delete.add_css_class("error");
@@ -549,8 +560,8 @@ fn day_label_secs(secs: u64) -> String {
     }
 }
 
-fn delivery_glyph(state: &iris_chat_core::DeliveryState) -> &'static str {
-    use iris_chat_core::DeliveryState::*;
+fn delivery_glyph(state: &DeliveryState) -> &'static str {
+    use DeliveryState::*;
     match state {
         Queued => "⋯",
         Pending => "⋯",
@@ -559,6 +570,92 @@ fn delivery_glyph(state: &iris_chat_core::DeliveryState) -> &'static str {
         Seen => "✓✓",
         Failed => "!",
     }
+}
+
+fn delivery_label(state: &DeliveryState) -> &'static str {
+    use DeliveryState::*;
+    match state {
+        Queued => "Queued",
+        Pending => "Pending",
+        Sent => "Sent",
+        Received => "Received",
+        Seen => "Seen",
+        Failed => "Failed",
+    }
+}
+
+fn message_info_text(message: &ChatMessageSnapshot) -> String {
+    let trace = &message.delivery_trace;
+    let mut lines = vec![
+        format!("Message {}", message.id),
+        format!("Time {}", relative_time(message.created_at_secs, unix_now())),
+        format!("Status {}", delivery_label(&message.delivery)),
+    ];
+    if !trace.transport_channels.is_empty() {
+        lines.push(format!("Channels {}", trace.transport_channels.join(", ")));
+    }
+    if !message.recipient_deliveries.is_empty() {
+        lines.push("Recipients".to_string());
+        lines.extend(message.recipient_deliveries.iter().map(|recipient| {
+            format!(
+                "- {} {}",
+                short_message_identifier(&recipient.owner_pubkey_hex),
+                delivery_label(&recipient.delivery)
+            )
+        }));
+    }
+    if !trace.outer_event_ids.is_empty() {
+        lines.push(format!(
+            "Network IDs {}",
+            short_message_identifier_list(&trace.outer_event_ids)
+        ));
+    }
+    if !trace.pending_relay_event_ids.is_empty() {
+        lines.push(format!(
+            "Pending message servers {}",
+            short_message_identifier_list(&trace.pending_relay_event_ids)
+        ));
+    }
+    if !trace.queued_protocol_targets.is_empty() {
+        lines.push(format!(
+            "Queued targets {}",
+            short_message_identifier_list(&trace.queued_protocol_targets)
+        ));
+    }
+    if !trace.target_device_ids.is_empty() {
+        lines.push(format!(
+            "Devices {}",
+            short_message_identifier_list(&trace.target_device_ids)
+        ));
+    }
+    if let Some(error) = trace.last_transport_error.as_deref().filter(|error| !error.is_empty()) {
+        lines.push(format!("Last send error {}", error));
+    }
+    if let Some(source_event_id) = message.source_event_id.as_deref().filter(|id| !id.is_empty()) {
+        lines.push(format!(
+            "Received as {}",
+            short_message_identifier(source_event_id)
+        ));
+    }
+    lines.join("\n")
+}
+
+fn short_message_identifier_list(values: &[String]) -> String {
+    values
+        .iter()
+        .map(|value| short_message_identifier(value))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn short_message_identifier(value: &str) -> String {
+    let char_count = value.chars().count();
+    if char_count <= 16 {
+        return value.to_string();
+    }
+    let start: String = value.chars().take(8).collect();
+    let end: String = value.chars().skip(char_count - 8).collect();
+    format!("{}...{}", start, end)
 }
 
 fn attachment_summary(attachments: &[&MessageAttachmentSnapshot]) -> String {

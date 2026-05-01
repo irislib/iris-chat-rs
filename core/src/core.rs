@@ -3,10 +3,11 @@ use crate::state::{
     AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, ChatThreadSnapshot,
     CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, DeviceEntrySnapshot,
     DeviceRosterSnapshot, GroupDetailsSnapshot, GroupMemberSnapshot, LinkDeviceSnapshot,
-    MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
-    MobilePushNotificationResolution, MobilePushSubscriptionRequest, MobilePushSyncSnapshot,
-    NetworkStatusSnapshot, OutgoingAttachment, PreferencesSnapshot, PublicInviteSnapshot,
-    RelayConnectionSnapshot, Router, Screen, TypingIndicatorSnapshot,
+    MessageAttachmentSnapshot, MessageDeliveryTraceSnapshot, MessageReactionSnapshot,
+    MessageReactor, MessageRecipientDeliverySnapshot, MobilePushNotificationResolution,
+    MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
+    OutgoingAttachment, PreferencesSnapshot, PublicInviteSnapshot, RelayConnectionSnapshot, Router,
+    Screen, TypingIndicatorSnapshot,
 };
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;
@@ -153,6 +154,7 @@ pub struct AppCore {
     all_relays_offline_since_secs: Option<u64>,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
+    event_transport_channels: BTreeMap<String, String>,
     pending_mobile_push_events: VecDeque<Event>,
     debug_log: VecDeque<DebugLogEntry>,
     debug_event_counters: DebugEventCounters,

@@ -72,6 +72,7 @@ impl AppCore {
         message_ids: &[String],
         delivery: DeliveryState,
         is_from_local_owner: bool,
+        receipt_author_hex: Option<&str>,
     ) {
         if message_ids.is_empty() {
             return;
@@ -90,6 +91,31 @@ impl AppCore {
             if should_advance_delivery(&message.delivery, &delivery) {
                 message.delivery = delivery.clone();
                 changed = true;
+            }
+            if message.is_outgoing {
+                if let Some(author) = receipt_author_hex {
+                    let now = unix_now().get();
+                    if let Some(recipient) = message
+                        .recipient_deliveries
+                        .iter_mut()
+                        .find(|recipient| recipient.owner_pubkey_hex == author)
+                    {
+                        if should_advance_delivery(&recipient.delivery, &delivery) {
+                            recipient.delivery = delivery.clone();
+                            recipient.updated_at_secs = now;
+                            changed = true;
+                        }
+                    } else {
+                        message
+                            .recipient_deliveries
+                            .push(MessageRecipientDeliverySnapshot {
+                                owner_pubkey_hex: author.to_string(),
+                                delivery: delivery.clone(),
+                                updated_at_secs: now,
+                            });
+                        changed = true;
+                    }
+                }
             }
         }
         if is_from_local_owner && matches!(delivery, DeliveryState::Seen) {

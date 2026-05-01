@@ -16,10 +16,20 @@ impl AppCore {
     }
 
     pub(super) fn handle_relay_event(&mut self, event: Event) {
+        self.handle_relay_event_with_channel(event, "message servers");
+    }
+
+    pub(super) fn handle_relay_event_with_channel(&mut self, event: Event, channel: &str) {
         let event_id = event.id.to_string();
         if self.has_seen_event(&event_id) {
+            self.add_transport_channel_for_event_id(&event_id, channel);
+            self.persist_best_effort();
+            self.rebuild_state();
+            self.emit_state();
             return;
         }
+        self.event_transport_channels
+            .insert(event_id.clone(), channel.to_string());
 
         let kind = event.kind.as_u16() as u32;
         if self.logged_in.is_none() {
@@ -64,6 +74,8 @@ impl AppCore {
                     .and_then(|logged_in| logged_in.ndr_runtime.group_handle_outer_event(&event));
                 if let Some(group_event) = group_event {
                     self.debug_event_counters.group_events += 1;
+                    self.event_transport_channels
+                        .insert(group_event.outer_event_id.clone(), channel.to_string());
                     self.apply_group_decrypted_event(group_event);
                     self.remember_event(event_id);
                     self.process_runtime_events();
@@ -194,7 +206,7 @@ impl AppCore {
                 SessionManagerEvent::PublishSignedForInnerEvent {
                     event,
                     inner_event_id,
-                    ..
+                    target_device_id,
                 } => {
                     let event_id = event.id.to_string();
                     let completion = self.runtime_publish_completion(
@@ -208,7 +220,13 @@ impl AppCore {
                             format!("event_id={event_id} matched={}", completion.is_some()),
                         );
                     }
-                    self.publish_runtime_event(event, "runtime", completion);
+                    self.publish_runtime_event_with_metadata(
+                        event,
+                        "runtime",
+                        completion,
+                        inner_event_id,
+                        target_device_id,
+                    );
                 }
                 SessionManagerEvent::Subscribe { subid, filter_json } => {
                     self.apply_runtime_subscription(subid, filter_json);
@@ -217,7 +235,7 @@ impl AppCore {
                     self.remove_runtime_subscription(subid);
                 }
                 SessionManagerEvent::ReceivedEvent(event) => {
-                    self.handle_relay_event(event);
+                    self.handle_relay_event_with_channel(event, "message servers");
                 }
                 SessionManagerEvent::DecryptedMessage {
                     sender,

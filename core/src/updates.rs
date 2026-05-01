@@ -71,6 +71,7 @@ pub(crate) enum InternalEvent {
         message_id: Option<String>,
         chat_id: Option<String>,
         success: bool,
+        relay_urls: Vec<String>,
         detail: String,
     },
     AttachmentUploadFinished {

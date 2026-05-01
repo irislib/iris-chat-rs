@@ -137,7 +137,7 @@ pub struct DeviceRosterSnapshot {
     pub devices: Vec<DeviceEntrySnapshot>,
 }
 
-#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+#[derive(uniffi::Enum, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum DeliveryState {
     Queued,
     Pending,
@@ -185,6 +185,25 @@ pub struct MessageReactor {
     pub emoji: String,
 }
 
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MessageRecipientDeliverySnapshot {
+    /// Hex-encoded owner/user pubkey.
+    pub owner_pubkey_hex: String,
+    pub delivery: DeliveryState,
+    pub updated_at_secs: u64,
+}
+
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(default)]
+pub struct MessageDeliveryTraceSnapshot {
+    pub outer_event_ids: Vec<String>,
+    pub pending_relay_event_ids: Vec<String>,
+    pub queued_protocol_targets: Vec<String>,
+    pub target_device_ids: Vec<String>,
+    pub transport_channels: Vec<String>,
+    pub last_transport_error: Option<String>,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatMessageSnapshot {
     pub id: String,
@@ -199,6 +218,8 @@ pub struct ChatMessageSnapshot {
     pub created_at_secs: u64,
     pub expires_at_secs: Option<u64>,
     pub delivery: DeliveryState,
+    pub recipient_deliveries: Vec<MessageRecipientDeliverySnapshot>,
+    pub delivery_trace: MessageDeliveryTraceSnapshot,
     /// Hex ID of the outer relay event that carried this rumor. The
     /// notification extension joins on this to find a body the
     /// foreground app already decrypted, so it can render a real

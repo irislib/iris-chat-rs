@@ -281,6 +281,7 @@ impl AppCore {
                     })
                     .collect::<BTreeMap<_, _>>();
                 self.process_runtime_events_with_completions(&completions);
+                self.sync_message_delivery_trace(&normalized_chat_id, &message_id);
                 if event_ids.is_empty() {
                     self.request_protocol_subscription_refresh();
                 }
@@ -371,6 +372,7 @@ impl AppCore {
                     );
                 }
                 self.process_runtime_events();
+                self.sync_message_delivery_trace(chat_id, &message_id);
             }
             Some(error) => self.state.toast = Some(error),
         }
@@ -390,8 +392,139 @@ impl AppCore {
             .iter_mut()
             .find(|message| message.id == message_id)
         {
-            message.delivery = delivery;
+            message.delivery = delivery.clone();
+            if matches!(delivery, DeliveryState::Sent) {
+                for recipient in &mut message.recipient_deliveries {
+                    if matches!(
+                        recipient.delivery,
+                        DeliveryState::Pending | DeliveryState::Queued
+                    ) {
+                        recipient.delivery = DeliveryState::Sent;
+                        recipient.updated_at_secs = unix_now().get();
+                    }
+                }
+            }
         }
+    }
+
+    pub(super) fn record_message_outer_event(
+        &mut self,
+        chat_id: &str,
+        message_id: &str,
+        event_id: &str,
+        target_device_id: Option<&str>,
+    ) {
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        push_unique(&mut message.delivery_trace.outer_event_ids, event_id);
+        push_unique(
+            &mut message.delivery_trace.pending_relay_event_ids,
+            event_id,
+        );
+        push_unique(
+            &mut message.delivery_trace.transport_channels,
+            "nearby offered",
+        );
+        if let Some(target_device_id) = target_device_id {
+            push_unique(
+                &mut message.delivery_trace.target_device_ids,
+                target_device_id,
+            );
+        }
+    }
+
+    pub(super) fn add_message_transport_channel(
+        &mut self,
+        chat_id: &str,
+        message_id: &str,
+        channel: &str,
+    ) {
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        push_unique(&mut message.delivery_trace.transport_channels, channel);
+    }
+
+    pub(super) fn add_transport_channel_for_event_id(&mut self, event_id: &str, channel: &str) {
+        for thread in self.threads.values_mut() {
+            for message in &mut thread.messages {
+                let matches_source = message.source_event_id.as_deref() == Some(event_id);
+                let matches_outer = message
+                    .delivery_trace
+                    .outer_event_ids
+                    .iter()
+                    .any(|outer_event_id| outer_event_id == event_id);
+                if matches_source || matches_outer {
+                    push_unique(&mut message.delivery_trace.transport_channels, channel);
+                }
+            }
+        }
+    }
+
+    pub(super) fn sync_message_delivery_trace(&mut self, chat_id: &str, message_id: &str) {
+        let pending_relay_event_ids = self
+            .pending_relay_publishes
+            .values()
+            .filter(|pending| {
+                pending.chat_id.as_deref() == Some(chat_id)
+                    && pending.message_id.as_deref() == Some(message_id)
+            })
+            .map(|pending| pending.event_id.clone())
+            .collect::<Vec<_>>();
+        let last_transport_error = self
+            .pending_relay_publishes
+            .values()
+            .filter(|pending| {
+                pending.chat_id.as_deref() == Some(chat_id)
+                    && pending.message_id.as_deref() == Some(message_id)
+            })
+            .filter_map(|pending| pending.last_error.clone())
+            .last();
+        let queued_protocol_targets = self
+            .logged_in
+            .as_ref()
+            .and_then(|logged_in| {
+                logged_in
+                    .ndr_runtime
+                    .queued_message_diagnostics(Some(message_id))
+                    .ok()
+            })
+            .map(|entries| {
+                entries
+                    .into_iter()
+                    .map(|entry| entry.target_key)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        message.delivery_trace.pending_relay_event_ids = pending_relay_event_ids;
+        message.delivery_trace.queued_protocol_targets = queued_protocol_targets;
+        message.delivery_trace.last_transport_error = last_transport_error;
     }
 
     pub(super) fn push_outgoing_message_with_id(
@@ -422,6 +555,8 @@ impl AppCore {
             created_at_secs,
             expires_at_secs,
             delivery,
+            recipient_deliveries: self.initial_recipient_deliveries(chat_id, created_at_secs),
+            delivery_trace: MessageDeliveryTraceSnapshot::default(),
             // Outgoing messages are composed locally; the wrapper event
             // id only exists once the rumor has been published, and we
             // never need it for notification preview lookups (we
@@ -485,6 +620,13 @@ impl AppCore {
         let author = author.unwrap_or_else(|| self.owner_display_label(chat_id));
         let should_count_unread = !self.is_chat_visible(chat_id);
         let (body, attachments) = extract_message_attachments(&body);
+        let mut delivery_trace = delivery_trace_for_source_event(source_event_id.as_deref());
+        if let Some(channel) = source_event_id
+            .as_ref()
+            .and_then(|event_id| self.event_transport_channels.remove(event_id))
+        {
+            push_unique(&mut delivery_trace.transport_channels, &channel);
+        }
         let message = ChatMessageSnapshot {
             id: message_id,
             chat_id: chat_id.to_string(),
@@ -498,6 +640,8 @@ impl AppCore {
             created_at_secs,
             expires_at_secs,
             delivery: DeliveryState::Received,
+            recipient_deliveries: Vec::new(),
+            delivery_trace,
             source_event_id,
         };
         let (thread_unread_count, thread_updated_at_secs) = {
@@ -572,6 +716,8 @@ impl AppCore {
             created_at_secs,
             expires_at_secs: None,
             delivery: DeliveryState::Received,
+            recipient_deliveries: Vec::new(),
+            delivery_trace: MessageDeliveryTraceSnapshot::default(),
             source_event_id: None,
         });
         self.bump_typing_floor(chat_id, created_at_secs);
@@ -806,6 +952,7 @@ impl AppCore {
                     &message_ids_from_tags(runtime_rumor.tags.iter()),
                     delivery,
                     is_outgoing,
+                    Some(&sender_owner.to_hex()),
                 );
             }
             TYPING_KIND => {
@@ -888,6 +1035,36 @@ impl AppCore {
         self.next_message_id = self.next_message_id.saturating_add(1);
         id.to_string()
     }
+
+    fn initial_recipient_deliveries(
+        &self,
+        chat_id: &str,
+        created_at_secs: u64,
+    ) -> Vec<MessageRecipientDeliverySnapshot> {
+        let local_owner = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
+        let mut recipients = if let Some(group_id) = parse_group_id_from_chat_id(chat_id) {
+            self.groups
+                .get(&group_id)
+                .map(|group| group.members.clone())
+                .unwrap_or_default()
+        } else {
+            vec![chat_id.to_string()]
+        };
+        recipients.retain(|owner| local_owner.as_deref() != Some(owner.as_str()));
+        recipients.sort();
+        recipients.dedup();
+        recipients
+            .into_iter()
+            .map(|owner_pubkey_hex| MessageRecipientDeliverySnapshot {
+                owner_pubkey_hex,
+                delivery: DeliveryState::Pending,
+                updated_at_secs: created_at_secs,
+            })
+            .collect()
+    }
 }
 
 fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
@@ -909,8 +1086,25 @@ fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapsho
         created_at_secs: message.created_at_secs,
         expires_at_secs: message.expires_at_secs,
         delivery: message.delivery.clone().into(),
+        recipient_deliveries: message.recipient_deliveries.clone(),
+        delivery_trace: message.delivery_trace.clone(),
         source_event_id: message.source_event_id.clone(),
     }
+}
+
+fn delivery_trace_for_source_event(source_event_id: Option<&str>) -> MessageDeliveryTraceSnapshot {
+    let mut trace = MessageDeliveryTraceSnapshot::default();
+    if let Some(source_event_id) = source_event_id {
+        trace.outer_event_ids.push(source_event_id.to_string());
+    }
+    trace
+}
+
+fn push_unique(values: &mut Vec<String>, value: &str) {
+    if values.iter().any(|existing| existing == value) {
+        return;
+    }
+    values.push(value.to_string());
 }
 
 fn message_order(message: &ChatMessageSnapshot) -> (u64, u64, &str) {

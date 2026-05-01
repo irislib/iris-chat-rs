@@ -556,6 +556,7 @@ impl AppCore {
                     &event_message_ids(&event.inner),
                     delivery,
                     is_outgoing,
+                    Some(&sender_owner.to_hex()),
                 );
             }
             TYPING_KIND => {
