@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.5
+
+- Import matching legacy `ndr` filesystem ratchet sessions into Iris SQLite storage on account startup.
+- Preserve active Iris ratchet state while filling missing or empty records from legacy storage.
+
 ## 0.1.4
 
 - Make `iris listen` run the full Iris core/network listener and own the data-dir lock.
