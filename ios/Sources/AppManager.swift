@@ -394,6 +394,7 @@ final class AppManager: ObservableObject {
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
     private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
+    private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
 
     @Published private(set) var state: AppState
     @Published private(set) var bootstrapInFlight = true
@@ -502,10 +503,13 @@ final class AppManager: ObservableObject {
         nearbyIris.onLanPermissionDenied = { [weak self] in
             self?.handleNearbyLanPermissionDenied()
         }
+        nearbyIris.onLanPermissionGranted = { [weak self] in
+            self?.markNearbyLanPermissionGranted()
+        }
         if initialState.preferences.nearbyBluetoothEnabled, nearbyIris.bluetoothPermissionGranted {
             nearbyIris.setVisible(true)
         }
-        if initialState.preferences.nearbyLanEnabled {
+        if initialState.preferences.nearbyLanEnabled, canAutoStartNearbyLan {
             nearbyIris.setLanVisible(true)
         }
 #endif
@@ -899,7 +903,7 @@ final class AppManager: ObservableObject {
            nearbyIris.bluetoothPermissionGranted {
             nearbyIris.setVisible(true)
         }
-        if state.preferences.nearbyLanEnabled, !nearbyIris.isLanVisible {
+        if state.preferences.nearbyLanEnabled, !nearbyIris.isLanVisible, canAutoStartNearbyLan {
             nearbyIris.setLanVisible(true)
         }
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
@@ -912,8 +916,22 @@ final class AppManager: ObservableObject {
             !nearbyIris.lanPermissionNeedsSettings
     }
 
+    private var canAutoStartNearbyLan: Bool {
+        UserDefaults.standard.bool(forKey: Self.nearbyLanPermissionGrantedKey)
+    }
+
     private func markNearbyLanPermissionPromptAttempted() {
         UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
+    }
+
+    private func markNearbyLanPermissionGranted() {
+        UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
+        UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionGrantedKey)
+    }
+
+    private func markNearbyLanPermissionDenied() {
+        UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
+        UserDefaults.standard.set(false, forKey: Self.nearbyLanPermissionGrantedKey)
     }
 
     private func handleNearbyBluetoothPermissionDenied() {
@@ -929,6 +947,7 @@ final class AppManager: ObservableObject {
         guard state.preferences.nearbyLanEnabled || nearbyIris.isLanVisible else {
             return
         }
+        markNearbyLanPermissionDenied()
         nearbyIris.setLanVisible(false)
         dispatchToRust(.setNearbyLanEnabled(enabled: false), showsToastOnFailure: false)
         showToast("Allow Wi-Fi in Settings")
@@ -1314,7 +1333,7 @@ final class AppManager: ObservableObject {
         let wasEnabled = oldState.preferences.nearbyLanEnabled
         let isEnabled = nextState.preferences.nearbyLanEnabled
         if isEnabled {
-            if !nearbyIris.isLanVisible {
+            if !nearbyIris.isLanVisible, canAutoStartNearbyLan {
                 nearbyIris.setLanVisible(true)
             }
         } else if wasEnabled, nearbyIris.isLanVisible {

@@ -74,6 +74,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     var frameBodyLength: ((Data) -> Int)?
     var onBluetoothPermissionDenied: (() -> Void)?
     var onLanPermissionDenied: (() -> Void)?
+    var onLanPermissionGranted: (() -> Void)?
 
     override init() {
         super.init()
@@ -342,6 +343,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             onLanPermissionDenied?()
         } else if status == "Visible" || status == "Connected" {
             lanPermissionNeedsSettings = false
+            onLanPermissionGranted?()
         }
     }
 

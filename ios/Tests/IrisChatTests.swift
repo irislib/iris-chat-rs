@@ -260,8 +260,78 @@ private func waitUntil(
     return condition()
 }
 
+private func restoreUserDefault(_ previousValue: Any?, forKey key: String) {
+    if let previousValue {
+        UserDefaults.standard.set(previousValue, forKey: key)
+    } else {
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+}
+
 final class IrisChatTests: XCTestCase {
 #if os(iOS)
+    @MainActor
+    func testNearbyLanDoesNotAutoStartBeforeLocalNetworkGrant() async throws {
+        let attemptedKey = "nearbyLanPermissionPromptAttempted"
+        let grantedKey = "nearbyLanPermissionGranted"
+        let previousAttempted = UserDefaults.standard.object(forKey: attemptedKey)
+        let previousGranted = UserDefaults.standard.object(forKey: grantedKey)
+        defer {
+            restoreUserDefault(previousAttempted, forKey: attemptedKey)
+            restoreUserDefault(previousGranted, forKey: grantedKey)
+        }
+        UserDefaults.standard.removeObject(forKey: attemptedKey)
+        UserDefaults.standard.removeObject(forKey: grantedKey)
+
+        var preferences = makeAppState().preferences
+        preferences.nearbyLanEnabled = true
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+
+        let manager = AppManager(
+            rust: MockRustApp(state: makeAppState(preferences: preferences)),
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+
+        XCTAssertFalse(manager.nearbyIris.isLanVisible)
+    }
+
+    @MainActor
+    func testNearbyLanPreferenceSyncWaitsForLocalNetworkGrant() async throws {
+        let attemptedKey = "nearbyLanPermissionPromptAttempted"
+        let grantedKey = "nearbyLanPermissionGranted"
+        let previousAttempted = UserDefaults.standard.object(forKey: attemptedKey)
+        let previousGranted = UserDefaults.standard.object(forKey: grantedKey)
+        defer {
+            restoreUserDefault(previousAttempted, forKey: attemptedKey)
+            restoreUserDefault(previousGranted, forKey: grantedKey)
+        }
+        UserDefaults.standard.removeObject(forKey: attemptedKey)
+        UserDefaults.standard.removeObject(forKey: grantedKey)
+
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let rust = MockRustApp(state: makeAppState(rev: 1))
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+        var preferences = makeAppState().preferences
+        preferences.nearbyLanEnabled = true
+
+        rust.emit(.fullState(makeAppState(rev: 2, preferences: preferences)))
+        await Task.yield()
+
+        XCTAssertTrue(manager.state.preferences.nearbyLanEnabled)
+        XCTAssertFalse(manager.nearbyIris.isLanVisible)
+    }
+
     @MainActor
     func testForegroundEncryptedPushWithUnserializablePayloadIsSuppressed() async throws {
         let dataDir = FileManager.default.temporaryDirectory
