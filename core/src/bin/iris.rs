@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
@@ -62,6 +62,25 @@ enum Commands {
     Send {
         chat: String,
         message: String,
+        #[arg(long)]
+        ttl: Option<u64>,
+        #[arg(long, value_name = "UNIX_SECONDS")]
+        expires_at: Option<u64>,
+    },
+    React {
+        chat: String,
+        message_id: String,
+        emoji: String,
+    },
+    Typing {
+        chat: String,
+        #[arg(long)]
+        stop: bool,
+    },
+    Receipt {
+        chat: String,
+        receipt_type: String,
+        message_ids: Vec<String>,
     },
     Read {
         chat: String,
@@ -74,6 +93,8 @@ enum Commands {
     },
     #[command(subcommand)]
     Invite(InviteCommands),
+    #[command(subcommand)]
+    Link(LinkCommands),
     #[command(subcommand)]
     Group(GroupCommands),
     #[command(subcommand)]
@@ -109,6 +130,10 @@ enum ChatCommands {
     Send {
         chat: String,
         message: String,
+        #[arg(long)]
+        ttl: Option<u64>,
+        #[arg(long, value_name = "UNIX_SECONDS")]
+        expires_at: Option<u64>,
     },
     Seen {
         chat: String,
@@ -129,6 +154,12 @@ enum ChatCommands {
 
 #[derive(Subcommand)]
 enum InviteCommands {
+    Create,
+    Accept { invite: String },
+}
+
+#[derive(Subcommand)]
+enum LinkCommands {
     Create,
     Accept { invite: String },
 }
@@ -369,9 +400,32 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
         Commands::Chat(ChatCommands::Read { chat, limit }) | Commands::Read { chat, limit } => {
             open_chat(cli, &chat).map(|chat| chat_json(&chat, limit))
         }
-        Commands::Chat(ChatCommands::Send { chat, message }) | Commands::Send { chat, message } => {
-            send_message(cli, &chat, &message)
+        Commands::Chat(ChatCommands::Send {
+            chat,
+            message,
+            ttl,
+            expires_at,
+        })
+        | Commands::Send {
+            chat,
+            message,
+            ttl,
+            expires_at,
+        } => {
+            let expires_at = message_expiration(ttl, expires_at)?;
+            send_message(cli, &chat, &message, expires_at)
         }
+        Commands::React {
+            chat,
+            message_id,
+            emoji,
+        } => react(cli, &chat, &message_id, &emoji),
+        Commands::Typing { chat, stop } => typing(cli, &chat, stop),
+        Commands::Receipt {
+            chat,
+            receipt_type,
+            message_ids,
+        } => receipt(cli, &chat, &receipt_type, message_ids),
         Commands::Chat(ChatCommands::Seen { chat, message_ids })
         | Commands::Seen { chat, message_ids } => mark_seen(cli, &chat, message_ids),
         Commands::Chat(ChatCommands::Delete { chat }) => {
@@ -427,6 +481,48 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
                 "current_chat": state.current_chat.as_ref().map(|chat| chat_summary_json(chat)),
             }))
         }
+        Commands::Link(LinkCommands::Create) => {
+            cli.dispatch_and_wait(
+                AppAction::StartLinkedDevice {
+                    owner_input: String::new(),
+                },
+                Duration::from_secs(3),
+            )?;
+            let state = cli.app.state();
+            fail_on_toast(&state)?;
+            let link = state.link_device.context("No link code was created.")?;
+            Ok(json!({
+                "url": link.url,
+                "device_input": link.device_input,
+            }))
+        }
+        Commands::Link(LinkCommands::Accept { invite }) => {
+            cli.dispatch_and_wait(
+                AppAction::AddAuthorizedDevice {
+                    device_input: invite,
+                },
+                Duration::from_secs(4),
+            )?;
+            let state = cli.app.state();
+            fail_on_toast(&state)?;
+            Ok(json!({
+                "accepted": true,
+                "device_roster": state.device_roster.map(|roster| {
+                    json!({
+                        "device_count": roster.devices.len(),
+                        "devices": roster.devices.iter().map(|device| {
+                            json!({
+                                "device_id": device.device_pubkey_hex,
+                                "device_npub": device.device_npub,
+                                "current": device.is_current_device,
+                                "authorized": device.is_authorized,
+                                "stale": device.is_stale,
+                            })
+                        }).collect::<Vec<_>>(),
+                    })
+                }),
+            }))
+        }
         Commands::Group(GroupCommands::Create { name, members }) => {
             cli.dispatch_and_wait(
                 AppAction::CreateGroup {
@@ -447,7 +543,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
         }
         Commands::Group(GroupCommands::Show { group }) => show_group(cli, &group),
         Commands::Group(GroupCommands::Send { group, message }) => {
-            send_message(cli, &normalize_group_chat(&group), &message)
+            send_message(cli, &normalize_group_chat(&group), &message, None)
         }
         Commands::Group(GroupCommands::Read { group, limit }) => {
             open_chat(cli, &normalize_group_chat(&group)).map(|chat| chat_json(&chat, limit))
@@ -545,15 +641,26 @@ fn open_chat(cli: &CliApp, chat: &str) -> Result<CurrentChatSnapshot> {
     state.current_chat.context("No chat is open.")
 }
 
-fn send_message(cli: &CliApp, chat: &str, message: &str) -> Result<Value> {
+fn send_message(
+    cli: &CliApp,
+    chat: &str,
+    message: &str,
+    expires_at_secs: Option<u64>,
+) -> Result<Value> {
     let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
-    cli.dispatch_and_wait(
+    let action = if let Some(expires_at_secs) = expires_at_secs {
+        AppAction::SendDisappearingMessage {
+            chat_id: chat_id.clone(),
+            text: message.to_string(),
+            expires_at_secs,
+        }
+    } else {
         AppAction::SendMessage {
             chat_id: chat_id.clone(),
             text: message.to_string(),
-        },
-        Duration::from_secs(3),
-    )?;
+        }
+    };
+    cli.dispatch_and_wait(action, Duration::from_secs(3))?;
     let state = cli.app.state();
     fail_on_toast(&state)?;
     let current = state.current_chat.context("No chat is open.")?;
@@ -565,6 +672,73 @@ fn send_message(cli: &CliApp, chat: &str, message: &str) -> Result<Value> {
         .cloned()
         .context("Message was not added to the chat.")?;
     Ok(message_json(&sent))
+}
+
+fn react(cli: &CliApp, chat: &str, message_id: &str, emoji: &str) -> Result<Value> {
+    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    cli.dispatch_and_wait(
+        AppAction::ToggleReaction {
+            chat_id: chat_id.clone(),
+            message_id: message_id.to_string(),
+            emoji: emoji.to_string(),
+        },
+        Duration::from_secs(2),
+    )?;
+    let current = open_chat(cli, &chat_id)?;
+    let message = current
+        .messages
+        .iter()
+        .find(|message| message.id == message_id)
+        .context("Message not found.")?;
+    Ok(message_json(message))
+}
+
+fn typing(cli: &CliApp, chat: &str, stop: bool) -> Result<Value> {
+    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    cli.dispatch_and_wait(
+        AppAction::SetTypingIndicatorsEnabled { enabled: true },
+        Duration::from_secs(1),
+    )?;
+    let action = if stop {
+        AppAction::StopTyping {
+            chat_id: chat_id.clone(),
+        }
+    } else {
+        AppAction::SendTyping {
+            chat_id: chat_id.clone(),
+        }
+    };
+    cli.dispatch_and_wait(action, Duration::from_secs(2))?;
+    Ok(json!({ "chat_id": chat_id, "typing": !stop }))
+}
+
+fn receipt(
+    cli: &CliApp,
+    chat: &str,
+    receipt_type: &str,
+    message_ids: Vec<String>,
+) -> Result<Value> {
+    let receipt_type = receipt_type.trim().to_ascii_lowercase();
+    if receipt_type != "delivered" && receipt_type != "seen" {
+        anyhow::bail!("Receipt type must be delivered or seen.");
+    }
+    if receipt_type == "seen" {
+        return mark_seen(cli, chat, message_ids);
+    }
+    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    cli.dispatch_and_wait(
+        AppAction::SendReceipt {
+            chat_id: chat_id.clone(),
+            receipt_type: receipt_type.clone(),
+            message_ids: message_ids.clone(),
+        },
+        Duration::from_secs(2),
+    )?;
+    Ok(json!({
+        "chat_id": chat_id,
+        "receipt_type": receipt_type,
+        "message_ids": message_ids,
+    }))
 }
 
 fn mark_seen(cli: &CliApp, chat: &str, message_ids: Vec<String>) -> Result<Value> {
@@ -587,6 +761,20 @@ fn mark_seen(cli: &CliApp, chat: &str, message_ids: Vec<String>) -> Result<Value
         Duration::from_secs(2),
     )?;
     Ok(json!({ "chat_id": current.chat_id, "message_ids": ids }))
+}
+
+fn message_expiration(ttl: Option<u64>, expires_at: Option<u64>) -> Result<Option<u64>> {
+    match (ttl, expires_at) {
+        (Some(_), Some(_)) => anyhow::bail!("Use either --ttl or --expires-at, not both."),
+        (Some(ttl), None) if ttl > 0 => Ok(Some(now_secs()?.saturating_add(ttl))),
+        (Some(_), None) => Ok(None),
+        (None, Some(expires_at)) if expires_at > 0 => Ok(Some(expires_at)),
+        (None, Some(_)) | (None, None) => Ok(None),
+    }
+}
+
+fn now_secs() -> Result<u64> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs())
 }
 
 fn show_group(cli: &CliApp, group: &str) -> Result<Value> {
@@ -822,9 +1010,13 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Account(_) => "account",
         Commands::Chat(_) => "chat",
         Commands::Send { .. } => "send",
+        Commands::React { .. } => "react",
+        Commands::Typing { .. } => "typing",
+        Commands::Receipt { .. } => "receipt",
         Commands::Read { .. } => "read",
         Commands::Seen { .. } => "seen",
         Commands::Invite(_) => "invite",
+        Commands::Link(_) => "link",
         Commands::Group(_) => "group",
         Commands::Relay(_) => "relay",
     }

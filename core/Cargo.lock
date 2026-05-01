@@ -1268,7 +1268,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "iris-chat-core"
+name = "iris-chat"
 version = "0.1.0"
 dependencies = [
  "anyhow",

@@ -287,6 +287,11 @@ impl AppCore {
                 chat_id,
                 message_ids,
             } => self.mark_messages_seen(&chat_id, &message_ids),
+            AppAction::SendReceipt {
+                chat_id,
+                receipt_type,
+                message_ids,
+            } => self.send_receipt(&chat_id, &receipt_type, message_ids),
             AppAction::DeleteLocalMessage {
                 chat_id,
                 message_id,

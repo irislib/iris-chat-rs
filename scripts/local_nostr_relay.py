@@ -32,6 +32,7 @@ def main() -> int:
     build = subprocess.run([
         "cargo", "build",
         "--manifest-path", manifest,
+        "--features", "local-relay-bin",
         "--bin", "local_nostr_relay",
     ])
     if build.returncode != 0:

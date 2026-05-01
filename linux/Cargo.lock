@@ -1751,7 +1751,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "iris-chat-core"
+name = "iris-chat"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -1792,7 +1792,7 @@ dependencies = [
  "glib",
  "gtk4",
  "image",
- "iris-chat-core",
+ "iris-chat",
  "libadwaita",
  "qrcode",
  "reqwest",

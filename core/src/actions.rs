@@ -140,6 +140,11 @@ pub enum AppAction {
         chat_id: String,
         message_ids: Vec<String>,
     },
+    SendReceipt {
+        chat_id: String,
+        receipt_type: String,
+        message_ids: Vec<String>,
+    },
     DeleteLocalMessage {
         chat_id: String,
         message_id: String,

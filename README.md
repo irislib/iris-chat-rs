@@ -93,10 +93,15 @@ and publishes the release tree to hashtree.
 
 ## Command Line
 
-[`ndr`](https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-double-ratchet)
-is an iris chat compatible command line app from the same protocol repo. It is
-useful for agents, programs, scripts, and local devices that need to send you a
-message and trigger normal iris chat notifications.
+Install the Iris command line app with Cargo:
+
+```bash
+cargo install iris-chat
+iris --help
+```
+
+The `iris` command is useful for agents, programs, scripts, and local devices
+that need to send or search messages and trigger normal iris chat notifications.
 
 Messages can travel over Nostr relays, and nearby transports can keep local
 device messages off a remote server when the devices are close enough.
