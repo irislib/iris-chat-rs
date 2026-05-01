@@ -269,6 +269,7 @@ impl AppCore {
                 new_relay_url,
             } => self.update_nostr_relay(&old_relay_url, &new_relay_url),
             AppAction::RemoveNostrRelay { relay_url } => self.remove_nostr_relay(&relay_url),
+            AppAction::SetNostrRelays { relay_urls } => self.set_nostr_relays(&relay_urls),
             AppAction::ResetNostrRelays => self.reset_nostr_relays(),
             AppAction::SetImageProxyEnabled { enabled } => self.set_image_proxy_enabled(enabled),
             AppAction::SetImageProxyUrl { url } => self.set_image_proxy_url(&url),

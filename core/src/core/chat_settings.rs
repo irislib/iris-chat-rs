@@ -244,6 +244,10 @@ impl AppCore {
         self.apply_nostr_relay_urls(next);
     }
 
+    pub(super) fn set_nostr_relays(&mut self, relay_urls: &[String]) {
+        self.apply_nostr_relay_urls(relay_urls.to_vec());
+    }
+
     pub(super) fn reset_nostr_relays(&mut self) {
         self.apply_nostr_relay_urls(configured_relays());
         self.state.toast = Some("Relays reset to defaults.".to_string());

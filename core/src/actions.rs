@@ -112,6 +112,9 @@ pub enum AppAction {
     RemoveNostrRelay {
         relay_url: String,
     },
+    SetNostrRelays {
+        relay_urls: Vec<String>,
+    },
     ResetNostrRelays,
     SetImageProxyEnabled {
         enabled: bool,
