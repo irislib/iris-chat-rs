@@ -1,17 +1,26 @@
 use super::schema;
 use super::SharedConnection;
-use rusqlite::{Connection, ErrorCode};
+use rusqlite::Connection;
+#[cfg(not(target_os = "ios"))]
+use rusqlite::ErrorCode;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+#[cfg(not(target_os = "ios"))]
 use std::time::Duration;
 
 pub(crate) const CORE_DB_FILENAME: &str = "core.sqlite3";
+#[cfg(not(target_os = "ios"))]
 pub(crate) const CORE_LOCK_DB_FILENAME: &str = "core.lock.sqlite3";
 
+#[cfg(not(target_os = "ios"))]
 pub(crate) struct DataDirLock {
     _conn: Connection,
 }
 
+#[cfg(target_os = "ios")]
+pub(crate) struct DataDirLock;
+
+#[cfg(not(target_os = "ios"))]
 impl DataDirLock {
     pub(crate) fn acquire(data_dir: &Path) -> anyhow::Result<Self> {
         std::fs::create_dir_all(data_dir)?;
@@ -39,6 +48,19 @@ impl DataDirLock {
     }
 }
 
+#[cfg(target_os = "ios")]
+impl DataDirLock {
+    pub(crate) fn acquire(data_dir: &Path) -> anyhow::Result<Self> {
+        // iOS kills background-suspended apps that hold file or SQLite locks
+        // (RunningBoard 0xdead10cc). The app has one foreground core process,
+        // while the notification extension uses overlay storage and does not
+        // own the live ratchet writer, so there is no long-lived OS lock here.
+        std::fs::create_dir_all(data_dir)?;
+        Ok(Self)
+    }
+}
+
+#[cfg(not(target_os = "ios"))]
 fn is_lock_busy(error: &rusqlite::Error) -> bool {
     matches!(
         error,
