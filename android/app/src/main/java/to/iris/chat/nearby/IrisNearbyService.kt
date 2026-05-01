@@ -61,6 +61,8 @@ class IrisNearbyService(
         val localNetworkStatus: String,
         val peerCount: Int,
         val peers: List<Peer>,
+        val bluetoothPeers: List<Peer>,
+        val localNetworkPeers: List<Peer>,
     )
 
     data class Peer(
@@ -120,6 +122,11 @@ class IrisNearbyService(
         get() {
             val bluetoothPermissionGranted = hasBluetoothPermission()
             val localNetworkPermissionGranted = hasLocalNetworkPermission()
+            val sortedPeers =
+                peers.values
+                    .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id })
+            val bluetoothPeerIds = peerIdsByAddress.values.toSet()
+            val localNetworkPeerIds = lanService.peerIds()
             return Snapshot(
                 visible = visible,
                 status = if (!visible && !bluetoothPermissionGranted) "No Bluetooth access" else status,
@@ -133,10 +140,10 @@ class IrisNearbyService(
                         !localNetworkPermissionGranted -> "No local network access"
                         else -> "Off"
                     },
-                peerCount = peers.size,
-                peers =
-                    peers.values
-                        .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id }),
+                peerCount = sortedPeers.size,
+                peers = sortedPeers,
+                bluetoothPeers = sortedPeers.filter { it.id in bluetoothPeerIds },
+                localNetworkPeers = sortedPeers.filter { it.id in localNetworkPeerIds },
             )
         }
 

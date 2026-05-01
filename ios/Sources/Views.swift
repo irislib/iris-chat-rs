@@ -1922,19 +1922,7 @@ private struct NearbyIrisScreen: View {
 
             transportControls
 
-            Rectangle()
-                .fill(palette.border)
-                .frame(height: 1)
-
-            if service.peers.isEmpty {
-                Text(service.sidebarSubtitle)
-                    .font(.system(.body, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.muted)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                peerStrip
-                Spacer(minLength: 0)
-            }
+            Spacer(minLength: 0)
         }
         .background(palette.background)
     }
@@ -1945,12 +1933,6 @@ private struct NearbyIrisScreen: View {
                 Text("Nearby")
                     .font(.system(.title3, design: .rounded, weight: .bold))
                     .foregroundStyle(palette.textPrimary)
-
-                Text(service.sidebarSubtitle)
-                    .font(.system(.caption, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.muted)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
             }
 
             Spacer()
@@ -1968,6 +1950,7 @@ private struct NearbyIrisScreen: View {
             transportRow(
                 title: "Bluetooth",
                 subtitle: service.bluetoothTransportWarning,
+                peers: service.bluetoothPeers,
                 isOn: bluetoothBinding,
                 accessibilityID: "nearbyBluetoothSwitch"
             )
@@ -1980,6 +1963,7 @@ private struct NearbyIrisScreen: View {
             transportRow(
                 title: "Wi-Fi",
                 subtitle: service.lanTransportWarning,
+                peers: service.lanPeers,
                 isOn: lanBinding,
                 accessibilityID: "nearbyLanSwitch"
             )
@@ -1990,29 +1974,44 @@ private struct NearbyIrisScreen: View {
     private func transportRow(
         title: String,
         subtitle: String?,
+        peers: [IrisNearbyPeer],
         isOn: Binding<Bool>,
         accessibilityID: String
     ) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(.body, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.textPrimary)
-                if let subtitle {
-                    Text(subtitle)
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                    if let subtitle {
+                        Text(subtitle)
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                Toggle("", isOn: isOn)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .accessibilityIdentifier(accessibilityID)
+            }
+            .frame(height: 52)
+
+            if isOn.wrappedValue {
+                if peers.isEmpty, subtitle == nil {
+                    Text("No users nearby")
                         .font(.system(.caption, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.muted)
-                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 12)
+                } else if !peers.isEmpty {
+                    peerStrip(peers)
                 }
             }
-            Spacer()
-            Toggle("", isOn: isOn)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .accessibilityIdentifier(accessibilityID)
         }
         .padding(.horizontal, 18)
-        .frame(height: 52)
     }
 
     private var bluetoothBinding: Binding<Bool> {
@@ -2030,11 +2029,11 @@ private struct NearbyIrisScreen: View {
     }
 
     @ViewBuilder
-    private var peerStrip: some View {
-        if !service.peers.isEmpty {
+    private func peerStrip(_ peers: [IrisNearbyPeer]) -> some View {
+        if !peers.isEmpty {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
-                    ForEach(service.peers) { peer in
+                    ForEach(peers) { peer in
                         Button {
                             openPeer(peer)
                         } label: {
@@ -2058,10 +2057,9 @@ private struct NearbyIrisScreen: View {
                         .accessibilityIdentifier("nearbyPeer-\(String(peer.id.prefix(12)))")
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 0)
                 .padding(.vertical, 10)
             }
-            .background(palette.panel)
         }
     }
 

@@ -157,6 +157,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return Self.wifiStatusLabel(lanStatus)
     }
 
+    var bluetoothPeers: [IrisNearbyPeer] {
+        let peerIDs = bluetoothPeerIDs
+        return peers.filter { peerIDs.contains($0.id) }
+    }
+
+    var lanPeers: [IrisNearbyPeer] {
+        let peerIDs = lanService?.peerIDs() ?? []
+        return peers.filter { peerIDs.contains($0.id) }
+    }
+
     private static func nearbySummary(for peers: [IrisNearbyPeer]) -> String {
         let names = peers.map(summaryName)
         switch names.count {
@@ -1000,12 +1010,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func removeLanOnlyPeers(_ lanPeerIDs: Set<String>) {
-        let bluetoothPeerIDs = Set(peerIDByPeripheral.values).union(peerIDByCentral.values)
         peers.removeAll { lanPeerIDs.contains($0.id) && !bluetoothPeerIDs.contains($0.id) }
         for peerID in lanPeerIDs where !bluetoothPeerIDs.contains(peerID) {
             peerNonces.removeValue(forKey: peerID)
         }
         status = peers.isEmpty ? visibleIdleStatus : sidebarSubtitle
+    }
+
+    private var bluetoothPeerIDs: Set<String> {
+        Set(peerIDByPeripheral.values).union(peerIDByCentral.values)
     }
 
     private func restartScanningAfterPruning() {
