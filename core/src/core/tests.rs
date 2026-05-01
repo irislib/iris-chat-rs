@@ -489,6 +489,89 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
 }
 
 #[test]
+fn mobile_push_decrypts_compacted_apns_event_payload() {
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_path_buf();
+    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        crate::core::storage::open_database(&data_dir).expect("bob db"),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+
+    let mut invite = Invite::create_new(
+        alice_keys.public_key(),
+        Some(alice_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("invite");
+    invite.owner_public_key = Some(alice_keys.public_key());
+
+    let alice = NdrRuntime::new(
+        alice_keys.public_key(),
+        alice_keys.secret_key().to_secret_bytes(),
+        alice_keys.public_key().to_hex(),
+        alice_keys.public_key(),
+        None,
+        Some(invite.clone()),
+    );
+    alice.init().expect("alice init");
+
+    let bob = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        Some(bob_storage),
+        None,
+    );
+    bob.init().expect("bob init");
+    bob.accept_invite(&invite, Some(alice_keys.public_key()))
+        .expect("bob accepts alice invite");
+    deliver_published_events(&bob, &bob_keys, &alice);
+
+    let message = "compacted apns preview";
+    alice
+        .send_text(bob_keys.public_key(), message.to_string(), None)
+        .expect("alice sends");
+    let bob_message_authors = bob.get_all_message_push_author_pubkeys();
+    let message_event = drain_signed_events(&alice, &alice_keys)
+        .into_iter()
+        .find(|event| {
+            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
+                && bob_message_authors.contains(&event.pubkey)
+        })
+        .expect("message event for Bob");
+    let payload = serde_json::json!({
+        "aps": {
+            "alert": {
+                "title": "Iris Chat",
+                "body": "New message",
+            },
+            "mutable-content": 1,
+        },
+        "event": compact_event_payload_for_apns_test(&message_event),
+        "title": "New message",
+        "body": "New message",
+    })
+    .to_string();
+
+    let resolution = decrypt_mobile_push_notification(
+        data_dir.to_string_lossy().to_string(),
+        bob_keys.public_key().to_hex(),
+        bob_keys
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
+        payload,
+    );
+
+    assert!(resolution.should_show);
+    assert_eq!(resolution.body, message);
+}
+
+#[test]
 fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
@@ -3256,6 +3339,27 @@ fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
             _ => None,
         })
         .collect()
+}
+
+fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
+    let mut value = serde_json::to_value(event).expect("event json");
+    if let Some(object) = value.as_object_mut() {
+        let header_tags = object
+            .get("tags")
+            .and_then(|tags| tags.as_array())
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|tag| {
+                tag.as_array()
+                    .and_then(|items| items.first())
+                    .and_then(|name| name.as_str())
+                    == Some("header")
+            })
+            .collect();
+        object.insert("tags".to_string(), serde_json::Value::Array(header_tags));
+    }
+    value
 }
 
 fn drain_text_messages(runtime: &NdrRuntime) -> Vec<String> {

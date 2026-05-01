@@ -175,6 +175,13 @@ final class InteropHarnessTests: XCTestCase {
         case "report_mobile_push_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             reportMobilePushSnapshot(manager: manager)
+        case "decrypt_notification_payload_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            try decryptNotificationPayloadFromArgs(
+                secretStore: secretStore,
+                dataDir: dataDir,
+                env: env
+            )
         case "report_mobile_push_server_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             try await reportMobilePushServerSnapshot(manager: manager)
@@ -1097,6 +1104,56 @@ final class InteropHarnessTests: XCTestCase {
         }.joined(separator: "|"))
     }
 
+    private func decryptNotificationPayloadFromArgs(
+        secretStore: AccountSecretStore,
+        dataDir: URL,
+        env: [String: String]
+    ) throws {
+        let outerEventJson = try requiredEnv("IRIS_IOS_HARNESS_OUTER_EVENT_JSON", env: env)
+        let expectedBody = env["IRIS_IOS_HARNESS_EXPECTED_BODY"] ?? ""
+        let expectedTitle = env["IRIS_IOS_HARNESS_EXPECTED_TITLE"] ?? ""
+        let eventObject = try jsonObjectFromString(outerEventJson)
+        let payloadObject: JsonObject = [
+            "aps": [
+                "alert": [
+                    "title": "Iris Chat",
+                    "body": "New message",
+                ],
+                "mutable-content": 1,
+            ],
+            "event": eventObject,
+            "title": "New message",
+            "body": "New message",
+        ]
+        let payloadData = try JSONSerialization.data(withJSONObject: payloadObject)
+        guard let payloadJson = String(data: payloadData, encoding: .utf8) else {
+            throw HarnessError.unexpected("could not encode notification payload")
+        }
+        guard let bundle = secretStore.load() else {
+            throw HarnessError.unexpected("stored account bundle unavailable")
+        }
+
+        let resolution = decryptMobilePushNotificationPayload(
+            dataDir: dataDir.path,
+            ownerPubkeyHex: bundle.ownerPubkeyHex,
+            deviceNsec: bundle.deviceNsec,
+            rawPayloadJson: payloadJson
+        )
+        status("notification_should_show", String(resolution.shouldShow))
+        status("notification_title", resolution.title)
+        status("notification_body", resolution.body)
+        status("notification_payload_json", resolution.payloadJson)
+        guard resolution.shouldShow else {
+            throw HarnessError.unexpected("decrypted notification was suppressed")
+        }
+        if !expectedBody.isEmpty && resolution.body != expectedBody {
+            throw HarnessError.unexpected("notification body `\(resolution.body)` != `\(expectedBody)`")
+        }
+        if !expectedTitle.isEmpty && resolution.title != expectedTitle {
+            throw HarnessError.unexpected("notification title `\(resolution.title)` != `\(expectedTitle)`")
+        }
+    }
+
     private func reportMobilePushServerSnapshot(manager: AppManager) async throws {
         guard let ownerNsec = manager.exportOwnerNsec() else {
             throw HarnessError.unexpected("owner nsec unavailable")
@@ -1322,6 +1379,14 @@ final class InteropHarnessTests: XCTestCase {
         guard let data = try? Data(contentsOf: url),
               let object = try? JSONSerialization.jsonObject(with: data) as? JsonObject else {
             return nil
+        }
+        return object
+    }
+
+    private func jsonObjectFromString(_ raw: String) throws -> JsonObject {
+        guard let data = raw.data(using: .utf8),
+              let object = try JSONSerialization.jsonObject(with: data) as? JsonObject else {
+            throw HarnessError.unexpected("invalid json object")
         }
         return object
     }
