@@ -272,7 +272,7 @@ private fun NearbyPeerRow(
             }
     IrisChatListRow(
         title = peer.name,
-        preview = if (peer.ownerPubkeyHex == null) "Found" else "Ready",
+        preview = null,
         timeLabel = null,
         unreadCount = 0,
         lastMessageMine = false,

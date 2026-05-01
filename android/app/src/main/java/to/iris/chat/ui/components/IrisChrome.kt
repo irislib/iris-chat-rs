@@ -462,7 +462,7 @@ fun IrisInlineAction(
 fun IrisChatListRow(
     title: String,
     isMuted: Boolean = false,
-    preview: String,
+    preview: String?,
     timeLabel: String?,
     imageUrl: String? = null,
     imageData: ByteArray? = null,
@@ -523,34 +523,40 @@ fun IrisChatListRow(
                     )
                 }
             }
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = preview,
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = palette.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                if (lastMessageMine && lastDelivery != null) {
-                    DeliveryGlyph(lastDelivery)
-                }
-                if (unreadCount > 0) {
-                    BadgedBox(
-                        badge = {
-                            Badge(containerColor = palette.accent, contentColor = Color.White) {
-                                Text(
-                                    if (unreadCount > 99) "99+" else unreadCount.toString(),
-                                    color = Color.White,
-                                )
-                            }
-                        },
-                    ) {
-                        Spacer(modifier = Modifier.size(1.dp))
+            if (preview != null || (lastMessageMine && lastDelivery != null) || unreadCount > 0) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (preview != null) {
+                        Text(
+                            text = preview,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = palette.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        Spacer(modifier = Modifier.weight(1f))
+                    }
+                    if (lastMessageMine && lastDelivery != null) {
+                        DeliveryGlyph(lastDelivery)
+                    }
+                    if (unreadCount > 0) {
+                        BadgedBox(
+                            badge = {
+                                Badge(containerColor = palette.accent, contentColor = Color.White) {
+                                    Text(
+                                        if (unreadCount > 99) "99+" else unreadCount.toString(),
+                                        color = Color.White,
+                                    )
+                                }
+                            },
+                        ) {
+                            Spacer(modifier = Modifier.size(1.dp))
+                        }
                     }
                 }
             }
