@@ -63,6 +63,8 @@ impl AppCore {
             relay_status_watch_urls: HashSet::new(),
             relay_connected_count: 0,
             all_relays_offline_since_secs: None,
+            pending_relay_publishes: BTreeMap::new(),
+            pending_relay_publish_inflight: HashSet::new(),
             pending_mobile_push_events: VecDeque::new(),
             debug_log: VecDeque::new(),
             debug_event_counters: DebugEventCounters::default(),
@@ -105,7 +107,7 @@ impl AppCore {
                 InternalEvent::RelayConnectionChecked { .. } => "RelayConnectionChecked",
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
-                InternalEvent::PublishFinished { .. } => "PublishFinished",
+                InternalEvent::RelayPublishFinished { .. } => "RelayPublishFinished",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
@@ -418,19 +420,14 @@ impl AppCore {
                     self.emit_state();
                 }
             }
-            InternalEvent::PublishFinished {
+            InternalEvent::RelayPublishFinished {
+                event_id,
                 message_id,
                 chat_id,
                 success,
+                detail,
             } => {
-                if success {
-                    self.update_message_delivery(&chat_id, &message_id, DeliveryState::Sent);
-                } else {
-                    self.update_message_delivery(&chat_id, &message_id, DeliveryState::Queued);
-                }
-                self.rebuild_state();
-                self.persist_best_effort();
-                self.emit_state();
+                self.handle_relay_publish_finished(event_id, message_id, chat_id, success, detail);
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);

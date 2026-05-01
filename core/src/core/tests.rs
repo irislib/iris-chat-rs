@@ -86,6 +86,97 @@ fn direct_message_with_no_relays_is_queued_locally() {
 }
 
 #[test]
+fn queued_runtime_publish_retries_when_message_servers_return() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let relay = crate::local_relay::TestRelay::start();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let (core_tx, core_rx) = flume::unbounded();
+    let mut core = logged_in_test_core_at_data_dir(
+        &owner,
+        &device,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    core.core_sender = core_tx;
+
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "retry-message".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "offline relay retry".to_string(),
+        1_777_159_500,
+        None,
+        DeliveryState::Pending,
+    );
+    let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
+        .sign_with_keys(&device)
+        .expect("event");
+    let event_id = event.id.to_string();
+
+    core.publish_runtime_event(
+        event,
+        "runtime",
+        Some((message_id.clone(), chat_id.clone())),
+    );
+
+    assert!(core.pending_relay_publishes.contains_key(&event_id));
+    assert_eq!(
+        core.threads
+            .get(&chat_id)
+            .and_then(|thread| thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id))
+            .map(|message| &message.delivery),
+        Some(&DeliveryState::Queued)
+    );
+
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    {
+        let logged_in = core.logged_in.as_mut().expect("logged in");
+        logged_in.relay_urls = relay_urls.clone();
+        let client = logged_in.client.clone();
+        core.runtime
+            .block_on(ensure_session_relays_configured(&client, &relay_urls));
+    }
+    core.retry_pending_relay_publishes("test");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        while let Ok(msg) = core_rx.try_recv() {
+            core.handle_message(msg);
+        }
+        if relay.events().iter().any(|event| {
+            event.get("id").and_then(|value| value.as_str()) == Some(event_id.as_str())
+        }) && !core.pending_relay_publishes.contains_key(&event_id)
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    assert!(
+        relay.events().iter().any(|event| {
+            event.get("id").and_then(|value| value.as_str()) == Some(event_id.as_str())
+        }),
+        "retry should publish the queued event to the relay"
+    );
+    assert!(!core.pending_relay_publishes.contains_key(&event_id));
+    assert_eq!(
+        core.threads
+            .get(&chat_id)
+            .and_then(|thread| thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id))
+            .map(|message| &message.delivery),
+        Some(&DeliveryState::Sent)
+    );
+}
+
+#[test]
 fn network_status_includes_configured_relay_connection_status() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");

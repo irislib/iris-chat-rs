@@ -151,6 +151,8 @@ pub struct AppCore {
     relay_status_watch_urls: HashSet<String>,
     relay_connected_count: u64,
     all_relays_offline_since_secs: Option<u64>,
+    pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
+    pending_relay_publish_inflight: HashSet<String>,
     pending_mobile_push_events: VecDeque<Event>,
     debug_log: VecDeque<DebugLogEntry>,
     debug_event_counters: DebugEventCounters,

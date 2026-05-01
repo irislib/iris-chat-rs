@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 6;
+const SCHEMA_VERSION: u32 = 7;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -98,6 +98,19 @@ CREATE TABLE IF NOT EXISTS seen_events (
 
 CREATE INDEX IF NOT EXISTS seen_events_sequence_idx
     ON seen_events(sequence);
+
+CREATE TABLE IF NOT EXISTS pending_relay_publishes (
+    event_id TEXT PRIMARY KEY,
+    owner_pubkey_hex TEXT NOT NULL,
+    label TEXT NOT NULL,
+    event_json TEXT NOT NULL,
+    message_id TEXT,
+    chat_id TEXT,
+    created_at_secs INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS pending_relay_publishes_owner_idx
+    ON pending_relay_publishes(owner_pubkey_hex, created_at_secs);
 
 CREATE TABLE IF NOT EXISTS ndr_kv (
     owner_pubkey_hex TEXT NOT NULL,

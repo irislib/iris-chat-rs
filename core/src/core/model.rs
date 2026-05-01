@@ -121,6 +121,17 @@ pub(super) struct ProtocolSubscriptionSpec {
     pub(super) summary: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct PendingRelayPublish {
+    pub(super) owner_pubkey_hex: String,
+    pub(super) event_id: String,
+    pub(super) label: String,
+    pub(super) event_json: String,
+    pub(super) message_id: Option<String>,
+    pub(super) chat_id: Option<String>,
+    pub(super) created_at_secs: u64,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct DebugEventCounters {
     pub(super) app_keys_events: u64,

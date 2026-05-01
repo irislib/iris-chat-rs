@@ -460,6 +460,7 @@ impl AppCore {
                 self.reconcile_protocol_subscriptions("relay_connected", false);
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers(unix_now());
+                self.retry_pending_relay_publishes("relay_connected");
                 self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
                     PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
                 ));
@@ -492,6 +493,9 @@ impl AppCore {
                 self.relay_connected_count, configured_relay_count
             ),
         );
+        if self.relay_connected_count > 0 {
+            self.retry_pending_relay_publishes("connection_checked");
+        }
         self.rebuild_state();
         self.emit_state();
     }

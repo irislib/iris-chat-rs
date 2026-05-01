@@ -32,6 +32,8 @@ impl AppCore {
         }
         self.remember_event(event.id.to_string());
         self.emit_nearby_published_event(&event);
+        let event_id = event.id.to_string();
+        self.remember_pending_relay_publish(&event, label, completion.clone());
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -40,17 +42,38 @@ impl AppCore {
             return;
         };
         if relay_urls.is_empty() {
-            self.push_debug_log(
-                "publish.runtime",
+            let (message_id, chat_id) = completion
+                .map(|(message_id, chat_id)| (Some(message_id), Some(chat_id)))
+                .unwrap_or((None, None));
+            self.handle_relay_publish_finished(
+                event_id,
+                message_id,
+                chat_id,
+                false,
                 format!("label={label} success=false relays=0 skipped=no_servers"),
             );
             return;
         }
 
+        self.spawn_relay_publish_attempt(event, label.to_string(), completion, client, relay_urls);
+    }
+
+    fn spawn_relay_publish_attempt(
+        &mut self,
+        event: Event,
+        label: String,
+        completion: Option<(String, String)>,
+        client: Client,
+        relay_urls: Vec<RelayUrl>,
+    ) {
+        let event_id = event.id.to_string();
+        if !self.pending_relay_publish_inflight.insert(event_id.clone()) {
+            return;
+        }
         let tx = self.core_sender.clone();
         let relay_count = relay_urls.len();
         self.runtime.spawn(async move {
-            let result = publish_event_fire_and_forget(&client, &relay_urls, &event, label).await;
+            let result = publish_event_fire_and_forget(&client, &relay_urls, &event, &label).await;
             let success = result
                 .as_ref()
                 .map(|relays| !relays.is_empty())
@@ -66,25 +89,156 @@ impl AppCore {
                     format!("label={label} success=false relays={relay_count} error={error}")
                 }
             };
-            if let Some((message_id, chat_id)) = completion {
-                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                    category: "publish.runtime".to_string(),
-                    detail: detail.clone(),
-                })));
-                let _ = tx.send(CoreMsg::Internal(Box::new(
-                    InternalEvent::PublishFinished {
-                        message_id,
-                        chat_id,
-                        success,
-                    },
-                )));
-            } else {
-                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                    category: "publish.runtime".to_string(),
+            let (message_id, chat_id) = completion
+                .map(|(message_id, chat_id)| (Some(message_id), Some(chat_id)))
+                .unwrap_or((None, None));
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::RelayPublishFinished {
+                    event_id,
+                    message_id,
+                    chat_id,
+                    success,
                     detail,
-                })));
-            }
+                },
+            )));
         });
+    }
+
+    fn remember_pending_relay_publish(
+        &mut self,
+        event: &Event,
+        label: &str,
+        completion: Option<(String, String)>,
+    ) {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return;
+        };
+        let event_json = match serde_json::to_string(event) {
+            Ok(json) => json,
+            Err(error) => {
+                self.push_debug_log("publish.runtime.queue", format!("serialize_failed={error}"));
+                return;
+            }
+        };
+        let (message_id, chat_id) = completion
+            .map(|(message_id, chat_id)| (Some(message_id), Some(chat_id)))
+            .unwrap_or((None, None));
+        let pending = PendingRelayPublish {
+            owner_pubkey_hex: logged_in.owner_pubkey.to_hex(),
+            event_id: event.id.to_string(),
+            label: label.to_string(),
+            event_json,
+            message_id,
+            chat_id,
+            created_at_secs: event.created_at.as_secs(),
+        };
+        if let Err(error) = self.app_store.upsert_pending_relay_publish(&pending) {
+            self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
+        }
+        self.pending_relay_publishes
+            .insert(pending.event_id.clone(), pending);
+    }
+
+    pub(super) fn retry_pending_relay_publishes(&mut self, reason: &'static str) {
+        if self.pending_relay_publishes.is_empty() {
+            return;
+        }
+        let Some((client, relay_urls)) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
+        else {
+            return;
+        };
+        if relay_urls.is_empty() {
+            self.push_debug_log(
+                "publish.runtime.retry",
+                format!(
+                    "reason={reason} skipped=no_servers pending={}",
+                    self.pending_relay_publishes.len()
+                ),
+            );
+            return;
+        }
+
+        let pending = self
+            .pending_relay_publishes
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut started = 0usize;
+        for pending in pending {
+            if self
+                .pending_relay_publish_inflight
+                .contains(&pending.event_id)
+            {
+                continue;
+            }
+            let event = match serde_json::from_str::<Event>(&pending.event_json) {
+                Ok(event) => event,
+                Err(error) => {
+                    self.push_debug_log(
+                        "publish.runtime.retry",
+                        format!(
+                            "event_id={} skipped=invalid_json error={error}",
+                            pending.event_id
+                        ),
+                    );
+                    self.forget_pending_relay_publish(&pending.event_id);
+                    continue;
+                }
+            };
+            started += 1;
+            self.spawn_relay_publish_attempt(
+                event,
+                pending.label.clone(),
+                pending.message_id.clone().zip(pending.chat_id.clone()),
+                client.clone(),
+                relay_urls.clone(),
+            );
+        }
+        if started > 0 {
+            self.push_debug_log(
+                "publish.runtime.retry",
+                format!(
+                    "reason={reason} started={started} pending={}",
+                    self.pending_relay_publishes.len()
+                ),
+            );
+        }
+    }
+
+    pub(super) fn handle_relay_publish_finished(
+        &mut self,
+        event_id: String,
+        message_id: Option<String>,
+        chat_id: Option<String>,
+        success: bool,
+        detail: String,
+    ) {
+        self.pending_relay_publish_inflight.remove(&event_id);
+        self.push_debug_log("publish.runtime", detail);
+        if success {
+            self.forget_pending_relay_publish(&event_id);
+        }
+        if let (Some(message_id), Some(chat_id)) = (message_id, chat_id) {
+            let delivery = if success {
+                DeliveryState::Sent
+            } else {
+                DeliveryState::Queued
+            };
+            self.update_message_delivery(&chat_id, &message_id, delivery);
+        }
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    fn forget_pending_relay_publish(&mut self, event_id: &str) {
+        self.pending_relay_publishes.remove(event_id);
+        if let Err(error) = self.app_store.delete_pending_relay_publish(event_id) {
+            self.push_debug_log("publish.runtime.queue", format!("delete_failed={error}"));
+        }
     }
 
     pub(super) fn sign_runtime_unsigned_event(&self, event: UnsignedEvent) -> Option<Event> {

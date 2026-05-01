@@ -1,7 +1,7 @@
 use super::super::{
-    KnownAppKeyDevice, KnownAppKeys, OwnerProfileRecord, PersistedAuthorizationState,
-    PersistedDeliveryState, PersistedMessage, PersistedPreferences, PersistedState,
-    PersistedThread, ThreadRecord, PERSISTED_STATE_VERSION,
+    KnownAppKeyDevice, KnownAppKeys, OwnerProfileRecord, PendingRelayPublish,
+    PersistedAuthorizationState, PersistedDeliveryState, PersistedMessage, PersistedPreferences,
+    PersistedState, PersistedThread, ThreadRecord, PERSISTED_STATE_VERSION,
 };
 use super::SharedConnection;
 use crate::state::{ChatMessageKind, ChatMessageSnapshot, DeliveryState, PreferencesSnapshot};
@@ -253,6 +253,83 @@ impl AppStore {
         Ok(exists)
     }
 
+    pub(crate) fn load_pending_relay_publishes(
+        &self,
+        owner_pubkey_hex: &str,
+    ) -> anyhow::Result<Vec<PendingRelayPublish>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let mut stmt = conn.prepare(
+            "SELECT owner_pubkey_hex, event_id, label, event_json, message_id, chat_id, created_at_secs
+             FROM pending_relay_publishes
+             WHERE owner_pubkey_hex = ?1
+             ORDER BY created_at_secs ASC, event_id ASC",
+        )?;
+        let rows = stmt.query_map([owner_pubkey_hex], |row| {
+            Ok(PendingRelayPublish {
+                owner_pubkey_hex: row.get(0)?,
+                event_id: row.get(1)?,
+                label: row.get(2)?,
+                event_json: row.get(3)?,
+                message_id: row.get(4)?,
+                chat_id: row.get(5)?,
+                created_at_secs: row.get::<_, i64>(6)?.max(0) as u64,
+            })
+        })?;
+        let mut pending = Vec::new();
+        for row in rows {
+            pending.push(row?);
+        }
+        Ok(pending)
+    }
+
+    pub(crate) fn upsert_pending_relay_publish(
+        &self,
+        pending: &PendingRelayPublish,
+    ) -> anyhow::Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        conn.execute(
+            "INSERT INTO pending_relay_publishes(
+                event_id, owner_pubkey_hex, label, event_json, message_id, chat_id, created_at_secs
+             )
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(event_id) DO UPDATE SET
+                owner_pubkey_hex = excluded.owner_pubkey_hex,
+                label = excluded.label,
+                event_json = excluded.event_json,
+                message_id = COALESCE(excluded.message_id, pending_relay_publishes.message_id),
+                chat_id = COALESCE(excluded.chat_id, pending_relay_publishes.chat_id),
+                created_at_secs = excluded.created_at_secs",
+            params![
+                &pending.event_id,
+                &pending.owner_pubkey_hex,
+                &pending.label,
+                &pending.event_json,
+                &pending.message_id,
+                &pending.chat_id,
+                pending.created_at_secs as i64,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub(crate) fn delete_pending_relay_publish(&self, event_id: &str) -> anyhow::Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        conn.execute(
+            "DELETE FROM pending_relay_publishes WHERE event_id = ?1",
+            [event_id],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn delete_thread(&mut self, chat_id: &str) -> anyhow::Result<()> {
         let conn = self
             .conn
@@ -308,6 +385,7 @@ const TABLES_TO_CLEAR: &[&str] = &[
     "app_keys",
     "owner_profiles",
     "chat_message_ttls",
+    "pending_relay_publishes",
     "preferences",
     "app_meta",
     "ndr_kv",

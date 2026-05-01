@@ -369,6 +369,7 @@ impl AppCore {
             self.schedule_session_connect();
             self.request_protocol_subscription_refresh_forced();
             self.fetch_recent_protocol_state();
+            self.retry_pending_relay_publishes("relays_changed");
         }
         self.rebuild_state();
         self.persist_best_effort();

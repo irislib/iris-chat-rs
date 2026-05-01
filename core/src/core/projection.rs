@@ -342,7 +342,7 @@ impl AppCore {
             connected_relay_count: self.relay_connected_count,
             all_relays_offline_since_secs: self.all_relays_offline_since_secs,
             syncing: self.state.busy.syncing_network,
-            pending_outbound_count: 0,
+            pending_outbound_count: self.pending_relay_publishes.len() as u64,
             pending_group_control_count: 0,
             recent_event_count,
             recent_log_count: self.debug_log.len() as u64,

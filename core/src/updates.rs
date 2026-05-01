@@ -66,10 +66,12 @@ pub(crate) enum InternalEvent {
         chat_id: String,
         author: String,
     },
-    PublishFinished {
-        message_id: String,
-        chat_id: String,
+    RelayPublishFinished {
+        event_id: String,
+        message_id: Option<String>,
+        chat_id: Option<String>,
         success: bool,
+        detail: String,
     },
     AttachmentUploadFinished {
         chat_id: String,

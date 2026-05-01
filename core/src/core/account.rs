@@ -43,6 +43,7 @@ impl AppCore {
         self.request_protocol_subscription_refresh_forced();
         self.fetch_recent_protocol_state();
         self.fetch_recent_messages_for_tracked_peers(now);
+        self.retry_pending_relay_publishes("app_foreground");
         self.state.busy.syncing_network = true;
         self.rebuild_state();
         self.persist_best_effort();
@@ -426,6 +427,8 @@ impl AppCore {
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
         self.defer_owner_app_keys_publish = false;
+        self.pending_relay_publishes.clear();
+        self.pending_relay_publish_inflight.clear();
         self.debug_log.clear();
         self.debug_event_counters = DebugEventCounters::default();
         self.next_message_id = 1;
@@ -655,6 +658,20 @@ impl AppCore {
             local_invite,
             authorization_state,
         });
+        match self
+            .app_store
+            .load_pending_relay_publishes(&owner_pubkey.to_hex())
+        {
+            Ok(pending) => {
+                self.pending_relay_publishes = pending
+                    .into_iter()
+                    .map(|pending| (pending.event_id.clone(), pending))
+                    .collect();
+            }
+            Err(error) => {
+                self.push_debug_log("publish.runtime.queue", format!("load_failed={error}"));
+            }
+        }
 
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.start_relay_status_watchers();
@@ -663,6 +680,7 @@ impl AppCore {
         self.republish_local_identity_artifacts();
         self.drain_pending_mobile_push_events();
         self.process_runtime_events();
+        self.retry_pending_relay_publishes("session_start");
         self.schedule_next_message_expiry();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
