@@ -115,10 +115,10 @@ fun NearbyIrisSheet(
                             )
                             IrisDivider()
                             NearbyTransportRow(
-                                title = "Local network",
+                                title = "Wi-Fi",
                                 status =
                                     if (snapshot.localNetworkVisible || !snapshot.localNetworkPermissionGranted) {
-                                        snapshot.localNetworkStatus
+                                        nearbyWifiStatusLabel(snapshot.localNetworkStatus)
                                     } else {
                                         "Off"
                                     },
@@ -202,6 +202,14 @@ private fun NearbyTransportRow(
         )
     }
 }
+
+private fun nearbyWifiStatusLabel(status: String): String =
+    when (status) {
+        "No local network access" -> "No Wi-Fi access"
+        "Local network unavailable" -> "Wi-Fi unavailable"
+        "Local network failed" -> "Wi-Fi failed"
+        else -> status
+    }
 
 @Composable
 private fun NearbyPeerRow(

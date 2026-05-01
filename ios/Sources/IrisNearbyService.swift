@@ -108,7 +108,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
         if !isLanVisible, Self.isBlockingStatus(status) { return status }
         if isLanVisible, Self.isBlockingLanStatus(lanStatus) {
-            return lanStatus
+            return Self.wifiStatusLabel(lanStatus)
         }
         return "No users nearby"
     }
@@ -177,6 +177,19 @@ final class IrisNearbyService: NSObject, ObservableObject {
             return true
         default:
             return false
+        }
+    }
+
+    private static func wifiStatusLabel(_ status: String) -> String {
+        switch status {
+        case "No local network access":
+            return "No Wi-Fi access"
+        case "Local network failed":
+            return "Wi-Fi failed"
+        case "Local network unavailable":
+            return "Wi-Fi unavailable"
+        default:
+            return status
         }
     }
 

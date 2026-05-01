@@ -423,7 +423,7 @@ fun MyProfileSheet(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "Local network",
+                        text = "Wi-Fi",
                         style = MaterialTheme.typography.bodyLarge,
                     )
                     Switch(

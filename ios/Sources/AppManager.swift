@@ -861,7 +861,7 @@ final class AppManager: ObservableObject {
     func setNearbyLanEnabled(_ enabled: Bool) {
 #if os(iOS) || os(macOS)
         if enabled, nearbyIris.lanPermissionNeedsSettings {
-            showNearbySettingsHint("Allow local network in Settings")
+            showNearbySettingsHint("Allow Wi-Fi in Settings")
             return
         }
         if enabled {
@@ -929,7 +929,7 @@ final class AppManager: ObservableObject {
             return
         }
         dispatchToRust(.setNearbyLanEnabled(enabled: false), showsToastOnFailure: false)
-        showToast("Allow local network in Settings")
+        showToast("Allow Wi-Fi in Settings")
     }
 
     private func showNearbySettingsHint(_ message: String) {

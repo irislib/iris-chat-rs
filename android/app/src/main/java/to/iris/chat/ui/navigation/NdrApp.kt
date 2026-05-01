@@ -35,6 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
+import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.Screen
@@ -77,9 +78,9 @@ fun NdrApp(
     val context = LocalContext.current
     var showingNearbyIris by remember { mutableStateOf(false) }
     var offlineNowSecs by remember { mutableStateOf(System.currentTimeMillis() / 1_000L) }
-    val nearbyBluetoothOnProvider =
+    val nearbySnapshotProvider =
         remember(container.nearbyIrisService) {
-            { container.nearbyIrisService.snapshot.bluetoothOn }
+            { container.nearbyIrisService.snapshot }
         }
     val openNearbyIris = {
         onNearbyOpen()
@@ -123,8 +124,10 @@ fun NdrApp(
             offlineSinceSecs != null &&
             offlineNowSecs.saturatingSubtract(offlineSinceSecs) >= 5L
         ) {
-            val bluetoothState = if (nearbyBluetoothOnProvider()) "on" else "off"
-            IrisOfflineBannerState("Offline, Bluetooth $bluetoothState")
+            val nearbySnapshot = nearbySnapshotProvider()
+            val bluetoothState = if (nearbySnapshot.bluetoothOn) "on" else "off"
+            val wifiState = if (nearbyWifiEnabled(nearbySnapshot)) "on" else "off"
+            IrisOfflineBannerState("Offline, Bluetooth $bluetoothState, Wi-Fi $wifiState")
         } else {
             null
         }
@@ -438,6 +441,17 @@ private fun ChatThreadSnapshot.matchesShareQuery(query: String): Boolean =
     displayName.lowercase().contains(query) ||
         (subtitle?.lowercase()?.contains(query) == true) ||
         (lastMessagePreview?.lowercase()?.contains(query) == true)
+
+private fun nearbyWifiEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =
+    snapshot.localNetworkVisible &&
+        snapshot.localNetworkStatus !in nearbyWifiBlockingStatuses
+
+private val nearbyWifiBlockingStatuses =
+    setOf(
+        "No local network access",
+        "Local network unavailable",
+        "Local network failed",
+    )
 
 private fun Long.saturatingSubtract(other: Long): Long =
     if (this >= other) this - other else 0L

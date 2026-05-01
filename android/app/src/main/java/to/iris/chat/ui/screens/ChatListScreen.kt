@@ -407,7 +407,8 @@ private fun nearbyPreview(snapshot: IrisNearbyService.Snapshot): String =
             !snapshot.localNetworkVisible &&
             (!snapshot.bluetoothPermissionGranted || !snapshot.localNetworkPermissionGranted) -> "Click to enable"
         !snapshot.visible && !snapshot.localNetworkVisible -> "Off"
-        snapshot.localNetworkVisible && snapshot.localNetworkStatus in nearbyLanBlockingStatuses -> snapshot.localNetworkStatus
+        snapshot.localNetworkVisible && snapshot.localNetworkStatus in nearbyLanBlockingStatuses ->
+            nearbyWifiStatusLabel(snapshot.localNetworkStatus)
         !snapshot.localNetworkVisible && snapshot.status in nearbyBlockingStatuses -> snapshot.status
         else -> "No users nearby"
     }
@@ -443,6 +444,14 @@ private val nearbyLanBlockingStatuses =
         "Local network unavailable",
         "Local network failed",
     )
+
+private fun nearbyWifiStatusLabel(status: String): String =
+    when (status) {
+        "No local network access" -> "No Wi-Fi access"
+        "Local network unavailable" -> "Wi-Fi unavailable"
+        "Local network failed" -> "Wi-Fi failed"
+        else -> status
+    }
 
 @Composable
 private fun NearbyChatIcon(visible: Boolean) {

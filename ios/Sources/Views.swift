@@ -592,7 +592,9 @@ private struct OfflineStatusBanner: View {
               date.timeIntervalSince1970 - TimeInterval(offlineSince) >= 5 else {
             return nil
         }
-        return "Offline, Bluetooth \(nearbyService.isBluetoothOn ? "on" : "off")"
+        let bluetoothStatus = nearbyService.isBluetoothOn ? "on" : "off"
+        let wifiStatus = mobileWifiEnabled(nearbyService) ? "on" : "off"
+        return "Offline, Bluetooth \(bluetoothStatus), Wi-Fi \(wifiStatus)"
     }
 }
 
@@ -619,6 +621,31 @@ private struct IrisSwipeBackModifier: ViewModifier {
             )
     }
 }
+#endif
+
+#if os(iOS) || os(macOS)
+private func mobileWifiEnabled(_ service: IrisNearbyService) -> Bool {
+    service.isLanVisible && !mobileWifiBlockingStatuses.contains(service.lanStatus)
+}
+
+private func mobileWifiStatusLabel(_ status: String) -> String {
+    switch status {
+    case "No local network access":
+        return "No Wi-Fi access"
+    case "Local network unavailable":
+        return "Wi-Fi unavailable"
+    case "Local network failed":
+        return "Wi-Fi failed"
+    default:
+        return status
+    }
+}
+
+private let mobileWifiBlockingStatuses: Set<String> = [
+    "No local network access",
+    "Local network unavailable",
+    "Local network failed"
+]
 #endif
 
 private struct DesktopChatShell: View {
@@ -1964,8 +1991,8 @@ private struct NearbyIrisScreen: View {
                 .padding(.leading, 18)
 
             transportRow(
-                title: "Local network",
-                subtitle: service.isLanVisible ? service.lanStatus : "Off",
+                title: "Wi-Fi",
+                subtitle: service.isLanVisible ? mobileWifiStatusLabel(service.lanStatus) : "Off",
                 isOn: lanBinding,
                 accessibilityID: "nearbyLanSwitch"
             )
@@ -3602,7 +3629,7 @@ private struct NearbySettingsRows: View {
             )
 
             settingsToggle(
-                title: "Local network",
+                title: "Wi-Fi",
                 isOn: Binding(
                     get: { manager.state.preferences.nearbyLanEnabled },
                     set: { manager.setNearbyLanEnabled($0) }
