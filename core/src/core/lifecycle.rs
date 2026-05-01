@@ -19,8 +19,7 @@ impl AppCore {
     ) -> anyhow::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
-            .build()
-            .expect("tokio runtime");
+            .build()?;
 
         let state = AppState::empty();
         match shared_state.write() {

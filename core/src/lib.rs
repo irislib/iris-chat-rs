@@ -8,6 +8,7 @@ mod qr;
 mod state;
 mod updates;
 
+use std::any::Any;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -78,30 +79,50 @@ impl FfiApp {
         let update_tx_for_error = update_tx.clone();
         match AppCore::try_new(update_tx, core_tx_for_thread, data_dir, shared_for_thread) {
             Ok(mut core) => {
-                thread::spawn(move || {
-                    // Drain whatever is already queued and process it as one batch so
-                    // a flurry of relay events + user actions produces a single UI
-                    // update instead of N. Without this, tapping a chat while a
-                    // relay backlog drains can take seconds because OpenChat sits
-                    // behind every queued event and the UI recomposes between each.
-                    while let Ok(first) = core_rx.recv() {
-                        let mut batch = Vec::with_capacity(8);
-                        batch.push(first);
-                        while let Ok(next) = core_rx.try_recv() {
-                            batch.push(next);
-                        }
-                        let batch_size = batch.len();
-                        let t0 = crate::perflog::now_ms();
-                        crate::perflog!("core.batch.start size={batch_size}");
-                        if !handle_core_batch_responsive(&mut core, batch) {
-                            break;
-                        }
-                        crate::perflog!(
-                            "core.batch.end size={batch_size} elapsed_ms={}",
-                            crate::perflog::now_ms().saturating_sub(t0)
-                        );
+                let spawn_result =
+                    thread::Builder::new()
+                        .name("iris-core".to_string())
+                        .spawn(move || {
+                            // Drain whatever is already queued and process it as one batch so
+                            // a flurry of relay events + user actions produces a single UI
+                            // update instead of N. Without this, tapping a chat while a
+                            // relay backlog drains can take seconds because OpenChat sits
+                            // behind every queued event and the UI recomposes between each.
+                            while let Ok(first) = core_rx.recv() {
+                                let mut batch = Vec::with_capacity(8);
+                                batch.push(first);
+                                while let Ok(next) = core_rx.try_recv() {
+                                    batch.push(next);
+                                }
+                                let batch_size = batch.len();
+                                let t0 = crate::perflog::now_ms();
+                                crate::perflog!("core.batch.start size={batch_size}");
+                                match catch_core_batch(|| {
+                                    handle_core_batch_responsive(&mut core, batch)
+                                }) {
+                                    Ok(true) => {}
+                                    Ok(false) => break,
+                                    Err(error) => {
+                                        core.mark_core_panic(error);
+                                        break;
+                                    }
+                                }
+                                crate::perflog!(
+                                    "core.batch.end size={batch_size} elapsed_ms={}",
+                                    crate::perflog::now_ms().saturating_sub(t0)
+                                );
+                            }
+                        });
+                if let Err(error) = spawn_result {
+                    let mut state = AppState::empty();
+                    state.toast = Some(format!("Iris could not start: {error}"));
+                    state.rev = 1;
+                    match shared_state.write() {
+                        Ok(mut slot) => *slot = state.clone(),
+                        Err(poison) => *poison.into_inner() = state.clone(),
                     }
-                });
+                    let _ = update_tx_for_error.send(AppUpdate::FullState(state));
+                }
             }
             Err(error) => {
                 let mut state = AppState::empty();
@@ -124,30 +145,36 @@ impl FfiApp {
     }
 
     pub fn state(&self) -> AppState {
-        match self.shared_state.read() {
-            Ok(slot) => slot.clone(),
-            Err(poison) => poison.into_inner().clone(),
-        }
+        ffi_or("ffiapp.state", ffi_failure_state(), || {
+            match self.shared_state.read() {
+                Ok(slot) => slot.clone(),
+                Err(poison) => poison.into_inner().clone(),
+            }
+        })
     }
 
     pub fn dispatch(&self, action: AppAction) {
-        crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
-        let _ = self.core_tx.send(CoreMsg::Action(action));
+        ffi_or("ffiapp.dispatch", (), || {
+            crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
+            let _ = self.core_tx.send(CoreMsg::Action(action));
+        })
     }
 
     pub fn ingest_nearby_event_json(&self, event_json: String) -> bool {
-        let event = match serde_json::from_str::<nostr_sdk::prelude::Event>(&event_json) {
-            Ok(event) => event,
-            Err(_) => return false,
-        };
-        if event.verify().is_err() {
-            return false;
-        }
-        self.core_tx
-            .send(CoreMsg::Internal(Box::new(InternalEvent::NearbyEvent(
-                event,
-            ))))
-            .is_ok()
+        ffi_or("ffiapp.ingest_nearby_event_json", false, || {
+            let event = match serde_json::from_str::<nostr_sdk::prelude::Event>(&event_json) {
+                Ok(event) => event,
+                Err(_) => return false,
+            };
+            if event.verify().is_err() {
+                return false;
+            }
+            self.core_tx
+                .send(CoreMsg::Internal(Box::new(InternalEvent::NearbyEvent(
+                    event,
+                ))))
+                .is_ok()
+        })
     }
 
     pub fn build_nearby_presence_event_json(
@@ -157,23 +184,29 @@ impl FfiApp {
         their_nonce: String,
         profile_event_id: String,
     ) -> String {
-        let (reply_tx, reply_rx) = flume::bounded(1);
-        if self
-            .core_tx
-            .send(CoreMsg::BuildNearbyPresenceEvent {
-                peer_id,
-                my_nonce,
-                their_nonce,
-                profile_event_id,
-                reply_tx,
-            })
-            .is_err()
-        {
-            return String::new();
-        }
-        reply_rx
-            .recv_timeout(Duration::from_secs(2))
-            .unwrap_or_default()
+        ffi_or(
+            "ffiapp.build_nearby_presence_event_json",
+            String::new(),
+            || {
+                let (reply_tx, reply_rx) = flume::bounded(1);
+                if self
+                    .core_tx
+                    .send(CoreMsg::BuildNearbyPresenceEvent {
+                        peer_id,
+                        my_nonce,
+                        their_nonce,
+                        profile_event_id,
+                        reply_tx,
+                    })
+                    .is_err()
+                {
+                    return String::new();
+                }
+                reply_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap_or_default()
+            },
+        )
     }
 
     pub fn verify_nearby_presence_event_json(
@@ -183,45 +216,65 @@ impl FfiApp {
         my_nonce: String,
         their_nonce: String,
     ) -> String {
-        verify_nearby_presence_event_json(&event_json, &peer_id, &my_nonce, &their_nonce)
+        ffi_or(
+            "ffiapp.verify_nearby_presence_event_json",
+            String::new(),
+            || verify_nearby_presence_event_json(&event_json, &peer_id, &my_nonce, &their_nonce),
+        )
     }
 
     pub fn nearby_encode_frame(&self, envelope_json: String) -> Vec<u8> {
-        nostr_double_ratchet::encode_nearby_frame_json(&envelope_json).unwrap_or_default()
+        ffi_or("ffiapp.nearby_encode_frame", Vec::new(), || {
+            nostr_double_ratchet::encode_nearby_frame_json(&envelope_json).unwrap_or_default()
+        })
     }
 
     pub fn nearby_decode_frame(&self, frame: Vec<u8>) -> String {
-        nostr_double_ratchet::decode_nearby_frame_json(&frame).unwrap_or_default()
+        ffi_or("ffiapp.nearby_decode_frame", String::new(), || {
+            nostr_double_ratchet::decode_nearby_frame_json(&frame).unwrap_or_default()
+        })
     }
 
     pub fn nearby_frame_body_len_from_header(&self, header: Vec<u8>) -> i32 {
-        nostr_double_ratchet::nearby_frame_body_len_from_header(&header)
-            .and_then(|len| i32::try_from(len).ok())
-            .unwrap_or(-1)
+        ffi_or("ffiapp.nearby_frame_body_len_from_header", -1, || {
+            nostr_double_ratchet::nearby_frame_body_len_from_header(&header)
+                .and_then(|len| i32::try_from(len).ok())
+                .unwrap_or(-1)
+        })
     }
 
     pub fn export_support_bundle_json(&self) -> String {
-        let (reply_tx, reply_rx) = flume::bounded(1);
-        if self
-            .core_tx
-            .send(CoreMsg::ExportSupportBundle(reply_tx))
-            .is_err()
-        {
-            return "{}".to_string();
-        }
-        reply_rx.recv().unwrap_or_else(|_| "{}".to_string())
+        ffi_or(
+            "ffiapp.export_support_bundle_json",
+            "{}".to_string(),
+            || {
+                let (reply_tx, reply_rx) = flume::bounded(1);
+                if self
+                    .core_tx
+                    .send(CoreMsg::ExportSupportBundle(reply_tx))
+                    .is_err()
+                {
+                    return "{}".to_string();
+                }
+                reply_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap_or_else(|_| "{}".to_string())
+            },
+        )
     }
 
     pub fn shutdown(&self) {
-        let (reply_tx, reply_rx) = flume::bounded(1);
-        if self
-            .core_tx
-            .send(CoreMsg::Shutdown(Some(reply_tx)))
-            .is_err()
-        {
-            return;
-        }
-        let _ = reply_rx.recv();
+        ffi_or("ffiapp.shutdown", (), || {
+            let (reply_tx, reply_rx) = flume::bounded(1);
+            if self
+                .core_tx
+                .send(CoreMsg::Shutdown(Some(reply_tx)))
+                .is_err()
+            {
+                return;
+            }
+            let _ = reply_rx.recv_timeout(Duration::from_secs(2));
+        })
     }
 
     pub fn listen_for_updates(&self, reconciler: Box<dyn AppReconciler>) {
@@ -234,53 +287,59 @@ impl FfiApp {
         }
 
         let update_rx = self.update_rx.clone();
-        thread::spawn(move || {
-            // Drain queued updates and deliver the latest FullState only.
-            // The shell side already discards FullStates with stale `rev`,
-            // but the JNI marshal of an AppState is itself ~20-30 ms and
-            // each push triggers a full Compose recomposition (~400 ms on
-            // Android debug). When the core emits a tight burst of 3-4
-            // updates (OpenChat → SyncComplete → FetchCatchUpEvents → …)
-            // the UI keeps re-rendering for seconds even though only the
-            // final state mattered.
-            //
-            // PersistAccountBundle is a side-effect (key persistence), not
-            // a UI update, so we never collapse those — every one must run.
-            while let Ok(first) = update_rx.recv() {
-                let mut latest_full_state: Option<AppUpdate> = None;
-                let mut sidecar: Vec<AppUpdate> = Vec::new();
-                let process = |update: AppUpdate,
-                               latest: &mut Option<AppUpdate>,
-                               side: &mut Vec<AppUpdate>| match update
-                {
-                    full @ AppUpdate::FullState(_) => *latest = Some(full),
-                    other => side.push(other),
-                };
-                process(first, &mut latest_full_state, &mut sidecar);
-                while let Ok(next) = update_rx.try_recv() {
-                    process(next, &mut latest_full_state, &mut sidecar);
-                }
-                for update in sidecar.into_iter().chain(latest_full_state) {
-                    let kind = match &update {
-                        AppUpdate::FullState(_) => "FullState",
-                        AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
-                        AppUpdate::NearbyPublishedEvent { .. } => "NearbyPublishedEvent",
-                    };
-                    let t0 = crate::perflog::now_ms();
-                    crate::perflog!("reconcile.start kind={kind}");
-                    if panic::catch_unwind(AssertUnwindSafe(|| reconciler.reconcile(update)))
-                        .is_err()
-                    {
-                        crate::perflog!("reconcile.failed kind={kind}");
-                        continue;
+        let spawn_result = thread::Builder::new()
+            .name("iris-updates".to_string())
+            .spawn(move || {
+                // Drain queued updates and deliver the latest FullState only.
+                // The shell side already discards FullStates with stale `rev`,
+                // but the JNI marshal of an AppState is itself ~20-30 ms and
+                // each push triggers a full Compose recomposition (~400 ms on
+                // Android debug). When the core emits a tight burst of 3-4
+                // updates (OpenChat → SyncComplete → FetchCatchUpEvents → …)
+                // the UI keeps re-rendering for seconds even though only the
+                // final state mattered.
+                //
+                // PersistAccountBundle is a side-effect (key persistence), not
+                // a UI update, so we never collapse those — every one must run.
+                while let Ok(first) = update_rx.recv() {
+                    let mut latest_full_state: Option<AppUpdate> = None;
+                    let mut sidecar: Vec<AppUpdate> = Vec::new();
+                    let process =
+                        |update: AppUpdate,
+                         latest: &mut Option<AppUpdate>,
+                         side: &mut Vec<AppUpdate>| match update {
+                            full @ AppUpdate::FullState(_) => *latest = Some(full),
+                            other => side.push(other),
+                        };
+                    process(first, &mut latest_full_state, &mut sidecar);
+                    while let Ok(next) = update_rx.try_recv() {
+                        process(next, &mut latest_full_state, &mut sidecar);
                     }
-                    crate::perflog!(
-                        "reconcile.end kind={kind} elapsed_ms={}",
-                        crate::perflog::now_ms().saturating_sub(t0)
-                    );
+                    for update in sidecar.into_iter().chain(latest_full_state) {
+                        let kind = match &update {
+                            AppUpdate::FullState(_) => "FullState",
+                            AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
+                            AppUpdate::NearbyPublishedEvent { .. } => "NearbyPublishedEvent",
+                        };
+                        let t0 = crate::perflog::now_ms();
+                        crate::perflog!("reconcile.start kind={kind}");
+                        if panic::catch_unwind(AssertUnwindSafe(|| reconciler.reconcile(update)))
+                            .is_err()
+                        {
+                            crate::perflog!("reconcile.failed kind={kind}");
+                            continue;
+                        }
+                        crate::perflog!(
+                            "reconcile.end kind={kind} elapsed_ms={}",
+                            crate::perflog::now_ms().saturating_sub(t0)
+                        );
+                    }
                 }
-            }
-        });
+            });
+        if let Err(error) = spawn_result {
+            crate::perflog!("updates.spawn.failed error={error}");
+            self.listening.store(false, Ordering::SeqCst);
+        }
     }
 }
 
@@ -332,6 +391,54 @@ fn handle_core_batch_responsive(core: &mut AppCore, messages: Vec<CoreMsg>) -> b
         }
     }
     background.is_empty() || core.handle_messages(background)
+}
+
+fn catch_core_batch<F>(f: F) -> Result<bool, String>
+where
+    F: FnOnce() -> bool,
+{
+    panic::catch_unwind(AssertUnwindSafe(f)).map_err(panic_payload_to_string)
+}
+
+fn ffi_or<T, F>(label: &'static str, fallback: T, f: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    match panic::catch_unwind(AssertUnwindSafe(f)) {
+        Ok(value) => value,
+        Err(payload) => {
+            crate::perflog!(
+                "ffi.panic label={label} detail={}",
+                panic_payload_to_string(payload)
+            );
+            fallback
+        }
+    }
+}
+
+fn ffi_failure_state() -> AppState {
+    let mut state = AppState::empty();
+    state.toast = Some("Iris needs restart. Copy support bundle in Settings.".to_string());
+    state
+}
+
+fn suppressed_mobile_push_resolution() -> MobilePushNotificationResolution {
+    MobilePushNotificationResolution {
+        should_show: false,
+        title: String::new(),
+        body: String::new(),
+        payload_json: "{}".to_string(),
+    }
+}
+
+fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else {
+        "unknown panic".to_string()
+    }
 }
 
 fn is_foreground_core_msg(message: &CoreMsg) -> bool {
@@ -407,12 +514,16 @@ impl Drop for FfiApp {
 
 #[uniffi::export]
 pub fn normalize_peer_input(input: String) -> String {
-    crate::core::normalize_peer_input_for_display(&input)
+    ffi_or("normalize_peer_input", String::new(), || {
+        crate::core::normalize_peer_input_for_display(&input)
+    })
 }
 
 #[uniffi::export]
 pub fn is_valid_peer_input(input: String) -> bool {
-    crate::core::parse_peer_input(&input).is_ok()
+    ffi_or("is_valid_peer_input", false, || {
+        crate::core::parse_peer_input(&input).is_ok()
+    })
 }
 
 /// Convert any pubkey-shaped input (hex, npub, nprofile, …) to its
@@ -421,33 +532,39 @@ pub fn is_valid_peer_input(input: String) -> bool {
 /// downstream can short-circuit on that.
 #[uniffi::export]
 pub fn peer_input_to_hex(input: String) -> String {
-    let normalized = crate::core::normalize_peer_input_for_display(&input);
-    match nostr::PublicKey::parse(&normalized) {
-        Ok(pubkey) => pubkey.to_hex(),
-        Err(_) => String::new(),
-    }
+    ffi_or("peer_input_to_hex", String::new(), || {
+        let normalized = crate::core::normalize_peer_input_for_display(&input);
+        match nostr::PublicKey::parse(&normalized) {
+            Ok(pubkey) => pubkey.to_hex(),
+            Err(_) => String::new(),
+        }
+    })
 }
 
 /// Convert any pubkey-shaped input (hex, npub, nprofile, …) to its npub form.
 /// Returns the original string when it can't be parsed as a public key.
 #[uniffi::export]
 pub fn peer_input_to_npub(input: String) -> String {
-    use nostr::nips::nip19::ToBech32;
-    let normalized = crate::core::normalize_peer_input_for_display(&input);
-    match nostr::PublicKey::parse(&normalized) {
-        Ok(pubkey) => pubkey.to_bech32().unwrap_or(normalized),
-        Err(_) => normalized,
-    }
+    ffi_or("peer_input_to_npub", String::new(), || {
+        use nostr::nips::nip19::ToBech32;
+        let normalized = crate::core::normalize_peer_input_for_display(&input);
+        match nostr::PublicKey::parse(&normalized) {
+            Ok(pubkey) => pubkey.to_bech32().unwrap_or(normalized),
+            Err(_) => normalized,
+        }
+    })
 }
 
 #[uniffi::export]
 pub fn build_summary() -> String {
-    crate::core::build_summary()
+    ffi_or("build_summary", String::new(), crate::core::build_summary)
 }
 
 #[uniffi::export]
 pub fn relay_set_id() -> String {
-    crate::core::relay_set_id().to_string()
+    ffi_or("relay_set_id", String::new(), || {
+        crate::core::relay_set_id().to_string()
+    })
 }
 
 #[uniffi::export]
@@ -458,19 +575,29 @@ pub fn proxied_image_url(
     height: Option<u32>,
     square: bool,
 ) -> String {
-    image_proxy::proxied_image_url(&original_src, &preferences, width, height, square)
+    ffi_or("proxied_image_url", original_src.clone(), || {
+        image_proxy::proxied_image_url(&original_src, &preferences, width, height, square)
+    })
 }
 
 #[uniffi::export]
 pub fn is_trusted_test_build() -> bool {
-    crate::core::trusted_test_build_flag()
+    ffi_or(
+        "is_trusted_test_build",
+        false,
+        crate::core::trusted_test_build_flag,
+    )
 }
 
 #[uniffi::export]
 pub fn resolve_mobile_push_notification_payload(
     raw_payload_json: String,
 ) -> MobilePushNotificationResolution {
-    crate::core::resolve_mobile_push_notification(raw_payload_json)
+    ffi_or(
+        "resolve_mobile_push_notification_payload",
+        suppressed_mobile_push_resolution(),
+        || crate::core::resolve_mobile_push_notification(raw_payload_json),
+    )
 }
 
 /// Decrypt a notification payload against the persisted double-ratchet
@@ -485,11 +612,17 @@ pub fn decrypt_mobile_push_notification_payload(
     device_nsec: String,
     raw_payload_json: String,
 ) -> MobilePushNotificationResolution {
-    crate::core::decrypt_mobile_push_notification(
-        data_dir,
-        owner_pubkey_hex,
-        device_nsec,
-        raw_payload_json,
+    ffi_or(
+        "decrypt_mobile_push_notification_payload",
+        suppressed_mobile_push_resolution(),
+        || {
+            crate::core::decrypt_mobile_push_notification(
+                data_dir,
+                owner_pubkey_hex,
+                device_nsec,
+                raw_payload_json,
+            )
+        },
     )
 }
 
@@ -499,12 +632,18 @@ pub fn resolve_mobile_push_subscription_server_url(
     is_release: bool,
     override_url: Option<String>,
 ) -> String {
-    crate::core::resolve_mobile_push_server_url(platform_key, is_release, override_url)
+    ffi_or(
+        "resolve_mobile_push_subscription_server_url",
+        String::new(),
+        || crate::core::resolve_mobile_push_server_url(platform_key, is_release, override_url),
+    )
 }
 
 #[uniffi::export]
 pub fn mobile_push_subscription_id_key(platform_key: String) -> String {
-    crate::core::mobile_push_stored_subscription_id_key(platform_key)
+    ffi_or("mobile_push_subscription_id_key", String::new(), || {
+        crate::core::mobile_push_stored_subscription_id_key(platform_key)
+    })
 }
 
 #[uniffi::export]
@@ -514,12 +653,14 @@ pub fn build_mobile_push_list_subscriptions_request(
     is_release: bool,
     server_url_override: Option<String>,
 ) -> Option<MobilePushSubscriptionRequest> {
-    crate::core::build_mobile_push_list_subscriptions_request(
-        owner_nsec,
-        platform_key,
-        is_release,
-        server_url_override,
-    )
+    ffi_or("build_mobile_push_list_subscriptions_request", None, || {
+        crate::core::build_mobile_push_list_subscriptions_request(
+            owner_nsec,
+            platform_key,
+            is_release,
+            server_url_override,
+        )
+    })
 }
 
 #[uniffi::export]
@@ -534,15 +675,21 @@ pub fn build_mobile_push_create_subscription_request(
     is_release: bool,
     server_url_override: Option<String>,
 ) -> Option<MobilePushSubscriptionRequest> {
-    crate::core::build_mobile_push_create_subscription_request(
-        owner_nsec,
-        platform_key,
-        push_token,
-        apns_topic,
-        message_author_pubkeys,
-        invite_response_pubkeys,
-        is_release,
-        server_url_override,
+    ffi_or(
+        "build_mobile_push_create_subscription_request",
+        None,
+        || {
+            crate::core::build_mobile_push_create_subscription_request(
+                owner_nsec,
+                platform_key,
+                push_token,
+                apns_topic,
+                message_author_pubkeys,
+                invite_response_pubkeys,
+                is_release,
+                server_url_override,
+            )
+        },
     )
 }
 
@@ -559,16 +706,22 @@ pub fn build_mobile_push_update_subscription_request(
     is_release: bool,
     server_url_override: Option<String>,
 ) -> Option<MobilePushSubscriptionRequest> {
-    crate::core::build_mobile_push_update_subscription_request(
-        owner_nsec,
-        subscription_id,
-        platform_key,
-        push_token,
-        apns_topic,
-        message_author_pubkeys,
-        invite_response_pubkeys,
-        is_release,
-        server_url_override,
+    ffi_or(
+        "build_mobile_push_update_subscription_request",
+        None,
+        || {
+            crate::core::build_mobile_push_update_subscription_request(
+                owner_nsec,
+                subscription_id,
+                platform_key,
+                push_token,
+                apns_topic,
+                message_author_pubkeys,
+                invite_response_pubkeys,
+                is_release,
+                server_url_override,
+            )
+        },
     )
 }
 
@@ -580,11 +733,46 @@ pub fn build_mobile_push_delete_subscription_request(
     is_release: bool,
     server_url_override: Option<String>,
 ) -> Option<MobilePushSubscriptionRequest> {
-    crate::core::build_mobile_push_delete_subscription_request(
-        owner_nsec,
-        subscription_id,
-        platform_key,
-        is_release,
-        server_url_override,
+    ffi_or(
+        "build_mobile_push_delete_subscription_request",
+        None,
+        || {
+            crate::core::build_mobile_push_delete_subscription_request(
+                owner_nsec,
+                subscription_id,
+                platform_key,
+                is_release,
+                server_url_override,
+            )
+        },
     )
+}
+
+#[cfg(test)]
+mod ffi_hardening_tests {
+    use super::*;
+
+    #[test]
+    fn ffi_guard_returns_fallback_after_panic() {
+        let value = ffi_or("test.panic", 42, || -> i32 {
+            panic!("ffi boom");
+        });
+
+        assert_eq!(value, 42);
+    }
+
+    #[test]
+    fn core_batch_guard_converts_panic_to_error() {
+        let result = catch_core_batch(|| -> bool {
+            panic!("batch boom");
+        });
+
+        assert_eq!(result, Err("batch boom".to_string()));
+    }
+
+    #[test]
+    fn core_batch_guard_preserves_success_result() {
+        assert_eq!(catch_core_batch(|| true), Ok(true));
+        assert_eq!(catch_core_batch(|| false), Ok(false));
+    }
 }

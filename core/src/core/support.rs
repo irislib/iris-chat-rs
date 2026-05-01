@@ -125,4 +125,12 @@ impl AppCore {
             self.debug_log.pop_front();
         }
     }
+
+    pub(crate) fn mark_core_panic(&mut self, detail: String) {
+        crate::perflog!("core.batch.panic detail={detail}");
+        self.push_debug_log("core.panic", detail);
+        self.state.toast = Some("Iris needs restart. Copy support bundle in Settings.".to_string());
+        self.persist_debug_snapshot_best_effort();
+        self.emit_state();
+    }
 }

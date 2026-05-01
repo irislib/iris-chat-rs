@@ -253,45 +253,45 @@ final class LiveRustAppClient: RustAppClient {
     }
 
     func ingestNearbyEventJson(eventJson: String) -> Bool {
-        ffi.ingestNearbyEventJson(eventJson: eventJson)
+        ffi.ingestNearbyEventJsonSafely(eventJson: eventJson)
     }
 
     func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String {
-        ffi.buildNearbyPresenceEventJson(
-            peerId: peerID,
+        ffi.buildNearbyPresenceEventJsonSafely(
+            peerID: peerID,
             myNonce: myNonce,
             theirNonce: theirNonce,
-            profileEventId: profileEventID
+            profileEventID: profileEventID
         )
     }
 
     func verifyNearbyPresenceEventJson(eventJson: String, peerID: String, myNonce: String, theirNonce: String) -> String {
-        ffi.verifyNearbyPresenceEventJson(
+        ffi.verifyNearbyPresenceEventJsonSafely(
             eventJson: eventJson,
-            peerId: peerID,
+            peerID: peerID,
             myNonce: myNonce,
             theirNonce: theirNonce
         )
     }
 
     func nearbyEncodeFrame(envelopeJson: String) -> Data {
-        ffi.nearbyEncodeFrame(envelopeJson: envelopeJson)
+        ffi.nearbyEncodeFrameSafely(envelopeJson: envelopeJson)
     }
 
     func nearbyDecodeFrame(frame: Data) -> String {
-        ffi.nearbyDecodeFrame(frame: frame)
+        ffi.nearbyDecodeFrameSafely(frame: frame)
     }
 
     func nearbyFrameBodyLenFromHeader(header: Data) -> Int {
-        Int(ffi.nearbyFrameBodyLenFromHeader(header: header))
+        ffi.nearbyFrameBodyLenFromHeaderSafely(header: header)
     }
 
     func exportSupportBundleJson() -> String {
-        ffi.exportSupportBundleJson()
+        ffi.exportSupportBundleJsonSafely()
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
-        ffi.listenForUpdates(reconciler: reconciler)
+        ffi.listenForUpdatesSafely(reconciler: reconciler)
     }
 }
 

@@ -41,6 +41,108 @@ extension FfiApp {
         )
         try checkRustCallStatus(callStatus)
     }
+
+    func buildNearbyPresenceEventJsonSafely(
+        peerID: String,
+        myNonce: String,
+        theirNonce: String,
+        profileEventID: String
+    ) -> String {
+        ffiString("ffiapp.buildNearbyPresenceEventJson") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_build_nearby_presence_event_json(
+                self.uniffiClonePointer(),
+                lowerString(peerID),
+                lowerString(myNonce),
+                lowerString(theirNonce),
+                lowerString(profileEventID),
+                status
+            )
+        }
+    }
+
+    func exportSupportBundleJsonSafely() -> String {
+        ffiString("ffiapp.exportSupportBundleJson", fallback: "{}") { status in
+            uniffi_iris_chat_core_fn_method_ffiapp_export_support_bundle_json(
+                self.uniffiClonePointer(),
+                status
+            )
+        }
+    }
+
+    func ingestNearbyEventJsonSafely(eventJson: String) -> Bool {
+        ffiBool("ffiapp.ingestNearbyEventJson") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_ingest_nearby_event_json(
+                self.uniffiClonePointer(),
+                lowerString(eventJson),
+                status
+            )
+        }
+    }
+
+    @discardableResult
+    func listenForUpdatesSafely(reconciler: AppReconciler) -> Bool {
+        ffiVoid("ffiapp.listenForUpdates") { status in
+            uniffi_iris_chat_core_fn_method_ffiapp_listen_for_updates(
+                self.uniffiClonePointer(),
+                FfiConverterCallbackInterfaceAppReconciler_lower(reconciler),
+                status
+            )
+        }
+    }
+
+    func nearbyDecodeFrameSafely(frame: Data) -> String {
+        ffiString("ffiapp.nearbyDecodeFrame") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_nearby_decode_frame(
+                self.uniffiClonePointer(),
+                lowerData(frame),
+                status
+            )
+        }
+    }
+
+    func nearbyEncodeFrameSafely(envelopeJson: String) -> Data {
+        ffiData("ffiapp.nearbyEncodeFrame") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_nearby_encode_frame(
+                self.uniffiClonePointer(),
+                lowerString(envelopeJson),
+                status
+            )
+        }
+    }
+
+    func nearbyFrameBodyLenFromHeaderSafely(header: Data) -> Int {
+        Int(ffiInt32("ffiapp.nearbyFrameBodyLenFromHeader", fallback: -1) { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_nearby_frame_body_len_from_header(
+                self.uniffiClonePointer(),
+                lowerData(header),
+                status
+            )
+        })
+    }
+
+    func verifyNearbyPresenceEventJsonSafely(
+        eventJson: String,
+        peerID: String,
+        myNonce: String,
+        theirNonce: String
+    ) -> String {
+        ffiString("ffiapp.verifyNearbyPresenceEventJson") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_verify_nearby_presence_event_json(
+                self.uniffiClonePointer(),
+                lowerString(eventJson),
+                lowerString(peerID),
+                lowerString(myNonce),
+                lowerString(theirNonce),
+                status
+            )
+        }
+    }
+
+    func shutdownSafely() {
+        ffiVoid("ffiapp.shutdown") { status in
+            uniffi_iris_chat_core_fn_method_ffiapp_shutdown(self.uniffiClonePointer(), status)
+        }
+    }
 }
 
 private func makeRustCallStatus() -> RustCallStatus {
@@ -82,4 +184,160 @@ private func freeRustBuffer(_ buffer: RustBuffer) {
     }
     var status = makeRustCallStatus()
     ffi_iris_chat_core_rustbuffer_free(buffer, &status)
+}
+
+private func ffiString(
+    _ label: String,
+    fallback: String = "",
+    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> RustBuffer
+) -> String {
+    do {
+        var status = makeRustCallStatus()
+        let buffer = try body(&status)
+        try checkRustCallStatus(status)
+        return try liftString(buffer)
+    } catch {
+        logSafeFfiFailure(label, error)
+        return fallback
+    }
+}
+
+private func ffiData(
+    _ label: String,
+    fallback: Data = Data(),
+    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> RustBuffer
+) -> Data {
+    do {
+        var status = makeRustCallStatus()
+        let buffer = try body(&status)
+        try checkRustCallStatus(status)
+        return try liftData(buffer)
+    } catch {
+        logSafeFfiFailure(label, error)
+        return fallback
+    }
+}
+
+private func ffiBool(
+    _ label: String,
+    fallback: Bool = false,
+    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> Int8
+) -> Bool {
+    do {
+        var status = makeRustCallStatus()
+        let value = try body(&status)
+        try checkRustCallStatus(status)
+        return value != 0
+    } catch {
+        logSafeFfiFailure(label, error)
+        return fallback
+    }
+}
+
+private func ffiInt32(
+    _ label: String,
+    fallback: Int32,
+    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> Int32
+) -> Int32 {
+    do {
+        var status = makeRustCallStatus()
+        let value = try body(&status)
+        try checkRustCallStatus(status)
+        return value
+    } catch {
+        logSafeFfiFailure(label, error)
+        return fallback
+    }
+}
+
+@discardableResult
+private func ffiVoid(
+    _ label: String,
+    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> Void
+) -> Bool {
+    do {
+        var status = makeRustCallStatus()
+        try body(&status)
+        try checkRustCallStatus(status)
+        return true
+    } catch {
+        logSafeFfiFailure(label, error)
+        return false
+    }
+}
+
+private func lowerString(_ value: String) throws -> RustBuffer {
+    try rustBuffer(from: Array(value.utf8))
+}
+
+private func lowerData(_ value: Data) throws -> RustBuffer {
+    guard value.count <= Int(Int32.max) else {
+        throw SafeFfiDispatchError.callError("Data too large")
+    }
+    var bytes: [UInt8] = []
+    appendInt32(Int32(value.count), to: &bytes)
+    bytes.append(contentsOf: value)
+    return try rustBuffer(from: bytes)
+}
+
+private func rustBuffer(from bytes: [UInt8]) throws -> RustBuffer {
+    let copy = bytes
+    return try copy.withUnsafeBufferPointer { pointer in
+        var status = makeRustCallStatus()
+        let buffer = ffi_iris_chat_core_rustbuffer_from_bytes(
+            ForeignBytes(len: Int32(pointer.count), data: pointer.baseAddress),
+            &status
+        )
+        try checkRustCallStatus(status)
+        return buffer
+    }
+}
+
+private func liftString(_ buffer: RustBuffer) throws -> String {
+    defer { freeRustBuffer(buffer) }
+    guard let data = buffer.data, buffer.len > 0 else {
+        return ""
+    }
+    let bytes = UnsafeBufferPointer<UInt8>(start: data, count: Int(buffer.len))
+    return String(bytes: bytes, encoding: .utf8) ?? ""
+}
+
+private func liftData(_ buffer: RustBuffer) throws -> Data {
+    defer { freeRustBuffer(buffer) }
+    guard let data = buffer.data, buffer.len > 0 else {
+        return Data()
+    }
+    let bytes = Array(UnsafeBufferPointer<UInt8>(start: data, count: Int(buffer.len)))
+    guard bytes.count >= 4 else {
+        throw SafeFfiDispatchError.callError("Invalid data buffer")
+    }
+    let count = readInt32(from: bytes, offset: 0)
+    guard count >= 0 else {
+        throw SafeFfiDispatchError.callError("Invalid data length")
+    }
+    let end = 4 + Int(count)
+    guard bytes.count >= end else {
+        throw SafeFfiDispatchError.callError("Short data buffer")
+    }
+    return Data(bytes[4..<end])
+}
+
+private func logSafeFfiFailure(_ label: String, _ error: Error) {
+    NSLog("%@", "Iris Chat FFI call failed (\(label)): \(error)")
+}
+
+private func appendInt32(_ value: Int32, to bytes: inout [UInt8]) {
+    let raw = UInt32(bitPattern: value)
+    bytes.append(UInt8((raw >> 24) & 0xff))
+    bytes.append(UInt8((raw >> 16) & 0xff))
+    bytes.append(UInt8((raw >> 8) & 0xff))
+    bytes.append(UInt8(raw & 0xff))
+}
+
+private func readInt32(from bytes: [UInt8], offset: Int) -> Int32 {
+    let raw = UInt32(bytes[offset]) << 24
+        | UInt32(bytes[offset + 1]) << 16
+        | UInt32(bytes[offset + 2]) << 8
+        | UInt32(bytes[offset + 3])
+    return Int32(bitPattern: raw)
 }
