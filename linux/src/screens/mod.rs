@@ -15,6 +15,7 @@ mod device_revoked;
 mod device_roster;
 mod group_details;
 mod join_invite;
+mod nearby;
 mod new_chat;
 mod new_group;
 mod restore_account;
@@ -169,4 +170,8 @@ pub(crate) fn scan_qr_button<F: Fn(String) + 'static>(label: &str, on_result: F)
         });
     });
     btn
+}
+
+pub(crate) fn present_nearby(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
+    nearby::present(parent, manager);
 }

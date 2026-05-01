@@ -7,14 +7,9 @@ use iris_chat_core::{
 };
 
 use crate::app_manager::AppManager;
-use crate::screens::screen_container;
 use crate::widgets::image_cache;
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
-    if state.chat_list.is_empty() {
-        return empty_state();
-    }
-
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
     scrolled.set_vexpand(true);
@@ -28,12 +23,36 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     list.set_margin_end(12);
 
     let now = unix_now();
+    list.append(&nearby_row(manager));
     for chat in &state.chat_list {
         list.append(&row_for(chat, &state.preferences, now, manager));
     }
 
     scrolled.set_child(Some(&list));
     scrolled.upcast()
+}
+
+fn nearby_row(manager: &Rc<AppManager>) -> adw::ActionRow {
+    let snapshot = manager.nearby_snapshot();
+    let subtitle = if !snapshot.visible {
+        "Click to enable".to_string()
+    } else if !snapshot.peers.is_empty() {
+        nearby_summary(&snapshot.peers)
+    } else {
+        wifi_status_label(&snapshot.status)
+    };
+    let row = adw::ActionRow::builder()
+        .title("Nearby")
+        .subtitle(escape(&subtitle))
+        .activatable(true)
+        .build();
+    row.add_prefix(&gtk::Image::from_icon_name("network-wireless-symbolic"));
+    let manager = manager.clone();
+    row.connect_activated(move |row| {
+        let parent = row.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+        crate::screens::present_nearby(parent.as_ref(), manager.clone());
+    });
+    row
 }
 
 fn row_for(
@@ -103,25 +122,44 @@ fn row_for(
     row
 }
 
-fn empty_state() -> gtk::Widget {
-    let container = screen_container();
-    container.set_valign(gtk::Align::Center);
-    container.set_vexpand(true);
-
-    let title = gtk::Label::new(Some("No chats yet"));
-    title.add_css_class("title-3");
-    container.append(&title);
-
-    let hint = gtk::Label::new(Some("Tap the + in the header to start a new chat."));
-    hint.add_css_class("dim-label");
-    hint.set_wrap(true);
-    container.append(&hint);
-
-    container.upcast()
-}
-
 fn escape(s: &str) -> String {
     glib::markup_escape_text(s).to_string()
+}
+
+fn nearby_summary(peers: &[iris_chat_core::DesktopNearbyPeerSnapshot]) -> String {
+    match peers.len() {
+        0 => "Visible".to_string(),
+        1 => format!("{} nearby", summary_name(&peers[0].name)),
+        2 => format!(
+            "{} and {} nearby",
+            summary_name(&peers[0].name),
+            summary_name(&peers[1].name)
+        ),
+        count => format!(
+            "{}, {} and {} others nearby",
+            summary_name(&peers[0].name),
+            summary_name(&peers[1].name),
+            count - 2
+        ),
+    }
+}
+
+fn summary_name(name: &str) -> &str {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        "Someone"
+    } else {
+        trimmed
+    }
+}
+
+fn wifi_status_label(status: &str) -> String {
+    match status {
+        "Local network unavailable" => "Wi-Fi unavailable".to_string(),
+        "Local network failed" => "Wi-Fi failed".to_string(),
+        "No local network access" => "No Wi-Fi access".to_string(),
+        _ => status.to_string(),
+    }
 }
 
 pub(crate) fn unix_now() -> u64 {

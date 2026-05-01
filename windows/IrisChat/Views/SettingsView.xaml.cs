@@ -49,6 +49,7 @@ public partial class SettingsView : UserControl
         ReceiptsToggle.IsChecked = prefs.sendReadReceipts;
         NotificationsToggle.IsChecked = prefs.desktopNotificationsEnabled;
         StartupToggle.IsChecked = prefs.startupAtLoginEnabled;
+        NearbyLanToggle.IsChecked = prefs.nearbyLanEnabled;
         StartupToggle.Visibility = PlatformStartupAtLogin.IsSupported ? Visibility.Visible : Visibility.Collapsed;
         _suppressToggleDispatch = false;
 
@@ -138,6 +139,12 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetStartupAtLoginEnabled(StartupToggle.IsChecked == true);
+    }
+
+    private void OnNearbyLanChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetNearbyLanEnabled(NearbyLanToggle.IsChecked == true);
     }
 
     private void OnSaveProfile(object sender, RoutedEventArgs e)

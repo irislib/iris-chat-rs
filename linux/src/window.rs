@@ -176,29 +176,68 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     let current_for_updates = current.clone();
     glib::MainContext::default().spawn_local(async move {
         while let Ok(update) = update_rx.recv().await {
-            if let AppUpdate::FullState(state) = update {
-                let mut slot = current_for_updates.borrow_mut();
-                if state.rev >= slot.rev {
-                    let prev_chat_list = slot.chat_list.clone();
-                    let prev_focused_chat_id =
-                        slot.current_chat.as_ref().map(|c| c.chat_id.clone());
-                    *slot = state;
-                    apply_state(
-                        &content_for_updates,
-                        &header_for_updates,
-                        &manager_for_updates,
-                        &slot,
-                    );
-                    show_toast_if_changed(&toast_for_updates, &last_toast_for_updates, &slot.toast);
-                    if slot.preferences.desktop_notifications_enabled {
-                        notify_new_messages(
-                            &prev_chat_list,
-                            &slot.chat_list,
-                            prev_focused_chat_id.as_deref(),
+            match update {
+                AppUpdate::FullState(state) => {
+                    let mut slot = current_for_updates.borrow_mut();
+                    if state.rev >= slot.rev {
+                        let prev_chat_list = slot.chat_list.clone();
+                        let prev_focused_chat_id =
+                            slot.current_chat.as_ref().map(|c| c.chat_id.clone());
+                        *slot = state;
+                        manager_for_updates.sync_nearby_preference(&slot);
+                        apply_state(
+                            &content_for_updates,
+                            &header_for_updates,
+                            &manager_for_updates,
+                            &slot,
                         );
+                        show_toast_if_changed(
+                            &toast_for_updates,
+                            &last_toast_for_updates,
+                            &slot.toast,
+                        );
+                        if slot.preferences.desktop_notifications_enabled {
+                            notify_new_messages(
+                                &prev_chat_list,
+                                &slot.chat_list,
+                                prev_focused_chat_id.as_deref(),
+                            );
+                        }
                     }
                 }
+                AppUpdate::NearbyPublishedEvent {
+                    event_id,
+                    kind,
+                    created_at_secs,
+                    event_json,
+                } => {
+                    manager_for_updates.publish_nearby_event(
+                        event_id,
+                        kind,
+                        created_at_secs,
+                        event_json,
+                    );
+                }
+                AppUpdate::PersistAccountBundle { .. } => {}
             }
+        }
+    });
+
+    let nearby_rx = manager.nearby_update_rx();
+    let content_for_nearby = content_slot.clone();
+    let header_for_nearby = header_widgets.clone();
+    let manager_for_nearby = manager.clone();
+    let current_for_nearby = current.clone();
+    glib::MainContext::default().spawn_local(async move {
+        while let Ok(snapshot) = nearby_rx.recv().await {
+            manager_for_nearby.apply_nearby_snapshot(snapshot);
+            let slot = current_for_nearby.borrow();
+            apply_state(
+                &content_for_nearby,
+                &header_for_nearby,
+                &manager_for_nearby,
+                &slot,
+            );
         }
     });
 

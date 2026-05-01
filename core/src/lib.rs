@@ -1,5 +1,6 @@
 mod actions;
 mod core;
+pub mod desktop_nearby;
 pub mod image_proxy;
 pub mod local_relay;
 pub mod perflog;
@@ -29,12 +30,39 @@ pub trait AppReconciler: Send + Sync + 'static {
     fn reconcile(&self, update: AppUpdate);
 }
 
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct DesktopNearbyPeerSnapshot {
+    pub id: String,
+    pub name: String,
+    pub owner_pubkey_hex: Option<String>,
+    pub picture_url: Option<String>,
+    pub profile_event_id: Option<String>,
+    pub last_seen_secs: u64,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct DesktopNearbySnapshot {
+    pub visible: bool,
+    pub status: String,
+    pub peers: Vec<DesktopNearbyPeerSnapshot>,
+}
+
+#[uniffi::export(callback_interface)]
+pub trait DesktopNearbyObserver: Send + Sync + 'static {
+    fn desktop_nearby_changed(&self, snapshot: DesktopNearbySnapshot);
+}
+
 #[derive(uniffi::Object)]
 pub struct FfiApp {
     core_tx: Sender<CoreMsg>,
     update_rx: Receiver<AppUpdate>,
     listening: AtomicBool,
     shared_state: Arc<RwLock<AppState>>,
+}
+
+#[derive(uniffi::Object)]
+pub struct FfiDesktopNearby {
+    service: Arc<desktop_nearby::DesktopNearbyService>,
 }
 
 #[uniffi::export]
@@ -239,6 +267,33 @@ impl FfiApp {
                 }
             }
         });
+    }
+}
+
+#[uniffi::export]
+impl FfiDesktopNearby {
+    #[uniffi::constructor]
+    pub fn new(app: Arc<FfiApp>, observer: Box<dyn DesktopNearbyObserver>) -> Arc<Self> {
+        Arc::new(Self {
+            service: desktop_nearby::DesktopNearbyService::new(app, observer.into()),
+        })
+    }
+
+    pub fn start(&self, local_name: String) {
+        self.service.start(local_name);
+    }
+
+    pub fn stop(&self) {
+        self.service.stop();
+    }
+
+    pub fn snapshot(&self) -> DesktopNearbySnapshot {
+        self.service.snapshot()
+    }
+
+    pub fn publish(&self, event_id: String, kind: u32, created_at_secs: u64, event_json: String) {
+        self.service
+            .publish(event_id, kind, created_at_secs, event_json);
     }
 }
 

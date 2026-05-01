@@ -25,6 +25,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     }
 
     page.add(&messaging_group(&state.preferences, manager));
+    page.add(&nearby_group(&state.preferences, manager));
     page.add(&media_group(&state.preferences, manager));
     page.add(&relays_group(&state.preferences, manager));
     page.add(&security_group(manager));
@@ -32,6 +33,22 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     page.add(&support_group(manager));
 
     page.upcast()
+}
+
+fn nearby_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title("Nearby").build();
+
+    let lan = adw::SwitchRow::builder().title("Wi-Fi").build();
+    lan.set_active(prefs.nearby_lan_enabled);
+    {
+        let manager = manager.clone();
+        lan.connect_active_notify(move |row| {
+            manager.set_nearby_lan_enabled(row.is_active());
+        });
+    }
+    group.add(&lan);
+
+    group
 }
 
 fn trusted_build_group() -> adw::PreferencesGroup {

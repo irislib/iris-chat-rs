@@ -1,0 +1,119 @@
+use std::rc::Rc;
+
+use adw::prelude::*;
+use gtk::glib;
+use iris_chat_core::{AppAction, DesktopNearbyPeerSnapshot, DesktopNearbySnapshot};
+
+use crate::app_manager::AppManager;
+
+pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
+    manager.prepare_nearby_for_user_tap();
+
+    let dialog = adw::Dialog::builder()
+        .title("Nearby")
+        .content_width(360)
+        .build();
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    content.set_margin_top(18);
+    content.set_margin_bottom(18);
+    content.set_margin_start(18);
+    content.set_margin_end(18);
+
+    let lan = adw::SwitchRow::builder().title("Wi-Fi").build();
+    lan.set_active(manager.current_state().preferences.nearby_lan_enabled);
+    {
+        let manager = manager.clone();
+        lan.connect_active_notify(move |row| {
+            manager.set_nearby_lan_enabled(row.is_active());
+        });
+    }
+    content.append(&lan);
+
+    let status = gtk::Label::new(None);
+    status.add_css_class("dim-label");
+    status.set_xalign(0.0);
+    content.append(&status);
+
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.add_css_class("boxed-list");
+    content.append(&list);
+
+    refresh(&list, &status, &manager.nearby_snapshot(), &manager);
+
+    let list_for_updates = list.clone();
+    let status_for_updates = status.clone();
+    let manager_for_updates = manager.clone();
+    glib::timeout_add_seconds_local(1, move || {
+        let snapshot = manager_for_updates.nearby_snapshot();
+        refresh(
+            &list_for_updates,
+            &status_for_updates,
+            &snapshot,
+            &manager_for_updates,
+        );
+        glib::ControlFlow::Continue
+    });
+
+    dialog.set_child(Some(&content));
+    dialog.present(parent);
+}
+
+fn refresh(
+    list: &gtk::ListBox,
+    status: &gtk::Label,
+    snapshot: &DesktopNearbySnapshot,
+    manager: &Rc<AppManager>,
+) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+
+    let status_text = if snapshot.visible {
+        wifi_status_label(snapshot.status.as_str())
+    } else {
+        "Off".to_string()
+    };
+    status.set_label(&status_text);
+
+    if snapshot.peers.is_empty() {
+        let row = adw::ActionRow::builder()
+            .title("No users nearby")
+            .sensitive(false)
+            .build();
+        list.append(&row);
+        return;
+    }
+
+    for peer in &snapshot.peers {
+        list.append(&peer_row(peer, manager));
+    }
+}
+
+fn wifi_status_label(status: &str) -> String {
+    match status {
+        "Local network unavailable" => "Wi-Fi unavailable".to_string(),
+        "Local network failed" => "Wi-Fi failed".to_string(),
+        "No local network access" => "No Wi-Fi access".to_string(),
+        _ => status.to_string(),
+    }
+}
+
+fn peer_row(peer: &DesktopNearbyPeerSnapshot, manager: &Rc<AppManager>) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(peer.name.as_str())
+        .activatable(peer.owner_pubkey_hex.is_some())
+        .build();
+    let icon = gtk::Image::from_icon_name("avatar-default-symbolic");
+    row.add_prefix(&icon);
+    if let Some(owner) = peer.owner_pubkey_hex.clone() {
+        let manager = manager.clone();
+        row.connect_activated(move |_| {
+            manager.dispatch(AppAction::CreateChat {
+                peer_input: owner.clone(),
+            });
+        });
+    }
+    row
+}

@@ -75,6 +75,22 @@
                 </StackPanel>
             </Border>
 
+            <!-- nearby -->
+            <Border Background="{StaticResource Panel}"
+                    CornerRadius="{StaticResource SectionRadius}"
+                    Padding="20"
+                    Margin="0,0,0,16">
+                <StackPanel>
+                    <TextBlock Text="Nearby"
+                               Style="{StaticResource SectionTitleText}"
+                               Margin="0,0,0,12" />
+                    <CheckBox x:Name="NearbyLanToggle"
+                              Content="Wi-Fi"
+                              Checked="OnNearbyLanChanged"
+                              Unchecked="OnNearbyLanChanged" />
+                </StackPanel>
+            </Border>
+
             <!-- servers -->
             <Border Background="{StaticResource Panel}"
                     CornerRadius="{StaticResource SectionRadius}"

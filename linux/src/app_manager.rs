@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use iris_chat_core::{AppAction, AppReconciler, AppState, AppUpdate, FfiApp, OutgoingAttachment};
+use iris_chat_core::{
+    AppAction, AppReconciler, AppState, AppUpdate, DesktopNearbyObserver, DesktopNearbySnapshot,
+    FfiApp, FfiDesktopNearby, OutgoingAttachment,
+};
 
 use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
 
@@ -12,6 +15,10 @@ pub struct AppManager {
     update_rx: async_channel::Receiver<AppUpdate>,
     secret_store: Arc<dyn SecretStore>,
     data_dir: PathBuf,
+    nearby: Arc<FfiDesktopNearby>,
+    nearby_update_rx: async_channel::Receiver<DesktopNearbySnapshot>,
+    nearby_snapshot: RefCell<DesktopNearbySnapshot>,
+    nearby_first_open_path: PathBuf,
     staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
     last_focused_chat_id: RefCell<Option<String>>,
 }
@@ -19,6 +26,16 @@ pub struct AppManager {
 struct Reconciler {
     tx: async_channel::Sender<AppUpdate>,
     secret_store: Arc<dyn SecretStore>,
+}
+
+struct NearbyObserver {
+    tx: async_channel::Sender<DesktopNearbySnapshot>,
+}
+
+impl DesktopNearbyObserver for NearbyObserver {
+    fn desktop_nearby_changed(&self, snapshot: DesktopNearbySnapshot) {
+        let _ = self.tx.send_blocking(snapshot);
+    }
 }
 
 impl AppReconciler for Reconciler {
@@ -53,10 +70,18 @@ impl AppManager {
         );
 
         let (tx, rx) = async_channel::unbounded();
+        let (nearby_tx, nearby_rx) = async_channel::unbounded();
         ffi.listen_for_updates(Box::new(Reconciler {
             tx,
             secret_store: secret_store.clone(),
         }));
+        let nearby = FfiDesktopNearby::new(
+            ffi.clone(),
+            Box::new(NearbyObserver {
+                tx: nearby_tx.clone(),
+            }),
+        );
+        let nearby_snapshot = nearby.snapshot();
         if crate::platform::startup::is_supported() {
             let _ = crate::platform::startup::set_enabled(
                 ffi.state().preferences.startup_at_login_enabled,
@@ -76,6 +101,10 @@ impl AppManager {
             update_rx: rx,
             secret_store,
             data_dir,
+            nearby,
+            nearby_update_rx: nearby_rx,
+            nearby_snapshot: RefCell::new(nearby_snapshot),
+            nearby_first_open_path: secrets_dir.join("nearby-first-open"),
             staged_attachments: RefCell::new(HashMap::new()),
             last_focused_chat_id: RefCell::new(None),
         }
@@ -127,8 +156,60 @@ impl AppManager {
         self.update_rx.clone()
     }
 
+    pub fn nearby_update_rx(&self) -> async_channel::Receiver<DesktopNearbySnapshot> {
+        self.nearby_update_rx.clone()
+    }
+
+    pub fn nearby_snapshot(&self) -> DesktopNearbySnapshot {
+        self.nearby_snapshot.borrow().clone()
+    }
+
+    pub fn apply_nearby_snapshot(&self, snapshot: DesktopNearbySnapshot) {
+        *self.nearby_snapshot.borrow_mut() = snapshot;
+    }
+
     pub fn dispatch(&self, action: AppAction) {
         self.ffi.dispatch(action);
+    }
+
+    pub fn prepare_nearby_for_user_tap(&self) {
+        let first_open = !self.nearby_first_open_path.exists();
+        if first_open {
+            let _ = std::fs::write(&self.nearby_first_open_path, b"1");
+        }
+        let prefs = self.current_state().preferences;
+        if prefs.nearby_lan_enabled || first_open {
+            self.set_nearby_lan_enabled(true);
+        }
+    }
+
+    pub fn set_nearby_lan_enabled(&self, enabled: bool) {
+        if enabled {
+            self.nearby.start(local_device_name());
+        } else {
+            self.nearby.stop();
+        }
+        self.ffi
+            .dispatch(AppAction::SetNearbyLanEnabled { enabled });
+    }
+
+    pub fn sync_nearby_preference(&self, state: &AppState) {
+        if state.preferences.nearby_lan_enabled {
+            self.nearby.start(local_device_name());
+        } else {
+            self.nearby.stop();
+        }
+    }
+
+    pub fn publish_nearby_event(
+        &self,
+        event_id: String,
+        kind: u32,
+        created_at_secs: u64,
+        event_json: String,
+    ) {
+        self.nearby
+            .publish(event_id, kind, created_at_secs, event_json);
     }
 
     pub fn export_support_bundle_json(&self) -> String {
@@ -142,6 +223,15 @@ impl AppManager {
         let _ = std::fs::remove_dir_all(&self.data_dir);
         let _ = std::fs::create_dir_all(&self.data_dir);
     }
+}
+
+fn local_device_name() -> String {
+    std::env::var("HOSTNAME")
+        .ok()
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Iris".to_string())
 }
 
 fn xdg_data_home() -> PathBuf {

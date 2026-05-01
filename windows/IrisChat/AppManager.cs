@@ -27,11 +27,14 @@ public sealed class AppManager : INotifyPropertyChanged
     private readonly IDesktopNotificationPoster _notifier;
     private readonly HashtreeAttachmentCache _cache;
     private readonly string _dataDir;
+    private readonly string _nearbyFirstOpenPath;
+    private readonly FfiDesktopNearby _nearby;
     private readonly Dispatcher _ui;
     private readonly object _toastLock = new();
     private string? _activeToast;
 
     private AppState _state;
+    private DesktopNearbySnapshot _nearbySnapshot;
     private ulong _lastRevApplied;
 
     public AppManager(string dataDir, IDesktopNotificationPoster? notifier = null)
@@ -46,6 +49,9 @@ public sealed class AppManager : INotifyPropertyChanged
         _ffi = new FfiApp(dataDir, "", version);
         _state = _ffi.State();
         _lastRevApplied = _state.rev;
+        _nearbyFirstOpenPath = Path.Combine(dataDir, "nearby-first-open");
+        _nearby = new FfiDesktopNearby(_ffi, new NearbyObserver(this));
+        _nearbySnapshot = _nearby.Snapshot();
 
         _ffi.ListenForUpdates(new Reconciler(this));
         SyncStartupAtLoginPreference();
@@ -74,6 +80,7 @@ public sealed class AppManager : INotifyPropertyChanged
     public NetworkStatusSnapshot? NetworkStatus => _state.networkStatus;
     public PreferencesSnapshot Preferences => _state.preferences;
     public BusyState Busy => _state.busy;
+    public DesktopNearbySnapshot NearbySnapshot => _nearbySnapshot;
 
     public HashtreeAttachmentCache AttachmentCache => _cache;
 
@@ -350,6 +357,28 @@ public sealed class AppManager : INotifyPropertyChanged
         catch { }
     }
 
+    public void PrepareNearbyForUserTap()
+    {
+        var firstOpen = !File.Exists(_nearbyFirstOpenPath);
+        if (firstOpen)
+        {
+            try { File.WriteAllText(_nearbyFirstOpenPath, "1"); } catch { }
+        }
+
+        if (_state.preferences.nearbyLanEnabled || firstOpen)
+            SetNearbyLanEnabled(true);
+    }
+
+    public void SetNearbyLanEnabled(bool enabled)
+    {
+        if (enabled)
+            _nearby.Start(LocalDeviceName());
+        else
+            _nearby.Stop();
+
+        DispatchToRust(new AppAction.SetNearbyLanEnabled(enabled));
+    }
+
     public void AddNostrRelay(string url) =>
         DispatchToRust(new AppAction.AddNostrRelay(url.Trim()));
 
@@ -429,6 +458,7 @@ public sealed class AppManager : INotifyPropertyChanged
                 _lastRevApplied = f.v1.rev;
                 BootstrapInFlight = false;
 
+                SyncNearbyPreference(prev, f.v1);
                 PostDesktopNotifications(prev, f.v1);
 
                 NotifyAll();
@@ -438,7 +468,32 @@ public sealed class AppManager : INotifyPropertyChanged
                     ShowToast(f.v1.toast!);
                 }
                 break;
+
+            case AppUpdate.NearbyPublishedEvent nearby:
+                _nearby.Publish(
+                    nearby.eventId,
+                    nearby.kind,
+                    nearby.createdAtSecs,
+                    nearby.eventJson
+                );
+                break;
         }
+    }
+
+    private void ApplyNearbySnapshot(DesktopNearbySnapshot snapshot)
+    {
+        _nearbySnapshot = snapshot;
+        Notify(nameof(NearbySnapshot));
+    }
+
+    private void SyncNearbyPreference(AppState old, AppState next)
+    {
+        var wasEnabled = old.preferences.nearbyLanEnabled;
+        var isEnabled = next.preferences.nearbyLanEnabled;
+        if (isEnabled && !NearbySnapshot.visible)
+            _nearby.Start(LocalDeviceName());
+        else if (!isEnabled && (wasEnabled || NearbySnapshot.visible))
+            _nearby.Stop();
     }
 
     private void ApplySafely(AppUpdate update)
@@ -500,6 +555,7 @@ public sealed class AppManager : INotifyPropertyChanged
         Notify(nameof(NetworkStatus));
         Notify(nameof(Preferences));
         Notify(nameof(Busy));
+        Notify(nameof(NearbySnapshot));
     }
 
     private bool DispatchToRust(AppAction action, bool showToastOnFailure = true)
@@ -556,5 +612,22 @@ public sealed class AppManager : INotifyPropertyChanged
         {
             _owner._ui.BeginInvoke(new Action(() => _owner.ApplySafely(update)));
         }
+    }
+
+    private sealed class NearbyObserver : DesktopNearbyObserver
+    {
+        private readonly AppManager _owner;
+        public NearbyObserver(AppManager owner) { _owner = owner; }
+
+        public void DesktopNearbyChanged(DesktopNearbySnapshot snapshot)
+        {
+            _owner._ui.BeginInvoke(new Action(() => _owner.ApplyNearbySnapshot(snapshot)));
+        }
+    }
+
+    private static string LocalDeviceName()
+    {
+        var name = Environment.MachineName?.Trim();
+        return string.IsNullOrEmpty(name) ? "Iris" : name;
     }
 }
