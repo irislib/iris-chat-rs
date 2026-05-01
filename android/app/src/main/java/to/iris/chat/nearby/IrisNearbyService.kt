@@ -1118,7 +1118,13 @@ class IrisNearbyService(
         peers[peerId] =
             Peer(
                 id = peerId,
-                name = name.sanitizedName() ?: existing?.name ?: "Iris",
+                name =
+                    nearbyPeerName(
+                        advertisedName = name,
+                        ownerPubkeyHex = existing?.ownerPubkeyHex,
+                        profileDisplayName = null,
+                        existingName = existing?.name,
+                    ),
                 ownerPubkeyHex = existing?.ownerPubkeyHex,
                 pictureUrl = existing?.pictureUrl,
                 profileEventId = sanitizedProfileEventId ?: existing?.profileEventId,
@@ -1139,7 +1145,13 @@ class IrisNearbyService(
                 peers[remotePeerId] =
                     Peer(
                         id = remotePeerId,
-                        name = profile.displayName ?: "Iris",
+                        name =
+                            nearbyPeerName(
+                                advertisedName = null,
+                                ownerPubkeyHex = profile.ownerPubkeyHex,
+                                profileDisplayName = profile.displayName,
+                                existingName = null,
+                            ),
                         ownerPubkeyHex = profile.ownerPubkeyHex,
                         pictureUrl = profile.pictureUrl,
                         profileEventId = profile.id,
@@ -1160,6 +1172,13 @@ class IrisNearbyService(
         val nextProfileEventId = profileEventId ?: existing.profileEventId
         peers[peerId] =
             existing.copy(
+                name =
+                    nearbyPeerName(
+                        advertisedName = null,
+                        ownerPubkeyHex = ownerPubkeyHex,
+                        profileDisplayName = null,
+                        existingName = existing.name,
+                    ),
                 ownerPubkeyHex = ownerPubkeyHex,
                 profileEventId = nextProfileEventId,
                 lastSeenMillis = System.currentTimeMillis(),
@@ -1185,7 +1204,13 @@ class IrisNearbyService(
         }
         peers[peerId] =
             peer.copy(
-                name = profile.displayName ?: peer.name,
+                name =
+                    nearbyPeerName(
+                        advertisedName = null,
+                        ownerPubkeyHex = profile.ownerPubkeyHex,
+                        profileDisplayName = profile.displayName,
+                        existingName = peer.name,
+                    ),
                 ownerPubkeyHex = profile.ownerPubkeyHex,
                 pictureUrl = profile.pictureUrl ?: peer.pictureUrl,
                 profileEventId = profile.id,
@@ -1245,8 +1270,67 @@ class IrisNearbyService(
         }
     }
 
-    private fun String?.sanitizedName(): String? =
-        this?.trim()?.takeIf(String::isNotEmpty)
+    private fun nearbyPeerName(
+        advertisedName: String?,
+        ownerPubkeyHex: String?,
+        profileDisplayName: String?,
+        existingName: String?,
+    ): String {
+        profileDisplayName.sanitizedPeerLabel()?.let { return it }
+        ownerPubkeyHex.sanitizedPeerLabel()?.let { return fallbackProfileNameForIdentity(it) }
+        return advertisedName.sanitizedPeerLabel()
+            ?: existingName.sanitizedPeerLabel()
+            ?: "Iris"
+    }
+
+    private fun String?.sanitizedPeerLabel(): String? =
+        this?.trim()?.takeIf { it.isNotEmpty() && it != "Iris" }
+
+    private fun fallbackProfileNameForIdentity(identity: String): String {
+        val adjectives =
+            listOf(
+                "Amber",
+                "Bright",
+                "Calm",
+                "Clear",
+                "Golden",
+                "Lunar",
+                "Nova",
+                "Quiet",
+                "Silver",
+                "Solar",
+                "Velvet",
+                "Wild",
+            )
+        val nouns =
+            listOf(
+                "Aurora",
+                "Comet",
+                "Echo",
+                "Falcon",
+                "Harbor",
+                "Listener",
+                "Otter",
+                "Raven",
+                "Signal",
+                "Sparrow",
+                "Tide",
+                "Voyager",
+            )
+        val trimmed = identity.trim()
+        if (trimmed.isEmpty()) {
+            return "Quiet Listener"
+        }
+        val hash =
+            trimmed
+                .encodeToByteArray()
+                .fold(0L) { partial, byte ->
+                    (partial * 31L + (byte.toInt() and 0xff).toLong()) and 0xffff_ffffL
+                }
+        val adjective = adjectives[(hash % adjectives.size).toInt()]
+        val noun = nouns[((hash / adjectives.size) % nouns.size).toInt()]
+        return "$adjective $noun"
+    }
 
     private fun String?.sanitizedEventId(): String? =
         this?.trim()?.takeIf { it.length == 64 }

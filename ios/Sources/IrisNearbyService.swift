@@ -179,6 +179,48 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return trimmed.isEmpty ? "Someone" : trimmed
     }
 
+    private static func nearbyPeerName(
+        advertisedName: String?,
+        ownerPubkeyHex: String?,
+        profileDisplayName: String?,
+        existingName: String?
+    ) -> String {
+        if let name = normalizedPeerName(profileDisplayName) {
+            return name
+        }
+        if let owner = normalizedPeerName(ownerPubkeyHex) {
+            return fallbackProfileName(for: owner)
+        }
+        return normalizedPeerName(advertisedName)
+            ?? normalizedPeerName(existingName)
+            ?? "Iris"
+    }
+
+    private static func normalizedPeerName(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty || trimmed == "Iris" ? nil : trimmed
+    }
+
+    private static func fallbackProfileName(for identity: String) -> String {
+        let adjectives = [
+            "Amber", "Bright", "Calm", "Clear", "Golden", "Lunar",
+            "Nova", "Quiet", "Silver", "Solar", "Velvet", "Wild"
+        ]
+        let nouns = [
+            "Aurora", "Comet", "Echo", "Falcon", "Harbor", "Listener",
+            "Otter", "Raven", "Signal", "Sparrow", "Tide", "Voyager"
+        ]
+        let trimmed = identity.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Quiet Listener" }
+
+        let hash = trimmed.utf8.reduce(UInt32(0)) { partial, byte in
+            partial &* 31 &+ UInt32(byte)
+        }
+        let adjective = adjectives[Int(hash) % adjectives.count]
+        let noun = nouns[(Int(hash) / adjectives.count) % nouns.count]
+        return "\(adjective) \(noun)"
+    }
+
     private static func isBlockingStatus(_ status: String) -> Bool {
         switch status {
         case "No Bluetooth access", "Bluetooth off", "Bluetooth unavailable", "Bluetooth failed", "Bluetooth reset", "Advertise failed":
@@ -993,7 +1035,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         let existing = peers.first(where: { $0.id == peerID })
         let peer = IrisNearbyPeer(
             id: peerID,
-            name: sanitizedName(name) ?? existing?.name ?? "Iris",
+            name: Self.nearbyPeerName(
+                advertisedName: name,
+                ownerPubkeyHex: existing?.ownerPubkeyHex,
+                profileDisplayName: nil,
+                existingName: existing?.name
+            ),
             ownerPubkeyHex: existing?.ownerPubkeyHex,
             pictureURL: existing?.pictureURL,
             profileEventID: sanitizedProfileEventID ?? existing?.profileEventID,
@@ -1080,7 +1127,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 peers.append(
                     IrisNearbyPeer(
                         id: remotePeerID,
-                        name: profile.displayName ?? "Iris",
+                        name: Self.nearbyPeerName(
+                            advertisedName: nil,
+                            ownerPubkeyHex: profile.ownerPubkeyHex,
+                            profileDisplayName: profile.displayName,
+                            existingName: nil
+                        ),
                         ownerPubkeyHex: profile.ownerPubkeyHex,
                         pictureURL: profile.pictureURL,
                         profileEventID: profile.id,
@@ -1099,6 +1151,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         let nextProfileEventID = profileEventID ?? peers[index].profileEventID
         peers[index].ownerPubkeyHex = ownerPubkeyHex
         peers[index].profileEventID = nextProfileEventID
+        peers[index].name = Self.nearbyPeerName(
+            advertisedName: nil,
+            ownerPubkeyHex: ownerPubkeyHex,
+            profileDisplayName: nil,
+            existingName: peers[index].name
+        )
         peers[index].lastSeen = Date()
         if let nextProfileEventID, let profile = knownProfiles[nextProfileEventID] {
             applyAdvertisedProfile(profile, toPeerID: peerID)
@@ -1122,9 +1180,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
         peers[index].ownerPubkeyHex = profile.ownerPubkeyHex
         peers[index].profileEventID = profile.id
-        if let displayName = profile.displayName {
-            peers[index].name = displayName
-        }
+        peers[index].name = Self.nearbyPeerName(
+            advertisedName: nil,
+            ownerPubkeyHex: profile.ownerPubkeyHex,
+            profileDisplayName: profile.displayName,
+            existingName: peers[index].name
+        )
         if let pictureURL = profile.pictureURL {
             peers[index].pictureURL = pictureURL
         }
@@ -1141,11 +1202,6 @@ final class IrisNearbyService: NSObject, ObservableObject {
             }
             return comparison == .orderedAscending
         }
-    }
-
-    private func sanitizedName(_ value: String?) -> String? {
-        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return trimmed.isEmpty ? nil : trimmed
     }
 
     private func sanitizedEventID(_ value: String?) -> String? {

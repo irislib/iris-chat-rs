@@ -965,12 +965,14 @@ fn remember_peer(
         peer_id.to_string(),
         DesktopNearbyPeer {
             id: peer_id.to_string(),
-            name: clean_optional_name(name).unwrap_or_else(|| {
+            name: nearby_peer_name(
+                name,
                 existing
                     .as_ref()
-                    .map(|peer| peer.name.clone())
-                    .unwrap_or_else(|| "Iris".to_string())
-            }),
+                    .and_then(|peer| peer.owner_pubkey_hex.as_deref()),
+                None,
+                existing.as_ref().map(|peer| peer.name.as_str()),
+            ),
             owner_pubkey_hex: existing
                 .as_ref()
                 .and_then(|peer| peer.owner_pubkey_hex.clone()),
@@ -1004,10 +1006,12 @@ fn remember_profile(
                 peer_id.to_string(),
                 DesktopNearbyPeer {
                     id: peer_id.to_string(),
-                    name: profile
-                        .display_name
-                        .clone()
-                        .unwrap_or_else(|| "Iris".to_string()),
+                    name: nearby_peer_name(
+                        None,
+                        Some(profile.owner_pubkey_hex.as_str()),
+                        profile.display_name.as_deref(),
+                        None,
+                    ),
                     owner_pubkey_hex: Some(profile.owner_pubkey_hex.clone()),
                     picture_url: profile.picture_url.clone(),
                     profile_event_id: Some(profile.id.clone()),
@@ -1033,6 +1037,15 @@ fn remember_presence(
     if profile_event_id.is_some() {
         peer.profile_event_id = profile_event_id;
     }
+    if let Some(owner) = peer.owner_pubkey_hex.clone() {
+        let existing_name = peer.name.clone();
+        peer.name = nearby_peer_name(
+            None,
+            Some(owner.as_str()),
+            None,
+            Some(existing_name.as_str()),
+        );
+    }
     peer.last_seen = Instant::now();
     if let Some(profile_id) = peer.profile_event_id.clone() {
         if let Some(profile) = inner.known_profiles.get(&profile_id).cloned() {
@@ -1056,10 +1069,13 @@ fn apply_profile(inner: &mut DesktopNearbyInner, peer_id: &str, profile: &Nearby
             return;
         }
     }
-    peer.name = profile
-        .display_name
-        .clone()
-        .unwrap_or_else(|| peer.name.clone());
+    let existing_name = peer.name.clone();
+    peer.name = nearby_peer_name(
+        None,
+        Some(profile.owner_pubkey_hex.as_str()),
+        profile.display_name.as_deref(),
+        Some(existing_name.as_str()),
+    );
     peer.owner_pubkey_hex = Some(profile.owner_pubkey_hex.clone());
     peer.picture_url = profile
         .picture_url
@@ -1456,6 +1472,46 @@ fn clean_optional_name(name: Option<&str>) -> Option<String> {
     (value != "Iris").then_some(value)
 }
 
+fn nearby_peer_name(
+    advertised_name: Option<&str>,
+    owner_pubkey_hex: Option<&str>,
+    profile_display_name: Option<&str>,
+    existing_name: Option<&str>,
+) -> String {
+    if let Some(name) = clean_optional_name(profile_display_name) {
+        return name;
+    }
+    if let Some(owner) = owner_pubkey_hex.and_then(nonempty) {
+        return fallback_profile_name_for_identity(owner);
+    }
+    clean_optional_name(advertised_name)
+        .or_else(|| clean_optional_name(existing_name))
+        .unwrap_or_else(|| "Iris".to_string())
+}
+
+fn fallback_profile_name_for_identity(identity: &str) -> String {
+    const ADJECTIVES: [&str; 12] = [
+        "Amber", "Bright", "Calm", "Clear", "Golden", "Lunar", "Nova", "Quiet", "Silver", "Solar",
+        "Velvet", "Wild",
+    ];
+    const NOUNS: [&str; 12] = [
+        "Aurora", "Comet", "Echo", "Falcon", "Harbor", "Listener", "Otter", "Raven", "Signal",
+        "Sparrow", "Tide", "Voyager",
+    ];
+
+    let trimmed = identity.trim();
+    if trimmed.is_empty() {
+        return "Quiet Listener".to_string();
+    }
+
+    let hash = trimmed.bytes().fold(0_u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(byte as u32)
+    });
+    let adjective = ADJECTIVES[(hash as usize) % ADJECTIVES.len()];
+    let noun = NOUNS[((hash as usize) / ADJECTIVES.len()) % NOUNS.len()];
+    format!("{adjective} {noun}")
+}
+
 fn sanitized_nonce(value: &str) -> Option<String> {
     let value = value.trim();
     (16..=128).contains(&value.len()).then(|| value.to_string())
@@ -1484,5 +1540,31 @@ fn is_private_ipv4(ip: Ipv4Addr) -> bool {
         [172, second, _, _] if (16..=31).contains(&second) => true,
         [192, 168, _, _] => true,
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verified_nearby_identity_beats_advertised_device_name() {
+        let owner = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        let expected = fallback_profile_name_for_identity(owner);
+
+        assert_eq!(
+            nearby_peer_name(Some("iPhone"), Some(owner), None, Some("iPhone")),
+            expected
+        );
+    }
+
+    #[test]
+    fn advertised_profile_name_beats_identity_fallback() {
+        let owner = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+        assert_eq!(
+            nearby_peer_name(Some("iPhone"), Some(owner), Some("Alice"), Some("iPhone")),
+            "Alice"
+        );
     }
 }
