@@ -108,16 +108,13 @@ fn direct_chat_send_read_search_and_tail_work_offline() {
 
     let alice_account = run_iris(alice.path(), &["account", "create", "--name", "Alice"]);
     let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
-    let bob_user_id = bob_account["data"]["user_id"].as_str().unwrap();
+    let bob_npub = bob_account["data"]["npub"].as_str().unwrap();
 
     run_iris(alice.path(), &["relay", "set"]);
-    let chat = run_iris(alice.path(), &["chat", "create", bob_user_id]);
-    let chat_id = chat["data"]["chat"]["chat_id"].as_str().unwrap();
-    assert_eq!(chat["data"]["chat"]["kind"], "direct");
-
-    let sent = run_iris(alice.path(), &["send", chat_id, "queued offline"]);
+    let sent = run_iris(alice.path(), &["send", bob_npub, "queued offline"]);
     assert_eq!(sent["data"]["body"], "queued offline");
     assert_eq!(sent["data"]["delivery"], "queued");
+    let chat_id = sent["data"]["chat_id"].as_str().unwrap();
     let message_id = sent["data"]["id"].as_str().unwrap();
 
     let reacted = run_iris(alice.path(), &["react", chat_id, message_id, "+1"]);

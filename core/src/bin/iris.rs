@@ -634,7 +634,7 @@ fn create_chat(cli: &CliApp, user_id: &str) -> Result<Value> {
 }
 
 fn open_chat(cli: &CliApp, chat: &str) -> Result<CurrentChatSnapshot> {
-    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    let chat_id = chat_action_input(&cli.app.state(), chat);
     cli.dispatch_and_wait(AppAction::OpenChat { chat_id }, Duration::from_secs(2))?;
     let state = cli.app.state();
     fail_on_toast(&state)?;
@@ -647,7 +647,7 @@ fn send_message(
     message: &str,
     expires_at_secs: Option<u64>,
 ) -> Result<Value> {
-    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    let chat_id = chat_action_input(&cli.app.state(), chat);
     let action = if let Some(expires_at_secs) = expires_at_secs {
         AppAction::SendDisappearingMessage {
             chat_id: chat_id.clone(),
@@ -675,7 +675,7 @@ fn send_message(
 }
 
 fn react(cli: &CliApp, chat: &str, message_id: &str, emoji: &str) -> Result<Value> {
-    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    let chat_id = chat_action_input(&cli.app.state(), chat);
     cli.dispatch_and_wait(
         AppAction::ToggleReaction {
             chat_id: chat_id.clone(),
@@ -694,7 +694,7 @@ fn react(cli: &CliApp, chat: &str, message_id: &str, emoji: &str) -> Result<Valu
 }
 
 fn typing(cli: &CliApp, chat: &str, stop: bool) -> Result<Value> {
-    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    let chat_id = chat_action_input(&cli.app.state(), chat);
     cli.dispatch_and_wait(
         AppAction::SetTypingIndicatorsEnabled { enabled: true },
         Duration::from_secs(1),
@@ -725,7 +725,7 @@ fn receipt(
     if receipt_type == "seen" {
         return mark_seen(cli, chat, message_ids);
     }
-    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    let chat_id = chat_action_input(&cli.app.state(), chat);
     cli.dispatch_and_wait(
         AppAction::SendReceipt {
             chat_id: chat_id.clone(),
@@ -1154,6 +1154,10 @@ fn fail_on_toast(state: &AppState) -> Result<()> {
         anyhow::bail!(toast.clone());
     }
     Ok(())
+}
+
+fn chat_action_input(state: &AppState, input: &str) -> String {
+    resolve_chat_id(state, input).unwrap_or_else(|_| input.to_string())
 }
 
 fn resolve_chat_id(state: &AppState, input: &str) -> Result<String> {
