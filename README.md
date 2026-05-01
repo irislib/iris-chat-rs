@@ -5,16 +5,13 @@ Encrypted chat app using Nostr Double Ratchet. Shared Rust core, native UIs.
 Primary development is on hashtree:
 https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs
 
-The compatible `ndr` command line app lives in `nostr-double-ratchet`:
-https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-double-ratchet
-
 ## Features
 
 - Encrypted direct and group chats.
 - Device linking and QR/link invites.
 - Offline queueing, message server sync, and SQLite persistence.
-- Compatible with the `ndr` command line app for scripts, agents, and local
-  devices that need to send messages.
+- `iris` command line app for scripts, agents, and local devices that need to
+  send messages.
 - Attachments, profile pictures, notifications, and support bundles.
 - Desktop open-at-login on macOS, Linux, and Windows.
 - Share to iris chat from Android, iOS, and macOS.
@@ -93,15 +90,22 @@ and publishes the release tree to hashtree.
 
 ## Command Line
 
-Install the Iris command line app with Cargo:
+Install the Iris command line app with a prebuilt macOS/Linux binary:
+
+```bash
+curl -fsSL https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/install.sh | sh
+```
+
+Or build it from crates.io with Cargo:
 
 ```bash
 cargo install iris-chat
 iris --help
 ```
 
-The `iris` command is useful for agents, programs, scripts, and local devices
-that need to send or search messages and trigger normal iris chat notifications.
+The `iris` command is useful for humans, agents, scripts, and local devices
+that need to send, search, or listen for messages and trigger normal iris chat
+notifications.
 
 Messages can travel over Nostr relays, and nearby transports can keep local
 device messages off a remote server when the devices are close enough.

@@ -22,6 +22,7 @@ resolve_shared_build_metadata "$ROOT"
 DIST_DIR="$ROOT/dist"
 STAGE_ROOT="$DIST_DIR/release"
 RELEASE_TREE_DEFAULT="releases/iris-chat-rs"
+RELEASE_OWNER_NPUB_DEFAULT="npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm"
 
 PUBLISH=0
 DRY_RUN=0
@@ -42,14 +43,15 @@ Options:
   --publish                Publish the staged tree with `htree add` + `htree release publish`
   --publish-zapstore       Also publish the signed Android APK to Zapstore
   --tag <vX.Y.Z>           Override release tag (defaults to v$IRIS_APP_VERSION_NAME)
-  --release-tree <name>    htree release tree name (default: releases/iris-chat)
-  --only <csv>             Only run named steps (macos,windows,android,linux,ios)
+  --release-tree <name>    htree release tree name (default: releases/iris-chat-rs)
+  --only <csv>             Only run named steps (macos,windows,android,linux,cli,ios)
   --skip <csv>             Skip named steps
   --dry-run                Print the plan without running build commands
   -h, --help               Show this help
 
 Environment:
   IRIS_RELEASE_TREE         Default for --release-tree
+  IRIS_CLI_TARGETS          Comma-separated CLI targets for the iris binary
   IRIS_RELEASE_ALLOW_DIRTY  Allow building from a dirty git tree
 EOF
 }
@@ -77,6 +79,7 @@ normalize_tag() {
 
 TAG="$(normalize_tag "${TAG_OVERRIDE:-$IRIS_APP_VERSION_NAME}")"
 RELEASE_TREE="${RELEASE_TREE:-${IRIS_RELEASE_TREE:-$RELEASE_TREE_DEFAULT}}"
+RELEASE_OWNER_NPUB="${IRIS_RELEASE_OWNER_NPUB:-$RELEASE_OWNER_NPUB_DEFAULT}"
 STAGE_DIR="$STAGE_ROOT/$TAG"
 
 ONLY_SET=""
@@ -241,6 +244,328 @@ build_ios() {
   fi
 }
 
+# ---------- Command line ----------
+release_tree_url_path() {
+  printf '%s\n' "${RELEASE_TREE//\//%2F}"
+}
+
+release_gateway_base_url() {
+  printf 'https://upload.iris.to/%s/%s/%s\n' \
+    "$RELEASE_OWNER_NPUB" \
+    "$(release_tree_url_path)" \
+    "$TAG"
+}
+
+default_cli_targets() {
+  case "$(uname -s)" in
+    Darwin)
+      printf '%s\n' "aarch64-apple-darwin,x86_64-apple-darwin,x86_64-unknown-linux-gnu"
+      ;;
+    Linux)
+      case "$(uname -m)" in
+        arm64|aarch64) printf '%s\n' "aarch64-unknown-linux-gnu" ;;
+        *)             printf '%s\n' "x86_64-unknown-linux-gnu" ;;
+      esac
+      ;;
+    *)
+      printf '%s\n' ""
+      ;;
+  esac
+}
+
+write_cli_unix_install_script() {
+  local path="$1"
+  cat > "$path" <<'EOF'
+#!/bin/sh
+set -eu
+
+default_install_dir() {
+  if [ "$(id -u)" -eq 0 ]; then
+    printf '%s\n' /usr/local/bin
+  elif [ -n "${XDG_BIN_HOME:-}" ]; then
+    printf '%s\n' "$XDG_BIN_HOME"
+  elif [ -n "${HOME:-}" ]; then
+    printf '%s\n' "$HOME/.local/bin"
+  else
+    printf '%s\n' /usr/local/bin
+  fi
+}
+
+path_contains() {
+  target="$1"
+  old_ifs="$IFS"
+  IFS=:
+  for entry in ${PATH:-}; do
+    if [ "$entry" = "$target" ]; then
+      IFS="$old_ifs"
+      return 0
+    fi
+  done
+  IFS="$old_ifs"
+  return 1
+}
+
+existing_parent_dir() {
+  dir="$1"
+  while [ ! -e "$dir" ]; do
+    dir="$(dirname "$dir")"
+  done
+  printf '%s\n' "$dir"
+}
+
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+INSTALL_DIR="${1:-$(default_install_dir)}"
+
+echo "Installing iris to $INSTALL_DIR"
+
+if [ ! -d "$INSTALL_DIR" ]; then
+  parent="$(existing_parent_dir "$INSTALL_DIR")"
+  if [ -w "$parent" ]; then
+    mkdir -p "$INSTALL_DIR"
+  else
+    echo "Need sudo to create $INSTALL_DIR"
+    sudo mkdir -p "$INSTALL_DIR"
+  fi
+fi
+
+if [ ! -w "$INSTALL_DIR" ]; then
+  echo "Need sudo to install to $INSTALL_DIR"
+  sudo install -m 755 "$script_dir/iris" "$INSTALL_DIR/"
+else
+  install -m 755 "$script_dir/iris" "$INSTALL_DIR/"
+fi
+
+echo "Installed iris"
+if ! path_contains "$INSTALL_DIR"; then
+  echo
+  echo "Add $INSTALL_DIR to your PATH, for example:"
+  echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+fi
+echo
+echo "Try:"
+echo "  iris --help"
+EOF
+  chmod +x "$path"
+}
+
+write_cli_readme() {
+  local path="$1"
+  cat > "$path" <<'EOF'
+iris command line app
+=====================
+
+Quick install:
+  ./install.sh
+  ./install.sh /usr/local/bin
+
+The iris command can create or restore a profile, send messages, search local
+messages, and listen for new messages.
+
+Examples:
+  iris account create --name Alice
+  iris whoami
+  iris send <user-id-or-chat-id> "hello"
+  iris listen
+
+Use --json when another program is reading the output.
+EOF
+}
+
+write_cli_bootstrap_installer() {
+  local path="$1"
+  local base_url="$2"
+
+  cat > "$path" <<EOF
+#!/bin/sh
+set -eu
+
+BASE_URL="${base_url}"
+ASSET_BASE_URL="\${BASE_URL}/assets"
+
+log() {
+  printf 'iris-install: %s\n' "\$*" >&2
+}
+
+die() {
+  printf 'iris-install: error: %s\n' "\$*" >&2
+  exit 1
+}
+
+tmpdir=""
+
+on_exit() {
+  rc=\$?
+  if [ -n "\$tmpdir" ] && [ -d "\$tmpdir" ]; then
+    rm -rf "\$tmpdir"
+  fi
+  if [ "\$rc" -ne 0 ]; then
+    printf 'iris-install: install failed.\n' >&2
+  fi
+}
+
+trap on_exit EXIT HUP INT TERM
+
+require_command() {
+  if ! command -v "\$1" >/dev/null 2>&1; then
+    die "missing required command: \$1"
+  fi
+}
+
+detect_arch() {
+  case "\$(uname -m)" in
+    arm64|aarch64) printf '%s\n' aarch64 ;;
+    x86_64|amd64)  printf '%s\n' x86_64 ;;
+    *) die "unsupported architecture: \$(uname -m)" ;;
+  esac
+}
+
+detect_os() {
+  case "\$(uname -s)" in
+    Darwin) printf '%s\n' apple-darwin ;;
+    Linux)  printf '%s\n' unknown-linux-gnu ;;
+    *) die "unsupported operating system: \$(uname -s)" ;;
+  esac
+}
+
+require_command curl
+require_command tar
+require_command mktemp
+require_command uname
+
+target="\$(detect_arch)-\$(detect_os)"
+archive="iris-\${target}.tar.gz"
+tmpdir=\$(mktemp -d 2>/dev/null || mktemp -d -t iris-install) || die "failed to create temporary directory"
+url="\${ASSET_BASE_URL}/\${archive}"
+archive_path="\${tmpdir}/\${archive}"
+
+log "downloading \${url}"
+curl -fL "\$url" -o "\$archive_path"
+[ -s "\$archive_path" ] || die "downloaded archive is empty"
+tar -tzf "\$archive_path" >/dev/null 2>&1 || die "downloaded file is not a valid gzip tar archive"
+tar -xzf "\$archive_path" -C "\$tmpdir"
+
+packaged_dir="\${tmpdir}/iris"
+packaged_installer="\${packaged_dir}/install.sh"
+[ -d "\$packaged_dir" ] || die "expected directory 'iris/' not found in archive"
+[ -x "\$packaged_installer" ] || die "packaged installer not found"
+
+cd "\$packaged_dir"
+./install.sh "\$@"
+EOF
+  chmod +x "$path"
+}
+
+package_cli_unix_target() {
+  local target="$1"
+  local binary_path="$2"
+  local out_dir="$ROOT/dist/cli"
+  local stage_dir
+  local package_dir
+  local archive
+
+  if [[ ! -f "$binary_path" ]]; then
+    note_skipped "cli ${target}: binary missing at $binary_path"
+    return 1
+  fi
+
+  mkdir -p "$out_dir"
+  stage_dir="$(mktemp -d)"
+  package_dir="$stage_dir/iris"
+  archive="$out_dir/iris-${target}.tar.gz"
+
+  mkdir -p "$package_dir"
+  install -m 755 "$binary_path" "$package_dir/iris"
+  write_cli_unix_install_script "$package_dir/install.sh"
+  write_cli_readme "$package_dir/README.txt"
+
+  rm -f "$archive"
+  (cd "$stage_dir" && tar -czf "$archive" iris)
+  rm -rf "$stage_dir"
+
+  ASSET_PATHS+=("$archive")
+  note_built "Iris CLI ${target}: $(basename "$archive")"
+}
+
+build_cli_darwin_target() {
+  local target="$1"
+  local target_dir="$ROOT/target/cli-release"
+  rustup target add "$target" >/dev/null
+  CARGO_TARGET_DIR="$target_dir" \
+    cargo build --manifest-path "$ROOT/core/Cargo.toml" --release --bin iris --target "$target" --locked
+  package_cli_unix_target "$target" "$target_dir/$target/release/iris"
+}
+
+build_cli_linux_target() {
+  local target="$1"
+  local target_dir="$ROOT/target/cli-release/linux-x64"
+  local image="${IRIS_LINUX_BUILD_IMAGE:-iris-chat-linux-dev:latest}"
+
+  if [[ "$target" != "x86_64-unknown-linux-gnu" ]]; then
+    note_skipped "cli ${target}: only x86_64 Linux is wired for Docker builds"
+    return 0
+  fi
+  if ! command -v docker >/dev/null 2>&1; then
+    note_skipped "cli ${target}: docker not available"
+    return 0
+  fi
+  if ! docker image inspect "$image" >/dev/null 2>&1; then
+    docker build \
+      --platform linux/amd64 \
+      --build-arg INSTALL_CARGO_WATCH=0 \
+      -f "$ROOT/linux/Dockerfile" \
+      -t "$image" \
+      "$ROOT/.."
+  fi
+  docker run \
+    --platform linux/amd64 \
+    --rm \
+    -v "$ROOT/..:/workspace:cached" \
+    -w /workspace/iris-chat-rs/core \
+    -e CARGO_TARGET_DIR="/workspace/iris-chat-rs/target/cli-release/linux-x64" \
+    --entrypoint /bin/bash \
+    "$image" -lc 'set -Eeuo pipefail; cargo build --release --bin iris --locked'
+  package_cli_unix_target "$target" "$target_dir/release/iris"
+}
+
+build_cli() {
+  local targets_csv="${IRIS_CLI_TARGETS:-$(default_cli_targets)}"
+  local target
+  local built_before="${#ASSET_PATHS[@]}"
+
+  if [[ -z "$targets_csv" ]]; then
+    note_skipped "cli: no default targets for this host"
+    return 0
+  fi
+
+  IFS=',' read -r -a cli_targets <<< "$targets_csv"
+  for target in "${cli_targets[@]}"; do
+    [[ -n "$target" ]] || continue
+    case "$target" in
+      *-apple-darwin)
+        if [[ "$(uname -s)" != "Darwin" ]]; then
+          note_skipped "cli ${target}: host is not Darwin"
+          continue
+        fi
+        if ! build_cli_darwin_target "$target"; then
+          note_skipped "cli ${target}: build failed"
+        fi
+        ;;
+      x86_64-unknown-linux-gnu)
+        if ! build_cli_linux_target "$target"; then
+          note_skipped "cli ${target}: build failed"
+        fi
+        ;;
+      *)
+        note_skipped "cli ${target}: unsupported target"
+        ;;
+    esac
+  done
+
+  if [[ "${#ASSET_PATHS[@]}" -eq "$built_before" ]]; then
+    note_skipped "cli: no command line archives were produced"
+  fi
+}
+
 # ---------- Run steps ----------
 echo "=== iris-chat release $TAG ==="
 echo "Release tree:    $RELEASE_TREE"
@@ -253,6 +578,7 @@ run_step macos   build_macos
 run_step windows build_windows
 run_step android build_android
 run_step linux   build_linux
+run_step cli     build_cli
 run_step ios     build_ios
 
 if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -271,6 +597,10 @@ mkdir -p "$STAGE_DIR/assets"
 for asset in "${ASSET_PATHS[@]}"; do
   cp "$asset" "$STAGE_DIR/assets/"
 done
+
+if compgen -G "$STAGE_DIR/assets/iris-*.tar.gz" >/dev/null; then
+  write_cli_bootstrap_installer "$STAGE_DIR/install.sh" "$(release_gateway_base_url)"
+fi
 
 CREATED_AT="$(date -u +%s)"
 COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_GIT_SHA")"
@@ -308,6 +638,14 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_
   echo "# Iris Chat $TAG"
   echo
   echo "Built from commit \`$COMMIT\`."
+  if [[ -f "$STAGE_DIR/install.sh" ]]; then
+    echo
+    echo "Command line install:"
+    echo
+    echo "\`\`\`bash"
+    echo "curl -fsSL $(release_gateway_base_url)/install.sh | sh"
+    echo "\`\`\`"
+  fi
   echo
   echo "## Downloads"
   echo
