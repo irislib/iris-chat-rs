@@ -255,7 +255,7 @@ fn invite_create_group_create_relays_and_logout_are_scriptable() {
 }
 
 #[test]
-fn listen_streams_new_sqlite_messages_for_agents() {
+fn tail_follow_streams_new_sqlite_messages_for_agents() {
     let dir = TempDir::new().unwrap();
     let bob = TempDir::new().unwrap();
     run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
@@ -265,17 +265,45 @@ fn listen_streams_new_sqlite_messages_for_agents() {
     let chat = run_iris(dir.path(), &["chat", "create", bob_user_id]);
     let chat_id = chat["data"]["chat"]["chat_id"].as_str().unwrap();
 
+    let mut child = start_iris(dir.path(), &["tail", "--follow", "--interval-ms", "100"]);
+    let stdout = child.stdout.take().expect("stdout");
+    let mut reader = BufReader::new(stdout);
+    let ready = read_json_line(&mut reader);
+    assert_eq!(ready["command"], "tail");
+    assert_eq!(ready["data"]["ready"], true);
+    assert_eq!(ready["data"]["network"], false);
+
+    run_iris(dir.path(), &["send", chat_id, "from another process"]);
+    let message = read_json_line(&mut reader);
+    assert_eq!(message["command"], "message");
+    assert_eq!(message["data"]["body"], "from another process");
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
+fn listen_owns_the_core_lock_for_the_data_dir() {
+    let dir = TempDir::new().unwrap();
+    run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
+
     let mut child = start_iris(dir.path(), &["listen", "--interval-ms", "100"]);
     let stdout = child.stdout.take().expect("stdout");
     let mut reader = BufReader::new(stdout);
     let ready = read_json_line(&mut reader);
     assert_eq!(ready["command"], "listen");
     assert_eq!(ready["data"]["ready"], true);
+    assert_eq!(ready["data"]["network"], true);
 
-    run_iris(dir.path(), &["send", chat_id, "from another process"]);
-    let message = read_json_line(&mut reader);
-    assert_eq!(message["command"], "message");
-    assert_eq!(message["data"]["body"], "from another process");
+    let error = run_iris_error(dir.path(), &["whoami"]);
+    assert_eq!(error["status"], "error");
+    assert!(
+        error["error"]
+            .as_str()
+            .unwrap()
+            .contains("already using this data folder"),
+        "unexpected error: {error}"
+    );
 
     let _ = child.kill();
     let _ = child.wait();

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- Make `iris listen` run the full Iris core/network listener and own the data-dir lock.
+- Move read-only SQLite streaming to `iris tail --follow`.
+- Add CLI interop coverage for receiving messages through `iris listen`.
+
 ## 0.1.3
 
 - Add `iris sync` for explicit CLI relay catch-up.

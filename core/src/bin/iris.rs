@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -7,7 +8,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use iris_chat_core::{
     AppAction, AppReconciler, AppState, AppUpdate, ChatKind, ChatMessageSnapshot,
-    ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, FfiApp,
+    ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState, DesktopNearbyObserver,
+    DesktopNearbySnapshot, DeviceAuthorizationState, FfiApp, FfiDesktopNearby,
     GroupDetailsSnapshot,
 };
 use rusqlite::Connection;
@@ -52,12 +54,20 @@ enum Commands {
     Tail {
         #[arg(short, long, default_value_t = 20)]
         limit: usize,
+        #[arg(short, long)]
+        follow: bool,
+        #[arg(short, long)]
+        chat: Option<String>,
+        #[arg(long, default_value_t = 1000)]
+        interval_ms: u64,
     },
     Listen {
         #[arg(short, long)]
         chat: Option<String>,
         #[arg(long, default_value_t = 1000)]
         interval_ms: u64,
+        #[arg(long)]
+        nearby_lan: bool,
     },
     #[command(subcommand)]
     Account(AccountCommands),
@@ -268,6 +278,12 @@ struct CliApp {
     reconciler: Arc<CliReconciler>,
 }
 
+struct CliNearbyObserver;
+
+impl DesktopNearbyObserver for CliNearbyObserver {
+    fn desktop_nearby_changed(&self, _snapshot: DesktopNearbySnapshot) {}
+}
+
 #[derive(Serialize)]
 struct Envelope<T: Serialize> {
     status: &'static str,
@@ -308,8 +324,26 @@ fn run(cli: Cli) -> Result<()> {
     let command_name = command_name(&cli.command).to_string();
     let data = match cli.command {
         Commands::Search { query, limit } => search_messages(&data_dir, &query, limit)?,
-        Commands::Tail { limit } => tail_messages(&data_dir, limit)?,
-        Commands::Listen { chat, interval_ms } => listen(&data_dir, chat.as_deref(), interval_ms)?,
+        Commands::Tail {
+            limit,
+            follow,
+            chat,
+            interval_ms,
+        } => {
+            if follow {
+                follow_messages(&data_dir, chat.as_deref(), interval_ms, "tail")?;
+                return Ok(());
+            }
+            tail_messages(&data_dir, limit, chat.as_deref())?
+        }
+        Commands::Listen {
+            chat,
+            interval_ms,
+            nearby_lan,
+        } => {
+            listen(&data_dir, chat.as_deref(), interval_ms, nearby_lan)?;
+            return Ok(());
+        }
         command => {
             let cli_app = CliApp::open(&data_dir)?;
             let data = handle_command(&cli_app, &data_dir, command)?;
@@ -411,7 +445,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             Ok(state_json(&state))
         }
         Commands::Search { .. } | Commands::Tail { .. } | Commands::Listen { .. } => {
-            unreachable!("read-only commands are handled before the app core starts")
+            unreachable!("streaming and read-only commands are handled before regular dispatch")
         }
         Commands::Account(AccountCommands::Create { name }) => {
             cli.dispatch_and_wait(AppAction::CreateAccount { name }, Duration::from_secs(4))?;
@@ -920,15 +954,25 @@ fn search_messages(data_dir: &Path, query: &str, limit: usize) -> Result<Value> 
     Ok(json!({ "messages": messages }))
 }
 
-fn tail_messages(data_dir: &Path, limit: usize) -> Result<Value> {
+fn tail_messages(data_dir: &Path, limit: usize, chat: Option<&str>) -> Result<Value> {
     let conn = open_existing_db(data_dir)?;
-    let mut stmt = conn.prepare(
-        "SELECT chat_id, id, body, is_outgoing, created_at_secs, delivery
-         FROM messages
-         ORDER BY created_at_secs DESC, id DESC
-         LIMIT ?1",
-    )?;
-    let rows = stmt.query_map([limit as i64], |row| {
+    let sql = match chat {
+        Some(_) => {
+            "SELECT chat_id, id, body, is_outgoing, created_at_secs, delivery
+             FROM messages
+             WHERE chat_id = ?1
+             ORDER BY created_at_secs DESC, id DESC
+             LIMIT ?2"
+        }
+        None => {
+            "SELECT chat_id, id, body, is_outgoing, created_at_secs, delivery
+             FROM messages
+             ORDER BY created_at_secs DESC, id DESC
+             LIMIT ?1"
+        }
+    };
+    let mut stmt = conn.prepare(sql)?;
+    let map_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<Value> {
         Ok(json!({
             "chat_id": row.get::<_, String>(0)?,
             "id": row.get::<_, String>(1)?,
@@ -937,46 +981,132 @@ fn tail_messages(data_dir: &Path, limit: usize) -> Result<Value> {
             "created_at_secs": row.get::<_, i64>(4)?,
             "delivery": row.get::<_, String>(5)?,
         }))
-    })?;
+    };
     let mut messages = Vec::new();
-    for row in rows {
-        messages.push(row?);
+    match chat {
+        Some(chat_id) => {
+            let rows = stmt.query_map((chat_id, limit as i64), map_row)?;
+            for row in rows {
+                messages.push(row?);
+            }
+        }
+        None => {
+            let rows = stmt.query_map([limit as i64], map_row)?;
+            for row in rows {
+                messages.push(row?);
+            }
+        }
     }
     messages.reverse();
     Ok(json!({ "messages": messages }))
 }
 
-fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64) -> Result<Value> {
+fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: bool) -> Result<()> {
+    let interval = Duration::from_millis(interval_ms.max(100));
+    let cli = CliApp::open(data_dir)?;
+    let state = cli.app.state();
+    fail_on_toast(&state)?;
+    require_account(&state)?;
+    let chat_filter = normalize_chat_filter(&state, chat);
+    if let Some(chat_id) = chat_filter.as_ref() {
+        cli.dispatch_and_wait(
+            AppAction::OpenChat {
+                chat_id: chat_id.clone(),
+            },
+            Duration::from_secs(2),
+        )?;
+        fail_on_toast(&cli.app.state())?;
+    }
+    let mut seen = latest_message_keys(data_dir, chat_filter.as_deref())?;
+    let _nearby = if nearby_lan {
+        let service = FfiDesktopNearby::new(cli.app.clone(), Box::new(CliNearbyObserver));
+        let name = state
+            .account
+            .as_ref()
+            .map(|account| account.display_name.trim())
+            .filter(|name| !name.is_empty())
+            .unwrap_or("Iris")
+            .to_string();
+        service.start(name);
+        Some(service)
+    } else {
+        None
+    };
+    let state = cli.dispatch_and_wait(AppAction::AppForegrounded, Duration::from_secs(5))?;
+    fail_on_toast(&state)?;
+
+    print_stream_envelope(
+        "listen",
+        json!({
+            "ready": true,
+            "chat": chat_filter.clone(),
+            "network": true,
+            "nearby_lan": nearby_lan,
+        }),
+    )?;
+    let mut last_foreground = Instant::now();
+
+    loop {
+        thread::sleep(interval);
+        if last_foreground.elapsed() >= Duration::from_secs(60) {
+            cli.app.dispatch(AppAction::AppForegrounded);
+            last_foreground = Instant::now();
+        }
+        stream_new_messages(data_dir, chat_filter.as_deref(), &mut seen)?;
+    }
+}
+
+fn follow_messages(
+    data_dir: &Path,
+    chat: Option<&str>,
+    interval_ms: u64,
+    command: &str,
+) -> Result<()> {
     let interval = Duration::from_millis(interval_ms.max(100));
     let mut seen = latest_message_keys(data_dir, chat)?;
+    print_stream_envelope(
+        command,
+        json!({ "ready": true, "chat": chat, "network": false }),
+    )?;
+    loop {
+        thread::sleep(interval);
+        stream_new_messages(data_dir, chat, &mut seen)?;
+    }
+}
+
+fn stream_new_messages(
+    data_dir: &Path,
+    chat: Option<&str>,
+    seen: &mut std::collections::HashSet<String>,
+) -> Result<()> {
+    let messages = new_message_rows(data_dir, chat, seen)?;
+    for message in messages {
+        if let (Some(chat_id), Some(id)) = (
+            message.get("chat_id").and_then(Value::as_str),
+            message.get("id").and_then(Value::as_str),
+        ) {
+            seen.insert(format!("{chat_id}\0{id}"));
+        }
+        print_stream_envelope("message", message)?;
+    }
+    Ok(())
+}
+
+fn print_stream_envelope(command: &str, data: Value) -> Result<()> {
     println!(
         "{}",
         serde_json::to_string(&Envelope {
             status: "ok",
-            command: "listen".to_string(),
-            data: json!({ "ready": true, "chat": chat }),
+            command: command.to_string(),
+            data,
         })?
     );
-    loop {
-        thread::sleep(interval);
-        let messages = new_message_rows(data_dir, chat, &seen)?;
-        for message in messages {
-            if let (Some(chat_id), Some(id)) = (
-                message.get("chat_id").and_then(Value::as_str),
-                message.get("id").and_then(Value::as_str),
-            ) {
-                seen.insert(format!("{chat_id}\0{id}"));
-            }
-            println!(
-                "{}",
-                serde_json::to_string(&Envelope {
-                    status: "ok",
-                    command: "message".to_string(),
-                    data: message,
-                })?
-            );
-        }
-    }
+    std::io::stdout().flush()?;
+    Ok(())
+}
+
+fn normalize_chat_filter(state: &AppState, chat: Option<&str>) -> Option<String> {
+    chat.map(|input| chat_action_input(state, input))
 }
 
 fn latest_message_keys(
