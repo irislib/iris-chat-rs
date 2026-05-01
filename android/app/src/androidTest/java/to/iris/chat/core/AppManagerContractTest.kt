@@ -39,7 +39,10 @@ import to.iris.chat.rust.AppReconciler
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.AppUpdate
 import to.iris.chat.rust.BusyState
+import to.iris.chat.rust.ChatKind
+import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
+import to.iris.chat.rust.MobilePushNotificationResolution
 import to.iris.chat.rust.MobilePushSyncSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.Router
@@ -96,6 +99,48 @@ class AppManagerContractTest {
         appManager.appForegrounded()
 
         assertTrue(rust.dispatchedActions.contains(AppAction.AppForegrounded))
+    }
+
+    @Test
+    fun active_chat_notification_suppression_matches_direct_sender() {
+        rustFactory.initialStates += makeAppState(
+            currentChat = makeCurrentChat(chatId = "ABCDEF", kind = ChatKind.DIRECT),
+        )
+        val appManager = createManager()
+        appManager.appForegrounded()
+
+        val resolution =
+            MobilePushNotificationResolution(
+                shouldShow = true,
+                title = "Alice",
+                body = "hello",
+                payloadJson = """{"sender_pubkey":"abcdef"}""",
+            )
+
+        assertTrue(appManager.shouldSuppressNotificationForActiveChat(resolution))
+    }
+
+    @Test
+    fun active_chat_notification_suppression_matches_group_payload_id() {
+        rustFactory.initialStates += makeAppState(
+            currentChat = makeCurrentChat(
+                chatId = "group:Group-123",
+                kind = ChatKind.GROUP,
+                groupId = "Group-123",
+            ),
+        )
+        val appManager = createManager()
+        appManager.appForegrounded()
+
+        val resolution =
+            MobilePushNotificationResolution(
+                shouldShow = true,
+                title = "Group",
+                body = "hello",
+                payloadJson = """{"group_id":"group-123"}""",
+            )
+
+        assertTrue(appManager.shouldSuppressNotificationForActiveChat(resolution))
     }
 
     @Test
@@ -401,6 +446,7 @@ class AppManagerContractTest {
         router: Router = Router(Screen.Welcome, emptyList()),
         toast: String? = null,
         account: AccountSnapshot? = null,
+        currentChat: CurrentChatSnapshot? = null,
     ): AppState =
         AppState(
             rev = rev,
@@ -423,7 +469,7 @@ class AppManagerContractTest {
                     uploadingAttachment = false,
                 ),
             chatList = emptyList(),
-            currentChat = null,
+            currentChat = currentChat,
             groupDetails = null,
             publicInvite = null,
             linkDevice = null,
@@ -454,6 +500,25 @@ class AppManagerContractTest {
                     mobilePushServerUrl = "",
                 ),
             toast = toast,
+        )
+
+    private fun makeCurrentChat(
+        chatId: String,
+        kind: ChatKind,
+        groupId: String? = null,
+    ): CurrentChatSnapshot =
+        CurrentChatSnapshot(
+            chatId = chatId,
+            kind = kind,
+            displayName = "Chat",
+            subtitle = null,
+            pictureUrl = null,
+            groupId = groupId,
+            memberCount = 0u,
+            messageTtlSeconds = null,
+            isMuted = false,
+            messages = emptyList(),
+            typingIndicators = emptyList(),
         )
 
     private fun makeLoggedInState(rev: ULong): AppState =

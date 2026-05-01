@@ -447,7 +447,11 @@ final class AppManager: ObservableObject {
 
         self.rust = resolvedRust
         self.secretStore = resolvedSecretStore
+#if os(iOS)
+        self.desktopNotifications = desktopNotifications ?? NoopDesktopNotificationPoster()
+#else
         self.desktopNotifications = desktopNotifications ?? SystemDesktopNotificationPoster()
+#endif
         self.dataDir = resolvedDataDir
         self.state = initialState
         self.lastRevApplied = initialState.rev
@@ -662,8 +666,7 @@ final class AppManager: ObservableObject {
         let userInfo = content.userInfo
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
             if let payloadJson = serializedPushPayload(content: content),
-               let chatID = chatID(fromPushPayloadJson: payloadJson),
-               (isPushChatOpen(chatID) || isPushChatMuted(chatID)) {
+               shouldBlockPushNotification(payloadJson: payloadJson) {
                 return []
             }
             return [.banner, .sound, .list]
@@ -677,10 +680,8 @@ final class AppManager: ObservableObject {
         guard resolution.shouldShow else {
             return []
         }
-        if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) {
-            if isPushChatOpen(chatID) || isPushChatMuted(chatID) {
-                return []
-            }
+        if shouldBlockPushNotification(payloadJson: resolution.payloadJson) {
+            return []
         }
         await postForegroundDecryptedPush(resolution: resolution)
         return []
@@ -691,8 +692,7 @@ final class AppManager: ObservableObject {
     ) async -> UNNotificationPresentationOptions {
         if userInfo[foregroundDecryptedPushMarkerKey] as? Bool == true {
             if let payloadJson = serializedPushPayload(userInfo: userInfo),
-               let chatID = chatID(fromPushPayloadJson: payloadJson),
-               (isPushChatOpen(chatID) || isPushChatMuted(chatID)) {
+               shouldBlockPushNotification(payloadJson: payloadJson) {
                 return []
             }
             return [.banner, .sound, .list]
@@ -703,10 +703,8 @@ final class AppManager: ObservableObject {
         guard resolution.shouldShow else {
             return []
         }
-        if let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) {
-            if isPushChatOpen(chatID) || isPushChatMuted(chatID) {
-                return []
-            }
+        if shouldBlockPushNotification(payloadJson: resolution.payloadJson) {
+            return []
         }
         await postForegroundDecryptedPush(resolution: resolution)
         return []
@@ -719,10 +717,7 @@ final class AppManager: ObservableObject {
         guard resolution.shouldShow else {
             return true
         }
-        guard let chatID = chatID(fromPushPayloadJson: resolution.payloadJson) else {
-            return false
-        }
-        return isPushChatOpen(chatID) || isPushChatMuted(chatID)
+        return shouldBlockPushNotification(payloadJson: resolution.payloadJson)
     }
 
     func handlePushNotificationTap(userInfo: [AnyHashable: Any]) {
@@ -808,6 +803,12 @@ final class AppManager: ObservableObject {
         }
     }
 
+    private func shouldBlockPushNotification(payloadJson: String) -> Bool {
+        chatIDs(fromPushPayloadJson: payloadJson).contains { chatID in
+            isPushChatOpen(chatID) || isPushChatMuted(chatID)
+        }
+    }
+
     private var currentScreenChatID: String? {
         guard case .chat(let chatID) = activeScreen else {
             return nil
@@ -824,11 +825,11 @@ final class AppManager: ObservableObject {
         if open.caseInsensitiveCompare(push) == .orderedSame {
             return true
         }
-        if open.hasPrefix(mobilePushGroupChatPrefix) {
+        if open.lowercased().hasPrefix(mobilePushGroupChatPrefix) {
             let openGroupID = String(open.dropFirst(mobilePushGroupChatPrefix.count))
             return openGroupID.caseInsensitiveCompare(push) == .orderedSame
         }
-        if push.hasPrefix(mobilePushGroupChatPrefix) {
+        if push.lowercased().hasPrefix(mobilePushGroupChatPrefix) {
             let pushGroupID = String(push.dropFirst(mobilePushGroupChatPrefix.count))
             return open.caseInsensitiveCompare(pushGroupID) == .orderedSame
         }
@@ -1398,6 +1399,11 @@ final class AppManager: ObservableObject {
         guard oldState.account != nil, nextState.preferences.desktopNotificationsEnabled else {
             return
         }
+        let openChatIDs = [
+            activeChatID(in: oldState),
+            activeChatID(in: nextState),
+            nextState.currentChat?.chatId
+        ].compactMap { $0 }
         let oldUnreadByChat = Dictionary(
             uniqueKeysWithValues: oldState.chatList.map { ($0.chatId, $0.unreadCount) }
         )
@@ -1408,7 +1414,7 @@ final class AppManager: ObservableObject {
             guard chat.lastMessageIsOutgoing == false else {
                 continue
             }
-            guard chat.chatId != nextState.currentChat?.chatId else {
+            guard !openChatIDs.contains(where: { appChatID($0, matches: chat.chatId) }) else {
                 continue
             }
             let previousUnread = oldUnreadByChat[chat.chatId] ?? 0
@@ -1420,6 +1426,35 @@ final class AppManager: ObservableObject {
             let body = preview.isEmpty ? "New message" : preview
             desktopNotifications.post(title: chat.displayName, body: body)
         }
+    }
+
+    private func activeChatID(in state: AppState) -> String? {
+        let screen = state.router.screenStack.last ?? state.router.defaultScreen
+        guard case .chat(let chatID) = screen else {
+            return nil
+        }
+        return chatID
+    }
+
+    private func appChatID(_ openChatID: String, matches candidateChatID: String) -> Bool {
+        let groupPrefix = "group:"
+        let open = openChatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = candidateChatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !open.isEmpty, !candidate.isEmpty else {
+            return false
+        }
+        if open.caseInsensitiveCompare(candidate) == .orderedSame {
+            return true
+        }
+        if open.lowercased().hasPrefix(groupPrefix) {
+            let openGroupID = String(open.dropFirst(groupPrefix.count))
+            return openGroupID.caseInsensitiveCompare(candidate) == .orderedSame
+        }
+        if candidate.lowercased().hasPrefix(groupPrefix) {
+            let candidateGroupID = String(candidate.dropFirst(groupPrefix.count))
+            return open.caseInsensitiveCompare(candidateGroupID) == .orderedSame
+        }
+        return false
     }
 
     private func stageOutgoingAttachment(_ sourceURL: URL) throws -> (path: String, filename: String) {
@@ -1667,17 +1702,65 @@ private func foregroundDecryptedPushUserInfo(from payloadJson: String) -> [AnyHa
 }
 
 private func chatID(fromPushPayloadJson payloadJson: String) -> String? {
+    chatIDs(fromPushPayloadJson: payloadJson).first
+}
+
+private func chatIDs(fromPushPayloadJson payloadJson: String) -> [String] {
     guard let data = payloadJson.data(using: .utf8),
           let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        return nil
+        return []
     }
-    if let groupID = normalizedPushString(object["group_id"]) {
-        return "\(mobilePushGroupChatPrefix)\(groupID)"
+    var seen = Set<String>()
+    var result: [String] = []
+
+    func append(_ raw: String?) {
+        guard let candidate = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !candidate.isEmpty else {
+            return
+        }
+        let key = candidate.lowercased()
+        guard seen.insert(key).inserted else {
+            return
+        }
+        result.append(candidate)
     }
-    if let sender = normalizedPushString(object["sender_pubkey"]) {
-        return sender
+
+    func appendGroup(_ raw: String?) {
+        guard let groupID = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !groupID.isEmpty else {
+            return
+        }
+        if groupID.lowercased().hasPrefix(mobilePushGroupChatPrefix) {
+            append(groupID)
+        } else {
+            append("\(mobilePushGroupChatPrefix)\(groupID)")
+        }
     }
-    return nil
+
+    [
+        "chat_id",
+        "chatId",
+        "conversation_id",
+        "conversationId",
+        "thread_id",
+        "threadId",
+        "sender_pubkey",
+        "senderPubkey",
+        "author_pubkey",
+        "authorPubkey"
+    ].forEach { key in
+        append(normalizedPushString(object[key]))
+    }
+    [
+        "group_id",
+        "groupId",
+        "group_chat_id",
+        "groupChatId"
+    ].forEach { key in
+        appendGroup(normalizedPushString(object[key]))
+    }
+
+    return result
 }
 
 private func normalizedPushString(_ value: Any?) -> String? {

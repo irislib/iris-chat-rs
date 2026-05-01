@@ -12,6 +12,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import java.io.IOException
 import java.io.File
+import java.util.Locale
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -149,6 +150,77 @@ private class LiveRustAppClient(
         ffi.shutdown()
     }
 }
+
+private const val MOBILE_PUSH_GROUP_CHAT_PREFIX = "group:"
+
+private fun activeNotificationChatIds(
+    currentChat: CurrentChatSnapshot?,
+    router: Router,
+): Set<String> =
+    buildSet {
+        val activeScreen = router.screenStack.lastOrNull() ?: router.defaultScreen
+        if (activeScreen is Screen.Chat) {
+            normalizedNotificationId(activeScreen.chatId)?.let(::add)
+        }
+        normalizedNotificationId(currentChat?.chatId.orEmpty())?.let(::add)
+        currentChat?.groupId
+            ?.let(::normalizedNotificationId)
+            ?.let { groupId ->
+                add("$MOBILE_PUSH_GROUP_CHAT_PREFIX$groupId")
+            }
+    }
+
+private fun pushNotificationChatCandidates(payload: JSONObject): Set<String> =
+    buildSet {
+        listOf(
+            "chat_id",
+            "chatId",
+            "conversation_id",
+            "conversationId",
+            "thread_id",
+            "threadId",
+            "sender_pubkey",
+            "senderPubkey",
+            "author_pubkey",
+            "authorPubkey",
+        ).forEach { key ->
+            normalizedNotificationId(payload.optString(key))?.let(::add)
+        }
+        listOf("group_id", "groupId", "group_chat_id", "groupChatId").forEach { key ->
+            normalizedNotificationId(payload.optString(key))?.let { groupId ->
+                if (groupId.startsWith(MOBILE_PUSH_GROUP_CHAT_PREFIX)) {
+                    add(groupId)
+                } else {
+                    add("$MOBILE_PUSH_GROUP_CHAT_PREFIX$groupId")
+                }
+            }
+        }
+    }
+
+private fun notificationChatIdMatches(
+    activeChatId: String,
+    pushChatId: String,
+): Boolean {
+    if (activeChatId == pushChatId) {
+        return true
+    }
+    val activeGroupId = activeChatId.removePrefix(MOBILE_PUSH_GROUP_CHAT_PREFIX)
+        .takeIf { activeChatId.startsWith(MOBILE_PUSH_GROUP_CHAT_PREFIX) }
+    val pushGroupId = pushChatId.removePrefix(MOBILE_PUSH_GROUP_CHAT_PREFIX)
+        .takeIf { pushChatId.startsWith(MOBILE_PUSH_GROUP_CHAT_PREFIX) }
+    return when {
+        activeGroupId != null && pushGroupId != null -> activeGroupId == pushGroupId
+        activeGroupId != null -> activeGroupId == pushChatId
+        pushGroupId != null -> activeChatId == pushGroupId
+        else -> false
+    }
+}
+
+private fun normalizedNotificationId(value: String): String? =
+    value
+        .trim()
+        .takeIf { it.isNotEmpty() }
+        ?.lowercase(Locale.ROOT)
 
 data class NearbyPublishedEvent(
     val eventId: String,
@@ -879,19 +951,18 @@ class AppManager(
         if (!appInForeground || !resolution.shouldShow) {
             return false
         }
-        val activeChatId = mutableState.value.currentChat?.chatId?.trim()?.lowercase()
-            ?: return false
-        if (activeChatId.isEmpty()) {
+        val snapshot = mutableState.value
+        val activeChatIds = activeNotificationChatIds(snapshot.currentChat, snapshot.router)
+        if (activeChatIds.isEmpty()) {
             return false
         }
 
         val payload = runCatching { JSONObject(resolution.payloadJson) }.getOrNull()
             ?: return false
-        return listOf(
-            payload.optString("group_id"),
-            payload.optString("sender_pubkey"),
-        ).any { candidate ->
-            candidate.trim().lowercase() == activeChatId
+        return pushNotificationChatCandidates(payload).any { candidate ->
+            activeChatIds.any { activeChatId ->
+                notificationChatIdMatches(activeChatId, candidate)
+            }
         }
     }
 

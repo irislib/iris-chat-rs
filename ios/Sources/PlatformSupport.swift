@@ -452,6 +452,13 @@ protocol DesktopNotificationPosting {
     func post(title: String, body: String)
 }
 
+final class NoopDesktopNotificationPoster: DesktopNotificationPosting {
+    func post(title: String, body: String) {
+        _ = title
+        _ = body
+    }
+}
+
 final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
     private let center = UNUserNotificationCenter.current()
 

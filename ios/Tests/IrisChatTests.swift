@@ -331,6 +331,31 @@ final class IrisChatTests: XCTestCase {
 
         XCTAssertTrue(options.isEmpty, "generic Iris APNS fallback should not be presented in foreground")
     }
+
+    @MainActor
+    func testForegroundPushSuppressionMatchesCanonicalChatIDPayload() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let manager = AppManager(
+            rust: MockRustApp(
+                state: makeAppState(
+                    router: Router(defaultScreen: .chat(chatId: "chat-1"), screenStack: [])
+                )
+            ),
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+
+        let suppressed = manager.shouldSuppressPushNotification(userInfo: [
+            "chat_id": "chat-1",
+            "title": "Bob",
+            "body": "hello",
+        ])
+
+        XCTAssertTrue(suppressed)
+    }
 #endif
 
     @MainActor
@@ -359,6 +384,35 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(posted)
         XCTAssertEqual(notifications.posts.first?.title, "Bob")
         XCTAssertEqual(notifications.posts.first?.body, "new text")
+        _ = manager
+    }
+
+    @MainActor
+    func testDesktopNotificationSuppressedForActiveChatRoute() async {
+        let activeRoute = Router(defaultScreen: .chat(chatId: "chat-1"), screenStack: [])
+        let rust = MockRustApp(
+            state: makeAppState(
+                rev: 1,
+                router: activeRoute,
+                account: makeAccount(),
+                chatList: [makeChatThread(unreadCount: 0)]
+            )
+        )
+        let notifications = MockDesktopNotificationPoster()
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            desktopNotifications: notifications
+        )
+
+        rust.emit(.fullState(makeAppState(
+            rev: 2,
+            router: activeRoute,
+            account: makeAccount(),
+            chatList: [makeChatThread(unreadCount: 1, preview: "new text")]
+        )))
+
+        XCTAssertTrue(notifications.posts.isEmpty)
         _ = manager
     }
 
