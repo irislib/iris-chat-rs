@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.8
+
+- Update to `nostr-double-ratchet` 0.0.132, including the shared runtime
+  known-device roster helper and fresh same-owner send regression coverage.
+
 ## 0.1.7
 
 - Keep restored same-secret CLI sessions from publishing a one-device AppKeys
