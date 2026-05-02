@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.10
+
+- Update to `nostr-double-ratchet` 0.0.134, where low-level sessions only
+  encrypt/decrypt unsigned inner events and chat/reaction/typing/expiration
+  rumor construction lives in shared builder helpers.
+
 ## 0.1.9
 
 - Update to `nostr-double-ratchet` 0.0.133 so Rust runtime/device-roster
