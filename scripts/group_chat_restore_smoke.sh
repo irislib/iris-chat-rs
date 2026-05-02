@@ -34,10 +34,11 @@ PACKAGE_NAME="to.iris.chat.debug"
 TEST_PACKAGE_NAME="to.iris.chat.test"
 RELAY_LOG="${RELAY_LOG:-/tmp/ndr-group-restore-relay.log}"
 RELAY_PID=""
+DEFAULT_AVDS=("Medium_Phone_API_36.1" "Pixel_Fold")
 
-PRIMARY_SERIAL="${PRIMARY_SERIAL:-emulator-5554}"
-LINKED_SERIAL="${LINKED_SERIAL:-emulator-5556}"
-ADMIN_SERIAL="${ADMIN_SERIAL:-emulator-5558}"
+PRIMARY_SERIAL="${PRIMARY_SERIAL:-}"
+LINKED_SERIAL="${LINKED_SERIAL:-}"
+ADMIN_SERIAL="${ADMIN_SERIAL:-}"
 GROUP_NAME="${GROUP_NAME:-RestoreMatrixGroup}"
 ADMIN_MESSAGE="${ADMIN_MESSAGE:-restore_matrix_admin_message}"
 LINKED_MESSAGE="${LINKED_MESSAGE:-restore_matrix_linked_message}"
@@ -48,9 +49,9 @@ usage() {
 Usage: scripts/group_chat_restore_smoke.sh [options]
 
 Options:
-  --primary SERIAL      Primary-owner device serial. Default: ${PRIMARY_SERIAL}
-  --linked SERIAL       Linked-device serial. Default: ${LINKED_SERIAL}
-  --admin SERIAL        Admin/creator device serial. Default: ${ADMIN_SERIAL}
+  --primary SERIAL      Primary-owner device serial. Default: auto-selected
+  --linked SERIAL       Linked-device serial. Default: auto-selected
+  --admin SERIAL        Admin/creator device serial. Default: auto-selected
   --group-name NAME     Group name. Default: ${GROUP_NAME}
   --no-clear            Keep app state instead of clearing both app packages first.
   -h, --help            Show this help.
@@ -103,6 +104,51 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+add_unique_serial() {
+  local serial="$1"
+  local existing
+  [[ -z "${serial}" ]] && return 0
+  for existing in "${SELECTED_SERIALS[@]:-}"; do
+    [[ "${existing}" == "${serial}" ]] && return 0
+  done
+  SELECTED_SERIALS+=("${serial}")
+}
+
+connected_serials() {
+  "${ADB}" devices | awk 'NR>1 && $2 == "device" { print $1 }'
+}
+
+select_default_serials() {
+  SELECTED_SERIALS=()
+  add_unique_serial "${PRIMARY_SERIAL}"
+  add_unique_serial "${LINKED_SERIAL}"
+  add_unique_serial "${ADMIN_SERIAL}"
+
+  if [[ -z "${PRIMARY_SERIAL}" || -z "${LINKED_SERIAL}" || -z "${ADMIN_SERIAL}" ]]; then
+    local boot_output line serial
+    boot_output="$("${ROOT_DIR}/scripts/run_android_emulators.sh" --headless "${DEFAULT_AVDS[@]}")"
+    while IFS= read -r line; do
+      serial="$(awk '{print $2}' <<<"${line}")"
+      add_unique_serial "${serial}"
+    done <<<"${boot_output}"
+
+    while IFS= read -r serial; do
+      add_unique_serial "${serial}"
+    done < <(connected_serials)
+  fi
+
+  if [[ ${#SELECTED_SERIALS[@]} -lt 3 ]]; then
+    echo "Need three Android devices for group restore smoke; found ${#SELECTED_SERIALS[@]}." >&2
+    exit 1
+  fi
+
+  PRIMARY_SERIAL="${PRIMARY_SERIAL:-${SELECTED_SERIALS[0]}}"
+  LINKED_SERIAL="${LINKED_SERIAL:-${SELECTED_SERIALS[1]}}"
+  ADMIN_SERIAL="${ADMIN_SERIAL:-${SELECTED_SERIALS[2]}}"
+}
+
+select_default_serials
 
 for serial in "${PRIMARY_SERIAL}" "${LINKED_SERIAL}" "${ADMIN_SERIAL}"; do
   if ! "${ADB}" -s "${serial}" get-state >/dev/null 2>&1; then
@@ -175,9 +221,9 @@ trap cleanup EXIT
 
 if [[ "${CLEAR_STATE}" -eq 1 ]]; then
   for serial in "${PRIMARY_SERIAL}" "${LINKED_SERIAL}" "${ADMIN_SERIAL}"; do
-    echo "Clearing app state on ${serial}"
-    "${ADB}" -s "${serial}" shell pm clear "${PACKAGE_NAME}" >/dev/null
-    "${ADB}" -s "${serial}" shell pm clear "${TEST_PACKAGE_NAME}" >/dev/null || true
+    echo "Removing app state on ${serial}"
+    "${ADB}" -s "${serial}" uninstall "${PACKAGE_NAME}" >/dev/null 2>&1 || true
+    "${ADB}" -s "${serial}" uninstall "${TEST_PACKAGE_NAME}" >/dev/null 2>&1 || true
   done
 fi
 
