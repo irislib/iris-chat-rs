@@ -1,5 +1,5 @@
-# Iris Chat 3.0.10
+# Iris Chat 3.0.11
 
-- Updates encrypted chat internals to nostr-double-ratchet 0.0.135.
-- Improves direct-message subscription behavior and skipped-key recovery coverage.
-- Keeps the recent Nearby Wi-Fi reliability fixes.
+- Suppresses foreground notifications for the chat currently open on iOS.
+- Opens scanned or pasted invites immediately instead of leaving the link in the input.
+- Keeps invite acceptance responsive while message-server catch-up continues in the background.

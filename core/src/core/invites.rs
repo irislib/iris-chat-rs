@@ -37,7 +37,7 @@ impl AppCore {
 
         let result = match parse_public_invite_or_direct_chat_input(trimmed) {
             Ok(PublicInviteInput::Invite(invite)) => {
-                self.preload_invite_owner_app_keys(&invite);
+                self.schedule_invite_owner_app_keys_preload(&invite);
                 self.accept_parsed_invite(invite)
             }
             Ok(PublicInviteInput::DirectChat) => self.open_direct_chat_from_peer_input(trimmed),
@@ -87,7 +87,7 @@ impl AppCore {
         Ok(chat_id)
     }
 
-    fn preload_invite_owner_app_keys(&mut self, invite: &Invite) {
+    fn schedule_invite_owner_app_keys_preload(&self, invite: &Invite) {
         let Some(owner_pubkey) = invite.owner_public_key else {
             return;
         };
@@ -107,42 +107,44 @@ impl AppCore {
             .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
             .author(owner_pubkey)
             .limit(10);
-        let fetched = self.runtime.block_on(async {
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, Duration::from_secs(2)).await;
-            client.fetch_events(filter, Duration::from_secs(2)).await
+            let fetched = client.fetch_events(filter, Duration::from_secs(2)).await;
+            let Ok(events) = fetched else {
+                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                    category: "invite.app_keys.preload".to_string(),
+                    detail: format!("owner={} result=fetch_failed", owner_pubkey.to_hex()),
+                })));
+                return;
+            };
+
+            let latest = events
+                .iter()
+                .filter(|event| is_app_keys_event(event))
+                .max_by_key(|event| (event.created_at.as_secs(), event.id.to_hex()))
+                .cloned();
+            let Some(event) = latest else {
+                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                    category: "invite.app_keys.preload".to_string(),
+                    detail: format!("owner={} result=not_found", owner_pubkey.to_hex()),
+                })));
+                return;
+            };
+
+            let created_at = event.created_at.as_secs();
+            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                category: "invite.app_keys.preload".to_string(),
+                detail: format!(
+                    "owner={} result=queued created_at={created_at}",
+                    owner_pubkey.to_hex()
+                ),
+            })));
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::FetchCatchUpEvents(vec![event]),
+            )));
         });
-
-        let Ok(events) = fetched else {
-            self.push_debug_log(
-                "invite.app_keys.preload",
-                format!("owner={} result=fetch_failed", owner_pubkey.to_hex()),
-            );
-            return;
-        };
-
-        let latest = events
-            .iter()
-            .filter(|event| is_app_keys_event(event))
-            .max_by_key(|event| (event.created_at.as_secs(), event.id.to_hex()))
-            .cloned();
-        let Some(event) = latest else {
-            self.push_debug_log(
-                "invite.app_keys.preload",
-                format!("owner={} result=not_found", owner_pubkey.to_hex()),
-            );
-            return;
-        };
-
-        let created_at = event.created_at.as_secs();
-        self.apply_app_keys_event(&event);
-        self.push_debug_log(
-            "invite.app_keys.preload",
-            format!(
-                "owner={} result=applied created_at={created_at}",
-                owner_pubkey.to_hex()
-            ),
-        );
     }
 }
 

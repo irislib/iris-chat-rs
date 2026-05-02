@@ -2429,7 +2429,7 @@ struct JoinInviteScreen: View {
 
                 HStack(spacing: 10) {
                     Button("Paste") {
-                        inviteInput = PlatformClipboard.string() ?? ""
+                        submitInviteInput(PlatformClipboard.string() ?? "")
                     }
                     .buttonStyle(IrisSecondaryButtonStyle())
                     .accessibilityIdentifier("joinInvitePasteButton")
@@ -2442,7 +2442,7 @@ struct JoinInviteScreen: View {
                 }
 
                 Button(manager.state.busy.acceptingInvite ? "Joining…" : "Join chat") {
-                    manager.dispatch(.acceptInvite(inviteInput: normalizedInviteInput))
+                    submitInviteInput(inviteInput)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
                 .disabled(normalizedInviteInput.isEmpty || manager.state.busy.acceptingInvite)
@@ -2451,11 +2451,20 @@ struct JoinInviteScreen: View {
         }
         .sheet(isPresented: $showingScanner) {
             QrScannerSheet { code in
-                inviteInput = code
-                showingScanner = false
+                submitInviteInput(code)
             }
             .irisDismissOnMacOutsideClick { showingScanner = false }
         }
+    }
+
+    private func submitInviteInput(_ raw: String) {
+        let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        inviteInput = normalized
+        showingScanner = false
+        guard !normalized.isEmpty, !manager.state.busy.acceptingInvite else {
+            return
+        }
+        manager.dispatch(.acceptInvite(inviteInput: normalized))
     }
 }
 
