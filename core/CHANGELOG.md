@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.9
+
+- Update to `nostr-double-ratchet` 0.0.133 so Rust runtime/device-roster
+  inspection includes stored device sessions even when AppKeys are not cached.
+
 ## 0.1.8
 
 - Update to `nostr-double-ratchet` 0.0.132, including the shared runtime
