@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.6
+
+- Update to `nostr-double-ratchet` 0.0.128 so TypeScript and Rust stacks share
+  the same inactive send-capable session recovery release.
+
 ## 0.1.5
 
 - Import matching legacy `ndr` filesystem ratchet sessions into Iris SQLite storage on account startup.
