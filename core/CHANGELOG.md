@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.11
+
+- Update to `nostr-double-ratchet` 0.0.135, including the current direct
+  subscription behavior, skipped-key sender coverage, and send-session
+  selection parity.
+
 ## 0.1.10
 
 - Update to `nostr-double-ratchet` 0.0.134, where low-level sessions only
