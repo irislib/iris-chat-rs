@@ -120,6 +120,7 @@ pub struct AppCore {
     state: AppState,
     logged_in: Option<LoggedInState>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
+    private_chat_invites: BTreeMap<String, Invite>,
     threads: BTreeMap<String, ThreadRecord>,
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,

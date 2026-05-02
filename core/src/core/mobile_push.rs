@@ -44,7 +44,12 @@ impl AppCore {
         );
         let message_author_pubkeys = sorted_hexes(message_author_pubkeys);
         let invite_response_pubkeys = if self.preferences.invite_acceptance_notifications_enabled {
-            vec![logged_in.local_invite.inviter_ephemeral_public_key.to_hex()]
+            let mut pubkeys = HashSet::new();
+            pubkeys.insert(logged_in.local_invite.inviter_ephemeral_public_key.to_hex());
+            for invite in self.private_chat_invites.values() {
+                pubkeys.insert(invite.inviter_ephemeral_public_key.to_hex());
+            }
+            sorted_hexes(pubkeys)
         } else {
             Vec::new()
         };

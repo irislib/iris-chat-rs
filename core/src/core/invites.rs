@@ -1,5 +1,7 @@
 use super::*;
 
+const PRIVATE_CHAT_INVITE_KEY_PREFIX: &str = "private-chat-invites/";
+
 impl AppCore {
     pub(super) fn create_public_invite(&mut self) {
         if !self.can_use_chats() {
@@ -10,12 +12,90 @@ impl AppCore {
 
         self.state.busy.creating_invite = true;
         self.emit_state();
-        self.publish_local_identity_artifacts();
-        self.request_protocol_subscription_refresh();
-        self.persist_best_effort();
+
+        let result = (|| -> anyhow::Result<Invite> {
+            let logged_in = self
+                .logged_in
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
+            let device_pubkey = logged_in.device_keys.public_key();
+            let device_id = device_pubkey.to_hex();
+            let mut invite = Invite::create_new(device_pubkey, Some(device_id), Some(1))?;
+            invite.owner_public_key = Some(logged_in.owner_pubkey);
+            invite.purpose = Some("private".to_string());
+            logged_in.ndr_runtime.register_invite(invite.clone())?;
+            Ok(invite)
+        })();
+
+        match result {
+            Ok(invite) => {
+                if let Err(error) = self.store_private_chat_invite(&invite) {
+                    self.state.toast = Some(error.to_string());
+                } else {
+                    self.private_chat_invites
+                        .insert(private_chat_invite_key(&invite), invite);
+                    self.process_runtime_events();
+                    self.persist_best_effort();
+                }
+            }
+            Err(error) => {
+                self.state.toast = Some(error.to_string());
+            }
+        }
+
         self.state.busy.creating_invite = false;
         self.rebuild_state();
         self.emit_state();
+    }
+
+    fn private_chat_invite_storage(&self) -> anyhow::Result<SqliteStorageAdapter> {
+        let logged_in = self
+            .logged_in
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
+        Ok(SqliteStorageAdapter::new(
+            self.app_store.shared(),
+            logged_in.owner_pubkey.to_hex(),
+            logged_in.device_keys.public_key().to_hex(),
+        ))
+    }
+
+    fn store_private_chat_invite(&self, invite: &Invite) -> anyhow::Result<()> {
+        let storage = self.private_chat_invite_storage()?;
+        storage.put(&private_chat_invite_key(invite), invite.serialize()?)?;
+        Ok(())
+    }
+
+    pub(super) fn forget_private_chat_invite_keys(&mut self, keys: &[String]) {
+        if keys.is_empty() {
+            return;
+        }
+        if let Ok(storage) = self.private_chat_invite_storage() {
+            for key in keys {
+                let _ = storage.del(key);
+            }
+        }
+        for key in keys {
+            self.private_chat_invites.remove(key);
+        }
+        self.mark_mobile_push_dirty();
+    }
+
+    pub(super) fn private_chat_invite_response_keys(&self, event: &Event) -> Vec<String> {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return Vec::new();
+        };
+        let device_secret = logged_in.device_keys.secret_key().to_secret_bytes();
+        self.private_chat_invites
+            .iter()
+            .filter_map(|(key, invite)| {
+                matches!(
+                    invite.process_invite_response(event, device_secret),
+                    Ok(Some(_))
+                )
+                .then(|| key.clone())
+            })
+            .collect()
     }
 
     pub(super) fn accept_invite(&mut self, invite_input: &str) {
@@ -196,6 +276,34 @@ pub(super) fn parse_public_invite_input(input: &str) -> anyhow::Result<Invite> {
     }
 
     Invite::from_url(input).map_err(|error| anyhow::anyhow!(error.to_string()))
+}
+
+pub(super) fn private_chat_invite_key(invite: &Invite) -> String {
+    format!(
+        "{}{}",
+        PRIVATE_CHAT_INVITE_KEY_PREFIX,
+        invite.inviter_ephemeral_public_key.to_hex()
+    )
+}
+
+pub(super) fn load_private_chat_invites(
+    storage: &dyn StorageAdapter,
+) -> anyhow::Result<BTreeMap<String, Invite>> {
+    let mut invites = BTreeMap::new();
+    for key in storage.list(PRIVATE_CHAT_INVITE_KEY_PREFIX)? {
+        let Some(serialized) = storage.get(&key)? else {
+            continue;
+        };
+        match Invite::deserialize(&serialized) {
+            Ok(invite) => {
+                invites.insert(key, invite);
+            }
+            Err(_) => {
+                let _ = storage.del(&key);
+            }
+        }
+    }
+    Ok(invites)
 }
 
 fn parse_invite_candidate(candidate: &str) -> anyhow::Result<Invite> {

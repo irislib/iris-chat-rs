@@ -1752,7 +1752,7 @@ dependencies = [
 
 [[package]]
 name = "iris-chat"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2122,7 +2122,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.135"
+version = "0.0.136"
 dependencies = [
  "base64",
  "crossbeam-channel",

@@ -261,6 +261,7 @@ impl AppCore {
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
         self.stop_pending_linked_device();
+        self.private_chat_invites.clear();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
@@ -448,6 +449,7 @@ impl AppCore {
             ),
         );
         self.stop_pending_linked_device();
+        self.private_chat_invites.clear();
         if let Some(existing) = self.logged_in.take() {
             let client = existing.client;
             self.runtime.spawn(async move {
@@ -661,11 +663,15 @@ impl AppCore {
             device_keys.secret_key().to_secret_bytes(),
             device_id,
             owner_pubkey,
-            Some(storage),
+            Some(storage.clone()),
             Some(local_invite.clone()),
         );
         ndr_runtime.init()?;
         ndr_runtime.set_auto_adopt_chat_settings(true);
+        let private_chat_invites = super::invites::load_private_chat_invites(storage.as_ref())?;
+        for invite in private_chat_invites.values() {
+            ndr_runtime.register_invite(invite.clone())?;
+        }
 
         for app_keys in self.app_keys.values() {
             if let (Ok(owner), Some(keys)) = (
@@ -703,6 +709,7 @@ impl AppCore {
             local_invite,
             authorization_state,
         });
+        self.private_chat_invites = private_chat_invites;
         match self
             .app_store
             .load_pending_relay_publishes(&owner_pubkey.to_hex())

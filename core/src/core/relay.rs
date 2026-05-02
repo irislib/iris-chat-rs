@@ -91,7 +91,13 @@ impl AppCore {
         }
 
         if let Some(logged_in) = self.logged_in.as_ref() {
+            let consumed_private_invites = if kind == INVITE_RESPONSE_KIND {
+                self.private_chat_invite_response_keys(&event)
+            } else {
+                Vec::new()
+            };
             logged_in.ndr_runtime.process_received_event(event);
+            self.forget_private_chat_invite_keys(&consumed_private_invites);
         }
         self.remember_event(event_id);
         self.process_runtime_events();

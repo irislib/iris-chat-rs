@@ -386,7 +386,11 @@ impl AppCore {
     }
 
     pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
-        let invite = &self.logged_in.as_ref()?.local_invite;
+        self.logged_in.as_ref()?;
+        let invite = self
+            .private_chat_invites
+            .values()
+            .max_by_key(|invite| invite.created_at)?;
         let url = invite.get_url(CHAT_INVITE_ROOT_URL).ok()?;
         Some(PublicInviteSnapshot { url })
     }
