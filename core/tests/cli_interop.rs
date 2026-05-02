@@ -242,6 +242,9 @@ fn iris_cli_sends_to_protocol_client() {
         .as_str()
         .expect("chat id");
 
+    let sent = run_iris(iris_dir.path(), &["send", chat_id, "hello from iris cli"]);
+    assert_eq!(sent["data"]["body"], "hello from iris cli");
+
     let response_event = wait_for_relay_event(&relay, INVITE_RESPONSE_KIND as u64);
     let response = invite
         .process_invite_response(&response_event, alice_secret)
@@ -252,9 +255,6 @@ fn iris_cli_sends_to_protocol_client() {
         iris_account["data"]["user_id"].as_str().unwrap()
     );
     let mut protocol_session = response.session;
-
-    let sent = run_iris(iris_dir.path(), &["send", chat_id, "hello from iris cli"]);
-    assert_eq!(sent["data"]["body"], "hello from iris cli");
     wait_for_decrypted_message(&relay, &mut protocol_session, "hello from iris cli");
 }
 

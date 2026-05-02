@@ -253,6 +253,7 @@ fn ndr_runtime_invite_session_round_trips_text() {
     bob.accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob, &bob_keys, &alice);
+    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     alice
         .send_text(bob_keys.public_key(), "hello bob".to_string(), None)
@@ -485,8 +486,9 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     bob.accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob, &bob_keys, &alice);
+    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
-    let user_record_key = format!("user/{}", alice_keys.public_key().to_hex());
+    let user_record_key = "v2/runtime-state";
     let before = bob_storage
         .get(&user_record_key)
         .expect("read stored ratchet before notification")
@@ -621,6 +623,7 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
     bob.accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob, &bob_keys, &alice);
+    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     let message = "compacted apns preview";
     alice
@@ -698,6 +701,7 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         .accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
 
     let message = "push-only event";
     alice
@@ -814,6 +818,7 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
     bob.accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob, &bob_keys, &alice);
+    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     alice
         .send_typing(bob_keys.public_key(), None)
@@ -1025,8 +1030,9 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         .accept_invite(&alice_invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
     let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
-    let user_record_key = format!("user/{}", alice_keys.public_key().to_hex());
+    let user_record_key = "v2/runtime-state";
     let ratchet_before = bob_storage
         .get(&user_record_key)
         .expect("read bob ratchet before message")
@@ -3507,6 +3513,22 @@ fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
     for event in drain_signed_events(from, signer) {
         to.process_received_event(event);
     }
+}
+
+fn complete_first_contact(
+    acceptor: &NdrRuntime,
+    acceptor_keys: &Keys,
+    inviter_pubkey: PublicKey,
+    inviter: &NdrRuntime,
+) {
+    acceptor
+        .send_text(
+            inviter_pubkey,
+            "__ndr_first_contact_bootstrap__".to_string(),
+            None,
+        )
+        .expect("first-contact bootstrap send");
+    deliver_published_events(acceptor, acceptor_keys, inviter);
 }
 
 fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {

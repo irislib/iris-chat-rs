@@ -191,15 +191,19 @@ impl AppCore {
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
-        self.runtime
-            .block_on(ensure_session_relays_configured(&client, &relay_urls));
         self.start_notifications_loop(client.clone());
 
         let filter = Filter::new()
             .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
-            .pubkeys(vec![invite.inviter_ephemeral_public_key]);
+            .pubkeys(vec![invite.inviter_ephemeral_public_key.to_nostr()?]);
         let client_for_subscription = client.clone();
+        let relay_urls_for_subscription = relay_urls.clone();
         self.runtime.spawn(async move {
+            ensure_session_relays_configured(
+                &client_for_subscription,
+                &relay_urls_for_subscription,
+            )
+            .await;
             connect_client_with_timeout(
                 &client_for_subscription,
                 Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
@@ -654,7 +658,7 @@ impl AppCore {
             }
         }
         let device_id = device_pubkey.to_hex();
-        let local_invite =
+        let mut local_invite =
             load_or_create_local_invite(storage.as_ref(), device_pubkey, &device_id, owner_pubkey)?;
         let ndr_runtime = NdrRuntime::new(
             device_pubkey,
@@ -665,6 +669,9 @@ impl AppCore {
             Some(local_invite.clone()),
         );
         ndr_runtime.init()?;
+        if let Some(runtime_invite) = ndr_runtime.local_invite() {
+            local_invite = runtime_invite;
+        }
         ndr_runtime.set_auto_adopt_chat_settings(true);
 
         for app_keys in self.app_keys.values() {
@@ -689,8 +696,6 @@ impl AppCore {
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
-        self.runtime
-            .block_on(ensure_session_relays_configured(&client, &relay_urls));
         self.start_notifications_loop(client.clone());
 
         self.logged_in = Some(LoggedInState {

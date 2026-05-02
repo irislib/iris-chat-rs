@@ -93,11 +93,16 @@ impl AppCore {
         if let Some(logged_in) = self.logged_in.as_ref() {
             logged_in.ndr_runtime.process_received_event(event);
         }
-        self.remember_event(event_id);
-        self.process_runtime_events();
+        let decrypted_event_ids = self.process_runtime_events();
+        if kind != MESSAGE_EVENT_KIND || decrypted_event_ids.contains(&event_id) {
+            self.remember_event(event_id);
+        }
         if protocol_inputs_changed {
             self.setup_user_done.clear();
             self.request_protocol_subscription_refresh();
+            if self.fetch_recent_protocol_state() {
+                self.state.busy.syncing_network = true;
+            }
             self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
         }
         self.persist_best_effort();
@@ -160,22 +165,23 @@ impl AppCore {
         true
     }
 
-    pub(super) fn process_runtime_events(&mut self) {
-        self.process_runtime_events_with_completions(&BTreeMap::new());
+    pub(super) fn process_runtime_events(&mut self) -> HashSet<String> {
+        self.process_runtime_events_with_completions(&BTreeMap::new())
     }
 
     pub(super) fn process_runtime_events_with_completions(
         &mut self,
         completions: &BTreeMap<String, (String, String)>,
-    ) {
+    ) -> HashSet<String> {
         let Some(events) = self
             .logged_in
             .as_ref()
             .map(|logged_in| logged_in.ndr_runtime.drain_events())
         else {
-            return;
+            return HashSet::new();
         };
 
+        let mut decrypted_event_ids = HashSet::new();
         for event in events {
             match event {
                 SessionManagerEvent::Publish(unsigned) => {
@@ -240,30 +246,59 @@ impl AppCore {
                 SessionManagerEvent::DecryptedMessage {
                     sender,
                     sender_device,
+                    conversation_owner,
                     content,
                     event_id,
                 } => {
-                    self.apply_decrypted_runtime_message(sender, sender_device, content, event_id);
+                    if let Some(event_id) = event_id.as_ref() {
+                        decrypted_event_ids.insert(event_id.clone());
+                    }
+                    self.apply_decrypted_runtime_message_with_metadata(
+                        sender,
+                        sender_device,
+                        conversation_owner,
+                        content,
+                        event_id,
+                    );
                     // Decrypting a DM advances the double-ratchet state,
                     // so the cached mobile-push snapshot needs a refresh.
                     self.mark_mobile_push_dirty();
                 }
             }
         }
+        decrypted_event_ids
     }
 
     fn apply_runtime_subscription(&mut self, subid: String, filter_json: String) {
-        let Ok(filter) = serde_json::from_str::<Filter>(&filter_json) else {
+        let Ok(filters) = parse_runtime_subscription_filters(&filter_json) else {
             self.push_debug_log(
                 "runtime.subscribe.parse",
                 format!("subid={subid} invalid filter"),
             );
             return;
         };
-        let changed = self.upsert_protocol_subscription(subid.clone(), filter);
-        let added_authors = self
-            .direct_message_subscriptions
-            .register_subscription(&subid, &filter_json);
+        if filters.is_empty() {
+            return;
+        }
+
+        self.remove_runtime_subscription_family(&subid);
+        let mut changed = false;
+        let mut added_authors = Vec::new();
+        let multiple = filters.len() > 1;
+        for (index, filter) in filters.into_iter().enumerate() {
+            let indexed_subid = if multiple {
+                format!("{subid}-{index}")
+            } else {
+                subid.clone()
+            };
+            changed |= self.upsert_protocol_subscription(indexed_subid.clone(), filter.clone());
+            added_authors.extend(self.direct_message_subscriptions.register_subscription(
+                &indexed_subid,
+                serde_json::to_string(&filter).unwrap_or_default(),
+            ));
+        }
+        added_authors.sort_by_key(|pubkey| pubkey.to_hex());
+        added_authors.dedup();
         if !added_authors.is_empty() {
             self.mark_mobile_push_dirty();
             self.rebuild_state();
@@ -284,17 +319,7 @@ impl AppCore {
     }
 
     fn remove_runtime_subscription(&mut self, subid: String) {
-        self.protocol_subscription_runtime
-            .active_subscriptions
-            .remove(&subid);
-        let previous_authors = self.direct_message_subscriptions.tracked_authors();
-        self.direct_message_subscriptions
-            .unregister_subscription(&subid);
-        if self.direct_message_subscriptions.tracked_authors() != previous_authors {
-            self.mark_mobile_push_dirty();
-            self.rebuild_state();
-            self.emit_state();
-        }
+        let removed = self.remove_runtime_subscription_family(&subid);
         let Some(client) = self
             .logged_in
             .as_ref()
@@ -303,8 +328,40 @@ impl AppCore {
             return;
         };
         self.runtime.spawn(async move {
-            let _ = client.unsubscribe(&SubscriptionId::new(subid)).await;
+            let ids = if removed.is_empty() {
+                vec![subid]
+            } else {
+                removed
+            };
+            for id in ids {
+                let _ = client.unsubscribe(&SubscriptionId::new(id)).await;
+            }
         });
+    }
+
+    fn remove_runtime_subscription_family(&mut self, subid: &str) -> Vec<String> {
+        let previous_authors = self.direct_message_subscriptions.tracked_authors();
+        let prefix = format!("{subid}-");
+        let removed = self
+            .protocol_subscription_runtime
+            .active_subscriptions
+            .keys()
+            .filter(|existing| existing.as_str() == subid || existing.starts_with(&prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        for existing in &removed {
+            self.protocol_subscription_runtime
+                .active_subscriptions
+                .remove(existing);
+            self.direct_message_subscriptions
+                .unregister_subscription(existing);
+        }
+        if self.direct_message_subscriptions.tracked_authors() != previous_authors {
+            self.mark_mobile_push_dirty();
+            self.rebuild_state();
+            self.emit_state();
+        }
+        removed
     }
 
     /// Process an app-keys event (kind 30078) — adds/removes devices
@@ -355,6 +412,7 @@ impl AppCore {
             }
             self.defer_owner_app_keys_publish = false;
         }
+        self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
         if let Some(logged_in) = self.logged_in.as_ref() {
             logged_in.ndr_runtime.ingest_app_keys_snapshot(
                 event.pubkey,
@@ -373,6 +431,16 @@ impl AppCore {
     }
 }
 
+fn parse_runtime_subscription_filters(filter_json: &str) -> serde_json::Result<Vec<Filter>> {
+    match serde_json::from_str::<Filter>(filter_json) {
+        Ok(filter) => Ok(vec![filter]),
+        Err(single_error) => match serde_json::from_str::<Vec<Filter>>(filter_json) {
+            Ok(filters) => Ok(filters),
+            Err(_) => Err(single_error),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,5 +451,23 @@ mod tests {
         let tags = vec![Tag::parse(["expiration", "1704067260123"]).expect("expiration tag")];
 
         assert_eq!(message_expiration_from_tags(&tags), Some(1_704_067_260));
+    }
+
+    #[test]
+    fn runtime_subscription_parser_accepts_single_filter_and_filter_array() {
+        let single =
+            serde_json::to_string(&Filter::new().kind(Kind::from(MESSAGE_EVENT_KIND as u16)))
+                .expect("single filter");
+        assert_eq!(
+            parse_runtime_subscription_filters(&single).unwrap().len(),
+            1
+        );
+
+        let array = serde_json::to_string(&vec![
+            Filter::new().kind(Kind::from(APP_KEYS_EVENT_KIND as u16)),
+            Filter::new().kind(Kind::from(INVITE_RESPONSE_KIND as u16)),
+        ])
+        .expect("filter array");
+        assert_eq!(parse_runtime_subscription_filters(&array).unwrap().len(), 2);
     }
 }

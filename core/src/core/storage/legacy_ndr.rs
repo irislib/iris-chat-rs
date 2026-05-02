@@ -192,9 +192,9 @@ mod tests {
     use super::super::SqliteStorageAdapter;
     use super::*;
     use nostr_double_ratchet::{
-        FileStorageAdapter, SerializableKeyPair, SessionState, StoredDeviceRecord,
+        DevicePubkey, FileStorageAdapter, SerializableKeyPair, SessionState, StoredDeviceRecord,
     };
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
     use tempfile::TempDir;
 
     fn adapter(tmp: &TempDir) -> SqliteStorageAdapter {
@@ -224,14 +224,19 @@ mod tests {
         let their_next = Keys::generate();
         SessionState {
             root_key: [1; 32],
-            their_current_nostr_public_key: Some(their_current.public_key()),
-            their_next_nostr_public_key: Some(their_next.public_key()),
+            their_current_nostr_public_key: Some(DevicePubkey::from_bytes(
+                their_current.public_key().to_bytes(),
+            )),
+            their_next_nostr_public_key: Some(DevicePubkey::from_bytes(
+                their_next.public_key().to_bytes(),
+            )),
+            our_previous_nostr_key: None,
             our_current_nostr_key: Some(SerializableKeyPair {
-                public_key: our_current.public_key(),
+                public_key: DevicePubkey::from_bytes(our_current.public_key().to_bytes()),
                 private_key: our_current.secret_key().to_secret_bytes(),
             }),
             our_next_nostr_key: SerializableKeyPair {
-                public_key: our_next.public_key(),
+                public_key: DevicePubkey::from_bytes(our_next.public_key().to_bytes()),
                 private_key: our_next.secret_key().to_secret_bytes(),
             },
             receiving_chain_key: Some([2; 32]),
@@ -239,7 +244,7 @@ mod tests {
             sending_chain_message_number: 1,
             receiving_chain_message_number: 1,
             previous_sending_chain_message_count: 0,
-            skipped_keys: HashMap::new(),
+            skipped_keys: BTreeMap::new(),
         }
     }
 

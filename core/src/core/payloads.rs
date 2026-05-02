@@ -97,6 +97,32 @@ pub(super) fn chat_id_for_tags<'a>(
     sender_owner.to_hex()
 }
 
+pub(super) fn chat_id_for_runtime_message<'a>(
+    sender_owner: PublicKey,
+    local_owner: PublicKey,
+    conversation_owner: Option<PublicKey>,
+    tags: impl IntoIterator<Item = &'a nostr::Tag>,
+) -> String {
+    let chat_id = chat_id_for_tags(sender_owner, local_owner, tags);
+    if is_group_chat_id(&chat_id) {
+        return chat_id;
+    }
+    direct_self_sync_chat_id(sender_owner, local_owner, conversation_owner).unwrap_or(chat_id)
+}
+
+pub(super) fn direct_self_sync_chat_id(
+    sender_owner: PublicKey,
+    local_owner: PublicKey,
+    conversation_owner: Option<PublicKey>,
+) -> Option<String> {
+    let owner = conversation_owner?;
+    if sender_owner == local_owner && owner != local_owner {
+        Some(owner.to_hex())
+    } else {
+        None
+    }
+}
+
 pub(super) struct RuntimeRumor {
     pub(super) id: Option<String>,
     pub(super) kind: u32,

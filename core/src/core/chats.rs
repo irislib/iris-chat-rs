@@ -80,6 +80,123 @@ impl AppCore {
         thread
     }
 
+    pub(super) fn migrate_verified_device_owner_threads(
+        &mut self,
+        owner: PublicKey,
+        app_keys: &AppKeys,
+    ) {
+        let owner_hex = owner.to_hex();
+        for device in app_keys.get_all_devices() {
+            let device_hex = device.identity_pubkey.to_hex();
+            if device_hex != owner_hex {
+                self.migrate_direct_thread_alias(&device_hex, &owner_hex);
+            }
+        }
+    }
+
+    fn migrate_direct_thread_alias(&mut self, from_chat_id: &str, to_chat_id: &str) {
+        if from_chat_id == to_chat_id || !self.threads.contains_key(from_chat_id) {
+            return;
+        }
+
+        let from_label = self.owner_display_label(from_chat_id);
+        let to_label = self.owner_display_label(to_chat_id);
+        let Some(mut source) = self.threads.remove(from_chat_id) else {
+            return;
+        };
+        let target = self
+            .threads
+            .entry(to_chat_id.to_string())
+            .or_insert_with(|| ThreadRecord {
+                chat_id: to_chat_id.to_string(),
+                unread_count: 0,
+                updated_at_secs: source.updated_at_secs,
+                messages: Vec::new(),
+            });
+
+        for mut message in source.messages.drain(..) {
+            let duplicate = target.messages.iter().any(|existing| {
+                existing.id == message.id
+                    || message
+                        .source_event_id
+                        .as_ref()
+                        .is_some_and(|source_event_id| {
+                            existing.source_event_id.as_ref() == Some(source_event_id)
+                        })
+            });
+            if duplicate {
+                continue;
+            }
+            message.chat_id = to_chat_id.to_string();
+            if !message.is_outgoing
+                && (message.author == from_chat_id || message.author == from_label)
+            {
+                message.author = to_label.clone();
+            }
+            for delivery in &mut message.recipient_deliveries {
+                if delivery.owner_pubkey_hex == from_chat_id {
+                    delivery.owner_pubkey_hex = to_chat_id.to_string();
+                }
+            }
+            for reactor in &mut message.reactors {
+                if reactor.author == from_chat_id {
+                    reactor.author = to_chat_id.to_string();
+                }
+            }
+            target.insert_message_sorted(message);
+        }
+        target.unread_count = target.unread_count.saturating_add(source.unread_count);
+        target.updated_at_secs = target.updated_at_secs.max(source.updated_at_secs);
+
+        if self.active_chat_id.as_deref() == Some(from_chat_id) {
+            self.active_chat_id = Some(to_chat_id.to_string());
+        }
+        for screen in &mut self.screen_stack {
+            if let Screen::Chat { chat_id } = screen {
+                if chat_id == from_chat_id {
+                    *chat_id = to_chat_id.to_string();
+                }
+            }
+        }
+        if let Some(ttl) = self.chat_message_ttl_seconds.remove(from_chat_id) {
+            self.chat_message_ttl_seconds
+                .entry(to_chat_id.to_string())
+                .or_insert(ttl);
+        }
+        for muted in &mut self.preferences.muted_chat_ids {
+            if muted == from_chat_id {
+                *muted = to_chat_id.to_string();
+            }
+        }
+        self.preferences.muted_chat_ids.sort();
+        self.preferences.muted_chat_ids.dedup();
+        if let Some(floor) = self.typing_floor_secs.remove(from_chat_id) {
+            self.typing_floor_secs
+                .entry(to_chat_id.to_string())
+                .and_modify(|existing| *existing = (*existing).max(floor))
+                .or_insert(floor);
+        }
+        for peer in self.recent_handshake_peers.values_mut() {
+            if peer.owner_hex == from_chat_id {
+                peer.owner_hex = to_chat_id.to_string();
+            }
+        }
+        let typing_indicators = std::mem::take(&mut self.typing_indicators);
+        for (_, mut indicator) in typing_indicators {
+            if indicator.chat_id == from_chat_id {
+                indicator.chat_id = to_chat_id.to_string();
+            }
+            if indicator.author_owner_hex == from_chat_id {
+                indicator.author_owner_hex = to_chat_id.to_string();
+            }
+            self.typing_indicators.insert(
+                format!("{}\n{}", indicator.chat_id, indicator.author_owner_hex),
+                indicator,
+            );
+        }
+        self.mark_mobile_push_dirty();
+    }
+
     pub(super) fn find_message_chat_id(&self, message_id: &str) -> Option<String> {
         self.threads
             .iter()
@@ -235,6 +352,14 @@ impl AppCore {
             return;
         };
 
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            if let Err(error) = logged_in.ndr_runtime.setup_user(peer_pubkey) {
+                self.state.toast = Some(error.to_string());
+                return;
+            }
+        }
+        self.process_runtime_events();
+
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
@@ -284,6 +409,9 @@ impl AppCore {
                 self.sync_message_delivery_trace(&normalized_chat_id, &message_id);
                 if event_ids.is_empty() {
                     self.request_protocol_subscription_refresh();
+                    if self.fetch_recent_protocol_state() {
+                        self.state.busy.syncing_network = true;
+                    }
                 }
             }
             Err(error) => {
@@ -862,6 +990,7 @@ impl AppCore {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn apply_decrypted_runtime_message(
         &mut self,
         sender_owner: PublicKey,
@@ -869,10 +998,30 @@ impl AppCore {
         content: String,
         outer_event_id: Option<String>,
     ) {
+        self.apply_decrypted_runtime_message_with_metadata(
+            sender_owner,
+            sender_device,
+            None,
+            content,
+            outer_event_id,
+        );
+    }
+
+    pub(super) fn apply_decrypted_runtime_message_with_metadata(
+        &mut self,
+        sender_owner: PublicKey,
+        sender_device: Option<PublicKey>,
+        conversation_owner: Option<PublicKey>,
+        content: String,
+        outer_event_id: Option<String>,
+    ) {
         let Some(runtime_rumor) = parse_runtime_rumor(&content) else {
+            let chat_id = self.logged_in.as_ref().and_then(|logged_in| {
+                direct_self_sync_chat_id(sender_owner, logged_in.owner_pubkey, conversation_owner)
+            });
             self.apply_runtime_text_message(
                 sender_owner,
-                None,
+                chat_id,
                 content,
                 unix_now().get(),
                 None,
@@ -904,7 +1053,12 @@ impl AppCore {
         else {
             return;
         };
-        let chat_id = chat_id_for_tags(sender_owner, local_owner, runtime_rumor.tags.iter());
+        let chat_id = chat_id_for_runtime_message(
+            sender_owner,
+            local_owner,
+            conversation_owner,
+            runtime_rumor.tags.iter(),
+        );
         let is_outgoing = sender_owner == local_owner;
         let message_id = runtime_rumor.id.or_else(|| outer_event_id.clone());
 

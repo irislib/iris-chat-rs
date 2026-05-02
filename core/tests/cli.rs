@@ -50,7 +50,7 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "iris failed status={}\nstdout={}\nstderr={}",
+        "iris failed args={args:?} status={}\nstdout={}\nstderr={}",
         output.status,
         stdout,
         stderr
