@@ -264,6 +264,7 @@ class RealRelayHarnessTest {
 
     @Test
     fun report_mobile_push_snapshot() {
+        requireHarnessInvocation("mobile push snapshot is driven by targeted harness scripts")
         ensureLoggedIn()
         val snapshot =
             waitForState("mobile push author snapshot", timeoutMs = 90_000) {

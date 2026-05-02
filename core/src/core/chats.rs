@@ -1130,6 +1130,11 @@ impl AppCore {
             }
             _ => {}
         }
+
+        if matches!(kind, GROUP_METADATA_KIND | GROUP_SENDER_KEY_DISTRIBUTION_KIND) {
+            self.request_protocol_subscription_refresh();
+            self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
