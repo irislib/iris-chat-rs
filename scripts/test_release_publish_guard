@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+RELEASE_SCRIPT="${ROOT_DIR}/scripts/release"
+COMMON_ARGS=(--dry-run --skip-gate --skip-cargo-crate --skip-testflight)
+
+run_case() {
+  local name="$1"
+  local expected="$2"
+  shift 2
+
+  local output_file
+  local status
+  output_file="$(mktemp)"
+
+  set +e
+  "$@" >"$output_file" 2>&1
+  status=$?
+  set -e
+
+  case "$expected:$status" in
+    pass:0)
+      rm -f "$output_file"
+      return 0
+      ;;
+    fail:0)
+      echo "Expected failure but command passed: $name" >&2
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      return 1
+      ;;
+    fail:*)
+      if ! grep -q "Refusing to publish a partial htree latest release" "$output_file"; then
+        echo "Command failed for the wrong reason: $name" >&2
+        cat "$output_file" >&2
+        rm -f "$output_file"
+        return 1
+      fi
+      rm -f "$output_file"
+      return 0
+      ;;
+    pass:*)
+      echo "Expected success but command failed: $name" >&2
+      cat "$output_file" >&2
+      rm -f "$output_file"
+      return 1
+      ;;
+  esac
+}
+
+run_case "partial latest publish is rejected" fail \
+  "$RELEASE_SCRIPT" "${COMMON_ARGS[@]}" --publish --only android,ios
+
+run_case "partial local staging is allowed" pass \
+  "$RELEASE_SCRIPT" "${COMMON_ARGS[@]}" --only android,ios
+
+run_case "complete latest publish plan is allowed" pass \
+  "$RELEASE_SCRIPT" "${COMMON_ARGS[@]}" --publish
+
+run_case "explicit partial latest override is allowed" pass \
+  env IRIS_RELEASE_ALLOW_PARTIAL_LATEST=true \
+  "$RELEASE_SCRIPT" "${COMMON_ARGS[@]}" --publish --only android,ios
+
+echo "Release publish guard passed."

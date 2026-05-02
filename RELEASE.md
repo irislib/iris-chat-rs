@@ -12,9 +12,14 @@ This repo has repeatable release entrypoints for every platform:
 
 `./scripts/release` builds whatever the current host can build, stages a
 hashtree release tree under `dist/release/<tag>/`, and with `--publish` runs
-`htree add` + `htree release publish releases/iris-chat <tag> <cid>`. Pass
-`--only macos,linux` or `--skip windows` to limit scope, and `--dry-run` to see
-the plan first.
+`htree add` + `htree release publish releases/iris-chat-rs <tag> <cid>`, which
+also repoints the mutable `latest` release. Partial builds with `--only` or
+`--skip` are for local/staged artifacts and are rejected by `--publish` when
+they exclude a required latest platform. By default, latest requires macOS,
+Windows, Android, Linux, and CLI artifacts; override with
+`IRIS_RELEASE_REQUIRED_LATEST_STEPS` only when the official platform set
+changes. `--allow-partial-latest` exists only for an intentional emergency
+override. Pass `--dry-run` to see the plan first.
 
 ## Official References
 

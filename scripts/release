@@ -5,7 +5,7 @@
 # Builds whatever this host can build (macOS DMG, Windows x86_64 NSIS installer
 # via Parallels, Android APK/AAB, Linux x86_64 deb/tarball via Docker, optional
 # iOS xcarchive) and stages a hashtree release tree under dist/release/<tag>/.
-# With --publish it runs `htree add` + `htree release publish releases/iris-chat`.
+# With --publish it runs `htree add` + `htree release publish releases/iris-chat-rs`.
 #
 # This mirrors the spirit of nostr-vpn's scripts/local-release.mjs but is a bash
 # script for parity with the rest of scripts/ in this repo.
@@ -35,6 +35,8 @@ RELEASE_TREE=""
 TAG_OVERRIDE=""
 ONLY_RAW=""
 SKIP_RAW=""
+ALLOW_PARTIAL_LATEST=0
+REQUIRED_LATEST_STEPS_RAW="${IRIS_RELEASE_REQUIRED_LATEST_STEPS:-macos,windows,android,linux,cli}"
 
 usage() {
   cat <<'EOF'
@@ -44,7 +46,8 @@ Build all locally-buildable platforms, stage a hashtree release directory under
 dist/release/<tag>/, and optionally publish it via htree.
 
 Options:
-  --publish                Publish the staged tree with `htree add` + `htree release publish`
+  --publish                Publish the staged tree and repoint the htree latest release
+  --allow-partial-latest   Allow --publish to repoint latest even if required steps are missing
   --publish-zapstore       Also publish the signed Android APK to Zapstore
   --publish-cargo-crate    Publish the iris-chat Rust crate if this version is new
   --skip-cargo-crate       Do not publish the iris-chat Rust crate
@@ -65,6 +68,10 @@ Environment:
   IRIS_RELEASE_TREE         Default for --release-tree
   IRIS_CLI_TARGETS          Comma-separated CLI targets for the iris binary
   IRIS_RELEASE_ALLOW_DIRTY  Allow building from a dirty git tree
+  IRIS_RELEASE_ALLOW_PARTIAL_LATEST
+                            Allow partial releases to repoint latest
+  IRIS_RELEASE_REQUIRED_LATEST_STEPS
+                            Required steps for --publish latest (default: macos,windows,android,linux,cli)
   IRIS_RELEASE_GATE_ARGS    Extra/default args for scripts/test-release-gate
   IRIS_RELEASE_TESTFLIGHT   both, internal, public, or 0
 EOF
@@ -73,6 +80,7 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --publish) PUBLISH=1 ;;
+    --allow-partial-latest) ALLOW_PARTIAL_LATEST=1 ;;
     --publish-zapstore) PUBLISH_ZAPSTORE=1 ;;
     --publish-cargo-crate) PUBLISH_CARGO_CRATE=1 ;;
     --skip-cargo-crate) PUBLISH_CARGO_CRATE=0 ;;
@@ -101,6 +109,10 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if bool_is_true "${IRIS_RELEASE_ALLOW_PARTIAL_LATEST:-false}"; then
+  ALLOW_PARTIAL_LATEST=1
+fi
 
 if [[ "${#RELEASE_GATE_ARGS[@]}" -eq 0 && -n "${IRIS_RELEASE_GATE_ARGS:-}" ]]; then
   # shellcheck disable=SC2206
@@ -168,6 +180,20 @@ csv_to_set() {
 [[ -n "$ONLY_RAW" ]] && ONLY_SET="$(csv_to_set "$ONLY_RAW")"
 [[ -n "$SKIP_RAW" ]] && SKIP_SET="$(csv_to_set "$SKIP_RAW")"
 
+REQUIRED_LATEST_STEPS=()
+parse_required_latest_steps() {
+  local old_ifs="$IFS"
+  local step
+
+  IFS=','
+  for step in $REQUIRED_LATEST_STEPS_RAW; do
+    step="${step//[[:space:]]/}"
+    [[ -n "$step" ]] && REQUIRED_LATEST_STEPS+=("$step")
+  done
+  IFS="$old_ifs"
+}
+parse_required_latest_steps
+
 step_enabled() {
   local step="$1"
   if [[ -n "$ONLY_SET" ]]; then
@@ -182,9 +208,77 @@ step_enabled() {
 BUILT_LINES=()
 SKIPPED_LINES=()
 ASSET_PATHS=()
+BUILT_STEPS=()
 
 note_built() { BUILT_LINES+=("$1"); echo "[built] $1"; }
 note_skipped() { SKIPPED_LINES+=("$1"); echo "[skip] $1" >&2; }
+
+mark_step_built() { BUILT_STEPS+=("$1"); }
+
+step_was_built() {
+  local needle="$1"
+  local built
+
+  for built in "${BUILT_STEPS[@]}"; do
+    [[ "$built" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
+required_step_disabled_by_scope() {
+  local step="$1"
+
+  if [[ -n "$ONLY_SET" ]]; then
+    grep -qx "$step" <<<"$ONLY_SET" || return 0
+  fi
+  if [[ -n "$SKIP_SET" ]]; then
+    grep -qx "$step" <<<"$SKIP_SET" && return 0
+  fi
+  return 1
+}
+
+assert_latest_publish_scope() {
+  [[ "$PUBLISH" -eq 1 ]] || return 0
+  [[ "$ALLOW_PARTIAL_LATEST" -eq 0 ]] || {
+    echo "WARNING: --allow-partial-latest is set; --publish may repoint latest to an incomplete release." >&2
+    return 0
+  }
+
+  local missing=()
+  local step
+  for step in "${REQUIRED_LATEST_STEPS[@]}"; do
+    if required_step_disabled_by_scope "$step"; then
+      missing+=("$step")
+    fi
+  done
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    echo "Refusing to publish a partial htree latest release." >&2
+    echo "--publish repoints ${RELEASE_TREE}/latest, but this run excludes required step(s): ${missing[*]}." >&2
+    echo "Build partial artifacts without --publish, or run a complete release. Use --allow-partial-latest only for an intentional emergency override." >&2
+    exit 1
+  fi
+}
+
+assert_latest_publish_assets_complete() {
+  [[ "$PUBLISH" -eq 1 ]] || return 0
+  [[ "$ALLOW_PARTIAL_LATEST" -eq 0 ]] || return 0
+
+  local missing=()
+  local step
+  for step in "${REQUIRED_LATEST_STEPS[@]}"; do
+    if ! step_was_built "$step"; then
+      missing+=("$step")
+    fi
+  done
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    echo "Refusing to publish a partial htree latest release." >&2
+    echo "--publish repoints ${RELEASE_TREE}/latest, but required step(s) did not produce artifacts: ${missing[*]}." >&2
+    echo "Fix the failed/skipped builds before publishing latest, or use --allow-partial-latest only for an intentional emergency override." >&2
+    exit 1
+  fi
+}
 
 run_step() {
   local name="$1"; shift
@@ -196,7 +290,11 @@ run_step() {
     echo "[dry-run] would run step: $name $*"
     return 0
   fi
+  local built_before="${#ASSET_PATHS[@]}"
   if "$@"; then
+    if [[ "${#ASSET_PATHS[@]}" -gt "$built_before" ]]; then
+      mark_step_built "$name"
+    fi
     return 0
   else
     local ec=$?
@@ -765,7 +863,10 @@ echo "Git sha:         $IRIS_BUILD_GIT_SHA"
 echo "Gate:            $([[ "$RELEASE_GATE" -eq 1 ]] && printf '%s' "${RELEASE_GATE_ARGS[*]}" || printf skipped)"
 echo "Cargo crate:     $([[ "$PUBLISH_CARGO_CRATE" -eq 1 ]] && printf publish || printf skip)"
 echo "TestFlight:      $TESTFLIGHT_MODE"
+echo "Latest requires: ${REQUIRED_LATEST_STEPS[*]}"
 [[ "$DRY_RUN" -eq 1 ]] && echo "(dry-run; no commands executed)"
+
+assert_latest_publish_scope
 
 run_release_gate
 
@@ -780,6 +881,8 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   echo "Dry run complete."
   exit 0
 fi
+
+assert_latest_publish_assets_complete
 
 if [[ "${#ASSET_PATHS[@]}" -eq 0 ]]; then
   echo "No assets were produced; nothing to stage." >&2
