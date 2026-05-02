@@ -356,6 +356,23 @@ impl AppCore {
             false
         };
 
+        self.state.preferences = self.preferences.clone();
+        if let Some(network_status) = self.state.network_status.as_mut() {
+            network_status.relay_urls = self.preferences.nostr_relay_urls.clone();
+            network_status.relay_connections = self
+                .preferences
+                .nostr_relay_urls
+                .iter()
+                .map(|url| RelayConnectionSnapshot {
+                    url: url.clone(),
+                    status: "offline".to_string(),
+                })
+                .collect();
+            network_status.connected_relay_count = 0;
+        }
+        self.persist_best_effort();
+        self.emit_state();
+
         if should_refresh {
             let configured_relays = self
                 .preferences
@@ -365,15 +382,11 @@ impl AppCore {
                 .collect::<HashSet<_>>();
             self.relay_status_watch_urls
                 .retain(|url| configured_relays.contains(url));
-            self.start_relay_status_watchers();
             self.schedule_session_connect();
             self.request_protocol_subscription_refresh_forced();
             self.fetch_recent_protocol_state();
             self.retry_pending_relay_publishes("relays_changed");
         }
-        self.rebuild_state();
-        self.persist_best_effort();
-        self.emit_state();
     }
 
     fn reject_relay_setting(&mut self, message: String) {

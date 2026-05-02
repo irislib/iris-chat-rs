@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.7
+
+- Keep restored same-secret CLI sessions from publishing a one-device AppKeys
+  roster before relay backfill has merged existing devices.
+- Make `iris sync --wait-ms` wait for protocol catch-up, and keep logged-in
+  `iris relay set` from blocking before the new message-server list is saved.
+- Add CLI interop coverage for a fresh same-secret client sending to a peer
+  while an older session receives the message as its own outgoing sender copy.
+
 ## 0.1.6
 
 - Update to `nostr-double-ratchet` 0.0.128 so TypeScript and Rust stacks share

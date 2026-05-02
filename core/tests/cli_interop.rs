@@ -118,6 +118,39 @@ fn spawn_stderr_reader(stderr: std::process::ChildStderr) -> Arc<Mutex<String>> 
     output
 }
 
+fn read_owner_nsec(data_dir: &Path) -> String {
+    let path = data_dir.join("cli-account.json");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    let bundle: Value = serde_json::from_str(&raw)
+        .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()));
+    bundle
+        .get("owner_nsec")
+        .and_then(Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| panic!("{} missing owner_nsec", path.display()))
+        .to_string()
+}
+
+fn wait_for_listener_ready(
+    child: &mut std::process::Child,
+    receiver: &mpsc::Receiver<Value>,
+    stderr: &Arc<Mutex<String>>,
+) {
+    let ready = receiver
+        .recv_timeout(Duration::from_secs(10))
+        .unwrap_or_else(|error| {
+            let status = child.try_wait().expect("child status");
+            let stderr = stderr.lock().map(|text| text.clone()).unwrap_or_default();
+            panic!(
+                "timed out waiting for iris listen ready: {error}; status={status:?}; stderr={stderr}"
+            );
+        });
+    assert_eq!(ready["command"], "listen");
+    assert_eq!(ready["data"]["ready"], true);
+    assert_eq!(ready["data"]["network"], true);
+}
+
 fn wait_for_relay_event(relay: &TestRelay, kind: u64) -> Event {
     let started = Instant::now();
     let mut last_events = Vec::new();
@@ -289,4 +322,119 @@ fn iris_listen_receives_from_another_iris_client() {
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session() {
+    let relay = TestRelay::start();
+    let alice_old = TempDir::new().unwrap();
+    let alice_fresh = TempDir::new().unwrap();
+    let bob = TempDir::new().unwrap();
+
+    run_iris(alice_old.path(), &["relay", "set", relay.url()]);
+    let alice_account = run_iris(alice_old.path(), &["account", "create", "--name", "Alice"]);
+    run_iris(alice_old.path(), &["relay", "set", relay.url()]);
+    let alice_user_id = alice_account["data"]["user_id"].as_str().unwrap();
+    let alice_nsec = read_owner_nsec(alice_old.path());
+
+    run_iris(bob.path(), &["relay", "set", relay.url()]);
+    let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
+    run_iris(bob.path(), &["relay", "set", relay.url()]);
+    let bob_user_id = bob_account["data"]["user_id"].as_str().unwrap();
+    let bob_npub = bob_account["data"]["npub"].as_str().unwrap();
+    let bob_invite = run_iris(bob.path(), &["invite", "create"]);
+    let bob_invite_url = bob_invite["data"]["url"].as_str().expect("bob invite url");
+
+    run_iris(alice_old.path(), &["invite", "accept", bob_invite_url]);
+    run_iris(
+        alice_old.path(),
+        &["send", bob_user_id, "initial old alice"],
+    );
+    let alice_read = run_iris(alice_old.path(), &["read", bob_user_id]);
+    assert!(alice_read["data"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| {
+            message["body"] == "initial old alice" && message["is_outgoing"] == true
+        }));
+
+    let mut alice_child = start_iris(alice_old.path(), &["listen", "--interval-ms", "100"]);
+    let alice_stdout = alice_child.stdout.take().expect("alice stdout");
+    let alice_stderr = spawn_stderr_reader(alice_child.stderr.take().expect("alice stderr"));
+    let alice_receiver = spawn_json_reader(alice_stdout);
+    wait_for_listener_ready(&mut alice_child, &alice_receiver, &alice_stderr);
+
+    let mut bob_child = start_iris(bob.path(), &["listen", "--interval-ms", "100"]);
+    let bob_stdout = bob_child.stdout.take().expect("bob stdout");
+    let bob_stderr = spawn_stderr_reader(bob_child.stderr.take().expect("bob stderr"));
+    let bob_receiver = spawn_json_reader(bob_stdout);
+    wait_for_listener_ready(&mut bob_child, &bob_receiver, &bob_stderr);
+
+    run_iris(alice_fresh.path(), &["relay", "set", relay.url()]);
+    let fresh_account = run_iris(alice_fresh.path(), &["restore", &alice_nsec]);
+    run_iris(alice_fresh.path(), &["relay", "set", relay.url()]);
+    assert_eq!(fresh_account["data"]["user_id"], alice_user_id);
+    assert_ne!(
+        fresh_account["data"]["device_id"], alice_account["data"]["device_id"],
+        "fresh restore should create a new local device for the same owner"
+    );
+    run_iris(alice_fresh.path(), &["sync", "--wait-ms", "5000"]);
+
+    let body = "fresh restored same nsec send";
+    let sent = run_iris(alice_fresh.path(), &["send", bob_npub, body]);
+    assert_eq!(sent["data"]["chat_id"], bob_user_id);
+    assert_eq!(sent["data"]["is_outgoing"], true);
+
+    let bob_message = match read_stream_message(&relay, &bob_receiver, body) {
+        Some(message) => message,
+        None => {
+            let relay_kinds = relay
+                .events()
+                .into_iter()
+                .filter_map(|event| event.get("kind").and_then(Value::as_u64))
+                .collect::<Vec<_>>();
+            let _ = alice_child.kill();
+            let _ = alice_child.wait();
+            let _ = bob_child.kill();
+            let _ = bob_child.wait();
+            let bob_sync = run_iris(bob.path(), &["sync", "--wait-ms", "2000"]);
+            let bob_read = run_iris(bob.path(), &["read", alice_user_id]);
+            panic!(
+                "bob did not receive fresh restored send; trace={}; bob_sync={bob_sync}; bob_read={bob_read}; relay_kinds={relay_kinds:?}",
+                sent["data"]["delivery_trace"],
+            );
+        }
+    };
+    assert_eq!(bob_message["data"]["chat_id"], alice_user_id);
+    assert_eq!(bob_message["data"]["is_outgoing"], false);
+
+    let old_alice_message = match read_stream_message(&relay, &alice_receiver, body) {
+        Some(message) => message,
+        None => {
+            let relay_kinds = relay
+                .events()
+                .into_iter()
+                .filter_map(|event| event.get("kind").and_then(Value::as_u64))
+                .collect::<Vec<_>>();
+            let _ = alice_child.kill();
+            let _ = alice_child.wait();
+            let _ = bob_child.kill();
+            let _ = bob_child.wait();
+            let alice_sync = run_iris(alice_old.path(), &["sync", "--wait-ms", "2000"]);
+            let alice_read = run_iris(alice_old.path(), &["read", bob_user_id]);
+            let fresh_read = run_iris(alice_fresh.path(), &["read", bob_user_id]);
+            panic!(
+                "old alice did not receive sender copy; trace={}; alice_sync={alice_sync}; alice_read={alice_read}; fresh_read={fresh_read}; relay_kinds={relay_kinds:?}",
+                sent["data"]["delivery_trace"],
+            );
+        }
+    };
+    assert_eq!(old_alice_message["data"]["chat_id"], bob_user_id);
+    assert_eq!(old_alice_message["data"]["is_outgoing"], true);
+
+    let _ = alice_child.kill();
+    let _ = alice_child.wait();
+    let _ = bob_child.kill();
+    let _ = bob_child.wait();
 }

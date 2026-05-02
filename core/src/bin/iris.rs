@@ -384,10 +384,21 @@ impl CliApp {
     fn dispatch_and_wait(&self, action: AppAction, timeout: Duration) -> Result<AppState> {
         let before = self.app.state().rev;
         self.app.dispatch(action);
-        self.wait_for_quiet_after(before, timeout)
+        self.wait_for_quiet_after(before, timeout, false)
     }
 
-    fn wait_for_quiet_after(&self, before_rev: u64, timeout: Duration) -> Result<AppState> {
+    fn dispatch_and_wait_network(&self, action: AppAction, timeout: Duration) -> Result<AppState> {
+        let before = self.app.state().rev;
+        self.app.dispatch(action);
+        self.wait_for_quiet_after(before, timeout, true)
+    }
+
+    fn wait_for_quiet_after(
+        &self,
+        before_rev: u64,
+        timeout: Duration,
+        include_network_sync: bool,
+    ) -> Result<AppState> {
         let started = Instant::now();
         let mut saw_change = false;
         let mut last_rev = before_rev;
@@ -399,8 +410,12 @@ impl CliApp {
                 last_rev = state.rev;
                 stable_since = Instant::now();
             }
-            if saw_change && !is_busy(&state) && stable_since.elapsed() >= Duration::from_millis(80)
-            {
+            let busy = if include_network_sync {
+                is_busy_or_syncing(&state)
+            } else {
+                is_busy(&state)
+            };
+            if saw_change && !busy && stable_since.elapsed() >= Duration::from_millis(80) {
                 return Ok(state);
             }
             thread::sleep(Duration::from_millis(20));
@@ -438,7 +453,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
         Commands::Whoami => Ok(account_json(&require_account(&cli.app.state())?)),
         Commands::State => Ok(state_json(&cli.app.state())),
         Commands::Sync { wait_ms } => {
-            let state = cli.dispatch_and_wait(
+            let state = cli.dispatch_and_wait_network(
                 AppAction::AppForegrounded,
                 Duration::from_millis(wait_ms.max(100)),
             )?;
@@ -1471,6 +1486,10 @@ fn is_busy(state: &AppState) -> bool {
         || busy.creating_invite
         || busy.accepting_invite
         || busy.uploading_attachment
+}
+
+fn is_busy_or_syncing(state: &AppState) -> bool {
+    is_busy(state) || state.busy.syncing_network
 }
 
 fn chat_kind(kind: &ChatKind) -> &'static str {

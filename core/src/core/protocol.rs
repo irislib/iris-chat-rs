@@ -174,19 +174,19 @@ impl AppCore {
         filters
     }
 
-    pub(super) fn fetch_recent_protocol_state(&mut self) {
+    pub(super) fn fetch_recent_protocol_state(&mut self) -> bool {
         let Some(client) = self
             .logged_in
             .as_ref()
             .filter(|logged_in| !logged_in.relay_urls.is_empty())
             .map(|logged_in| logged_in.client.clone())
         else {
-            return;
+            return false;
         };
         let now = unix_now();
         let filters = self.recent_protocol_filters(now);
         if filters.is_empty() {
-            return;
+            return false;
         }
         self.push_debug_log(
             "protocol.catch_up.fetch",
@@ -215,7 +215,9 @@ impl AppCore {
                     })));
                 }
             }
+            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
         });
+        true
     }
 
     pub(super) fn fetch_pending_device_invites_for_local_owner(&mut self) {
@@ -485,6 +487,7 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.relay_urls.len())
             .unwrap_or(0);
+        self.start_relay_status_watchers();
         self.refresh_relay_connection_status();
         self.push_debug_log(
             "message_servers.connection",

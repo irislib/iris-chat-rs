@@ -1563,8 +1563,35 @@ fn restored_owner_session_does_not_publish_single_device_app_keys_before_backfil
 fn restored_account_bundle_publishes_existing_device_app_keys_on_startup() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let (update_tx, update_rx) = flume::unbounded();
+    let owner_nsec = owner
+        .secret_key()
+        .to_bech32()
+        .unwrap_or_else(|_| owner.secret_key().to_secret_hex());
+    let device_nsec = device
+        .secret_key()
+        .to_bech32()
+        .unwrap_or_else(|_| device.secret_key().to_secret_hex());
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
+
+    {
+        let mut core = AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            temp_dir.path().to_string_lossy().to_string(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        core.start_session(
+            owner.public_key(),
+            Some(owner.clone()),
+            device.clone(),
+            false,
+            true,
+        )
+        .expect("created account bundle session");
+        core.shutdown();
+    }
+
+    let (update_tx, update_rx) = flume::unbounded();
     let mut core = AppCore::new(
         update_tx,
         flume::unbounded().0,
@@ -1572,8 +1599,8 @@ fn restored_account_bundle_publishes_existing_device_app_keys_on_startup() {
         Arc::new(RwLock::new(AppState::empty())),
     );
 
-    core.start_session(owner.public_key(), Some(owner), device.clone(), true, true)
-        .expect("restored account bundle session");
+    core.restore_account_bundle(Some(owner_nsec), &owner.public_key().to_hex(), &device_nsec);
+    assert_eq!(core.state.toast, None);
 
     let app_keys_events = update_rx
         .try_iter()
@@ -1589,6 +1616,47 @@ fn restored_account_bundle_publishes_existing_device_app_keys_on_startup() {
     assert!(
         app_keys_events > 0,
         "same-device startup must continue publishing the current AppKeys roster"
+    );
+}
+
+#[test]
+fn restored_account_bundle_defers_app_keys_when_roster_was_not_backfilled() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let owner_nsec = owner
+        .secret_key()
+        .to_bech32()
+        .unwrap_or_else(|_| owner.secret_key().to_secret_hex());
+    let device_nsec = device
+        .secret_key()
+        .to_bech32()
+        .unwrap_or_else(|_| device.secret_key().to_secret_hex());
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    core.restore_account_bundle(Some(owner_nsec), &owner.public_key().to_hex(), &device_nsec);
+    assert_eq!(core.state.toast, None);
+
+    let app_keys_events = update_rx
+        .try_iter()
+        .filter(|update| {
+            if let AppUpdate::NearbyPublishedEvent { event_json, .. } = update {
+                return serde_json::from_str::<Event>(event_json)
+                    .map(|event| is_app_keys_event(&event))
+                    .unwrap_or(false);
+            }
+            false
+        })
+        .count();
+    assert_eq!(
+        app_keys_events, 0,
+        "restored account bundle must not publish a one-device AppKeys roster before backfill"
     );
 }
 

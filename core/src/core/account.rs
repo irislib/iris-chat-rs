@@ -41,10 +41,10 @@ impl AppCore {
         self.push_debug_log("app.foreground", "refresh relay session");
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced();
-        self.fetch_recent_protocol_state();
+        let fetching_recent_protocol_state = self.fetch_recent_protocol_state();
         self.fetch_recent_messages_for_tracked_peers(now);
         self.retry_pending_relay_publishes("app_foreground");
-        self.state.busy.syncing_network = true;
+        self.state.busy.syncing_network = fetching_recent_protocol_state;
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
@@ -109,7 +109,18 @@ impl AppCore {
             };
             let device_keys = Keys::parse(device_nsec.trim())
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-            self.start_session(owner_pubkey, owner_keys, device_keys, true, true)
+            let allow_protocol_restore = self.restored_bundle_has_current_owner_app_keys(
+                owner_pubkey,
+                device_keys.public_key(),
+                owner_keys.is_some(),
+            );
+            self.start_session(
+                owner_pubkey,
+                owner_keys,
+                device_keys,
+                true,
+                allow_protocol_restore,
+            )
         })();
 
         if let Err(error) = result {
@@ -119,6 +130,37 @@ impl AppCore {
         self.state.busy.restoring_session = false;
         self.rebuild_state();
         self.emit_state();
+    }
+
+    fn restored_bundle_has_current_owner_app_keys(
+        &mut self,
+        owner_pubkey: PublicKey,
+        device_pubkey: PublicKey,
+        has_owner_keys: bool,
+    ) -> bool {
+        if !has_owner_keys {
+            return true;
+        }
+
+        let owner_hex = owner_pubkey.to_hex();
+        let device_hex = device_pubkey.to_hex();
+        match self.app_store.load_state() {
+            Ok(Some(persisted)) => persisted.app_keys.iter().any(|app_keys| {
+                app_keys.owner_pubkey_hex.eq_ignore_ascii_case(&owner_hex)
+                    && app_keys
+                        .devices
+                        .iter()
+                        .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(&device_hex))
+            }),
+            Ok(None) => false,
+            Err(error) => {
+                self.push_debug_log(
+                    "session.restore_bundle",
+                    format!("ignored_app_keys_probe_error={error}"),
+                );
+                false
+            }
+        }
     }
 
     pub(super) fn start_linked_device(&mut self, _owner_input: &str) {
@@ -398,10 +440,11 @@ impl AppCore {
         self.push_debug_log(
             "session.start",
             format!(
-                "owner={} has_owner_keys={} allow_restore={}",
+                "owner={} has_owner_keys={} allow_restore={} allow_protocol_restore={}",
                 owner_pubkey.to_hex(),
                 owner_keys.is_some(),
                 allow_restore,
+                allow_protocol_restore,
             ),
         );
         self.stop_pending_linked_device();
