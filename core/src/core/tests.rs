@@ -177,6 +177,69 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
 }
 
 #[test]
+fn app_keys_publish_uses_durable_pending_publish_queue() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = logged_in_test_core_at_data_dir(
+        &owner,
+        &device,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+    let previous_created_at = core
+        .app_keys
+        .get_mut(&owner.public_key().to_hex())
+        .expect("local AppKeys")
+        .created_at_secs;
+    let linked_device = Keys::generate();
+    core.upsert_local_app_key_device(owner.public_key(), linked_device.public_key());
+    let app_keys_created_at = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("updated AppKeys")
+        .created_at_secs;
+    assert!(
+        app_keys_created_at > previous_created_at,
+        "AppKeys updates must advance replaceable-event timestamps even inside one Unix second"
+    );
+
+    core.publish_local_app_keys();
+
+    let pending = core
+        .pending_relay_publishes
+        .values()
+        .find(|pending| pending.label == "app-keys")
+        .expect("AppKeys should be tracked as a durable publish");
+    let event: Event = serde_json::from_str(&pending.event_json).expect("stored event json");
+
+    assert!(is_app_keys_event(&event));
+    assert_eq!(event.pubkey, owner.public_key());
+    assert_eq!(event.created_at.as_secs(), app_keys_created_at);
+    let device_tags = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let values = tag.clone().to_vec();
+            (values.first().map(|value| value.as_str()) == Some("device"))
+                .then(|| values.get(1).cloned())
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    assert!(device_tags.contains(&device.public_key().to_hex()));
+    assert!(device_tags.contains(&linked_device.public_key().to_hex()));
+    assert!(
+        pending
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("skipped=no_servers"),
+        "empty-relay publish should remain queued with a retryable error"
+    );
+}
+
+#[test]
 fn network_status_includes_configured_relay_connection_status() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -1749,12 +1812,18 @@ fn app_keys_event_rerenders_device_roster_even_when_authorization_is_unchanged()
         1
     );
 
+    let local_created_at = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("local app keys")
+        .created_at_secs;
+    let remote_created_at = local_created_at + 1;
     let remote_app_keys = AppKeys::new(vec![
-        DeviceEntry::new(device.public_key(), 10),
-        DeviceEntry::new(other_device.public_key(), 10),
+        DeviceEntry::new(device.public_key(), local_created_at),
+        DeviceEntry::new(other_device.public_key(), remote_created_at),
     ]);
     let remote_event = remote_app_keys
-        .get_event(owner.public_key())
+        .get_event_at(owner.public_key(), remote_created_at)
         .sign_with_keys(&owner)
         .expect("app keys event");
     core.apply_app_keys_event(&remote_event);

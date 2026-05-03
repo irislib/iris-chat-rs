@@ -24,11 +24,10 @@ use nostr_double_ratchet_runtime::{
     NdrProtocolBackfillOptions, NdrRuntime, SendOptions, SessionManagerEvent, StorageAdapter,
 };
 use nostr_sdk::prelude::{
-    Client, ClientMessage, Event, Filter, Keys, Kind, PublicKey, RelayNotification,
-    RelayPoolNotification, RelayStatus, RelayUrl, SubscriptionId, Timestamp, ToBech32,
+    Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
+    RelayStatus, RelayUrl, SubscriptionId, Timestamp, ToBech32,
 };
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;

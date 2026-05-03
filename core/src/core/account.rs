@@ -784,6 +784,11 @@ impl AppCore {
                 created_at_secs: now,
                 devices: Vec::new(),
             });
+        let next_created_at = if now <= entry.created_at_secs {
+            entry.created_at_secs.saturating_add(1)
+        } else {
+            now
+        };
         if !entry
             .devices
             .iter()
@@ -791,10 +796,10 @@ impl AppCore {
         {
             entry.devices.push(KnownAppKeyDevice {
                 identity_pubkey_hex: device.to_hex(),
-                created_at_secs: now,
+                created_at_secs: next_created_at,
             });
         }
-        entry.created_at_secs = now;
+        entry.created_at_secs = next_created_at;
         entry
             .devices
             .sort_by(|left, right| left.identity_pubkey_hex.cmp(&right.identity_pubkey_hex));

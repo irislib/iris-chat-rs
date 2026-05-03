@@ -339,22 +339,25 @@ impl AppCore {
         let tx = self.core_sender.clone();
         let update_tx = self.update_tx.clone();
 
-        let mut events: Vec<(&'static str, Event)> = Vec::new();
+        let mut background_events: Vec<(&'static str, Event)> = Vec::new();
+        let mut durable_events: Vec<(&'static str, Event)> = Vec::new();
 
         if let (Some(keys), Some(profile)) = (owner_keys.clone(), local_profile) {
             if let Ok(event) =
                 EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile))
                     .sign_with_keys(&keys)
             {
-                events.push(("metadata", event));
+                background_events.push(("metadata", event));
             }
         }
 
         if let (true, Some(keys), Some(app_keys)) = (publish_app_keys, owner_keys, local_app_keys) {
             if let Some(ndr_app_keys) = known_app_keys_to_ndr(&app_keys) {
-                if let Ok(unsigned) = ndr_app_keys.get_encrypted_event(&keys) {
+                if let Ok(unsigned) =
+                    ndr_app_keys.get_encrypted_event_at(&keys, app_keys.created_at_secs)
+                {
                     if let Ok(event) = unsigned.sign_with_keys(&keys) {
-                        events.push(("app-keys", event));
+                        durable_events.push(("app-keys", event));
                     }
                 }
             }
@@ -362,18 +365,29 @@ impl AppCore {
 
         if let Ok(unsigned) = nostr_double_ratchet_nostr::invite_unsigned_event(&local_invite) {
             if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
-                events.push(("invite", event));
+                durable_events.push(("invite", event));
             }
         }
 
-        for (_, event) in &events {
+        for (_, event) in &background_events {
             self.remember_event(event.id.to_string());
             send_nearby_published_event(&update_tx, event);
         }
+        for (label, event) in durable_events {
+            self.publish_runtime_event(event, label, None);
+        }
 
         self.runtime.spawn(async move {
-            for (label, event) in events {
-                let _ = publish_event_with_retry(&client, &relay_urls, event, label).await;
+            for (label, event) in background_events {
+                let detail =
+                    match publish_event_with_retry(&client, &relay_urls, event, label).await {
+                        Ok(()) => format!("label={label} success=true"),
+                        Err(error) => format!("label={label} success=false error={error}"),
+                    };
+                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                    category: "publish.identity".to_string(),
+                    detail,
+                })));
             }
             let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
         });

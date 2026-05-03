@@ -79,6 +79,7 @@ final class InteropHarnessTests: XCTestCase {
         switch action {
         case "create_account_and_report_identity", "report_logged_in_identity":
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
             reportIdentity(snapshot)
         case "start_linked_device_and_report_identity":
             let ownerInput = env["IRIS_IOS_HARNESS_OWNER_INPUT"] ?? ""
@@ -125,6 +126,7 @@ final class InteropHarnessTests: XCTestCase {
                 status("devices", roster.devices.map { $0.devicePubkeyHex }.joined(separator: ","))
             }
             status("toast", manager.state.toast ?? "")
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
         case "wait_for_authorization_state_from_args":
             let expected = try requiredEnv("IRIS_IOS_HARNESS_AUTHORIZATION_STATE", env: env).lowercased()
             let snapshot: AccountSnapshot = try await waitFor(label: "authorization state \(expected)", timeout: 180) {
@@ -719,6 +721,29 @@ final class InteropHarnessTests: XCTestCase {
             try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
         }
         throw HarnessError.timeout(label)
+    }
+
+    private func waitForRelayDrainIfRequested(manager: AppManager, env: [String: String]) async throws {
+        let raw = (env["IRIS_IOS_HARNESS_WAIT_FOR_RELAY_DRAIN"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard ["1", "true", "yes"].contains(raw) else {
+            return
+        }
+
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_RELAY_DRAIN_TIMEOUT_SECS"] ?? "") ?? 180)
+        let networkStatus: NetworkStatusSnapshot = try await waitFor(label: "relay publish drain", timeout: timeout) {
+            guard let status = manager.state.networkStatus else {
+                return nil
+            }
+            if status.pendingOutboundCount == 0 && status.pendingGroupControlCount == 0 {
+                return status
+            }
+            return nil
+        }
+        status("pending_outbound_count", String(networkStatus.pendingOutboundCount))
+        status("pending_group_control_count", String(networkStatus.pendingGroupControlCount))
     }
 
     private func waitForNoVisibleDeliveredNotifications(timeout: TimeInterval) async throws -> [UNNotification] {

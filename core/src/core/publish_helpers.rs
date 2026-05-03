@@ -33,12 +33,9 @@ pub(super) async fn publish_event_fire_and_forget(
         return Err(anyhow::anyhow!("{label}: no relays configured"));
     }
 
-    client.connect().await;
+    ensure_publish_connection(client, relay_urls).await;
     let output = client
-        .send_msg_to(
-            relay_urls.to_vec(),
-            ClientMessage::Event(Cow::Borrowed(event)),
-        )
+        .send_event_to(relay_urls.to_vec(), event)
         .await
         .map_err(|error| anyhow::anyhow!("{label}: {error}"))?;
     if output.success.is_empty() {
