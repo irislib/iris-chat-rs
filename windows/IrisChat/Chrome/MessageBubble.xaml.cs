@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -166,5 +168,33 @@ public partial class MessageBubble : UserControl
         {
             _ = app.Manager.OpenAttachmentAsync(att);
         }
+    }
+
+    private void OnCopyText(object sender, RoutedEventArgs e)
+    {
+        if (_message == null) return;
+        var pieces = new List<string>();
+        if (!string.IsNullOrEmpty(_message.body)) pieces.Add(_message.body);
+        if (_message.attachments != null)
+        {
+            foreach (var att in _message.attachments)
+            {
+                pieces.Add(att.htreeUrl);
+            }
+        }
+        if (pieces.Count == 0) return;
+        try { Clipboard.SetText(string.Join("\n", pieces)); }
+        catch { /* clipboard contention */ }
+    }
+
+    private void OnShowInfo(object sender, RoutedEventArgs e)
+    {
+        if (_message == null) return;
+        var owner = Window.GetWindow(this);
+        var window = new MessageInfoWindow(_message)
+        {
+            Owner = owner,
+        };
+        window.ShowDialog();
     }
 }
