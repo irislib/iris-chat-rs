@@ -360,7 +360,7 @@ report_android_debug "${BOB_SERIAL}"
 report_android_debug "${CHARLIE_SERIAL}"
 
 for serial in "${ALICE_SERIAL}" "${ALICE_LINKED_SERIAL}" "${BOB_SERIAL}" "${CHARLIE_SERIAL}"; do
-  "${ADB}" -s "${serial}" shell am start --user "${AM_USER}" -n "${APP_PACKAGE}/.MainActivity" >/dev/null || true
+  "${ADB}" -s "${serial}" shell monkey -p "${APP_PACKAGE}" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
 done
 
 trap - ERR

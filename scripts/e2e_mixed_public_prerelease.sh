@@ -415,7 +415,7 @@ for udid in "${IOS_A_UDID}" "${IOS_B_UDID}"; do
   xcrun simctl launch "${udid}" "${IOS_BUNDLE_ID}" >/dev/null 2>&1 || true
 done
 for serial in "${ANDROID_A_SERIAL}" "${ANDROID_B_SERIAL}"; do
-  "${ADB}" -s "${serial}" shell am start --user "${AM_USER}" -n "${ANDROID_APP_PACKAGE}/.MainActivity" >/dev/null || true
+  "${ADB}" -s "${serial}" shell monkey -p "${ANDROID_APP_PACKAGE}" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
 done
 
 trap - ERR
