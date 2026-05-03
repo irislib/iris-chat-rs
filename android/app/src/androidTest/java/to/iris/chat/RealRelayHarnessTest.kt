@@ -1,5 +1,6 @@
 package to.iris.chat
 
+import android.database.sqlite.SQLiteDatabase
 import android.util.Base64
 import android.os.Bundle
 import android.os.SystemClock
@@ -1156,7 +1157,7 @@ class RealRelayHarnessTest {
     }
 
     /**
-     * Wait until the local owner's `core/profiles.json` carries an
+     * Wait until the local owner's persisted profile store carries an
      * entry for `peer_pubkey_hex` whose name matches `display_name`.
      * Used by the notification-decrypt smoke to confirm that Bob has
      * received and persisted Alice's kind:0 before we feed her
@@ -1171,10 +1172,9 @@ class RealRelayHarnessTest {
 
         val resolved =
             waitForState("peer profile $peerPubkeyHex == $expected", timeoutMs = timeoutMs) {
-                val profiles = readJsonObject("core/profiles.json") ?: return@waitForState null
-                val entry = profiles.optJSONObject(peerPubkeyHex) ?: return@waitForState null
-                val candidate = entry.optString("display_name").takeIf { it.isNotEmpty() }
-                    ?: entry.optString("name").takeIf { it.isNotEmpty() }
+                val candidate =
+                    readOwnerProfileDisplayName(peerPubkeyHex)
+                        ?: readLegacyOwnerProfileDisplayName(peerPubkeyHex)
                 candidate?.takeIf { it == expected }
             }
 
@@ -1763,6 +1763,42 @@ class RealRelayHarnessTest {
             return null
         }
         return runCatching { JSONObject(file.readText()) }.getOrNull()
+    }
+
+    private fun readOwnerProfileDisplayName(ownerPubkeyHex: String): String? {
+        val dbFile = File(appFilesDir(), "core.sqlite3")
+        if (!dbFile.exists()) {
+            return null
+        }
+        return runCatching {
+            SQLiteDatabase
+                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+                .use { db ->
+                    db.rawQuery(
+                        """
+                            SELECT display_name, name
+                            FROM owner_profiles
+                            WHERE owner_pubkey_hex = ?
+                            LIMIT 1
+                        """.trimIndent(),
+                        arrayOf(ownerPubkeyHex),
+                    ).use { cursor ->
+                        if (!cursor.moveToFirst()) {
+                            null
+                        } else {
+                            cursor.getString(0)?.takeIf { it.isNotEmpty() }
+                                ?: cursor.getString(1)?.takeIf { it.isNotEmpty() }
+                        }
+                    }
+                }
+        }.getOrNull()
+    }
+
+    private fun readLegacyOwnerProfileDisplayName(ownerPubkeyHex: String): String? {
+        val profiles = readJsonObject("core/profiles.json") ?: return null
+        val entry = profiles.optJSONObject(ownerPubkeyHex) ?: return null
+        return entry.optString("display_name").takeIf { it.isNotEmpty() }
+            ?: entry.optString("name").takeIf { it.isNotEmpty() }
     }
 
     private fun persistedThreadWithMessage(

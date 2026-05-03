@@ -937,15 +937,19 @@ impl AppCore {
         outer_event_id: Option<String>,
     ) {
         if let Some(logged_in) = self.logged_in.as_ref() {
-            let group_events = logged_in.ndr_runtime.group_handle_incoming_payload(
+            let group_outcome = logged_in.ndr_runtime.group_handle_incoming_payload_outcome(
                 content.as_bytes(),
                 sender_owner,
                 sender_device,
             );
-            if !group_events.is_empty() {
-                for group_event in group_events {
+            if !group_outcome.events.is_empty() {
+                for group_event in group_outcome.events {
                     self.apply_group_decrypted_event(group_event);
                 }
+                self.request_protocol_subscription_refresh();
+                return;
+            }
+            if group_outcome.consumed {
                 self.request_protocol_subscription_refresh();
                 return;
             }

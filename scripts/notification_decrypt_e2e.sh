@@ -38,6 +38,7 @@ ADB="${SDK_DIR}/platform-tools/adb"
 HARNESS="${ROOT_DIR}/scripts/run_harness.py"
 CAPTURE="${ROOT_DIR}/scripts/capture_relay_event.py"
 RELAY_URL="${RELAY_URL:-ws://192.168.178.81:4848}"
+CAPTURE_SINCE_SECS="${CAPTURE_SINCE_SECS:-120}"
 RUNNER="to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner"
 TEST_CLASS="to.iris.chat.RealRelayHarnessTest"
 PACKAGE_NAME="to.iris.chat.debug"
@@ -131,7 +132,8 @@ python3 "${CAPTURE}" \
   --relay "${RELAY_URL}" \
   --kinds 1060 \
   --author "${B_MESSAGE_AUTHORS}" \
-  --since-secs 5 \
+  --since-secs "${CAPTURE_SINCE_SECS}" \
+  --live-only \
   --timeout-secs 60 \
   > "${CAPTURE_OUT}" &
 CAPTURE_PID=$!
