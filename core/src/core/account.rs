@@ -551,7 +551,7 @@ impl AppCore {
                 .groups
                 .iter()
                 .cloned()
-                .map(|group| (group.id.clone(), group))
+                .map(|group| (group.group_id.clone(), group))
                 .collect();
             self.threads = persisted
                 .threads

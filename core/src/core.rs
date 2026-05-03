@@ -13,15 +13,11 @@ use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;
 use nostr::{EventBuilder, UnsignedEvent};
 use nostr_double_ratchet::{
-    add_group_admin, add_group_member, apply_app_keys_snapshot_with_required_device,
-    apply_metadata_update, build_direct_message_backfill_filter, is_app_keys_event,
-    parse_group_metadata, remove_group_admin, remove_group_member, update_group_data,
-    validate_metadata_creation, validate_metadata_update, AppKeys, CreateGroupOptions, DeviceEntry,
-    DirectMessageSubscriptionTracker, FanoutGroupMetadataOptions, GroupData, GroupDecryptedEvent,
-    GroupSendEvent, GroupUpdate, Invite, MetadataValidation, NdrProtocolBackfillOptions,
-    NdrRuntime, SendOptions, SessionManagerEvent, SessionState, StorageAdapter,
-    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_METADATA_KIND,
-    GROUP_SENDER_KEY_DISTRIBUTION_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
+    apply_app_keys_snapshot_with_required_device, build_direct_message_backfill_filter,
+    is_app_keys_event, AppKeys, DeviceEntry, DirectMessageSubscriptionTracker, GroupIncomingEvent,
+    GroupSnapshot, Invite, NdrProtocolBackfillOptions, NdrRuntime, SendOptions,
+    SessionManagerEvent, SessionState, StorageAdapter, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND,
+    CHAT_SETTINGS_KIND, GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
     MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
 use nostr_sdk::prelude::{
@@ -87,9 +83,7 @@ impl UnixSeconds {
 #[cfg(test)]
 use account::known_app_keys_from_ndr;
 use account::known_app_keys_to_ndr;
-use attachment_upload::{
-    display_filename, upload_file_to_hashtree, upload_profile_picture_to_hashtree,
-};
+use attachment_upload::upload_profile_picture_to_hashtree;
 use attachments::*;
 use config::*;
 pub(crate) use config::{build_summary, configured_relays, relay_set_id, trusted_test_build_flag};
@@ -126,7 +120,7 @@ pub struct AppCore {
     next_message_id: u64,
     owner_profiles: BTreeMap<String, OwnerProfileRecord>,
     app_keys: BTreeMap<String, KnownAppKeys>,
-    groups: BTreeMap<String, GroupData>,
+    groups: BTreeMap<String, GroupSnapshot>,
     typing_indicators: BTreeMap<String, TypingIndicatorRecord>,
     /// Monotonic per-chat ceiling on `last_event_secs` we'll accept
     /// for incoming typing events. Bumped to the wire-clock

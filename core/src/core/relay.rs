@@ -66,17 +66,17 @@ impl AppCore {
             INVITE_RESPONSE_KIND => {
                 self.debug_event_counters.invite_response_events += 1;
             }
-            MESSAGE_EVENT_KIND => {
-                self.debug_event_counters.message_events += 1;
-                let group_event = self
+            GROUP_SENDER_KEY_MESSAGE_KIND => {
+                let group_events = self
                     .logged_in
                     .as_ref()
-                    .and_then(|logged_in| logged_in.ndr_runtime.group_handle_outer_event(&event));
-                if let Some(group_event) = group_event {
+                    .map(|logged_in| logged_in.ndr_runtime.group_handle_outer_event(&event))
+                    .unwrap_or_default();
+                if !group_events.is_empty() {
                     self.debug_event_counters.group_events += 1;
-                    self.event_transport_channels
-                        .insert(group_event.outer_event_id.clone(), channel.to_string());
-                    self.apply_group_decrypted_event(group_event);
+                    for group_event in group_events {
+                        self.apply_group_decrypted_event(group_event);
+                    }
                     self.remember_event(event_id);
                     self.process_runtime_events();
                     self.persist_best_effort();
@@ -84,6 +84,9 @@ impl AppCore {
                     self.emit_state();
                     return;
                 }
+            }
+            MESSAGE_EVENT_KIND => {
+                self.debug_event_counters.message_events += 1;
             }
             _ => {
                 self.debug_event_counters.other_events += 1;

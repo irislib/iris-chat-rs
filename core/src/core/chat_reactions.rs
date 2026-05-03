@@ -37,43 +37,11 @@ impl AppCore {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
-        if let Some(group_id) = parse_group_id_from_chat_id(chat_id) {
-            let mut outer_events = Vec::new();
-            let event = GroupSendEvent {
-                kind: REACTION_KIND,
-                content: emoji.to_string(),
-                tags: vec![vec!["e".to_string(), message_id.to_string()]],
-            };
-            let mut result = Ok(());
-            logged_in
-                .ndr_runtime
-                .with_group_context(|_, group_manager, _| {
-                    let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
-                        logged_in
-                            .ndr_runtime
-                            .send_event(recipient, rumor.clone())
-                            .map(|_| ())
-                    };
-                    let mut publish_outer = |event: &Event| {
-                        outer_events.push(event.clone());
-                        Ok(())
-                    };
-                    result = group_manager
-                        .send_event(
-                            &group_id,
-                            event,
-                            &mut send_pairwise,
-                            &mut publish_outer,
-                            None,
-                        )
-                        .map(|_| ());
-                });
-            if result.is_ok() {
-                for event in outer_events {
-                    self.publish_runtime_event(event, "group reaction", None);
-                }
-                self.process_runtime_events();
-            }
+        if parse_group_id_from_chat_id(chat_id).is_some() {
+            self.push_debug_log(
+                "group.reaction.skipped",
+                "group reactions are deferred on the experimental group protocol",
+            );
             return;
         }
 

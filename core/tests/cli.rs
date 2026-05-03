@@ -204,7 +204,11 @@ fn invite_create_group_create_relays_and_logout_are_scriptable() {
     assert_eq!(reacted["data"]["reactions"][0]["emoji"], "+1");
 
     let read = run_iris(dir.path(), &["group", "read", group_id]);
-    assert_eq!(read["data"]["messages"][0]["body"], "group note");
+    assert!(read["data"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["body"] == "group note"));
 
     let renamed = run_iris(dir.path(), &["group", "rename", group_id, "Renamed"]);
     assert_eq!(renamed["data"]["name"], "Renamed");

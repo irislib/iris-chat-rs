@@ -1132,7 +1132,7 @@ fn mobile_push_fallback_suppresses_decrypted_non_message_kinds() {
         0_u64,
         TYPING_KIND as u64,
         RECEIPT_KIND as u64,
-        GROUP_METADATA_KIND as u64,
+        40_u64,
         CHAT_SETTINGS_KIND as u64,
         12345,
     ] {
@@ -2622,43 +2622,60 @@ fn web_runtime_chat_message_expiration_tag_is_persisted() {
     );
 }
 
+fn ndr_owner_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::OwnerPubkey {
+    nostr_double_ratchet::OwnerPubkey::from_bytes(pubkey.to_bytes())
+}
+
+fn ndr_device_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::DevicePubkey {
+    nostr_double_ratchet::DevicePubkey::from_bytes(pubkey.to_bytes())
+}
+
+fn test_group_snapshot(
+    group_id: &str,
+    name: &str,
+    created_by: PublicKey,
+    members: Vec<PublicKey>,
+    admins: Vec<PublicKey>,
+    revision: u64,
+) -> GroupSnapshot {
+    GroupSnapshot {
+        group_id: group_id.to_string(),
+        protocol: nostr_double_ratchet::GroupProtocol::sender_key_v1(),
+        name: name.to_string(),
+        created_by: ndr_owner_pubkey(created_by),
+        members: members.into_iter().map(ndr_owner_pubkey).collect(),
+        admins: admins.into_iter().map(ndr_owner_pubkey).collect(),
+        revision,
+        created_at: nostr_double_ratchet::UnixSeconds(1),
+        updated_at: nostr_double_ratchet::UnixSeconds(revision),
+    }
+}
+
 #[test]
-fn group_runtime_chat_message_expiration_tag_is_persisted() {
+fn group_runtime_chat_message_is_persisted() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender_owner = Keys::generate();
     let sender_device = Keys::generate();
-    let mut core = logged_in_test_core("group-runtime-expiring-message", &owner, &device);
+    let mut core = logged_in_test_core("group-runtime-message", &owner, &device);
     core.preferences.send_read_receipts = false;
-    let group_id = "group-expiring-message".to_string();
+    let group_id = "group-runtime-message".to_string();
     let chat_id = group_chat_id(&group_id);
-    let mut inner = EventBuilder::new(Kind::from(CHAT_MESSAGE_KIND as u16), "group secret")
-        .custom_created_at(Timestamp::from(1_777_159_483u64))
-        .tag(nostr::Tag::parse(["expiration", "1777159543"]).expect("expiration tag"))
-        .build(sender_owner.public_key());
-    inner.ensure_id();
-    let inner_id = inner.id.as_ref().expect("inner id").to_string();
 
-    core.apply_group_decrypted_event(GroupDecryptedEvent {
-        group_id,
-        sender_event_pubkey: sender_device.public_key(),
-        sender_device_pubkey: sender_device.public_key(),
-        sender_owner_pubkey: Some(sender_owner.public_key()),
-        outer_event_id: "f".repeat(64),
-        outer_created_at: 1_777_159_484,
-        key_id: 0,
-        message_number: 0,
-        inner,
-    });
+    core.apply_group_decrypted_event(GroupIncomingEvent::Message(
+        nostr_double_ratchet::GroupReceivedMessage {
+            group_id,
+            sender_owner: ndr_owner_pubkey(sender_owner.public_key()),
+            sender_device: Some(ndr_device_pubkey(sender_device.public_key())),
+            body: b"group secret".to_vec(),
+            revision: 1,
+        },
+    ));
 
     let thread = core.threads.get(&chat_id).expect("group thread");
     assert_eq!(thread.messages.len(), 1);
     assert_eq!(thread.messages[0].body, "group secret");
-    assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
-    assert_eq!(
-        stored_message_expiration(&core, &chat_id, &inner_id),
-        Some(1_777_159_543)
-    );
+    assert_eq!(thread.messages[0].expires_at_secs, None);
 }
 
 #[test]
@@ -2782,9 +2799,14 @@ fn create_group_allows_self_only_group() {
     let current = core.state.current_chat.as_ref().expect("opened group chat");
     let group_id = current.group_id.as_ref().expect("group id").clone();
     let group = core.groups.get(&group_id).expect("stored group");
+    let owner = ndr_owner_pubkey(owner.public_key());
     assert_eq!(group.name, "Notes");
-    assert_eq!(group.members, vec![owner.public_key().to_hex()]);
-    assert_eq!(group.admins, vec![owner.public_key().to_hex()]);
+    assert_eq!(
+        group.protocol,
+        nostr_double_ratchet::GroupProtocol::sender_key_v1()
+    );
+    assert_eq!(group.members, vec![owner]);
+    assert_eq!(group.admins, vec![owner]);
 }
 
 #[test]
@@ -2794,39 +2816,53 @@ fn group_metadata_changes_create_system_notices() {
     let mut core = logged_in_test_core("group-metadata-notices", &owner, &device);
     let group_id = "group-notice-test".to_string();
     let chat_id = group_chat_id(&group_id);
-    let initial = GroupData {
-        id: group_id.clone(),
-        name: "Original".to_string(),
-        description: None,
-        picture: None,
-        members: vec![owner.public_key().to_hex()],
-        admins: vec![owner.public_key().to_hex()],
-        created_at: 1,
-        secret: None,
-        accepted: Some(true),
-    };
-    let renamed = GroupData {
-        name: "Renamed".to_string(),
-        ..initial.clone()
-    };
-    let member = Keys::generate().public_key().to_hex();
-    let with_member = GroupData {
-        members: vec![owner.public_key().to_hex(), member.clone()],
-        ..renamed.clone()
-    };
-    let member_removed = GroupData {
-        members: vec![owner.public_key().to_hex()],
-        ..with_member.clone()
-    };
+    let owner_pubkey = owner.public_key();
+    let member = Keys::generate().public_key();
+    let initial = test_group_snapshot(
+        &group_id,
+        "Original",
+        owner_pubkey,
+        vec![owner_pubkey],
+        vec![owner_pubkey],
+        1,
+    );
+    let renamed = test_group_snapshot(
+        &group_id,
+        "Renamed",
+        owner_pubkey,
+        vec![owner_pubkey],
+        vec![owner_pubkey],
+        2,
+    );
+    let with_member = test_group_snapshot(
+        &group_id,
+        "Renamed",
+        owner_pubkey,
+        vec![owner_pubkey, member],
+        vec![owner_pubkey],
+        3,
+    );
+    let member_removed = test_group_snapshot(
+        &group_id,
+        "Renamed",
+        owner_pubkey,
+        vec![owner_pubkey],
+        vec![owner_pubkey],
+        4,
+    );
 
     core.apply_group_metadata_notice(None, &initial);
     core.apply_group_metadata_notice(Some(&initial), &renamed);
     core.apply_group_metadata_notice(Some(&renamed), &with_member);
     core.apply_group_metadata_notice(Some(&with_member), &member_removed);
-    let with_admin = GroupData {
-        admins: with_member.members.clone(),
-        ..with_member.clone()
-    };
+    let with_admin = test_group_snapshot(
+        &group_id,
+        "Renamed",
+        owner_pubkey,
+        vec![owner_pubkey, member],
+        vec![owner_pubkey, member],
+        5,
+    );
     core.apply_group_metadata_notice(Some(&with_member), &with_admin);
 
     let messages = &core.threads.get(&chat_id).expect("group thread").messages;
@@ -2909,17 +2945,14 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
         );
         core.groups.insert(
             group_id.clone(),
-            GroupData {
-                id: group_id.clone(),
-                name: "Brunch".to_string(),
-                description: None,
-                picture: None,
-                members: vec![owner.public_key().to_hex()],
-                admins: vec![owner.public_key().to_hex()],
-                created_at: 1_000,
-                secret: None,
-                accepted: Some(true),
-            },
+            test_group_snapshot(
+                &group_id,
+                "Brunch",
+                owner.public_key(),
+                vec![owner.public_key()],
+                vec![owner.public_key()],
+                1_000,
+            ),
         );
         core.threads.insert(
             chat_id.clone(),

@@ -431,59 +431,21 @@ impl AppCore {
             self.state.toast = Some("Invalid group id.".to_string());
             return;
         };
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return;
+        let payload = match encode_app_group_message_payload(text) {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.state.toast = Some(error.to_string());
+                return;
+            }
         };
-
-        let mut outer_events = Vec::new();
-        let mut message_id = None;
-        let mut error = None;
-        let event = GroupSendEvent {
-            kind: CHAT_MESSAGE_KIND,
-            content: text.to_string(),
-            tags: expires_at_secs
-                .and_then(|expires_at| {
-                    nostr::Tag::parse(["expiration", &expires_at.to_string()]).ok()
-                })
-                .into_iter()
-                .map(|tag| tag.as_slice().to_vec())
-                .collect(),
-        };
-        logged_in
-            .ndr_runtime
-            .with_group_context(|_, group_manager, _| {
-                let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
-                    logged_in
-                        .ndr_runtime
-                        .send_event(recipient, rumor.clone())
-                        .map(|_| ())
-                };
-                let mut publish_outer = |event: &Event| {
-                    outer_events.push(event.clone());
-                    Ok(())
-                };
-                match group_manager.send_event(
-                    &group_id,
-                    event,
-                    &mut send_pairwise,
-                    &mut publish_outer,
-                    None,
-                ) {
-                    Ok(result) => {
-                        message_id = result
-                            .inner
-                            .id
-                            .as_ref()
-                            .map(ToString::to_string)
-                            .or_else(|| Some(result.outer.id.to_string()));
-                    }
-                    Err(send_error) => error = Some(send_error.to_string()),
-                }
-            });
-
-        match error {
-            None => {
-                let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
+        let message_id = self.allocate_message_id();
+        let result = self.logged_in.as_ref().map(|logged_in| {
+            logged_in
+                .ndr_runtime
+                .send_group_message(&group_id, payload, Some(message_id.clone()))
+        });
+        match result {
+            Some(Ok(event_ids)) => {
                 self.push_outgoing_message_with_id(
                     message_id.clone(),
                     chat_id,
@@ -492,17 +454,15 @@ impl AppCore {
                     expires_at_secs,
                     DeliveryState::Pending,
                 );
-                for event in outer_events {
-                    self.publish_runtime_event(
-                        event,
-                        "group message",
-                        Some((message_id.clone(), chat_id.to_string())),
-                    );
-                }
-                self.process_runtime_events();
+                let completions = event_ids
+                    .iter()
+                    .map(|event_id| (event_id.clone(), (message_id.clone(), chat_id.to_string())))
+                    .collect::<BTreeMap<_, _>>();
+                self.process_runtime_events_with_completions(&completions);
                 self.sync_message_delivery_trace(chat_id, &message_id);
             }
-            Some(error) => self.state.toast = Some(error),
+            Some(Err(error)) => self.state.toast = Some(error.to_string()),
+            None => {}
         }
     }
 
@@ -943,50 +903,11 @@ impl AppCore {
         chat_id: &str,
         kind: u32,
         content: &str,
-        tags: Vec<Vec<String>>,
-        now_ms: Option<u64>,
+        _tags: Vec<Vec<String>>,
+        _now_ms: Option<u64>,
     ) {
-        let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
-            return;
-        };
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return;
-        };
-        let mut outer_events = Vec::new();
-        let mut result = Ok(());
-        let event = GroupSendEvent {
-            kind,
-            content: content.to_string(),
-            tags,
-        };
-        logged_in
-            .ndr_runtime
-            .with_group_context(|_, group_manager, _| {
-                let mut send_pairwise = |recipient: PublicKey, rumor: &UnsignedEvent| {
-                    logged_in
-                        .ndr_runtime
-                        .send_event(recipient, rumor.clone())
-                        .map(|_| ())
-                };
-                let mut publish_outer = |event: &Event| {
-                    outer_events.push(event.clone());
-                    Ok(())
-                };
-                result = group_manager
-                    .send_event(
-                        &group_id,
-                        event,
-                        &mut send_pairwise,
-                        &mut publish_outer,
-                        now_ms,
-                    )
-                    .map(|_| ());
-            });
-        if result.is_ok() {
-            for event in outer_events {
-                self.publish_runtime_event(event, "group event", None);
-            }
-            self.process_runtime_events();
+        if kind == CHAT_MESSAGE_KIND {
+            self.send_group_message(chat_id, content, unix_now(), None);
         }
     }
 
@@ -1015,6 +936,21 @@ impl AppCore {
         content: String,
         outer_event_id: Option<String>,
     ) {
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            let group_events = logged_in.ndr_runtime.group_handle_incoming_payload(
+                content.as_bytes(),
+                sender_owner,
+                sender_device,
+            );
+            if !group_events.is_empty() {
+                for group_event in group_events {
+                    self.apply_group_decrypted_event(group_event);
+                }
+                self.request_protocol_subscription_refresh();
+                return;
+            }
+        }
+
         let Some(runtime_rumor) = parse_runtime_rumor(&content) else {
             let chat_id = self.logged_in.as_ref().and_then(|logged_in| {
                 direct_self_sync_chat_id(sender_owner, logged_in.owner_pubkey, conversation_owner)
@@ -1030,18 +966,6 @@ impl AppCore {
             );
             return;
         };
-
-        if let (Some(logged_in), Some(event)) =
-            (self.logged_in.as_ref(), runtime_rumor.unsigned.as_ref())
-        {
-            for group_event in logged_in.ndr_runtime.group_handle_incoming_session_event(
-                event,
-                sender_owner,
-                sender_device,
-            ) {
-                self.apply_group_decrypted_event(group_event);
-            }
-        }
 
         let kind = runtime_rumor.kind;
         let created_at_secs = runtime_rumor.created_at_secs;
@@ -1063,12 +987,6 @@ impl AppCore {
         let message_id = runtime_rumor.id.or_else(|| outer_event_id.clone());
 
         match kind {
-            GROUP_METADATA_KIND => {
-                if let Some(event) = runtime_rumor.unsigned.as_ref() {
-                    self.apply_group_metadata_rumor(sender_owner, event);
-                }
-            }
-            GROUP_SENDER_KEY_DISTRIBUTION_KIND => {}
             CHAT_MESSAGE_KIND => {
                 self.apply_runtime_text_message(
                     sender_owner,
@@ -1129,11 +1047,6 @@ impl AppCore {
                 );
             }
             _ => {}
-        }
-
-        if matches!(kind, GROUP_METADATA_KIND | GROUP_SENDER_KEY_DISTRIBUTION_KIND) {
-            self.request_protocol_subscription_refresh();
-            self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
         }
     }
 
@@ -1207,7 +1120,13 @@ impl AppCore {
         let mut recipients = if let Some(group_id) = parse_group_id_from_chat_id(chat_id) {
             self.groups
                 .get(&group_id)
-                .map(|group| group.members.clone())
+                .map(|group| {
+                    group
+                        .members
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
                 .unwrap_or_default()
         } else {
             vec![chat_id.to_string()]

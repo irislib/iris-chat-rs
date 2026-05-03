@@ -14,6 +14,26 @@ pub(super) fn parse_group_id_from_chat_id(chat_id: &str) -> Option<String> {
         .map(|group_id| group_id.to_string())
 }
 
+const APP_GROUP_MESSAGE_PAYLOAD_VERSION: u8 = 1;
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub(super) struct AppGroupMessagePayload {
+    pub(super) version: u8,
+    pub(super) body: String,
+}
+
+pub(super) fn encode_app_group_message_payload(body: &str) -> anyhow::Result<Vec<u8>> {
+    Ok(serde_json::to_vec(&AppGroupMessagePayload {
+        version: APP_GROUP_MESSAGE_PAYLOAD_VERSION,
+        body: body.to_string(),
+    })?)
+}
+
+pub(super) fn decode_app_group_message_payload(payload: &[u8]) -> Option<AppGroupMessagePayload> {
+    let decoded = serde_json::from_slice::<AppGroupMessagePayload>(payload).ok()?;
+    (decoded.version == APP_GROUP_MESSAGE_PAYLOAD_VERSION).then_some(decoded)
+}
+
 pub(super) fn normalize_group_id(value: &str) -> Option<String> {
     if let Some(group_id) = parse_group_id_from_chat_id(value) {
         if !group_id.trim().is_empty() {
@@ -53,10 +73,6 @@ pub(super) fn message_ids_from_tags<'a>(
         .filter(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some("e"))
         .filter_map(|tag| tag.as_slice().get(1).cloned())
         .collect()
-}
-
-pub(super) fn event_message_ids(event: &UnsignedEvent) -> Vec<String> {
-    message_ids_from_tags(event.tags.iter())
 }
 
 pub(super) fn message_expiration_from_tags<'a>(
@@ -129,7 +145,6 @@ pub(super) struct RuntimeRumor {
     pub(super) content: String,
     pub(super) created_at_secs: u64,
     pub(super) tags: Vec<nostr::Tag>,
-    pub(super) unsigned: Option<UnsignedEvent>,
 }
 
 #[derive(Deserialize)]
@@ -151,7 +166,6 @@ pub(super) fn parse_runtime_rumor(content: &str) -> Option<RuntimeRumor> {
             content: event.content.clone(),
             created_at_secs: event.created_at.as_secs(),
             tags: event.tags.iter().cloned().collect(),
-            unsigned: Some(event),
         });
     }
 
@@ -167,7 +181,6 @@ pub(super) fn parse_runtime_rumor(content: &str) -> Option<RuntimeRumor> {
         content: loose.content,
         created_at_secs: loose.created_at,
         tags,
-        unsigned: None,
     })
 }
 

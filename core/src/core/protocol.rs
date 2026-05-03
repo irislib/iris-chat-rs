@@ -42,8 +42,9 @@ impl AppCore {
             let local_owner_hex = logged_in.owner_pubkey.to_hex();
             for group in self.groups.values() {
                 for member in &group.members {
-                    if member != &local_owner_hex {
-                        owners.insert(member.clone());
+                    let member = member.to_string();
+                    if member != local_owner_hex {
+                        owners.insert(member);
                     }
                 }
             }
@@ -141,6 +142,38 @@ impl AppCore {
         });
     }
 
+    pub(super) fn fetch_recent_group_sender_key_messages_for_author(
+        &self,
+        author_pubkey: PublicKey,
+        now: UnixSeconds,
+        lookback_secs: u64,
+    ) {
+        let Some(client) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.client.clone())
+        else {
+            return;
+        };
+        let filter = Filter::new()
+            .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
+            .authors(vec![author_pubkey])
+            .since(Timestamp::from(now.get().saturating_sub(lookback_secs)))
+            .limit(DEVICE_INVITE_DISCOVERY_LIMIT);
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
+            if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
+                let collected = events.iter().cloned().collect::<Vec<_>>();
+                if !collected.is_empty() {
+                    let _ = tx.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::FetchCatchUpEvents(collected),
+                    )));
+                }
+            }
+        });
+    }
+
     pub(super) fn fetch_recent_messages_for_tracked_peers(&self, now: UnixSeconds) {
         let direct_authors = self.direct_message_subscriptions.tracked_authors();
         let group_authors = self
@@ -148,8 +181,15 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.ndr_runtime.group_known_sender_event_pubkeys())
             .unwrap_or_default();
-        for author in direct_authors.into_iter().chain(group_authors) {
+        for author in direct_authors {
             self.fetch_recent_messages_for_author(author, now, CATCH_UP_LOOKBACK_SECS);
+        }
+        for author in group_authors {
+            self.fetch_recent_group_sender_key_messages_for_author(
+                author,
+                now,
+                CATCH_UP_LOOKBACK_SECS,
+            );
         }
     }
 
@@ -370,12 +410,16 @@ impl AppCore {
 
         let subscription_filters_changed = if !group_authors.is_empty() {
             let filter = Filter::new()
-                .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
+                .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
                 .authors(group_authors.clone());
             let subid = GROUP_OUTER_SUBSCRIPTION_ID.to_string();
             let changed = self.upsert_protocol_subscription(subid.clone(), filter);
             for author in group_authors {
-                self.fetch_recent_messages_for_author(author, unix_now(), CATCH_UP_LOOKBACK_SECS);
+                self.fetch_recent_group_sender_key_messages_for_author(
+                    author,
+                    unix_now(),
+                    CATCH_UP_LOOKBACK_SECS,
+                );
             }
             changed
         } else {
@@ -674,12 +718,6 @@ impl AppCore {
         self.direct_message_subscriptions
             .tracked_authors()
             .into_iter()
-            .chain(
-                self.logged_in
-                    .as_ref()
-                    .map(|logged_in| logged_in.ndr_runtime.group_known_sender_event_pubkeys())
-                    .unwrap_or_default(),
-            )
             .map(|pubkey| pubkey.to_hex())
             .collect()
     }

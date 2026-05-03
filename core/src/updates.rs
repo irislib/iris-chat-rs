@@ -78,10 +78,6 @@ pub(crate) enum InternalEvent {
         chat_id: String,
         result: Result<String, String>,
     },
-    GroupPictureUploadFinished {
-        group_id: String,
-        result: Result<String, String>,
-    },
     ProfilePictureUploadFinished {
         result: Result<String, String>,
     },

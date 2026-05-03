@@ -1106,7 +1106,6 @@ fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {
         MOBILE_PUSH_REACTION_KIND => reaction_push_body(content),
         kind if kind == TYPING_KIND as u64 => "is typing".to_string(),
         kind if kind == RECEIPT_KIND as u64 => "Seen".to_string(),
-        kind if kind == GROUP_METADATA_KIND as u64 => "Updated group".to_string(),
         kind if kind == CHAT_SETTINGS_KIND as u64 => "Updated chat".to_string(),
         kind if kind == APP_KEYS_EVENT_KIND as u64 => "Updated devices".to_string(),
         MOBILE_PUSH_INVITE_RESPONSE_KIND => "Someone joined your chat".to_string(),

@@ -110,7 +110,6 @@ impl AppCore {
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
                 InternalEvent::RelayPublishFinished { .. } => "RelayPublishFinished",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
-                InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
                     "ProfilePictureUploadFinished"
                 }
@@ -435,9 +434,6 @@ impl AppCore {
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);
-            }
-            InternalEvent::GroupPictureUploadFinished { group_id, result } => {
-                self.handle_group_picture_upload_finished(group_id, result);
             }
             InternalEvent::ProfilePictureUploadFinished { result } => {
                 self.handle_profile_picture_upload_finished(result);
