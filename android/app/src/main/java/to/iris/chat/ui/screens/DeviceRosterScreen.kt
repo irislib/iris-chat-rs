@@ -40,6 +40,7 @@ import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
+import to.iris.chat.ui.components.formatRelativeTime
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 
@@ -317,6 +318,10 @@ private fun DeviceRosterRow(
                             containerColor = MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
                             contentColor = MaterialTheme.colorScheme.error,
                         )
+                    }
+                    val ago = formatRelativeTime(device.addedAtSecs?.toLong())
+                    if (ago != null) {
+                        DeviceStateChip(text = "Added $ago ago")
                     }
                 }
             }

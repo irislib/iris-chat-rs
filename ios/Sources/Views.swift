@@ -3245,6 +3245,9 @@ private struct DeviceRosterRow: View {
                 if device.isStale {
                     IrisInfoPill("Needs attention", tint: .red)
                 }
+                if let ago = irisRelativeTime(device.addedAtSecs) {
+                    IrisInfoPill("Added \(ago) ago", tint: .gray)
+                }
             }
 
             if canManageDevices && !device.isCurrentDevice {

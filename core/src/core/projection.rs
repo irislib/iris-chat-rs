@@ -284,7 +284,7 @@ impl AppCore {
                         is_current_device: device_pubkey_hex == current_device_pubkey_hex,
                         is_authorized: true,
                         is_stale: false,
-                        last_activity_secs: Some(device.created_at_secs),
+                        added_at_secs: Some(device.created_at_secs),
                     },
                 );
             }
@@ -304,7 +304,7 @@ impl AppCore {
                     logged_in.authorization_state,
                     LocalAuthorizationState::Revoked
                 ),
-                last_activity_secs: None,
+                added_at_secs: None,
             });
 
         let mut devices = entries.into_values().collect::<Vec<_>>();
