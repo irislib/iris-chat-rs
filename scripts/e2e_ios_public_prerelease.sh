@@ -149,6 +149,67 @@ run_ios_test() {
   printf '%s\n' "${output}"
 }
 
+start_ios_test_background() {
+  local udid="$1"
+  local run_id="$2"
+  local action="$3"
+  local reset="$4"
+  local rebuild="$5"
+  local action_log="$6"
+  local exit_file="$7"
+  shift 7
+
+  local status_file="${RUN_DIR}/status/${run_id}-${action}.status"
+  local cmd=(
+    python3
+    "${IOS_HARNESS}"
+    --udid "${udid}"
+    --run-id "${run_id}"
+    --action "${action}"
+    --use-app-storage
+    --data-root "${RUN_DIR}/harness-data"
+    --arg "status_file=${status_file}"
+  )
+  [[ "${reset}" -eq 1 ]] && cmd+=(--reset)
+  [[ "${rebuild}" -eq 1 ]] && cmd+=(--rebuild)
+  while [[ $# -gt 0 ]]; do
+    cmd+=(--arg "$1=$2")
+    shift 2
+  done
+
+  (
+    set +e
+    {
+      printf '+'
+      printf ' %q' "${cmd[@]}"
+      printf '\n'
+    } | tee -a "${LOG_FILE}" "${action_log}" >&2
+    "${cmd[@]}" 2>&1 | tee -a "${LOG_FILE}" "${action_log}"
+    printf '%s\n' "${PIPESTATUS[0]}" >"${exit_file}"
+  ) >/dev/null 2>&1 &
+  IRIS_IOS_BACKGROUND_PID="$!"
+}
+
+wait_for_status_in_file() {
+  local file="$1"
+  local key="$2"
+  local timeout_secs="$3"
+  local deadline=$((SECONDS + timeout_secs))
+  local value=""
+  while (( SECONDS < deadline )); do
+    if [[ -f "${file}" ]]; then
+      value="$(iris_e2e_extract_status "${key}" <"${file}")"
+      if [[ -n "${value}" ]]; then
+        printf '%s\n' "${value}"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  echo "Timed out waiting for ${key} in ${file}" >&2
+  return 1
+}
+
 report_ios_debug() {
   local udid="$1"
   local run_id="$2"
@@ -213,17 +274,32 @@ CHARLIE_HEX="$(printf '%s\n' "${CHARLIE_IDENTITY}" | iris_e2e_extract_status pub
 iris_e2e_require_value charlie_npub "${CHARLIE_NPUB}"
 iris_e2e_require_value charlie_hex "${CHARLIE_HEX}"
 
-LINK_START="$(run_ios_test "${ALICE_LINKED_UDID}" alice-linked start_linked_device_and_report_identity "${RESET_ARG}" 0 \
-  owner_input "${ALICE_NPUB}")"
-LINK_URL="$(printf '%s\n' "${LINK_START}" | iris_e2e_extract_status link_url)"
-LINK_DEVICE_INPUT="$(printf '%s\n' "${LINK_START}" | iris_e2e_extract_status device_input)"
+LINK_LOG="${RUN_DIR}/alice-linked-authorization.log"
+LINK_EXIT="${RUN_DIR}/alice-linked-authorization.exit"
+LINK_STATUS_FILE="${RUN_DIR}/status/alice-linked-start_linked_device_wait_authorized_from_args.status"
+IRIS_IOS_BACKGROUND_PID=""
+start_ios_test_background "${ALICE_LINKED_UDID}" alice-linked start_linked_device_wait_authorized_from_args "${RESET_ARG}" 0 \
+  "${LINK_LOG}" "${LINK_EXIT}" owner_input "${ALICE_NPUB}"
+LINK_PID="${IRIS_IOS_BACKGROUND_PID}"
+iris_e2e_require_value link_pid "${LINK_PID}"
+LINK_URL="$(wait_for_status_in_file "${LINK_STATUS_FILE}" link_url 120)"
+LINK_DEVICE_INPUT="$(wait_for_status_in_file "${LINK_STATUS_FILE}" device_input 120)"
 iris_e2e_require_value link_url "${LINK_URL}"
 iris_e2e_require_value link_device_input "${LINK_DEVICE_INPUT}"
 
 run_ios_test "${ALICE_UDID}" alice add_authorized_device_from_args 0 0 \
   device_input "${LINK_URL}" wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
-ALICE_LINKED_AUTH="$(run_ios_test "${ALICE_LINKED_UDID}" alice-linked wait_for_authorization_state_from_args 0 0 \
-  authorization_state authorized)"
+wait "${LINK_PID}"
+LINK_STATUS="$(cat "${LINK_EXIT}")"
+if [[ "${LINK_STATUS}" -ne 0 ]]; then
+  echo "Linked-device authorization harness failed with exit code ${LINK_STATUS}" >&2
+  exit "${LINK_STATUS}"
+fi
+if ! rg -q '^INSTRUMENTATION_CODE: -1$' "${LINK_LOG}"; then
+  echo "Linked-device authorization harness did not report success" >&2
+  exit 1
+fi
+ALICE_LINKED_AUTH="$(cat "${LINK_LOG}" "${LINK_STATUS_FILE}")"
 ALICE_LINKED_HEX="$(printf '%s\n' "${ALICE_LINKED_AUTH}" | iris_e2e_extract_status public_key_hex)"
 iris_e2e_require_value alice_linked_hex "${ALICE_LINKED_HEX}"
 if [[ "${ALICE_LINKED_HEX}" != "${ALICE_HEX}" ]]; then
@@ -247,7 +323,8 @@ run_ios_test "${CHARLIE_UDID}" charlie wait_for_message_from_args 0 0 \
 
 GROUP_NAME="Alice-Bob-Charlie-${STAMP}"
 GROUP_CREATE="$(run_ios_test "${ALICE_UDID}" alice create_group_from_args 0 0 \
-  group_name "${GROUP_NAME}" member_inputs "${BOB_NPUB},${CHARLIE_NPUB}")"
+  group_name "${GROUP_NAME}" member_inputs "${BOB_NPUB},${CHARLIE_NPUB}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240)"
 GROUP_CHAT_ID="$(printf '%s\n' "${GROUP_CREATE}" | iris_e2e_extract_status chat_id)"
 GROUP_ID="$(printf '%s\n' "${GROUP_CREATE}" | iris_e2e_extract_status group_id)"
 iris_e2e_require_value group_chat_id "${GROUP_CHAT_ID}"
@@ -259,7 +336,8 @@ run_ios_test "${ALICE_LINKED_UDID}" alice-linked wait_for_group_chat_from_args 0
 
 RENAMED_GROUP_NAME="${GROUP_NAME}-renamed"
 run_ios_test "${ALICE_UDID}" alice update_group_name_from_args 0 0 \
-  group_id "${GROUP_ID}" group_name "${RENAMED_GROUP_NAME}" >/dev/null
+  group_id "${GROUP_ID}" group_name "${RENAMED_GROUP_NAME}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
 run_ios_test "${BOB_UDID}" bob wait_for_group_name_from_args 0 0 \
   chat_id "${GROUP_CHAT_ID}" group_name "${RENAMED_GROUP_NAME}" >/dev/null
 run_ios_test "${CHARLIE_UDID}" charlie wait_for_group_name_from_args 0 0 \

@@ -264,7 +264,8 @@ run_android_test "${CHARLIE_SERIAL}" wait_for_message_from_args \
 
 GROUP_NAME="Alice-Bob-Charlie-${STAMP}"
 GROUP_CREATE="$(run_android_test "${ALICE_SERIAL}" create_group_from_args \
-  group_name "${GROUP_NAME}" member_inputs "${BOB_NPUB},${CHARLIE_NPUB}")"
+  group_name "${GROUP_NAME}" member_inputs "${BOB_NPUB},${CHARLIE_NPUB}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240)"
 GROUP_CHAT_ID="$(printf '%s\n' "${GROUP_CREATE}" | iris_e2e_extract_status chat_id)"
 GROUP_ID="$(printf '%s\n' "${GROUP_CREATE}" | iris_e2e_extract_status group_id)"
 iris_e2e_require_value group_chat_id "${GROUP_CHAT_ID}"

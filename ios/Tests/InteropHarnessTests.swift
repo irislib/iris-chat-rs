@@ -520,6 +520,7 @@ final class InteropHarnessTests: XCTestCase {
                 }
             }
 
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
             status("chat_id", chat.chatId)
             status("group_id", chat.groupId ?? "")
             status("group_name", chat.displayName)
@@ -578,6 +579,7 @@ final class InteropHarnessTests: XCTestCase {
                 })
             }
             manager.dispatch(.openChat(chatId: chat.chatId))
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
             status("chat_id", chat.chatId)
             status("group_id", groupID)
             status("group_name", chat.displayName)
@@ -597,6 +599,7 @@ final class InteropHarnessTests: XCTestCase {
                     return thread.memberCount == expectedMemberCount
                 })
             }
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
             status("chat_id", chat.chatId)
             status("group_id", groupID)
             status("member_count", String(chat.memberCount))
@@ -616,6 +619,7 @@ final class InteropHarnessTests: XCTestCase {
                     return thread.memberCount == expectedMemberCount
                 })
             }
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
             status("chat_id", chat.chatId)
             status("group_id", resolvedGroupID)
             status("member_count", String(chat.memberCount))
@@ -630,6 +634,7 @@ final class InteropHarnessTests: XCTestCase {
                     self.sameIdentifier(member.ownerPubkeyHex, memberInput) && member.isAdmin == isAdmin
                 }
             }
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
             status("group_id", groupID)
             status("member_input", memberInput)
             status("is_admin", String(isAdmin))
@@ -838,23 +843,37 @@ final class InteropHarnessTests: XCTestCase {
             let persistedThreadCount = splitPersistenceThreadFiles(dataDir: dataDir).count
             let debugActiveChatID = stringValue(debug?["active_chat_id"])
             let currentChatList = joinValues(arrayValue(debug?["current_chat_list"]))
+            let persistedPeerChatID = splitPersistenceThreadFiles(dataDir: dataDir)
+                .compactMap { self.readJsonObject(at: $0) }
+                .map { self.stringValue($0["chat_id"]) }
+                .first {
+                    !self.stringValue($0).isEmpty &&
+                        self.chatMatchesExpectedChat(chatId: self.stringValue($0), peerInput: peerInput, expectedChatID: nil)
+                } ?? ""
 
             lastObservation = [
                 "state.current=\(summarizeCurrentChat(manager.state.currentChat))",
                 "state.chatList=\(summarizeChatList(manager.state.chatList))",
                 "persisted.active=\(persistedActiveChatID)",
+                "persisted.peer=\(persistedPeerChatID)",
                 "persisted.threads=\(persistedThreadCount)",
                 "debug.active=\(debugActiveChatID)",
                 "debug.current_chat_list=\(currentChatList)",
             ].joined(separator: " ")
 
+            if !persistedPeerChatID.isEmpty {
+                return persistedPeerChatID
+            }
+
             if !persistedActiveChatID.isEmpty &&
-                (!sameIdentifier(persistedActiveChatID, previousActiveChatID) || persistedThreadCount > previousThreadCount) {
+                !sameIdentifier(persistedActiveChatID, previousActiveChatID) &&
+                chatMatchesExpectedChat(chatId: persistedActiveChatID, peerInput: peerInput, expectedChatID: nil) {
                 return persistedActiveChatID
             }
 
             if !debugActiveChatID.isEmpty &&
-                (!sameIdentifier(debugActiveChatID, previousActiveChatID) || !currentChatList.isEmpty) {
+                !sameIdentifier(debugActiveChatID, previousActiveChatID) &&
+                chatMatchesExpectedChat(chatId: debugActiveChatID, peerInput: peerInput, expectedChatID: nil) {
                 return debugActiveChatID
             }
 

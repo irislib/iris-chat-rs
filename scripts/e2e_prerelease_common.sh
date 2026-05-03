@@ -12,7 +12,9 @@ iris_e2e_stamp() {
 
 iris_e2e_extract_status() {
   local key="$1"
-  sed -n "s/^INSTRUMENTATION_STATUS: ${key}=//p" | tail -n 1
+  sed -n \
+    -e "s/^INSTRUMENTATION_STATUS: ${key}=//p" \
+    -e "s/^${key}=//p" | tail -n 1
 }
 
 iris_e2e_require_value() {
