@@ -1,5 +1,3 @@
-# Iris Chat 3.0.11
+# Iris Chat 3.0.12
 
-- Suppresses foreground notifications for the chat currently open on iOS.
-- Opens scanned or pasted invites immediately instead of leaving the link in the input.
-- Keeps invite acceptance responsive while message-server catch-up continues in the background.
+- Adds a Message info view to all platforms with delivery status, recipients, transport, and IDs.
