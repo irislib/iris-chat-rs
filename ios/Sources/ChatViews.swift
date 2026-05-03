@@ -20,6 +20,7 @@ struct ChatScreen: View {
     @State private var lastTypingSentAt: Date?
     @State private var sentTypingIndicator = false
     @State private var activeActionDockMessageId: String?
+    @State private var messageInfoSelection: MessageInfoSelection?
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -72,6 +73,14 @@ struct ChatScreen: View {
                                                                 messageId: message.id,
                                                                 emoji: emoji
                                                             )
+                                                        )
+                                                    },
+                                                    onInfo: {
+                                                        activeActionDockMessageId = nil
+                                                        messageInfoSelection = MessageInfoSelection(
+                                                            chatId: chat.chatId,
+                                                            messageId: message.id,
+                                                            snapshot: message
                                                         )
                                                     },
                                                     onDelete: {
@@ -306,6 +315,17 @@ struct ChatScreen: View {
                 }
             }
         }
+        .sheet(item: $messageInfoSelection) { selection in
+            let context = messageInfoContext(for: selection)
+            MessageInfoSheet(message: context.message, chat: context.chat) {
+                messageInfoSelection = nil
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .irisDismissOnMacOutsideClick {
+                messageInfoSelection = nil
+            }
+        }
         .onDisappear {
             stopTypingIfNeeded()
         }
@@ -361,6 +381,22 @@ struct ChatScreen: View {
         }
     }
 
+    private func messageInfoContext(for selection: MessageInfoSelection) -> (message: ChatMessageSnapshot, chat: CurrentChatSnapshot?) {
+        let currentChat = manager.state.currentChat?.chatId == selection.chatId ? manager.state.currentChat : nil
+        let message = currentChat?.messages.first { $0.id == selection.messageId } ?? selection.snapshot
+        return (message, currentChat)
+    }
+
+}
+
+private struct MessageInfoSelection: Identifiable {
+    let chatId: String
+    let messageId: String
+    let snapshot: ChatMessageSnapshot
+
+    var id: String {
+        "\(chatId):\(messageId)"
+    }
 }
 
 private let irisMessageClusterGapSecs: UInt64 = 60
@@ -440,6 +476,7 @@ private struct ChatMessageRow: View {
     @Binding var activeActionDockMessageId: String?
     let onReply: () -> Void
     let onReact: (String) -> Void
+    let onInfo: () -> Void
     let onDelete: () -> Void
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
@@ -509,9 +546,7 @@ private struct ChatMessageRow: View {
                         ChatMessageActionDock(
                             onShowReactionPicker: { showReactionPicker = true },
                             onReply: onReply,
-                            onCopyInfo: {
-                                PlatformClipboard.setString(messageInfoText(message))
-                            },
+                            onInfo: onInfo,
                             onDelete: onDelete
                         )
                     }
@@ -581,6 +616,7 @@ private struct ChatMessageRow: View {
                         Button("Copy") {
                             PlatformClipboard.setString(copyableMessageText(message))
                         }
+                        Button("Message info", action: onInfo)
                         Button("Delete locally", role: .destructive, action: onDelete)
                     }
                     .sheet(isPresented: $showReactionPicker) {
@@ -600,9 +636,7 @@ private struct ChatMessageRow: View {
                         ChatMessageActionDock(
                             onShowReactionPicker: { showReactionPicker = true },
                             onReply: onReply,
-                            onCopyInfo: {
-                                PlatformClipboard.setString(messageInfoText(message))
-                            },
+                            onInfo: onInfo,
                             onDelete: onDelete
                         )
                     }
@@ -619,6 +653,317 @@ private struct ChatMessageRow: View {
             .padding(.bottom, isLastInCluster ? 10 : 0)
             }
         }
+    }
+}
+
+private struct MessageInfoSheet: View {
+    @Environment(\.irisPalette) private var palette
+    let message: ChatMessageSnapshot
+    let chat: CurrentChatSnapshot?
+    let onClose: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    header
+                    statusSection
+                    peopleSection
+                    transportSection
+                    idsSection
+                    attachmentSection
+                    reactionSection
+                }
+                .padding(.horizontal, 18)
+                .padding(.vertical, 16)
+                .frame(maxWidth: IrisLayout.scrollMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .background(palette.background)
+            .navigationTitle("Message info")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    IrisModalCloseButton(action: onClose)
+                        .accessibilityIdentifier("messageInfoCloseButton")
+                }
+            }
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            #endif
+        }
+        .accessibilityIdentifier("messageInfoSheet")
+    }
+
+    private var header: some View {
+        IrisSectionCard(accent: true) {
+            HStack(alignment: .center, spacing: 12) {
+                IrisDeliveryGlyph(delivery: message.delivery)
+                    .frame(width: 26, height: 26)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(irisDeliveryLabel(message.delivery))
+                        .font(.system(.title3, design: .rounded, weight: .bold))
+                        .foregroundStyle(palette.textPrimary)
+                        .accessibilityIdentifier("messageInfoStatus")
+                    Text(messageInfoDirection(message))
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                }
+                Spacer(minLength: 12)
+                IrisCopyButton(
+                    label: "Copy",
+                    value: messageInfoText(message, chat: chat),
+                    compact: true
+                )
+            }
+        }
+    }
+
+    private var statusSection: some View {
+        MessageInfoSection(title: "Status") {
+            MessageInfoValueRow(label: "Time", value: messageInfoDateTime(message.createdAtSecs))
+            if let expiresAtSecs = message.expiresAtSecs {
+                MessageInfoValueRow(label: "Deletes", value: messageInfoDateTime(expiresAtSecs))
+            }
+            MessageInfoValueRow(label: "Type", value: messageInfoKind(message))
+        }
+    }
+
+    @ViewBuilder
+    private var peopleSection: some View {
+        MessageInfoSection(title: "People") {
+            if message.isOutgoing {
+                if message.recipientDeliveries.isEmpty {
+                    MessageInfoValueRow(label: "Recipients", value: "No receipts")
+                } else {
+                    ForEach(message.recipientDeliveries, id: \.ownerPubkeyHex) { recipient in
+                        MessageInfoRecipientRow(
+                            title: messageInfoRecipientName(recipient.ownerPubkeyHex, chat: chat),
+                            subtitle: messageInfoDateTime(recipient.updatedAtSecs),
+                            delivery: recipient.delivery
+                        )
+                    }
+                }
+            } else {
+                MessageInfoValueRow(label: "From", value: message.author)
+                MessageInfoRecipientRow(
+                    title: "You",
+                    subtitle: messageInfoDateTime(message.createdAtSecs),
+                    delivery: message.delivery
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var transportSection: some View {
+        let trace = message.deliveryTrace
+        if !trace.transportChannels.isEmpty ||
+            !trace.pendingRelayEventIds.isEmpty ||
+            !trace.queuedProtocolTargets.isEmpty ||
+            trace.lastTransportError?.isEmpty == false {
+            MessageInfoSection(title: "Transport") {
+                if !trace.transportChannels.isEmpty {
+                    MessageInfoMultiValueRow(
+                        label: message.isOutgoing ? "Sent over" : "Received over",
+                        values: trace.transportChannels
+                    )
+                }
+                if !trace.pendingRelayEventIds.isEmpty {
+                    MessageInfoMultiValueRow(
+                        label: "Pending message servers",
+                        values: trace.pendingRelayEventIds.map(shortMessageIdentifier),
+                        monospaced: true
+                    )
+                }
+                if !trace.queuedProtocolTargets.isEmpty {
+                    MessageInfoMultiValueRow(
+                        label: "Queued devices",
+                        values: trace.queuedProtocolTargets.map(shortMessageIdentifier),
+                        monospaced: true
+                    )
+                }
+                if let error = trace.lastTransportError, !error.isEmpty {
+                    MessageInfoValueRow(label: "Last error", value: error)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var idsSection: some View {
+        let trace = message.deliveryTrace
+        MessageInfoSection(title: "IDs") {
+            MessageInfoValueRow(label: "Message", value: message.id, monospaced: true, copyValue: message.id)
+            if let sourceEventId = message.sourceEventId, !sourceEventId.isEmpty {
+                MessageInfoValueRow(
+                    label: "Received event",
+                    value: shortMessageIdentifier(sourceEventId),
+                    monospaced: true,
+                    copyValue: sourceEventId
+                )
+            }
+            if !trace.outerEventIds.isEmpty {
+                MessageInfoCopyListRow(label: "Network events", values: trace.outerEventIds)
+            }
+            if !trace.targetDeviceIds.isEmpty {
+                MessageInfoCopyListRow(label: "Target devices", values: trace.targetDeviceIds)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentSection: some View {
+        if !message.attachments.isEmpty {
+            MessageInfoSection(title: "Attachments") {
+                ForEach(message.attachments, id: \.htreeUrl) { attachment in
+                    MessageInfoValueRow(
+                        label: attachment.filename.isEmpty ? "File" : attachment.filename,
+                        value: attachment.htreeUrl,
+                        monospaced: true,
+                        copyValue: attachment.htreeUrl
+                    )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var reactionSection: some View {
+        if !message.reactions.isEmpty || !message.reactors.isEmpty {
+            MessageInfoSection(title: "Reactions") {
+                ForEach(message.reactions, id: \.emoji) { reaction in
+                    MessageInfoValueRow(
+                        label: reaction.emoji,
+                        value: "\(reaction.count)"
+                    )
+                }
+                ForEach(message.reactors, id: \.author) { reactor in
+                    MessageInfoValueRow(
+                        label: shortMessageIdentifier(reactor.author),
+                        value: reactor.emoji.isEmpty ? "Removed" : reactor.emoji,
+                        monospaced: reactor.emoji.isEmpty
+                    )
+                }
+            }
+        }
+    }
+}
+
+private struct MessageInfoSection<Content: View>: View {
+    let title: String
+    let content: () -> Content
+
+    init(title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        IrisSectionCard {
+            Text(title)
+                .font(.system(.headline, design: .rounded, weight: .bold))
+            VStack(spacing: 0, content: content)
+        }
+    }
+}
+
+private struct MessageInfoValueRow: View {
+    @Environment(\.irisPalette) private var palette
+    let label: String
+    let value: String
+    var monospaced: Bool = false
+    var copyValue: String?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(label)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.muted)
+                .frame(width: 96, alignment: .leading)
+            Text(value)
+                .font(monospaced ? .system(.footnote, design: .monospaced, weight: .medium) : .system(.subheadline, design: .rounded))
+                .foregroundStyle(palette.textPrimary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            if let copyValue {
+                Button {
+                    PlatformClipboard.setString(copyValue)
+                } label: {
+                    Image(systemName: "doc.on.doc")
+                        .font(.system(size: 13, weight: .semibold))
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(palette.muted)
+                .accessibilityLabel("Copy")
+            }
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+private struct MessageInfoMultiValueRow: View {
+    @Environment(\.irisPalette) private var palette
+    let label: String
+    let values: [String]
+    var monospaced: Bool = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(label)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.muted)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(values.enumerated()), id: \.offset) { _, value in
+                    Text(value)
+                        .font(monospaced ? .system(.footnote, design: .monospaced, weight: .medium) : .system(.subheadline, design: .rounded))
+                        .foregroundStyle(palette.textPrimary)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MessageInfoCopyListRow: View {
+    let label: String
+    let values: [String]
+
+    var body: some View {
+        ForEach(Array(values.enumerated()), id: \.offset) { index, value in
+            MessageInfoValueRow(
+                label: index == 0 ? label : "",
+                value: shortMessageIdentifier(value),
+                monospaced: true,
+                copyValue: value
+            )
+        }
+    }
+}
+
+private struct MessageInfoRecipientRow: View {
+    @Environment(\.irisPalette) private var palette
+    let title: String
+    let subtitle: String
+    let delivery: DeliveryState
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            IrisDeliveryGlyph(delivery: delivery)
+                .frame(width: 22, height: 22)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                Text("\(irisDeliveryLabel(delivery)) - \(subtitle)")
+                    .font(.system(.caption, design: .rounded, weight: .medium))
+                    .foregroundStyle(palette.muted)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 8)
     }
 }
 
@@ -730,7 +1075,7 @@ private struct ChatMessageActionDock: View {
     @Environment(\.irisPalette) private var palette
     let onShowReactionPicker: () -> Void
     let onReply: () -> Void
-    let onCopyInfo: () -> Void
+    let onInfo: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -746,9 +1091,10 @@ private struct ChatMessageActionDock: View {
                     .frame(width: 26, height: 24)
             }
             .buttonStyle(.plain)
-            dockButton("arrowshape.turn.up.left", action: onReply)
+            .accessibilityIdentifier("messageReactButton")
+            dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
             Menu {
-                Button("Message info", action: onCopyInfo)
+                Button("Message info", action: onInfo)
                 Button("Delete message", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis")
@@ -756,6 +1102,7 @@ private struct ChatMessageActionDock: View {
                     .frame(width: 26, height: 24)
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("messageMoreButton")
         }
         .foregroundStyle(palette.muted)
         .padding(5)
@@ -765,13 +1112,14 @@ private struct ChatMessageActionDock: View {
         )
     }
 
-    private func dockButton(_ systemName: String, action: @escaping () -> Void) -> some View {
+    private func dockButton(_ systemName: String, identifier: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 12, weight: .semibold))
                 .frame(width: 26, height: 24)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
     }
 }
 
@@ -1434,21 +1782,28 @@ private func copyableMessageText(_ message: ChatMessageSnapshot) -> String {
     return pieces.joined(separator: "\n")
 }
 
-private func messageInfoText(_ message: ChatMessageSnapshot) -> String {
+private func messageInfoText(_ message: ChatMessageSnapshot, chat: CurrentChatSnapshot? = nil) -> String {
     var lines: [String] = [
         "Message \(message.id)",
-        "Time \(irisMessageClock(message.createdAtSecs))",
+        "Time \(messageInfoDateTime(message.createdAtSecs))",
+        "Type \(messageInfoKind(message))",
         "Status \(irisDeliveryLabel(message.delivery))",
     ]
+    if let expiresAtSecs = message.expiresAtSecs {
+        lines.append("Deletes \(messageInfoDateTime(expiresAtSecs))")
+    }
     let trace = message.deliveryTrace
     if !trace.transportChannels.isEmpty {
-        lines.append("Channels \(trace.transportChannels.joined(separator: ", "))")
+        lines.append("\(message.isOutgoing ? "Sent over" : "Received over") \(trace.transportChannels.joined(separator: ", "))")
     }
     if !message.recipientDeliveries.isEmpty {
         lines.append("Recipients")
         lines.append(contentsOf: message.recipientDeliveries.map { recipient in
-            "- \(shortMessageIdentifier(recipient.ownerPubkeyHex)) \(irisDeliveryLabel(recipient.delivery))"
+            "- \(messageInfoRecipientName(recipient.ownerPubkeyHex, chat: chat)) \(irisDeliveryLabel(recipient.delivery)) \(messageInfoDateTime(recipient.updatedAtSecs))"
         })
+    } else if !message.isOutgoing {
+        lines.append("From \(message.author)")
+        lines.append("You \(irisDeliveryLabel(message.delivery))")
     }
     if !trace.outerEventIds.isEmpty {
         lines.append("Network IDs \(shortMessageIdentifierList(trace.outerEventIds))")
@@ -1468,8 +1823,54 @@ private func messageInfoText(_ message: ChatMessageSnapshot) -> String {
     if let sourceEventId = message.sourceEventId, !sourceEventId.isEmpty {
         lines.append("Received as \(shortMessageIdentifier(sourceEventId))")
     }
+    if !message.attachments.isEmpty {
+        lines.append("Attachments")
+        lines.append(contentsOf: message.attachments.map { attachment in
+            "- \((attachment.filename.isEmpty ? "File" : attachment.filename)) \(attachment.htreeUrl)"
+        })
+    }
+    if !message.reactions.isEmpty {
+        lines.append("Reactions")
+        lines.append(contentsOf: message.reactions.map { reaction in
+            "- \(reaction.emoji) \(reaction.count)"
+        })
+    }
     return lines.joined(separator: "\n")
 }
+
+private func messageInfoDirection(_ message: ChatMessageSnapshot) -> String {
+    if message.kind == .system {
+        return "System message"
+    }
+    return message.isOutgoing ? "Sent message" : "Received message"
+}
+
+private func messageInfoKind(_ message: ChatMessageSnapshot) -> String {
+    switch message.kind {
+    case .system:
+        return "System"
+    case .user:
+        return message.isOutgoing ? "Sent" : "Received"
+    }
+}
+
+private func messageInfoRecipientName(_ ownerPubkeyHex: String, chat: CurrentChatSnapshot?) -> String {
+    if let chat, chat.kind == .direct && chat.chatId == ownerPubkeyHex {
+        return chat.displayName
+    }
+    return shortMessageIdentifier(ownerPubkeyHex)
+}
+
+private func messageInfoDateTime(_ secs: UInt64) -> String {
+    messageInfoDateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(secs)))
+}
+
+private let messageInfoDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter
+}()
 
 private func shortMessageIdentifierList(_ values: [String]) -> String {
     values.map(shortMessageIdentifier).joined(separator: ", ")

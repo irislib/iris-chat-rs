@@ -53,6 +53,13 @@ final class IrisChatUITests: XCTestCase {
         element(app, "chatSendButton").tap()
 
         XCTAssertTrue(app.staticTexts["hello from ios ui test"].waitForExistence(timeout: 15))
+        app.staticTexts["hello from ios ui test"].tap()
+        XCTAssertTrue(element(app, "messageMoreButton").waitForExistence(timeout: 5))
+        element(app, "messageMoreButton").tap()
+        XCTAssertTrue(app.buttons["Message info"].waitForExistence(timeout: 5))
+        app.buttons["Message info"].tap()
+        XCTAssertTrue(element(app, "messageInfoSheet").waitForExistence(timeout: 5))
+        XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
     }
 
     func testReturnKeyKeepsMobileDraftUnsent() throws {
