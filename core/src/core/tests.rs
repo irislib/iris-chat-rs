@@ -2695,6 +2695,99 @@ fn web_runtime_chat_message_expiration_tag_is_persisted() {
     );
 }
 
+#[test]
+fn prerelease_app_plaintext_controls_settings_reactions_and_expiration_flow() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("prerelease-app-plaintext-flow", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let message_id = "1".repeat(64);
+
+    let message_content = serde_json::json!({
+        "content": "pre-release app message",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_483u64,
+        "tags": [["expiration", "1777159543"]],
+        "pubkey": "0".repeat(64),
+        "id": message_id,
+    })
+    .to_string();
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        message_content,
+        Some("2".repeat(64)),
+    );
+
+    let thread = core.threads.get(&chat_id).expect("thread after message");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].body, "pre-release app message");
+    assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
+
+    core.apply_typing_event(
+        chat_id.clone(),
+        sender.public_key().to_hex(),
+        1_777_159_484,
+        None,
+    );
+    assert!(core.typing_indicators.values().any(|record| {
+        record.chat_id == chat_id && record.author_owner_hex == sender.public_key().to_hex()
+    }));
+
+    core.apply_incoming_reaction_to_chat(&chat_id, &message_id, &sender.public_key().to_hex(), "+");
+    let reacted = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("reacted message");
+    assert_eq!(reacted.reactions.len(), 1);
+    assert_eq!(reacted.reactions[0].emoji, "+");
+
+    let settings_content = serde_json::json!({
+        "content": serde_json::json!({
+            "type": "chat-settings",
+            "v": 1,
+            "messageTtlSeconds": 3600u64,
+        }).to_string(),
+        "kind": CHAT_SETTINGS_KIND,
+        "created_at": 1_777_159_485u64,
+        "tags": [],
+        "pubkey": "0".repeat(64),
+        "id": "3".repeat(64),
+    })
+    .to_string();
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        settings_content,
+        Some("4".repeat(64)),
+    );
+    assert_eq!(core.chat_message_ttl_seconds.get(&chat_id), Some(&3600));
+    assert_eq!(stored_chat_ttl(&core, &chat_id), Some(3600));
+
+    core.handle_action(AppAction::SendDisappearingMessage {
+        chat_id: chat_id.clone(),
+        text: "local expiring reply".to_string(),
+        expires_at_secs: 1_777_160_000,
+    });
+    let reply = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.body == "local expiring reply")
+        })
+        .expect("local expiring reply");
+    assert_eq!(reply.expires_at_secs, Some(1_777_160_000));
+    assert_eq!(
+        stored_message_expiration(&core, &chat_id, &reply.id),
+        Some(1_777_160_000)
+    );
+}
+
 fn ndr_owner_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::OwnerPubkey {
     nostr_double_ratchet::OwnerPubkey::from_bytes(pubkey.to_bytes())
 }

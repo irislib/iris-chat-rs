@@ -24,6 +24,7 @@ import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.rust.peerInputToHex
+import to.iris.chat.rust.Screen
 import to.iris.chat.nearby.IrisNearbyService
 import java.io.File
 
@@ -59,6 +60,7 @@ class RealRelayHarnessTest {
     @Test
     fun create_account_and_report_identity() {
         val account = ensureLoggedIn()
+        waitForRelayDrainIfRequested()
         reportStatus(
             "npub" to account.npub,
             "public_key_hex" to account.publicKeyHex,
@@ -389,6 +391,7 @@ class RealRelayHarnessTest {
                 null
             }
 
+        waitForRelayDrainIfRequested()
         reportStatus(
             "device_pubkey_hex" to normalizePeerInput(deviceInput),
             "device_count" to roster.devices.size.toString(),
@@ -779,6 +782,89 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun wait_for_group_name_from_args() {
+        ensureLoggedIn()
+        val chatId = requiredArg("chat_id")
+        val groupName = requiredArg("group_name")
+        val thread =
+            waitForState("group name $groupName", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .chatList
+                    .firstOrNull { thread ->
+                        thread.chatId.equals(chatId, ignoreCase = true) &&
+                            thread.displayName == groupName
+                    }
+            }
+
+        appManager().openChat(thread.chatId)
+        reportStatus(
+            "chat_id" to thread.chatId,
+            "group_name" to thread.displayName,
+            "member_count" to thread.memberCount.toString(),
+        )
+    }
+
+    @Test
+    fun update_group_name_from_args() {
+        ensureLoggedIn()
+        val groupId = requiredArg("group_id")
+        val groupName = requiredArg("group_name")
+        val chatId = optionalArg("chat_id") ?: "group:$groupId"
+
+        appManager().updateGroupName(groupId, groupName)
+        val thread =
+            waitForState("renamed group $groupName", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .chatList
+                    .firstOrNull { thread ->
+                        thread.chatId.equals(chatId, ignoreCase = true) &&
+                            thread.displayName == groupName
+                    }
+            }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to thread.chatId,
+            "group_id" to groupId,
+            "group_name" to thread.displayName,
+            "member_count" to thread.memberCount.toString(),
+        )
+    }
+
+    @Test
+    fun add_group_members_from_args() {
+        ensureLoggedIn()
+        val groupId = requiredArg("group_id")
+        val chatId = optionalArg("chat_id") ?: "group:$groupId"
+        val memberInputs = requiredListArg("member_inputs")
+        val expectedMemberCount = optionalArg("expected_member_count")?.toULong()
+
+        appManager().addGroupMembers(groupId, memberInputs)
+        val thread =
+            waitForState("added group members", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .chatList
+                    .firstOrNull { thread ->
+                        thread.chatId.equals(chatId, ignoreCase = true) &&
+                            (expectedMemberCount == null || thread.memberCount == expectedMemberCount)
+                    }
+            }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to thread.chatId,
+            "group_id" to groupId,
+            "member_count" to thread.memberCount.toString(),
+        )
+    }
+
+    @Test
     fun remove_group_member_from_args() {
         ensureLoggedIn()
         val chatId = optionalArg("chat_id")
@@ -826,6 +912,39 @@ class RealRelayHarnessTest {
             "chat_id" to current.chatId,
             "group_id" to current.groupId.orEmpty(),
             "member_count" to current.memberCount.toString(),
+        )
+    }
+
+    @Test
+    fun set_group_admin_from_args() {
+        ensureLoggedIn()
+        val groupId = requiredArg("group_id")
+        val memberInput = normalizePeerInput(requiredArg("member_input"))
+        val isAdmin = optionalArg("is_admin")?.lowercase() !in setOf("0", "false", "no")
+
+        appManager().setGroupAdmin(groupId, memberInput, isAdmin)
+        appManager().pushScreen(Screen.GroupDetails(groupId))
+        val details =
+            waitForState("group admin $memberInput=$isAdmin", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .groupDetails
+                    ?.takeIf { details ->
+                        details.groupId == groupId &&
+                            details.members.any { member ->
+                                member.ownerPubkeyHex.equals(memberInput, ignoreCase = true) &&
+                                    member.isAdmin == isAdmin
+                            }
+                    }
+            }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "group_id" to details.groupId,
+            "member_input" to memberInput,
+            "is_admin" to isAdmin.toString(),
+            "revision" to details.revision.toString(),
         )
     }
 
@@ -1730,6 +1849,33 @@ class RealRelayHarnessTest {
         if (arguments.getString("class").isNullOrBlank()) {
             assumeTrue(reason, false)
         }
+    }
+
+    private fun waitForRelayDrainIfRequested() {
+        val raw = optionalArg("wait_for_relay_drain")?.lowercase() ?: return
+        if (raw !in setOf("1", "true", "yes")) {
+            return
+        }
+
+        SystemClock.sleep(500)
+        val timeoutMs =
+            ((optionalArg("relay_drain_timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
+                .coerceAtLeast(1_000L)
+        val status =
+            waitForState("relay publish drain", timeoutMs = timeoutMs) {
+                appManager()
+                    .state
+                    .value
+                    .networkStatus
+                    ?.takeIf { status ->
+                        status.pendingOutboundCount == 0UL &&
+                            status.pendingGroupControlCount == 0UL
+                    }
+            }
+        reportStatus(
+            "pending_outbound_count" to status.pendingOutboundCount.toString(),
+            "pending_group_control_count" to status.pendingGroupControlCount.toString(),
+        )
     }
 
     private fun requiredListArg(name: String): List<String> =
