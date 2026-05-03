@@ -387,7 +387,7 @@ impl AppCore {
 
     pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
         let invite = &self.logged_in.as_ref()?.local_invite;
-        let url = invite.get_url(CHAT_INVITE_ROOT_URL).ok()?;
+        let url = nostr_double_ratchet_nostr::invite_url(invite, CHAT_INVITE_ROOT_URL).ok()?;
         Some(PublicInviteSnapshot { url })
     }
 

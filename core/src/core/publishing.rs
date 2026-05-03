@@ -360,7 +360,7 @@ impl AppCore {
             }
         }
 
-        if let Ok(unsigned) = local_invite.get_event() {
+        if let Ok(unsigned) = nostr_double_ratchet_nostr::invite_unsigned_event(&local_invite) {
             if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
                 events.push(("invite", event));
             }

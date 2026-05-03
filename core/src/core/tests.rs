@@ -1787,7 +1787,8 @@ fn start_linked_device_creates_ownerless_link_invite() {
         .link_device
         .as_ref()
         .expect("link-device snapshot");
-    let invite = Invite::from_url(&snapshot.url).expect("parse link invite");
+    let invite =
+        nostr_double_ratchet_nostr::parse_invite_url(&snapshot.url).expect("parse link invite");
     assert_eq!(invite.purpose.as_deref(), Some("link"));
     assert!(invite.owner_public_key.is_none());
     assert_eq!(
@@ -1819,7 +1820,8 @@ fn owner_device_accepts_link_invite_and_registers_new_device() {
     )
     .expect("link invite");
     invite.purpose = Some("link".to_string());
-    let invite_url = invite.get_url(CHAT_INVITE_ROOT_URL).expect("invite url");
+    let invite_url =
+        nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL).expect("invite url");
 
     core.handle_action(AppAction::AddAuthorizedDevice {
         device_input: invite_url,
@@ -1855,7 +1857,7 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         .pending_linked_device
         .as_ref()
         .expect("pending link invite");
-    let (_owner_session, response_event) = pending
+    let (_owner_session, response_envelope) = pending
         .invite
         .accept_with_owner(
             owner.public_key(),
@@ -1864,6 +1866,8 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
             Some(owner.public_key()),
         )
         .expect("owner accepts");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response_envelope)
+        .expect("invite response event");
 
     core.handle_relay_event(response_event);
 

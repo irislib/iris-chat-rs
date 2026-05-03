@@ -123,10 +123,11 @@ impl AppCore {
 
         self.debug_event_counters.invite_response_events += 1;
         let event_id = event.id.to_string();
-        let response = match pending
-            .invite
-            .process_invite_response(&event, pending.device_keys.secret_key().to_secret_bytes())
-        {
+        let response = match nostr_double_ratchet_nostr::process_invite_response_event(
+            &pending.invite,
+            &event,
+            pending.device_keys.secret_key().to_secret_bytes(),
+        ) {
             Ok(Some(response)) => response,
             Ok(None) => return false,
             Err(error) => {

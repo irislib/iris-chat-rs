@@ -161,12 +161,13 @@ fn parse_public_invite_or_direct_chat_input(input: &str) -> anyhow::Result<Publi
 }
 
 pub(super) fn parse_public_invite_input(input: &str) -> anyhow::Result<Invite> {
-    if let Ok(invite) = Invite::from_url(input) {
+    if let Ok(invite) = nostr_double_ratchet_nostr::parse_invite_url(input) {
         return Ok(invite);
     }
 
     let Ok(url) = url::Url::parse(input) else {
-        return Invite::from_url(input).map_err(|error| anyhow::anyhow!(error.to_string()));
+        return nostr_double_ratchet_nostr::parse_invite_url(input)
+            .map_err(|error| anyhow::anyhow!(error.to_string()));
     };
 
     for (key, value) in url.query_pairs() {
@@ -193,15 +194,16 @@ pub(super) fn parse_public_invite_input(input: &str) -> anyhow::Result<Invite> {
         }
     }
 
-    Invite::from_url(input).map_err(|error| anyhow::anyhow!(error.to_string()))
+    nostr_double_ratchet_nostr::parse_invite_url(input)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 fn parse_invite_candidate(candidate: &str) -> anyhow::Result<Invite> {
     let trimmed = candidate.trim().trim_start_matches('/');
-    if let Ok(invite) = Invite::from_url(trimmed) {
+    if let Ok(invite) = nostr_double_ratchet_nostr::parse_invite_url(trimmed) {
         return Ok(invite);
     }
-    Invite::from_url(&format!("{CHAT_INVITE_ROOT_URL}#{trimmed}"))
+    nostr_double_ratchet_nostr::parse_invite_url(&format!("{CHAT_INVITE_ROOT_URL}#{trimmed}"))
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
@@ -214,7 +216,7 @@ mod tests {
         let mut invite = Invite::create_new(keys.public_key(), Some("public".to_string()), None)
             .expect("invite");
         invite.owner_public_key = Some(keys.public_key());
-        invite.get_url(CHAT_INVITE_ROOT_URL).expect("invite url")
+        nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL).expect("invite url")
     }
 
     #[test]

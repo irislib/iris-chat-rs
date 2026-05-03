@@ -12,13 +12,16 @@ use crate::state::{
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;
 use nostr::{EventBuilder, UnsignedEvent};
-use nostr_double_ratchet::{
-    apply_app_keys_snapshot_with_required_device, build_direct_message_backfill_filter,
-    is_app_keys_event, AppKeys, DeviceEntry, DirectMessageSubscriptionTracker, GroupIncomingEvent,
-    GroupSnapshot, Invite, NdrProtocolBackfillOptions, NdrRuntime, SendOptions,
-    SessionManagerEvent, SessionState, StorageAdapter, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND,
-    CHAT_SETTINGS_KIND, GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND,
-    MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
+use nostr_double_ratchet::{GroupIncomingEvent, GroupSnapshot, Invite, SessionState};
+use nostr_double_ratchet_nostr::{
+    apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,
+    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_SENDER_KEY_MESSAGE_KIND,
+    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
+    TYPING_KIND,
+};
+use nostr_double_ratchet_runtime::{
+    build_direct_message_backfill_filter, DirectMessageSubscriptionTracker,
+    NdrProtocolBackfillOptions, NdrRuntime, SendOptions, SessionManagerEvent, StorageAdapter,
 };
 use nostr_sdk::prelude::{
     Client, ClientMessage, Event, Filter, Keys, Kind, PublicKey, RelayNotification,

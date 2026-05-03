@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context};
-use nostr_double_ratchet::{FileStorageAdapter, StorageAdapter, StoredUserRecord};
+use nostr_double_ratchet_runtime::{FileStorageAdapter, StorageAdapter, StoredUserRecord};
 use nostr_sdk::prelude::{Keys, PublicKey};
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
@@ -191,9 +191,8 @@ mod tests {
     use super::super::open_database;
     use super::super::SqliteStorageAdapter;
     use super::*;
-    use nostr_double_ratchet::{
-        DevicePubkey, FileStorageAdapter, SerializableKeyPair, SessionState, StoredDeviceRecord,
-    };
+    use nostr_double_ratchet::{DevicePubkey, SerializableKeyPair, SessionState};
+    use nostr_double_ratchet_runtime::{FileStorageAdapter, StoredDeviceRecord};
     use std::collections::BTreeMap;
     use tempfile::TempDir;
 

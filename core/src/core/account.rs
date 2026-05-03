@@ -187,7 +187,7 @@ impl AppCore {
         let device_id = device_pubkey.to_hex();
         let mut invite = Invite::create_new(device_pubkey, Some(device_id), Some(1))?;
         invite.purpose = Some("link".to_string());
-        let url = invite.get_url(CHAT_INVITE_ROOT_URL)?;
+        let url = nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL)?;
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
