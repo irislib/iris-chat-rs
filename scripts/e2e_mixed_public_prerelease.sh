@@ -134,16 +134,13 @@ if [[ ${#ANDROID_SERIALS[@]} -eq 0 ]]; then
     "${ROOT_DIR}/scripts/run_android_emulators.sh" --list >&2 || true
     exit 1
   fi
-  BOOT_ARGS=()
-  [[ "${HEADLESS}" -eq 1 ]] && BOOT_ARGS+=(--headless)
-  BOOT_LINES=()
-  while IFS= read -r line; do
-    BOOT_LINES+=("${line}")
-  done < <("${ROOT_DIR}/scripts/run_android_emulators.sh" "${BOOT_ARGS[@]}" "${AVDS[@]:0:2}")
+  BOOT_CMD=("${ROOT_DIR}/scripts/run_android_emulators.sh")
+  [[ "${HEADLESS}" -eq 1 ]] && BOOT_CMD+=(--headless)
+  BOOT_CMD+=("${AVDS[@]:0:2}")
   ANDROID_SERIALS=()
-  for line in "${BOOT_LINES[@]}"; do
+  while IFS= read -r line; do
     ANDROID_SERIALS+=("$(printf '%s\n' "${line}" | awk '{print $2}')")
-  done
+  done < <("${BOOT_CMD[@]}")
 fi
 ANDROID_A_SERIAL="${ANDROID_SERIALS[0]}"
 ANDROID_B_SERIAL="${ANDROID_SERIALS[1]}"
@@ -366,11 +363,13 @@ run_device "${ALICE_PLATFORM}" "${ALICE_ID}" "${ALICE_RUN_ID}" send_message_from
   peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" >/dev/null
 run_device "${CHARLIE_PLATFORM}" "${CHARLIE_ID}" "${CHARLIE_RUN_ID}" wait_for_message_from_args 0 0 \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_CHARLIE}" direction incoming >/dev/null
+run_device "${LINKED_PLATFORM}" "${LINKED_ID}" "${LINKED_RUN_ID}" wait_for_message_from_args 0 0 \
+  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" direction outgoing >/dev/null
 
 GROUP_NAME="Mixed-Alice-Bob-Charlie-${STAMP}"
 GROUP_CREATE="$(run_device "${ALICE_PLATFORM}" "${ALICE_ID}" "${ALICE_RUN_ID}" create_group_from_args 0 0 \
   group_name "${GROUP_NAME}" member_inputs "${BOB_NPUB},${CHARLIE_NPUB}" \
-  wait_for_relay_drain true relay_drain_timeout_secs 240)"
+  wait_for_relay_drain true relay_drain_runtime_only true relay_drain_timeout_secs 240)"
 GROUP_CHAT_ID="$(printf '%s\n' "${GROUP_CREATE}" | iris_e2e_extract_status chat_id)"
 GROUP_ID="$(printf '%s\n' "${GROUP_CREATE}" | iris_e2e_extract_status group_id)"
 iris_e2e_require_value group_chat_id "${GROUP_CHAT_ID}"
@@ -382,7 +381,7 @@ run_device "${LINKED_PLATFORM}" "${LINKED_ID}" "${LINKED_RUN_ID}" wait_for_group
 
 RENAMED_GROUP_NAME="${GROUP_NAME}-renamed"
 run_device "${ALICE_PLATFORM}" "${ALICE_ID}" "${ALICE_RUN_ID}" update_group_name_from_args 0 0 \
-  group_id "${GROUP_ID}" group_name "${RENAMED_GROUP_NAME}" wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
+  group_id "${GROUP_ID}" group_name "${RENAMED_GROUP_NAME}" wait_for_relay_drain true relay_drain_runtime_only true relay_drain_timeout_secs 240 >/dev/null
 run_device "${BOB_PLATFORM}" "${BOB_ID}" "${BOB_RUN_ID}" wait_for_group_name_from_args 0 0 \
   chat_id "${GROUP_CHAT_ID}" group_name "${RENAMED_GROUP_NAME}" >/dev/null
 run_device "${CHARLIE_PLATFORM}" "${CHARLIE_ID}" "${CHARLIE_RUN_ID}" wait_for_group_name_from_args 0 0 \

@@ -320,6 +320,8 @@ run_ios_test "${ALICE_UDID}" alice send_message_from_args 0 0 \
   peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" >/dev/null
 run_ios_test "${CHARLIE_UDID}" charlie wait_for_message_from_args 0 0 \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_CHARLIE}" direction incoming >/dev/null
+run_ios_test "${ALICE_LINKED_UDID}" alice-linked wait_for_message_from_args 0 0 \
+  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" direction outgoing >/dev/null
 
 GROUP_NAME="Alice-Bob-Charlie-${STAMP}"
 GROUP_CREATE="$(run_ios_test "${ALICE_UDID}" alice create_group_from_args 0 0 \

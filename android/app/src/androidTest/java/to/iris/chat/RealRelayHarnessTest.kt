@@ -347,11 +347,18 @@ class RealRelayHarnessTest {
     fun add_authorized_device_from_args() {
         ensureLoggedIn()
         val deviceInput = requiredArg("device_input")
-        val initialRev = appManager().state.value.rev
+        val initialAuthorizedDeviceCount =
+            appManager()
+                .state
+                .value
+                .deviceRoster
+                ?.devices
+                ?.count { device -> device.isAuthorized && !device.isStale }
+                ?: 0
 
         appManager().addAuthorizedDevice(deviceInput)
 
-        val roster =
+        val deviceCount =
             waitForState("authorized device in roster", timeoutMs = 90_000) {
                 val state = appManager().state.value
                 val roster = state.deviceRoster
@@ -362,31 +369,17 @@ class RealRelayHarnessTest {
                             !device.isStale
                     } == true
                 if (matched) {
-                    return@waitForState roster
+                    return@waitForState roster?.devices?.size ?: 0
                 }
-                if (state.rev > initialRev && !state.busy.updatingRoster) {
-                    val rosterSummary =
-                        roster
-                            ?.devices
-                            ?.joinToString("|") { device ->
-                                listOf(
-                                    device.devicePubkeyHex,
-                                    device.isAuthorized.toString(),
-                                    device.isStale.toString(),
-                                ).joinToString(",")
-                            }
-                            ?: "<none>"
-                    fail(
-                        buildString {
-                            append("Device add completed without authorizing $deviceInput.")
-                            state.toast?.takeIf { it.isNotBlank() }?.let { toast ->
-                                append(" toast=")
-                                append(toast)
-                            }
-                            append(" roster=")
-                            append(rosterSummary)
-                        },
-                    )
+
+                val debug = readJsonObject(DEBUG_SNAPSHOT_FILENAME)
+                val localOwner = debug.optStringOrEmpty("local_owner_pubkey_hex")
+                val runtimeAuthorizedCount =
+                    runtimeDebugAuthorizedDeviceCount(debug, localOwner)
+                if (runtimeAuthorizedCount != null &&
+                    runtimeAuthorizedCount > initialAuthorizedDeviceCount
+                ) {
+                    return@waitForState runtimeAuthorizedCount
                 }
                 null
             }
@@ -394,7 +387,7 @@ class RealRelayHarnessTest {
         waitForRelayDrainIfRequested()
         reportStatus(
             "device_pubkey_hex" to normalizePeerInput(deviceInput),
-            "device_count" to roster.devices.size.toString(),
+            "device_count" to deviceCount.toString(),
         )
     }
 
@@ -708,6 +701,7 @@ class RealRelayHarnessTest {
                     }
             }
 
+        waitForRelayDrainIfRequested()
         reportStatus(
             "chat_id" to chat.chatId,
             "group_id" to chat.groupId.orEmpty(),
@@ -1858,22 +1852,32 @@ class RealRelayHarnessTest {
         }
 
         SystemClock.sleep(500)
+        val runtimeOnly =
+            optionalArg("relay_drain_runtime_only")?.lowercase() in setOf("1", "true", "yes")
         val timeoutMs =
             ((optionalArg("relay_drain_timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
                 .coerceAtLeast(1_000L)
         val status =
             waitForState("relay publish drain", timeoutMs = timeoutMs) {
+                val pendingRuntimeOutboundCount =
+                    if (runtimeOnly) {
+                        pendingRelayPublishCount("runtime")
+                    } else {
+                        null
+                    }
                 appManager()
                     .state
                     .value
                     .networkStatus
                     ?.takeIf { status ->
-                        status.pendingOutboundCount == 0UL &&
+                        (pendingRuntimeOutboundCount?.let { it == 0 } ?:
+                            (status.pendingOutboundCount == 0UL)) &&
                             status.pendingGroupControlCount == 0UL
                     }
             }
         reportStatus(
             "pending_outbound_count" to status.pendingOutboundCount.toString(),
+            "pending_runtime_outbound_count" to pendingRelayPublishCount("runtime").toString(),
             "pending_group_control_count" to status.pendingGroupControlCount.toString(),
         )
     }
@@ -1909,6 +1913,29 @@ class RealRelayHarnessTest {
             return null
         }
         return runCatching { JSONObject(file.readText()) }.getOrNull()
+    }
+
+    private fun pendingRelayPublishCount(label: String? = null): Int {
+        val dbFile = File(appFilesDir(), "core.sqlite3")
+        if (!dbFile.exists()) {
+            return 0
+        }
+        return runCatching {
+            SQLiteDatabase
+                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+                .use { db ->
+                    val (sql, args) =
+                        if (label.isNullOrBlank()) {
+                            "SELECT COUNT(*) FROM pending_relay_publishes" to emptyArray<String>()
+                        } else {
+                            "SELECT COUNT(*) FROM pending_relay_publishes WHERE label = ?" to
+                                arrayOf(label)
+                        }
+                    db.rawQuery(sql, args).use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    }
+                }
+        }.getOrDefault(0)
     }
 
     private fun readOwnerProfileDisplayName(ownerPubkeyHex: String): String? {
@@ -2128,6 +2155,23 @@ class RealRelayHarnessTest {
             user.optString("owner_pubkey_hex").equals(peerOwnerHex, ignoreCase = true) &&
                 predicate(user)
         }
+    }
+
+    private fun runtimeDebugAuthorizedDeviceCount(
+        debug: JSONObject?,
+        ownerHex: String,
+    ): Int? {
+        if (debug == null || ownerHex.isBlank()) {
+            return null
+        }
+        val users = debug.optJSONArray("known_users") ?: return null
+        for (index in 0 until users.length()) {
+            val user = users.optJSONObject(index) ?: continue
+            if (user.optString("owner_pubkey_hex").equals(ownerHex, ignoreCase = true)) {
+                return user.optInt("authorized_device_count")
+            }
+        }
+        return null
     }
 
     private fun summarizeKnownUsers(

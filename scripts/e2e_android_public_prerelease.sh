@@ -110,16 +110,13 @@ if [[ ${#SERIALS[@]} -eq 0 ]]; then
     "${ROOT_DIR}/scripts/run_android_emulators.sh" --list >&2 || true
     exit 1
   fi
-  BOOT_ARGS=()
-  [[ "${HEADLESS}" -eq 1 ]] && BOOT_ARGS+=(--headless)
-  BOOT_LINES=()
-  while IFS= read -r line; do
-    BOOT_LINES+=("${line}")
-  done < <("${ROOT_DIR}/scripts/run_android_emulators.sh" "${BOOT_ARGS[@]}" "${AVDS[@]:0:4}")
+  BOOT_CMD=("${ROOT_DIR}/scripts/run_android_emulators.sh")
+  [[ "${HEADLESS}" -eq 1 ]] && BOOT_CMD+=(--headless)
+  BOOT_CMD+=("${AVDS[@]:0:4}")
   SERIALS=()
-  for line in "${BOOT_LINES[@]}"; do
+  while IFS= read -r line; do
     SERIALS+=("$(printf '%s\n' "${line}" | awk '{print $2}')")
-  done
+  done < <("${BOOT_CMD[@]}")
 fi
 
 if [[ ${#SERIALS[@]} -lt 4 ]]; then
@@ -178,6 +175,40 @@ run_android_test() {
   printf '%s\n' "${output}"
 }
 
+start_android_test_background() {
+  local serial="$1"
+  local test_name="$2"
+  local action_log="$3"
+  local exit_file="$4"
+  shift 4
+  local cmd=(
+    python3
+    "${ANDROID_HARNESS}"
+    --adb "${ADB}"
+    --serial "${serial}"
+    --runner "${RUNNER}"
+    --class-name "${CLASS}"
+    --test-name "${test_name}"
+    --user "${AM_USER}"
+  )
+  while [[ $# -gt 0 ]]; do
+    cmd+=(--arg "$1=$2")
+    shift 2
+  done
+
+  (
+    set +e
+    {
+      printf '+'
+      printf ' %q' "${cmd[@]}"
+      printf '\n'
+    } | tee -a "${LOG_FILE}" "${action_log}" >&2
+    "${cmd[@]}" 2>&1 | tee -a "${LOG_FILE}" "${action_log}"
+    printf '%s\n' "${PIPESTATUS[0]}" >"${exit_file}"
+  ) >/dev/null 2>&1 &
+  IRIS_ANDROID_BACKGROUND_PID="$!"
+}
+
 report_android_debug() {
   local serial="$1"
   echo "----- Android runtime debug: ${serial} -----" | tee -a "${LOG_FILE}" >&2
@@ -234,19 +265,39 @@ CHARLIE_HEX="$(printf '%s\n' "${CHARLIE_IDENTITY}" | iris_e2e_extract_status pub
 iris_e2e_require_value charlie_npub "${CHARLIE_NPUB}"
 iris_e2e_require_value charlie_hex "${CHARLIE_HEX}"
 
-LINKED_IDENTITY="$(run_android_test "${ALICE_LINKED_SERIAL}" start_linked_device_and_report_identity \
-  owner_input "${ALICE_NPUB}")"
-LINKED_DEVICE_NPUB="$(printf '%s\n' "${LINKED_IDENTITY}" | iris_e2e_extract_status device_npub)"
-LINKED_DEVICE_HEX="$(printf '%s\n' "${LINKED_IDENTITY}" | iris_e2e_extract_status device_public_key_hex)"
+LINK_LOG="${RUN_DIR}/alice-linked-authorization.log"
+LINK_EXIT="${RUN_DIR}/alice-linked-authorization.exit"
+IRIS_ANDROID_BACKGROUND_PID=""
+start_android_test_background "${ALICE_LINKED_SERIAL}" start_link_invite_and_wait_for_authorization_from_args \
+  "${LINK_LOG}" "${LINK_EXIT}" owner_input "${ALICE_NPUB}" authorization_state AUTHORIZED
+LINK_PID="${IRIS_ANDROID_BACKGROUND_PID}"
+iris_e2e_require_value link_pid "${LINK_PID}"
+LINK_URL="$(iris_e2e_wait_for_status_in_file "${LINK_LOG}" invite_url 120)"
+LINKED_DEVICE_NPUB="$(iris_e2e_wait_for_status_in_file "${LINK_LOG}" device_input 120)"
 iris_e2e_require_value linked_device_npub "${LINKED_DEVICE_NPUB}"
-iris_e2e_require_value linked_device_hex "${LINKED_DEVICE_HEX}"
+iris_e2e_require_value link_url "${LINK_URL}"
 
 run_android_test "${ALICE_SERIAL}" add_authorized_device_from_args \
-  device_input "${LINKED_DEVICE_NPUB}" wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
-ALICE_LINKED_AUTH="$(run_android_test "${ALICE_LINKED_SERIAL}" wait_for_authorization_state_from_args \
-  authorization_state AUTHORIZED)"
+  device_input "${LINK_URL}" wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
+wait "${LINK_PID}"
+LINK_STATUS="$(cat "${LINK_EXIT}")"
+if [[ "${LINK_STATUS}" -ne 0 ]]; then
+  echo "Linked-device authorization harness failed with exit code ${LINK_STATUS}" >&2
+  exit "${LINK_STATUS}"
+fi
+if ! rg -q '^INSTRUMENTATION_CODE: -1$' "${LINK_LOG}"; then
+  echo "Linked-device authorization harness did not report success" >&2
+  exit 1
+fi
+ALICE_LINKED_AUTH="$(cat "${LINK_LOG}")"
+ALICE_LINKED_OWNER_HEX="$(printf '%s\n' "${ALICE_LINKED_AUTH}" | iris_e2e_extract_status public_key_hex)"
 ALICE_LINKED_HEX="$(printf '%s\n' "${ALICE_LINKED_AUTH}" | iris_e2e_extract_status device_public_key_hex)"
+iris_e2e_require_value alice_linked_owner_hex "${ALICE_LINKED_OWNER_HEX}"
 iris_e2e_require_value alice_linked_device_hex "${ALICE_LINKED_HEX}"
+if [[ "${ALICE_LINKED_OWNER_HEX}" != "${ALICE_HEX}" ]]; then
+  echo "Alice linked owner mismatch: expected ${ALICE_HEX}, got ${ALICE_LINKED_OWNER_HEX}" >&2
+  exit 1
+fi
 
 ALICE_TO_BOB="android-public-alice-to-bob-${STAMP}"
 ALICE_TO_CHARLIE="android-public-alice-to-charlie-${STAMP}"
@@ -261,11 +312,13 @@ run_android_test "${ALICE_SERIAL}" send_message_from_args \
   peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" >/dev/null
 run_android_test "${CHARLIE_SERIAL}" wait_for_message_from_args \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_CHARLIE}" direction incoming >/dev/null
+run_android_test "${ALICE_LINKED_SERIAL}" wait_for_message_from_args \
+  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" direction outgoing >/dev/null
 
 GROUP_NAME="Alice-Bob-Charlie-${STAMP}"
 GROUP_CREATE="$(run_android_test "${ALICE_SERIAL}" create_group_from_args \
   group_name "${GROUP_NAME}" member_inputs "${BOB_NPUB},${CHARLIE_NPUB}" \
-  wait_for_relay_drain true relay_drain_timeout_secs 240)"
+  wait_for_relay_drain true relay_drain_runtime_only true relay_drain_timeout_secs 240)"
 GROUP_CHAT_ID="$(printf '%s\n' "${GROUP_CREATE}" | iris_e2e_extract_status chat_id)"
 GROUP_ID="$(printf '%s\n' "${GROUP_CREATE}" | iris_e2e_extract_status group_id)"
 iris_e2e_require_value group_chat_id "${GROUP_CHAT_ID}"
@@ -277,7 +330,7 @@ run_android_test "${ALICE_LINKED_SERIAL}" wait_for_group_chat_from_args chat_id 
 
 RENAMED_GROUP_NAME="${GROUP_NAME}-renamed"
 run_android_test "${ALICE_SERIAL}" update_group_name_from_args \
-  group_id "${GROUP_ID}" group_name "${RENAMED_GROUP_NAME}" wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
+  group_id "${GROUP_ID}" group_name "${RENAMED_GROUP_NAME}" wait_for_relay_drain true relay_drain_runtime_only true relay_drain_timeout_secs 240 >/dev/null
 run_android_test "${BOB_SERIAL}" wait_for_group_name_from_args \
   chat_id "${GROUP_CHAT_ID}" group_name "${RENAMED_GROUP_NAME}" >/dev/null
 run_android_test "${CHARLIE_SERIAL}" wait_for_group_name_from_args \
@@ -289,7 +342,7 @@ run_android_test "${ALICE_LINKED_SERIAL}" wait_for_group_name_from_args \
   printf 'alice_npub=%q\n' "${ALICE_NPUB}"
   printf 'alice_hex=%q\n' "${ALICE_HEX}"
   printf 'alice_linked_device_npub=%q\n' "${LINKED_DEVICE_NPUB}"
-  printf 'alice_linked_device_hex=%q\n' "${LINKED_DEVICE_HEX}"
+  printf 'alice_linked_device_hex=%q\n' "${ALICE_LINKED_HEX}"
   printf 'bob_npub=%q\n' "${BOB_NPUB}"
   printf 'bob_hex=%q\n' "${BOB_HEX}"
   printf 'charlie_npub=%q\n' "${CHARLIE_NPUB}"

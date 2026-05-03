@@ -26,6 +26,26 @@ iris_e2e_require_value() {
   fi
 }
 
+iris_e2e_wait_for_status_in_file() {
+  local file="$1"
+  local key="$2"
+  local timeout_secs="$3"
+  local deadline=$((SECONDS + timeout_secs))
+  local value=""
+  while (( SECONDS < deadline )); do
+    if [[ -f "${file}" ]]; then
+      value="$(iris_e2e_extract_status "${key}" <"${file}")"
+      if [[ -n "${value}" ]]; then
+        printf '%s\n' "${value}"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  echo "Timed out waiting for ${key} in ${file}" >&2
+  return 1
+}
+
 iris_e2e_record_repo_trace() {
   local root_dir="$1"
   local run_dir="$2"

@@ -1,5 +1,7 @@
 use super::*;
 
+const RELAY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub(super) async fn publish_event_with_retry(
     client: &Client,
     relay_urls: &[RelayUrl],
@@ -34,29 +36,7 @@ pub(super) async fn publish_event_fire_and_forget(
     }
 
     ensure_publish_connection(client, relay_urls).await;
-    let output = client
-        .send_event_to(relay_urls.to_vec(), event)
-        .await
-        .map_err(|error| anyhow::anyhow!("{label}: {error}"))?;
-    if output.success.is_empty() {
-        let reasons = output.failed.values().cloned().collect::<Vec<_>>();
-        return Err(anyhow::anyhow!(
-            "{label}: {}",
-            if reasons.is_empty() {
-                "no relay accepted event for send".to_string()
-            } else {
-                reasons.join("; ")
-            }
-        ));
-    }
-
-    let mut relays = output
-        .success
-        .into_iter()
-        .map(|relay| relay.to_string())
-        .collect::<Vec<_>>();
-    relays.sort();
-    Ok(relays)
+    publish_event_to_any_relay(client, relay_urls, event, label).await
 }
 
 async fn ensure_publish_connection(client: &Client, relay_urls: &[RelayUrl]) {
@@ -88,18 +68,57 @@ pub(super) async fn publish_event_once(
         return Err(anyhow::anyhow!("no relays configured"));
     }
 
-    let output = client
-        .send_event_to(relay_urls.to_vec(), event)
+    publish_event_to_any_relay(client, relay_urls, event, "publish")
         .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    if output.success.is_empty() {
-        let reasons = output.failed.values().cloned().collect::<Vec<_>>();
-        Err(anyhow::anyhow!(if reasons.is_empty() {
-            "no relay accepted event".to_string()
-        } else {
-            reasons.join("; ")
-        }))
-    } else {
-        Ok(())
+        .map(|_| ())
+}
+
+async fn publish_event_to_any_relay(
+    client: &Client,
+    relay_urls: &[RelayUrl],
+    event: &Event,
+    label: &str,
+) -> anyhow::Result<Vec<String>> {
+    let mut successes = Vec::new();
+    let mut failures = Vec::new();
+
+    for relay_url in relay_urls {
+        let relay_label = relay_url.to_string();
+        let result = tokio::time::timeout(
+            RELAY_PUBLISH_TIMEOUT,
+            client.send_event_to(vec![relay_url.clone()], event),
+        )
+        .await;
+
+        match result {
+            Ok(Ok(output)) if !output.success.is_empty() => {
+                successes.extend(output.success.into_iter().map(|relay| relay.to_string()));
+            }
+            Ok(Ok(output)) => {
+                let reason = output
+                    .failed
+                    .values()
+                    .next()
+                    .cloned()
+                    .unwrap_or_else(|| "no relay accepted event".to_string());
+                failures.push(format!("{relay_label}: {reason}"));
+            }
+            Ok(Err(error)) => failures.push(format!("{relay_label}: {error}")),
+            Err(_) => failures.push(format!("{relay_label}: publish timed out")),
+        }
     }
+
+    successes.sort();
+    successes.dedup();
+    if successes.is_empty() {
+        return Err(anyhow::anyhow!(
+            "{label}: {}",
+            if failures.is_empty() {
+                "no relay accepted event".to_string()
+            } else {
+                failures.join("; ")
+            }
+        ));
+    }
+    Ok(successes)
 }
