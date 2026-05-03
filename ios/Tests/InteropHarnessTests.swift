@@ -80,6 +80,61 @@ final class InteropHarnessTests: XCTestCase {
         case "create_account_and_report_identity", "report_logged_in_identity":
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
             reportIdentity(snapshot)
+        case "start_linked_device_and_report_identity":
+            let ownerInput = env["IRIS_IOS_HARNESS_OWNER_INPUT"] ?? ""
+            manager.startLinkedDevice(ownerInput: ownerInput)
+            let link = try await waitFor(label: "linked-device invite", timeout: 90) {
+                manager.state.linkDevice
+            }
+            status("link_url", link.url)
+            status("device_input", link.deviceInput)
+        case "start_linked_device_wait_authorized_from_args":
+            let ownerInput = env["IRIS_IOS_HARNESS_OWNER_INPUT"] ?? ""
+            manager.startLinkedDevice(ownerInput: ownerInput)
+            let link = try await waitFor(label: "linked-device invite", timeout: 90) {
+                manager.state.linkDevice
+            }
+            status("link_url", link.url)
+            status("device_input", link.deviceInput)
+            let snapshot: AccountSnapshot = try await waitFor(label: "linked-device authorization", timeout: 240) {
+                guard let account = manager.state.account else {
+                    return nil
+                }
+                let actual = String(describing: account.authorizationState).lowercased()
+                return actual == "authorized" ? account : nil
+            }
+            reportIdentity(snapshot)
+        case "add_authorized_device_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let deviceInput = try requiredEnv("IRIS_IOS_HARNESS_DEVICE_INPUT", env: env)
+            let initialDeviceCount = manager.state.deviceRoster?.devices.count ?? 0
+            manager.addAuthorizedDevice(deviceInput: deviceInput)
+            _ = try await waitFor(label: "device roster update", timeout: 90) {
+                let currentDeviceCount = manager.state.deviceRoster?.devices.count ?? 0
+                if currentDeviceCount > initialDeviceCount {
+                    return true
+                }
+                if let toast = manager.state.toast,
+                   !toast.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return true
+                }
+                return nil
+            }
+            if let roster = manager.state.deviceRoster {
+                status("device_count", String(roster.devices.count))
+                status("devices", roster.devices.map { $0.devicePubkeyHex }.joined(separator: ","))
+            }
+            status("toast", manager.state.toast ?? "")
+        case "wait_for_authorization_state_from_args":
+            let expected = try requiredEnv("IRIS_IOS_HARNESS_AUTHORIZATION_STATE", env: env).lowercased()
+            let snapshot: AccountSnapshot = try await waitFor(label: "authorization state \(expected)", timeout: 180) {
+                guard let account = manager.state.account else {
+                    return nil
+                }
+                let actual = String(describing: account.authorizationState).lowercased()
+                return actual == expected ? account : nil
+            }
+            reportIdentity(snapshot)
         case "create_public_invite_and_report_url":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             manager.dispatch(.createPublicInvite)
@@ -469,6 +524,22 @@ final class InteropHarnessTests: XCTestCase {
             }
             status("chat_id", chat.chatId)
             status("group_id", chat.groupId ?? "")
+            status("member_count", String(chat.memberCount))
+        case "update_group_name_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let groupID = try requiredEnv("IRIS_IOS_HARNESS_GROUP_ID", env: env)
+            let groupName = try requiredEnv("IRIS_IOS_HARNESS_GROUP_NAME", env: env)
+            manager.dispatch(.updateGroupName(groupId: groupID, name: groupName))
+            let chatID = "group:\(groupID)"
+            let chat = try await waitFor(label: "renamed group \(groupName)", timeout: 180) {
+                manager.state.chatList.first(where: {
+                    self.sameIdentifier($0.chatId, chatID) && $0.displayName == groupName
+                })
+            }
+            manager.dispatch(.openChat(chatId: chat.chatId))
+            status("chat_id", chat.chatId)
+            status("group_id", groupID)
+            status("group_name", chat.displayName)
             status("member_count", String(chat.memberCount))
         default:
             throw HarnessError.unexpected("unknown harness action: \(action)")
@@ -1504,5 +1575,21 @@ final class InteropHarnessTests: XCTestCase {
     private func status(_ key: String, _ value: String) {
         print("HARNESS_STATUS: \(key)=\(value)")
         fflush(stdout)
+        guard let path = ProcessInfo.processInfo.environment["IRIS_IOS_HARNESS_STATUS_FILE"],
+              !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        let line = "\(key)=\(value)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        if FileManager.default.fileExists(atPath: path),
+           let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
+            defer { try? handle.close() }
+            try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        }
     }
 }

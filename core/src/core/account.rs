@@ -354,11 +354,22 @@ impl AppCore {
             ));
         }
         let owner_pubkey = logged_in.owner_pubkey;
-        let result = logged_in
-            .ndr_runtime
-            .accept_invite(&invite, Some(owner_pubkey))?;
-        self.upsert_local_app_key_device(owner_pubkey, result.inviter_device_pubkey);
+        let device_pubkey = logged_in.device_keys.public_key();
+        let (session, response) = invite.accept_with_owner(
+            device_pubkey,
+            logged_in.device_keys.secret_key().to_secret_bytes(),
+            Some(device_pubkey.to_hex()),
+            Some(owner_pubkey),
+        )?;
+        logged_in.ndr_runtime.import_session_state(
+            owner_pubkey,
+            Some(invite.inviter_device_pubkey.to_hex()),
+            session.state,
+        )?;
+        let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)?;
+        self.upsert_local_app_key_device(owner_pubkey, invite.inviter_device_pubkey.to_nostr()?);
         self.publish_local_app_keys();
+        self.publish_runtime_event(response_event, "runtime", None);
         self.mark_mobile_push_dirty();
         self.process_runtime_events();
         Ok(())
