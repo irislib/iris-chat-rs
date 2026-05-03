@@ -214,6 +214,46 @@ run_ios_test() {
   printf '%s\n' "${output}"
 }
 
+start_ios_test_background() {
+  local udid="$1"
+  local run_id="$2"
+  local action="$3"
+  local reset="$4"
+  local rebuild="$5"
+  local action_log="$6"
+  local exit_file="$7"
+  shift 7
+
+  local status_file="${RUN_DIR}/status/${run_id}-${action}.status"
+  local cmd=(
+    python3 "${IOS_HARNESS}"
+    --udid "${udid}"
+    --run-id "${run_id}"
+    --action "${action}"
+    --use-app-storage
+    --data-root "${RUN_DIR}/harness-data"
+    --arg "status_file=${status_file}"
+  )
+  [[ "${reset}" -eq 1 ]] && cmd+=(--reset)
+  [[ "${rebuild}" -eq 1 ]] && cmd+=(--rebuild)
+  while [[ $# -gt 0 ]]; do
+    cmd+=(--arg "$1=$2")
+    shift 2
+  done
+
+  (
+    set +e
+    {
+      printf '+'
+      printf ' %q' "${cmd[@]}"
+      printf '\n'
+    } | tee -a "${LOG_FILE}" "${action_log}" >&2
+    "${cmd[@]}" 2>&1 | tee -a "${LOG_FILE}" "${action_log}"
+    printf '%s\n' "${PIPESTATUS[0]}" >"${exit_file}"
+  ) >/dev/null 2>&1 &
+  IRIS_MIXED_BACKGROUND_PID="$!"
+}
+
 run_android_test() {
   local serial="$1"
   local test_name="$2"
@@ -242,6 +282,39 @@ run_android_test() {
     return 1
   fi
   printf '%s\n' "${output}"
+}
+
+start_android_test_background() {
+  local serial="$1"
+  local test_name="$2"
+  local action_log="$3"
+  local exit_file="$4"
+  shift 4
+  local cmd=(
+    python3 "${ANDROID_HARNESS}"
+    --adb "${ADB}"
+    --serial "${serial}"
+    --runner "${ANDROID_RUNNER}"
+    --class-name "${ANDROID_CLASS}"
+    --test-name "${test_name}"
+    --user "${AM_USER}"
+  )
+  while [[ $# -gt 0 ]]; do
+    cmd+=(--arg "$1=$2")
+    shift 2
+  done
+
+  (
+    set +e
+    {
+      printf '+'
+      printf ' %q' "${cmd[@]}"
+      printf '\n'
+    } | tee -a "${LOG_FILE}" "${action_log}" >&2
+    "${cmd[@]}" 2>&1 | tee -a "${LOG_FILE}" "${action_log}"
+    printf '%s\n' "${PIPESTATUS[0]}" >"${exit_file}"
+  ) >/dev/null 2>&1 &
+  IRIS_MIXED_BACKGROUND_PID="$!"
 }
 
 run_device() {
@@ -332,23 +405,36 @@ CHARLIE_HEX="$(printf '%s\n' "${CHARLIE_IDENTITY}" | iris_e2e_extract_status pub
 iris_e2e_require_value charlie_npub "${CHARLIE_NPUB}"
 iris_e2e_require_value charlie_hex "${CHARLIE_HEX}"
 
-LINK_START="$(run_device "${LINKED_PLATFORM}" "${LINKED_ID}" "${LINKED_RUN_ID}" start_linked_device_and_report_identity "${FRESH}" "$(ios_rebuild_for "${LINKED_PLATFORM}")" \
-  owner_input "${ALICE_NPUB}")"
-LINK_INPUT="$(printf '%s\n' "${LINK_START}" | iris_e2e_extract_status link_url)"
-if [[ -z "${LINK_INPUT}" ]]; then
-  LINK_INPUT="$(printf '%s\n' "${LINK_START}" | iris_e2e_extract_status device_npub)"
+LINK_LOG="${RUN_DIR}/alice-linked-authorization.log"
+LINK_EXIT="${RUN_DIR}/alice-linked-authorization.exit"
+IRIS_MIXED_BACKGROUND_PID=""
+if [[ "${LINKED_PLATFORM}" == "ios" ]]; then
+  LINK_STATUS_FILE="${RUN_DIR}/status/${LINKED_RUN_ID}-start_linked_device_wait_authorized_from_args.status"
+  start_ios_test_background "${LINKED_ID}" "${LINKED_RUN_ID}" start_linked_device_wait_authorized_from_args \
+    "${FRESH}" "$(ios_rebuild_for "${LINKED_PLATFORM}")" "${LINK_LOG}" "${LINK_EXIT}" \
+    owner_input "${ALICE_NPUB}"
+  LINK_INPUT="$(iris_e2e_wait_for_status_in_file "${LINK_STATUS_FILE}" link_url 120)"
+else
+  start_android_test_background "${LINKED_ID}" start_link_invite_and_wait_for_authorization_from_args \
+    "${LINK_LOG}" "${LINK_EXIT}" owner_input "${ALICE_NPUB}" authorization_state AUTHORIZED
+  LINK_INPUT="$(iris_e2e_wait_for_status_in_file "${LINK_LOG}" invite_url 120)"
 fi
-if [[ -z "${LINK_INPUT}" ]]; then
-  LINK_INPUT="$(printf '%s\n' "${LINK_START}" | iris_e2e_extract_status device_input)"
-fi
+LINK_PID="${IRIS_MIXED_BACKGROUND_PID}"
+iris_e2e_require_value link_pid "${LINK_PID}"
 iris_e2e_require_value link_input "${LINK_INPUT}"
 
 run_device "${ALICE_PLATFORM}" "${ALICE_ID}" "${ALICE_RUN_ID}" add_authorized_device_from_args 0 0 \
   device_input "${LINK_INPUT}" wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
-AUTH_STATE="AUTHORIZED"
-[[ "${LINKED_PLATFORM}" == "ios" ]] && AUTH_STATE="authorized"
-run_device "${LINKED_PLATFORM}" "${LINKED_ID}" "${LINKED_RUN_ID}" wait_for_authorization_state_from_args 0 0 \
-  authorization_state "${AUTH_STATE}" >/dev/null
+wait "${LINK_PID}"
+LINK_STATUS="$(cat "${LINK_EXIT}")"
+if [[ "${LINK_STATUS}" -ne 0 ]]; then
+  echo "Linked-device authorization harness failed with exit code ${LINK_STATUS}" >&2
+  exit "${LINK_STATUS}"
+fi
+if ! rg -q '^INSTRUMENTATION_CODE: -1$' "${LINK_LOG}"; then
+  echo "Linked-device authorization harness did not report success" >&2
+  exit 1
+fi
 
 ALICE_TO_BOB="mixed-public-alice-to-bob-${STAMP}"
 ALICE_TO_CHARLIE="mixed-public-alice-to-charlie-${STAMP}"
