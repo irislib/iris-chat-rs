@@ -198,7 +198,9 @@ impl AppCore {
                                 format!("event_id={event_id} matched={}", completion.is_some()),
                             );
                         }
-                        self.publish_runtime_event(signed, "runtime", completion);
+                        if self.publish_runtime_event(signed, "runtime", completion) {
+                            self.ack_runtime_prepared_publish(&event_id);
+                        }
                     }
                 }
                 SessionManagerEvent::PublishSigned(event) => {
@@ -210,7 +212,9 @@ impl AppCore {
                             format!("event_id={event_id} matched={}", completion.is_some()),
                         );
                     }
-                    self.publish_runtime_event(event, "runtime", completion);
+                    if self.publish_runtime_event(event, "runtime", completion) {
+                        self.ack_runtime_prepared_publish(&event_id);
+                    }
                 }
                 SessionManagerEvent::PublishSignedForInnerEvent {
                     event,
@@ -229,13 +233,15 @@ impl AppCore {
                             format!("event_id={event_id} matched={}", completion.is_some()),
                         );
                     }
-                    self.publish_runtime_event_with_metadata(
+                    if self.publish_runtime_event_with_metadata(
                         event,
                         "runtime",
                         completion,
                         inner_event_id,
                         target_device_id,
-                    );
+                    ) {
+                        self.ack_runtime_prepared_publish(&event_id);
+                    }
                 }
                 SessionManagerEvent::Subscribe { subid, filter_json } => {
                     self.apply_runtime_subscription(subid, filter_json);
@@ -270,6 +276,17 @@ impl AppCore {
             }
         }
         decrypted_event_ids
+    }
+
+    fn ack_runtime_prepared_publish(&mut self, event_id: &str) {
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            if let Err(error) = logged_in.ndr_runtime.ack_prepared_publish(event_id) {
+                self.push_debug_log(
+                    "publish.runtime.ack",
+                    format!("event_id={event_id} error={error}"),
+                );
+            }
+        }
     }
 
     fn apply_runtime_subscription(&mut self, subid: String, filter_json: String) {

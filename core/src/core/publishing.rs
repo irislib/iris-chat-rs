@@ -22,8 +22,8 @@ impl AppCore {
         event: Event,
         label: &'static str,
         completion: Option<(String, String)>,
-    ) {
-        self.publish_runtime_event_with_metadata(event, label, completion, None, None);
+    ) -> bool {
+        self.publish_runtime_event_with_metadata(event, label, completion, None, None)
     }
 
     pub(super) fn publish_runtime_event_with_metadata(
@@ -33,30 +33,33 @@ impl AppCore {
         completion: Option<(String, String)>,
         inner_event_id: Option<String>,
         target_device_id: Option<String>,
-    ) {
+    ) -> bool {
         if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
             self.push_debug_log(
                 "publish.runtime",
                 "label=runtime skipped=defer_owner_app_keys".to_string(),
             );
-            return;
+            return false;
         }
         self.remember_event(event.id.to_string());
         self.emit_nearby_published_event(&event);
         let event_id = event.id.to_string();
-        self.remember_pending_relay_publish(
+        let stored = self.remember_pending_relay_publish(
             &event,
             label,
             completion.clone(),
             inner_event_id,
             target_device_id,
         );
+        if !stored {
+            return false;
+        }
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
             .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
         else {
-            return;
+            return false;
         };
         if relay_urls.is_empty() {
             let (message_id, chat_id) = completion
@@ -70,10 +73,11 @@ impl AppCore {
                 Vec::new(),
                 format!("label={label} success=false relays=0 skipped=no_servers"),
             );
-            return;
+            return true;
         }
 
         self.spawn_relay_publish_attempt(event, label.to_string(), completion, client, relay_urls);
+        true
     }
 
     fn spawn_relay_publish_attempt(
@@ -134,29 +138,21 @@ impl AppCore {
         completion: Option<(String, String)>,
         inner_event_id: Option<String>,
         target_device_id: Option<String>,
-    ) {
+    ) -> bool {
         let Some(logged_in) = self.logged_in.as_ref() else {
-            return;
+            return false;
         };
         let owner_pubkey_hex = logged_in.owner_pubkey.to_hex();
         let event_json = match serde_json::to_string(event) {
             Ok(json) => json,
             Err(error) => {
                 self.push_debug_log("publish.runtime.queue", format!("serialize_failed={error}"));
-                return;
+                return false;
             }
         };
         let (message_id, chat_id) = completion
             .map(|(message_id, chat_id)| (Some(message_id), Some(chat_id)))
             .unwrap_or((None, None));
-        if let (Some(message_id), Some(chat_id)) = (message_id.as_deref(), chat_id.as_deref()) {
-            self.record_message_outer_event(
-                chat_id,
-                message_id,
-                &event.id.to_string(),
-                target_device_id.as_deref(),
-            );
-        }
         let pending = PendingRelayPublish {
             owner_pubkey_hex,
             event_id: event.id.to_string(),
@@ -172,6 +168,17 @@ impl AppCore {
         };
         if let Err(error) = self.app_store.upsert_pending_relay_publish(&pending) {
             self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
+            return false;
+        }
+        if let (Some(message_id), Some(chat_id)) =
+            (pending.message_id.as_deref(), pending.chat_id.as_deref())
+        {
+            self.record_message_outer_event(
+                chat_id,
+                message_id,
+                &pending.event_id,
+                pending.target_device_id.as_deref(),
+            );
         }
         self.pending_relay_publishes
             .insert(pending.event_id.clone(), pending);
@@ -182,6 +189,7 @@ impl AppCore {
                 self.sync_message_delivery_trace(&chat_id, &message_id);
             }
         }
+        true
     }
 
     pub(super) fn retry_pending_relay_publishes(&mut self, reason: &'static str) {
