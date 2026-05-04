@@ -59,10 +59,13 @@ impl AppCore {
                 .collect();
             self.send_group_event(chat_id, RECEIPT_KIND, receipt_type, tags, None);
         } else if let Ok((_, peer)) = parse_peer_input(chat_id) {
-            let _ = logged_in
-                .ndr_runtime
-                .send_receipt(peer, receipt_type, message_ids, None);
-            self.process_runtime_events();
+            if let Ok(result) =
+                logged_in
+                    .ndr_runtime
+                    .send_receipt(peer, receipt_type, message_ids, None)
+            {
+                self.process_runtime_effects(result.effects);
+            }
         }
     }
 

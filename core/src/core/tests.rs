@@ -377,9 +377,7 @@ fn ndr_runtime_invite_session_round_trips_text() {
         None,
     );
     bob.init().expect("bob init");
-    bob.accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob, &bob_keys, &alice);
+    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
     complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     alice
@@ -610,9 +608,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
         None,
     );
     bob.init().expect("bob init");
-    bob.accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob, &bob_keys, &alice);
+    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
     complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     let user_record_key = "v2/runtime-state";
@@ -699,7 +695,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
         None,
     );
     bob_restarted.init().expect("bob restarted init");
-    bob_restarted.process_received_event(message_event);
+    deliver_event_to_runtime(&bob_restarted, message_event);
     assert!(
         drain_text_messages(&bob_restarted)
             .iter()
@@ -747,9 +743,7 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
         None,
     );
     bob.init().expect("bob init");
-    bob.accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob, &bob_keys, &alice);
+    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
     complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     let message = "compacted apns preview";
@@ -824,10 +818,13 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         None,
     );
     bob_runtime.init().expect("bob init");
-    bob_runtime
-        .accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    accept_invite_and_deliver(
+        &bob_runtime,
+        &bob_keys,
+        &invite,
+        alice_keys.public_key(),
+        &alice,
+    );
     complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
 
     let message = "push-only event";
@@ -942,9 +939,7 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
         None,
     );
     bob.init().expect("bob init");
-    bob.accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob, &bob_keys, &alice);
+    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
     complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     alice
@@ -1153,10 +1148,13 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         None,
     );
     bob_runtime.init().expect("bob init");
-    bob_runtime
-        .accept_invite(&alice_invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    accept_invite_and_deliver(
+        &bob_runtime,
+        &bob_keys,
+        &alice_invite,
+        alice_keys.public_key(),
+        &alice,
+    );
     complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
     let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
     let user_record_key = "v2/runtime-state";
@@ -3962,9 +3960,87 @@ fn stored_chat_ttl(core: &AppCore, chat_id: &str) -> Option<u64> {
         .map(|row| row.get::<_, i64>(0).unwrap() as u64)
 }
 
+fn delivered_texts() -> &'static std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>> {
+    static DELIVERED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>>,
+    > = std::sync::OnceLock::new();
+    DELIVERED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn runtime_key(runtime: &NdrRuntime) -> usize {
+    runtime as *const NdrRuntime as usize
+}
+
 fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
     for event in drain_signed_events(from, signer) {
-        to.process_received_event(event);
+        deliver_event_to_runtime(to, event);
+    }
+}
+
+fn deliver_runtime_effects(
+    from: &NdrRuntime,
+    signer: &Keys,
+    effects: Vec<RuntimeEffect>,
+    to: &NdrRuntime,
+) {
+    apply_runtime_persist_effects(from, &effects);
+    let events = signed_events_from_effects(effects, signer);
+    for event in &events {
+        deliver_event_to_runtime(to, event.clone());
+    }
+    for event in events {
+        if let Ok(effects) = from.ack_prepared_publish(&event.id.to_string()) {
+            apply_runtime_persist_effects(from, &effects);
+        }
+    }
+}
+
+fn accept_invite_and_deliver(
+    acceptor: &NdrRuntime,
+    acceptor_keys: &Keys,
+    invite: &Invite,
+    inviter_pubkey: PublicKey,
+    inviter: &NdrRuntime,
+) {
+    let result = acceptor
+        .accept_invite(invite, Some(inviter_pubkey))
+        .expect("accept invite");
+    deliver_runtime_effects(acceptor, acceptor_keys, result.effects, inviter);
+}
+
+fn deliver_event_to_runtime(to: &NdrRuntime, event: Event) {
+    let Ok(effects) = to.process_received_event(event) else {
+        return;
+    };
+    apply_runtime_persist_effects(to, &effects);
+    let mut messages = Vec::new();
+    for effect in effects {
+        if let RuntimeEffect::EmitDecrypted { content, .. } = effect {
+            messages.push(
+                serde_json::from_str::<UnsignedEvent>(&content)
+                    .ok()
+                    .map(|event| event.content)
+                    .unwrap_or(content),
+            );
+        }
+    }
+    if !messages.is_empty() {
+        delivered_texts()
+            .lock()
+            .unwrap()
+            .entry(runtime_key(to))
+            .or_default()
+            .extend(messages);
+    }
+}
+
+fn apply_runtime_persist_effects(runtime: &NdrRuntime, effects: &[RuntimeEffect]) {
+    for effect in effects {
+        if let RuntimeEffect::PersistRuntimeState { key, value } = effect {
+            runtime
+                .persist_runtime_state(key, value.clone())
+                .expect("persist runtime state");
+        }
     }
 }
 
@@ -3982,29 +4058,47 @@ fn complete_first_contact(
     inviter_pubkey: PublicKey,
     inviter: &NdrRuntime,
 ) {
-    acceptor
+    let result = acceptor
         .send_text(
             inviter_pubkey,
             "__ndr_first_contact_bootstrap__".to_string(),
             None,
         )
         .expect("first-contact bootstrap send");
-    deliver_published_events(acceptor, acceptor_keys, inviter);
+    deliver_runtime_effects(acceptor, acceptor_keys, result.effects, inviter);
 }
 
-fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
-    runtime
-        .drain_events()
+fn signed_events_from_effects(effects: Vec<RuntimeEffect>, signer: &Keys) -> Vec<Event> {
+    effects
         .into_iter()
         .filter_map(|event| match event {
-            SessionManagerEvent::Publish(unsigned) if unsigned.pubkey == signer.public_key() => {
+            RuntimeEffect::PublishUnsigned(unsigned) if unsigned.pubkey == signer.public_key() => {
                 unsigned.sign_with_keys(signer).ok()
             }
-            SessionManagerEvent::PublishSigned(event) => Some(event),
-            SessionManagerEvent::PublishSignedForInnerEvent { event, .. } => Some(event),
+            RuntimeEffect::PublishSigned(event) => Some(event),
+            RuntimeEffect::PublishSignedForInnerEvent { event, .. } => Some(event),
             _ => None,
         })
         .collect()
+}
+
+fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
+    let mut effects = runtime.prepared_publish_effects();
+    if effects.is_empty() {
+        effects = runtime.reload_from_storage().unwrap_or_default();
+        effects.extend(runtime.prepared_publish_effects());
+    }
+    let mut seen = HashSet::new();
+    let events = signed_events_from_effects(effects, signer)
+        .into_iter()
+        .filter(|event| seen.insert(event.id))
+        .collect::<Vec<_>>();
+    for event in &events {
+        if let Ok(effects) = runtime.ack_prepared_publish(&event.id.to_string()) {
+            apply_runtime_persist_effects(runtime, &effects);
+        }
+    }
+    events
 }
 
 fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
@@ -4029,19 +4123,11 @@ fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
 }
 
 fn drain_text_messages(runtime: &NdrRuntime) -> Vec<String> {
-    runtime
-        .drain_events()
-        .into_iter()
-        .filter_map(|event| match event {
-            SessionManagerEvent::DecryptedMessage { content, .. } => {
-                serde_json::from_str::<UnsignedEvent>(&content)
-                    .ok()
-                    .map(|event| event.content)
-                    .or(Some(content))
-            }
-            _ => None,
-        })
-        .collect()
+    delivered_texts()
+        .lock()
+        .unwrap()
+        .remove(&runtime_key(runtime))
+        .unwrap_or_default()
 }
 
 /// End-to-end round-trip: upload a real image to the hashtree network and

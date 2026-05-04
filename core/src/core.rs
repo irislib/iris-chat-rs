@@ -21,7 +21,7 @@ use nostr_double_ratchet_nostr::{
 };
 use nostr_double_ratchet_runtime::{
     build_direct_message_backfill_filter, DirectMessageSubscriptionTracker,
-    NdrProtocolBackfillOptions, NdrRuntime, SendOptions, SessionManagerEvent, StorageAdapter,
+    NdrProtocolBackfillOptions, NdrRuntime, RuntimeEffect, SendOptions, StorageAdapter,
 };
 use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,

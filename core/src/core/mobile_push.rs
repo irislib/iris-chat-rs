@@ -246,12 +246,15 @@ pub(crate) fn decrypt_mobile_push_notification(
     if runtime.init().is_err() {
         return cached_fallback();
     }
-    runtime.process_received_event(outer_event);
+    let effects = match runtime.process_received_event(outer_event) {
+        Ok(effects) => effects,
+        Err(_) => return cached_fallback(),
+    };
 
     let mut decrypted_inner_json: Option<String> = None;
     let mut decrypted_sender: Option<nostr::PublicKey> = None;
-    for event in runtime.drain_events() {
-        if let SessionManagerEvent::DecryptedMessage {
+    for event in effects {
+        if let RuntimeEffect::EmitDecrypted {
             sender, content, ..
         } = event
         {

@@ -74,18 +74,18 @@ impl AppCore {
                 }
             }
             MESSAGE_EVENT_KIND => {
-                let group_events = self
+                let group_result = self
                     .logged_in
                     .as_ref()
                     .map(|logged_in| logged_in.ndr_runtime.group_handle_outer_event(&event))
                     .unwrap_or_default();
-                if !group_events.is_empty() {
+                if !group_result.events.is_empty() {
                     self.debug_event_counters.group_events += 1;
-                    for group_event in group_events {
+                    for group_event in group_result.events {
                         self.apply_group_decrypted_event(group_event);
                     }
                     self.remember_event(event_id);
-                    self.process_runtime_events();
+                    self.process_runtime_effects(group_result.effects);
                     self.persist_best_effort();
                     self.rebuild_state();
                     self.emit_state();
@@ -98,10 +98,19 @@ impl AppCore {
             }
         }
 
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            logged_in.ndr_runtime.process_received_event(event);
-        }
-        let decrypted_event_ids = self.process_runtime_events();
+        let runtime_result = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.ndr_runtime.process_received_event(event));
+        let effects = match runtime_result {
+            Some(Ok(effects)) => effects,
+            Some(Err(error)) => {
+                self.push_debug_log("runtime.event.error", error.to_string());
+                Vec::new()
+            }
+            None => Vec::new(),
+        };
+        let decrypted_event_ids = self.process_runtime_effects(effects);
         if kind != MESSAGE_EVENT_KIND || decrypted_event_ids.contains(&event_id) {
             self.remember_event(event_id);
         }
@@ -175,25 +184,37 @@ impl AppCore {
     }
 
     pub(super) fn process_runtime_events(&mut self) -> HashSet<String> {
-        self.process_runtime_events_with_completions(&BTreeMap::new())
+        HashSet::new()
     }
 
-    pub(super) fn process_runtime_events_with_completions(
+    pub(super) fn process_runtime_effects(
         &mut self,
+        effects: Vec<RuntimeEffect>,
+    ) -> HashSet<String> {
+        self.process_runtime_effects_with_completions(effects, &BTreeMap::new())
+    }
+
+    pub(super) fn process_runtime_effects_with_completions(
+        &mut self,
+        effects: Vec<RuntimeEffect>,
         completions: &BTreeMap<String, (String, String)>,
     ) -> HashSet<String> {
-        let Some(events) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.ndr_runtime.drain_events())
-        else {
-            return HashSet::new();
-        };
-
         let mut decrypted_event_ids = HashSet::new();
-        for event in events {
-            match event {
-                SessionManagerEvent::Publish(unsigned) => {
+        for effect in effects {
+            match effect {
+                RuntimeEffect::PersistRuntimeState { key, value } => {
+                    let result = self
+                        .logged_in
+                        .as_ref()
+                        .map(|logged_in| logged_in.ndr_runtime.persist_runtime_state(&key, value));
+                    if let Some(Err(error)) = result {
+                        self.push_debug_log(
+                            "runtime.persist",
+                            format!("key={key} error={error}"),
+                        );
+                    }
+                }
+                RuntimeEffect::PublishUnsigned(unsigned) => {
                     if let Some(signed) = self.sign_runtime_unsigned_event(unsigned) {
                         let event_id = signed.id.to_string();
                         let completion =
@@ -209,7 +230,7 @@ impl AppCore {
                         }
                     }
                 }
-                SessionManagerEvent::PublishSigned(event) => {
+                RuntimeEffect::PublishSigned(event) => {
                     let event_id = event.id.to_string();
                     let completion = self.runtime_publish_completion(&event_id, None, completions);
                     if !completions.is_empty() {
@@ -222,7 +243,7 @@ impl AppCore {
                         self.ack_runtime_prepared_publish(&event_id);
                     }
                 }
-                SessionManagerEvent::PublishSignedForInnerEvent {
+                RuntimeEffect::PublishSignedForInnerEvent {
                     event,
                     inner_event_id,
                     target_device_id,
@@ -249,16 +270,13 @@ impl AppCore {
                         self.ack_runtime_prepared_publish(&event_id);
                     }
                 }
-                SessionManagerEvent::Subscribe { subid, filter_json } => {
-                    self.apply_runtime_subscription(subid, filter_json);
+                RuntimeEffect::Subscribe { subid, filters } => {
+                    self.apply_runtime_subscription(subid, filters);
                 }
-                SessionManagerEvent::Unsubscribe(subid) => {
+                RuntimeEffect::Unsubscribe(subid) => {
                     self.remove_runtime_subscription(subid);
                 }
-                SessionManagerEvent::ReceivedEvent(event) => {
-                    self.handle_relay_event_with_channel(event, "message servers");
-                }
-                SessionManagerEvent::DecryptedMessage {
+                RuntimeEffect::EmitDecrypted {
                     sender,
                     sender_device,
                     conversation_owner,
@@ -286,23 +304,23 @@ impl AppCore {
 
     fn ack_runtime_prepared_publish(&mut self, event_id: &str) {
         if let Some(logged_in) = self.logged_in.as_ref() {
-            if let Err(error) = logged_in.ndr_runtime.ack_prepared_publish(event_id) {
-                self.push_debug_log(
-                    "publish.runtime.ack",
-                    format!("event_id={event_id} error={error}"),
-                );
+            match logged_in.ndr_runtime.ack_prepared_publish(event_id) {
+                Ok(effects) => {
+                    if !effects.is_empty() {
+                        self.process_runtime_effects(effects);
+                    }
+                }
+                Err(error) => {
+                    self.push_debug_log(
+                        "publish.runtime.ack",
+                        format!("event_id={event_id} error={error}"),
+                    );
+                }
             }
         }
     }
 
-    fn apply_runtime_subscription(&mut self, subid: String, filter_json: String) {
-        let Ok(filters) = parse_runtime_subscription_filters(&filter_json) else {
-            self.push_debug_log(
-                "runtime.subscribe.parse",
-                format!("subid={subid} invalid filter"),
-            );
-            return;
-        };
+    fn apply_runtime_subscription(&mut self, subid: String, filters: Vec<Filter>) {
         if filters.is_empty() {
             return;
         }
@@ -440,11 +458,13 @@ impl AppCore {
         }
         self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
         if let Some(logged_in) = self.logged_in.as_ref() {
-            logged_in.ndr_runtime.ingest_app_keys_snapshot(
+            if let Ok(effects) = logged_in.ndr_runtime.ingest_app_keys_snapshot(
                 event.pubkey,
                 effective_app_keys,
                 effective_created_at,
-            );
+            ) {
+                self.process_runtime_effects(effects);
+            }
         }
         self.mark_mobile_push_dirty();
         let _authorization_changed = self.refresh_local_authorization_state();
@@ -454,16 +474,6 @@ impl AppCore {
         if should_publish_backfilled_owner_app_keys {
             self.publish_local_app_keys();
         }
-    }
-}
-
-fn parse_runtime_subscription_filters(filter_json: &str) -> serde_json::Result<Vec<Filter>> {
-    match serde_json::from_str::<Filter>(filter_json) {
-        Ok(filter) => Ok(vec![filter]),
-        Err(single_error) => match serde_json::from_str::<Vec<Filter>>(filter_json) {
-            Ok(filters) => Ok(filters),
-            Err(_) => Err(single_error),
-        },
     }
 }
 
@@ -477,23 +487,5 @@ mod tests {
         let tags = vec![Tag::parse(["expiration", "1704067260123"]).expect("expiration tag")];
 
         assert_eq!(message_expiration_from_tags(&tags), Some(1_704_067_260));
-    }
-
-    #[test]
-    fn runtime_subscription_parser_accepts_single_filter_and_filter_array() {
-        let single =
-            serde_json::to_string(&Filter::new().kind(Kind::from(MESSAGE_EVENT_KIND as u16)))
-                .expect("single filter");
-        assert_eq!(
-            parse_runtime_subscription_filters(&single).unwrap().len(),
-            1
-        );
-
-        let array = serde_json::to_string(&vec![
-            Filter::new().kind(Kind::from(APP_KEYS_EVENT_KIND as u16)),
-            Filter::new().kind(Kind::from(INVITE_RESPONSE_KIND as u16)),
-        ])
-        .expect("filter array");
-        assert_eq!(parse_runtime_subscription_filters(&array).unwrap().len(), 2);
     }
 }

@@ -409,16 +409,19 @@ impl AppCore {
                 continue;
             }
             any_new_setup = true;
-            if let Some(logged_in) = self.logged_in.as_ref() {
-                let _ = logged_in.ndr_runtime.setup_user(*owner);
+            let effects = self
+                .logged_in
+                .as_ref()
+                .and_then(|logged_in| logged_in.ndr_runtime.setup_user(*owner).ok())
+                .unwrap_or_default();
+            if !effects.is_empty() {
+                self.process_runtime_effects(effects);
             }
         }
         if any_new_setup {
             // New tracked owner appears in mobile-push session set.
             self.mark_mobile_push_dirty();
         }
-        self.process_runtime_events();
-
         if self
             .logged_in
             .as_ref()
@@ -641,7 +644,6 @@ impl AppCore {
         {
             return;
         }
-        self.process_runtime_events();
         let connected_relays = self
             .logged_in
             .as_ref()

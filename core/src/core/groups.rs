@@ -68,19 +68,24 @@ impl AppCore {
 
         match result {
             Ok(result) => {
+                self.process_runtime_effects(result.effects);
                 for owner in member_owners {
-                    if let Some(logged_in) = self.logged_in.as_ref() {
-                        let _ = logged_in.ndr_runtime.setup_user(owner);
+                    let effects = self
+                        .logged_in
+                        .as_ref()
+                        .and_then(|logged_in| logged_in.ndr_runtime.setup_user(owner).ok())
+                        .unwrap_or_default();
+                    if !effects.is_empty() {
+                        self.process_runtime_effects(effects);
                     }
                 }
-                let group = result.group;
+                let group = result.outcome.group;
                 let chat_id = group_chat_id(&group.group_id);
                 self.apply_group_snapshot_to_threads(&group, now.get());
                 self.groups.insert(group.group_id.clone(), group.clone());
                 self.active_chat_id = Some(chat_id.clone());
                 self.screen_stack = vec![Screen::Chat { chat_id }];
                 self.apply_group_metadata_notice(None, &group);
-                self.process_runtime_events();
                 self.request_protocol_subscription_refresh();
                 self.schedule_tracked_peer_catch_up(Duration::from_secs(
                     RESUBSCRIBE_CATCH_UP_DELAY_SECS,
@@ -113,8 +118,9 @@ impl AppCore {
         });
 
         match result {
-            Some(Ok(group)) => {
-                self.apply_local_group_snapshot(previous.as_ref(), group, "group.rename")
+            Some(Ok(result)) => {
+                self.process_runtime_effects(result.effects);
+                self.apply_local_group_snapshot(previous.as_ref(), result.snapshot, "group.rename")
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => {}
@@ -165,13 +171,23 @@ impl AppCore {
             .ndr_runtime
             .add_group_members(group_id, member_owners.clone());
         match result {
-            Ok(group) => {
+            Ok(result) => {
+                self.process_runtime_effects(result.effects);
                 for owner in member_owners {
-                    if let Some(logged_in) = self.logged_in.as_ref() {
-                        let _ = logged_in.ndr_runtime.setup_user(owner);
+                    let effects = self
+                        .logged_in
+                        .as_ref()
+                        .and_then(|logged_in| logged_in.ndr_runtime.setup_user(owner).ok())
+                        .unwrap_or_default();
+                    if !effects.is_empty() {
+                        self.process_runtime_effects(effects);
                     }
                 }
-                self.apply_local_group_snapshot(previous.as_ref(), group, "group.add_members");
+                self.apply_local_group_snapshot(
+                    previous.as_ref(),
+                    result.snapshot,
+                    "group.add_members",
+                );
             }
             Err(error) => self.state.toast = Some(error.to_string()),
         }
@@ -200,15 +216,18 @@ impl AppCore {
             .ndr_runtime
             .set_group_admin(group_id, owner, is_admin);
         match result {
-            Ok(group) => self.apply_local_group_snapshot(
-                previous.as_ref(),
-                group,
-                if is_admin {
-                    "group.add_admin"
-                } else {
-                    "group.remove_admin"
-                },
-            ),
+            Ok(result) => {
+                self.process_runtime_effects(result.effects);
+                self.apply_local_group_snapshot(
+                    previous.as_ref(),
+                    result.snapshot,
+                    if is_admin {
+                        "group.add_admin"
+                    } else {
+                        "group.remove_admin"
+                    },
+                );
+            }
             Err(error) => self.state.toast = Some(error.to_string()),
         }
         self.rebuild_state();
@@ -230,8 +249,13 @@ impl AppCore {
             .ndr_runtime
             .remove_group_member(group_id, owner);
         match result {
-            Ok(group) => {
-                self.apply_local_group_snapshot(previous.as_ref(), group, "group.remove_member")
+            Ok(result) => {
+                self.process_runtime_effects(result.effects);
+                self.apply_local_group_snapshot(
+                    previous.as_ref(),
+                    result.snapshot,
+                    "group.remove_member",
+                )
             }
             Err(error) => self.state.toast = Some(error.to_string()),
         }
@@ -250,7 +274,6 @@ impl AppCore {
         self.apply_group_snapshot_to_threads(&group, unix_now().get());
         self.push_debug_log(debug_category, group.group_id.clone());
         self.apply_group_metadata_notice(previous, &group);
-        self.process_runtime_events();
         self.request_protocol_subscription_refresh();
     }
 

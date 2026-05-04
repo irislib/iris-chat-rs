@@ -66,8 +66,9 @@ impl AppCore {
             parse_peer_input(&normalized_chat_id),
         ) {
             let ttl = normalized_ttl.unwrap_or(0);
-            let _ = logged_in.ndr_runtime.send_chat_settings(peer, ttl);
-            self.process_runtime_events();
+            if let Ok(result) = logged_in.ndr_runtime.send_chat_settings(peer, ttl) {
+                self.process_runtime_effects(result.effects);
+            }
         }
         self.rebuild_state();
         self.persist_best_effort();

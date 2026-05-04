@@ -57,17 +57,20 @@ impl AppCore {
                         vec![e_tag],
                         String::new(),
                     );
-                    let _ = logged_in.ndr_runtime.send_event(peer, unsigned);
+                    if let Ok(result) = logged_in.ndr_runtime.send_event(peer, unsigned) {
+                        self.process_runtime_effects(result.effects);
+                    }
                 }
             } else {
-                let _ = logged_in.ndr_runtime.send_reaction(
+                if let Ok(result) = logged_in.ndr_runtime.send_reaction(
                     peer,
                     message_id.to_string(),
                     emoji.to_string(),
                     None,
-                );
+                ) {
+                    self.process_runtime_effects(result.effects);
+                }
             }
-            self.process_runtime_events();
         }
     }
 

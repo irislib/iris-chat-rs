@@ -462,12 +462,14 @@ impl AppCore {
                 })
         }) {
             if let Some(logged_in) = self.logged_in.as_ref() {
-                logged_in
+                if let Ok(effects) = logged_in
                     .ndr_runtime
-                    .ingest_app_keys_snapshot(owner, app_keys, created_at);
+                    .ingest_app_keys_snapshot(owner, app_keys, created_at)
+                {
+                    self.process_runtime_effects(effects);
+                }
             }
         }
-        self.process_runtime_events();
     }
 
     pub(super) fn republish_local_identity_artifacts(&mut self) {

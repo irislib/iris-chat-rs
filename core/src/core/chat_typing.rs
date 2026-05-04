@@ -16,8 +16,9 @@ impl AppCore {
         if is_group_chat_id(&normalized_chat_id) {
             self.send_group_event(&normalized_chat_id, TYPING_KIND, "typing", Vec::new(), None);
         } else if let Ok((_, peer)) = parse_peer_input(&normalized_chat_id) {
-            let _ = logged_in.ndr_runtime.send_typing(peer, None);
-            self.process_runtime_events();
+            if let Ok(result) = logged_in.ndr_runtime.send_typing(peer, None) {
+                self.process_runtime_effects(result.effects);
+            }
         }
     }
 
@@ -40,14 +41,15 @@ impl AppCore {
                 None,
             );
         } else if let Ok((_, peer)) = parse_peer_input(&normalized_chat_id) {
-            let _ = logged_in.ndr_runtime.send_typing(
+            if let Ok(result) = logged_in.ndr_runtime.send_typing(
                 peer,
                 Some(SendOptions {
                     expires_at: Some(1),
                     ttl_seconds: None,
                 }),
-            );
-            self.process_runtime_events();
+            ) {
+                self.process_runtime_effects(result.effects);
+            }
         }
     }
 

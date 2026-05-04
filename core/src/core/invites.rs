@@ -229,13 +229,13 @@ impl AppCore {
             .unread_count = 0;
         self.remember_recent_handshake_peer(
             chat_id.clone(),
-            result.inviter_device_pubkey.to_hex(),
+            result.outcome.inviter_device_pubkey.to_hex(),
             unix_now().get(),
         );
         // Accepting an invite installs a new session — invalidate the
         // cached mobile-push snapshot so the new recipient appears.
         self.mark_mobile_push_dirty();
-        self.process_runtime_events();
+        self.process_runtime_effects(result.effects);
         Ok(chat_id)
     }
 

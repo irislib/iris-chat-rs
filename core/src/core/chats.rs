@@ -45,9 +45,9 @@ impl AppCore {
         self.load_latest_message_page_for_chat(&chat_id);
 
         if let Some(logged_in) = self.logged_in.as_ref() {
-            logged_in.ndr_runtime.setup_user(peer_pubkey)?;
+            let effects = logged_in.ndr_runtime.setup_user(peer_pubkey)?;
+            self.process_runtime_effects(effects);
         }
-        self.process_runtime_events();
 
         self.active_chat_id = Some(chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
@@ -353,12 +353,16 @@ impl AppCore {
         };
 
         if let Some(logged_in) = self.logged_in.as_ref() {
-            if let Err(error) = logged_in.ndr_runtime.setup_user(peer_pubkey) {
-                self.state.toast = Some(error.to_string());
-                return;
+            match logged_in.ndr_runtime.setup_user(peer_pubkey) {
+                Ok(effects) => {
+                    self.process_runtime_effects(effects);
+                }
+                Err(error) => {
+                    self.state.toast = Some(error.to_string());
+                    return;
+                }
             }
         }
-        self.process_runtime_events();
 
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
@@ -370,13 +374,13 @@ impl AppCore {
         );
 
         match result {
-            Ok((inner_id, event_ids)) => {
-                let message_id = if inner_id.is_empty() {
+            Ok(result) => {
+                let message_id = if result.inner_event_id.is_empty() {
                     self.allocate_message_id()
                 } else {
-                    inner_id
+                    result.inner_event_id
                 };
-                let delivery = if event_ids.is_empty() {
+                let delivery = if result.event_ids.is_empty() {
                     DeliveryState::Queued
                 } else {
                     DeliveryState::Pending
@@ -385,7 +389,7 @@ impl AppCore {
                     "message.direct.send",
                     format!(
                         "chat_id={normalized_chat_id} message_id={message_id} event_ids={}",
-                        event_ids.len()
+                        result.event_ids.len()
                     ),
                 );
                 self.push_outgoing_message_with_id(
@@ -396,7 +400,8 @@ impl AppCore {
                     expires_at_secs,
                     delivery,
                 );
-                let completions = event_ids
+                let completions = result
+                    .event_ids
                     .iter()
                     .map(|event_id| {
                         (
@@ -405,9 +410,9 @@ impl AppCore {
                         )
                     })
                     .collect::<BTreeMap<_, _>>();
-                self.process_runtime_events_with_completions(&completions);
+                self.process_runtime_effects_with_completions(result.effects, &completions);
                 self.sync_message_delivery_trace(&normalized_chat_id, &message_id);
-                if event_ids.is_empty() {
+                if completions.is_empty() {
                     self.request_protocol_subscription_refresh();
                     if self.fetch_recent_protocol_state() {
                         self.state.busy.syncing_network = true;
@@ -445,7 +450,7 @@ impl AppCore {
                 .send_group_message(&group_id, payload, Some(message_id.clone()))
         });
         match result {
-            Some(Ok(event_ids)) => {
+            Some(Ok(result)) => {
                 self.push_outgoing_message_with_id(
                     message_id.clone(),
                     chat_id,
@@ -454,11 +459,12 @@ impl AppCore {
                     expires_at_secs,
                     DeliveryState::Pending,
                 );
-                let completions = event_ids
+                let completions = result
+                    .event_ids
                     .iter()
                     .map(|event_id| (event_id.clone(), (message_id.clone(), chat_id.to_string())))
                     .collect::<BTreeMap<_, _>>();
-                self.process_runtime_events_with_completions(&completions);
+                self.process_runtime_effects_with_completions(result.effects, &completions);
                 self.sync_message_delivery_trace(chat_id, &message_id);
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
@@ -942,10 +948,12 @@ impl AppCore {
                 for group_event in group_outcome.events {
                     self.apply_group_decrypted_event(group_event);
                 }
+                self.process_runtime_effects(group_outcome.effects);
                 self.request_protocol_subscription_refresh();
                 return;
             }
             if group_outcome.consumed {
+                self.process_runtime_effects(group_outcome.effects);
                 self.request_protocol_subscription_refresh();
                 return;
             }

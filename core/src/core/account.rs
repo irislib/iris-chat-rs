@@ -246,13 +246,13 @@ impl AppCore {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return Err(anyhow::anyhow!("Link failed."));
         };
-        logged_in.ndr_runtime.import_session_state(
+        let effects = logged_in.ndr_runtime.import_session_state(
             owner_pubkey,
             Some(peer_device_id),
             session_state,
         )?;
         self.mark_mobile_push_dirty();
-        self.process_runtime_events();
+        self.process_runtime_effects(effects);
         self.request_protocol_subscription_refresh_forced();
         self.fetch_recent_protocol_state();
         self.persist_best_effort();
@@ -362,7 +362,7 @@ impl AppCore {
             Some(device_pubkey.to_hex()),
             Some(owner_pubkey),
         )?;
-        logged_in.ndr_runtime.import_session_state(
+        let effects = logged_in.ndr_runtime.import_session_state(
             owner_pubkey,
             Some(invite.inviter_device_pubkey.to_hex()),
             session.state,
@@ -372,7 +372,7 @@ impl AppCore {
         self.publish_local_app_keys();
         self.publish_runtime_event(response_event, "runtime", None);
         self.mark_mobile_push_dirty();
-        self.process_runtime_events();
+        self.process_runtime_effects(effects);
         Ok(())
     }
 
@@ -681,7 +681,7 @@ impl AppCore {
             Some(storage),
             Some(local_invite.clone()),
         );
-        ndr_runtime.init()?;
+        let mut startup_effects = ndr_runtime.init()?;
         if let Some(runtime_invite) = ndr_runtime.local_invite() {
             local_invite = runtime_invite;
         }
@@ -692,7 +692,11 @@ impl AppCore {
                 PublicKey::parse(&app_keys.owner_pubkey_hex),
                 known_app_keys_to_ndr(app_keys),
             ) {
-                ndr_runtime.ingest_app_keys_snapshot(owner, keys, app_keys.created_at_secs);
+                if let Ok(effects) =
+                    ndr_runtime.ingest_app_keys_snapshot(owner, keys, app_keys.created_at_secs)
+                {
+                    startup_effects.extend(effects);
+                }
             }
         }
         ndr_runtime.sync_groups(self.groups.values().cloned().collect())?;
@@ -721,6 +725,7 @@ impl AppCore {
             local_invite,
             authorization_state,
         });
+        self.process_runtime_effects(startup_effects);
         match self
             .app_store
             .load_pending_relay_publishes(&owner_pubkey.to_hex())
