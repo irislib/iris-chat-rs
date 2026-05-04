@@ -2,9 +2,9 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use iris_chat_core::{
-    proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot,
-    CurrentChatSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot, OutgoingAttachment,
-    PreferencesSnapshot, DeliveryState,
+    peer_input_to_npub, proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind,
+    ChatMessageSnapshot, CurrentChatSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot,
+    OutgoingAttachment, PreferencesSnapshot, DeliveryState,
 };
 
 use crate::app_manager::AppManager;
@@ -158,20 +158,14 @@ fn present_message_info(
     let glyph = gtk::Label::new(Some(delivery_glyph(&message.delivery)));
     glyph.add_css_class("title-2");
     header_row.append(&glyph);
-    let header_text = gtk::Box::new(gtk::Orientation::Vertical, 2);
     let status_label = gtk::Label::new(Some(delivery_label(&message.delivery)));
     status_label.add_css_class("title-3");
     status_label.set_xalign(0.0);
-    header_text.append(&status_label);
-    let direction_label = gtk::Label::new(Some(message_info_direction(message)));
-    direction_label.add_css_class("dim-label");
-    direction_label.set_xalign(0.0);
-    header_text.append(&direction_label);
-    header_row.append(&header_text);
+    header_row.append(&status_label);
     let header_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     header_spacer.set_hexpand(true);
     header_row.append(&header_spacer);
-    let copy_all = gtk::Button::with_label("Copy");
+    let copy_all = gtk::Button::with_label("Copy info");
     copy_all.add_css_class("flat");
     let info_text = message_info_text(message, Some(chat));
     copy_all.connect_clicked(move |_| {
@@ -226,9 +220,18 @@ fn present_message_info(
 
     // Transport
     let trace = &message.delivery_trace;
-    let has_transport = !trace.transport_channels.is_empty()
-        || !trace.pending_relay_event_ids.is_empty()
-        || !trace.queued_protocol_targets.is_empty()
+    let channels: Vec<String> = trace
+        .transport_channels
+        .iter()
+        .map(|c| pretty_transport_channel(c))
+        .collect();
+    let queued_device_npubs: Vec<String> = trace
+        .queued_protocol_targets
+        .iter()
+        .map(|id| short_npub(id))
+        .collect();
+    let has_transport = !channels.is_empty()
+        || !queued_device_npubs.is_empty()
         || trace
             .last_transport_error
             .as_deref()
@@ -236,29 +239,16 @@ fn present_message_info(
             .unwrap_or(false);
     if has_transport {
         let transport_section = info_section("Transport");
-        if !trace.transport_channels.is_empty() {
+        if !channels.is_empty() {
             info_multivalue_row(
                 &transport_section,
                 if message.is_outgoing { "Sent over" } else { "Received over" },
-                &trace.transport_channels,
+                &channels,
                 false,
             );
         }
-        if !trace.pending_relay_event_ids.is_empty() {
-            let shortened: Vec<String> = trace
-                .pending_relay_event_ids
-                .iter()
-                .map(|id| short_message_identifier(id))
-                .collect();
-            info_multivalue_row(&transport_section, "Pending message servers", &shortened, true);
-        }
-        if !trace.queued_protocol_targets.is_empty() {
-            let shortened: Vec<String> = trace
-                .queued_protocol_targets
-                .iter()
-                .map(|id| short_message_identifier(id))
-                .collect();
-            info_multivalue_row(&transport_section, "Queued devices", &shortened, true);
+        if !queued_device_npubs.is_empty() {
+            info_multivalue_row(&transport_section, "Queued devices", &queued_device_npubs, true);
         }
         if let Some(error) = trace.last_transport_error.as_deref().filter(|s| !s.is_empty()) {
             info_value_row(&transport_section, "Last error", error);
@@ -286,10 +276,12 @@ fn present_message_info(
         );
     }
     for (idx, value) in trace.target_device_ids.iter().enumerate() {
+        let npub = peer_input_to_npub(value.clone());
+        let display = if npub.is_empty() { value.clone() } else { npub };
         info_copy_row(
             &ids_section,
             if idx == 0 { "Target devices" } else { "" },
-            value,
+            &display,
             true,
         );
     }
@@ -323,7 +315,7 @@ fn present_message_info(
             };
             info_value_row(
                 &react_section,
-                &short_message_identifier(&reactor.author),
+                &message_info_recipient_name(&reactor.author, chat),
                 &value,
             );
         }
@@ -917,11 +909,16 @@ fn message_info_text(
     if let Some(expires) = message.expires_at_secs {
         lines.push(format!("Deletes {}", message_info_date_time(expires)));
     }
-    if !trace.transport_channels.is_empty() {
+    let channels: Vec<String> = trace
+        .transport_channels
+        .iter()
+        .map(|c| pretty_transport_channel(c))
+        .collect();
+    if !channels.is_empty() {
         lines.push(format!(
             "{} {}",
             if message.is_outgoing { "Sent over" } else { "Received over" },
-            trace.transport_channels.join(", "),
+            channels.join(", "),
         ));
     }
     if !message.recipient_deliveries.is_empty() {
@@ -947,23 +944,21 @@ fn message_info_text(
             short_message_identifier_list(&trace.outer_event_ids)
         ));
     }
-    if !trace.pending_relay_event_ids.is_empty() {
-        lines.push(format!(
-            "Pending message servers {}",
-            short_message_identifier_list(&trace.pending_relay_event_ids)
-        ));
-    }
     if !trace.queued_protocol_targets.is_empty() {
-        lines.push(format!(
-            "Queued targets {}",
-            short_message_identifier_list(&trace.queued_protocol_targets)
-        ));
+        let npubs: Vec<String> = trace
+            .queued_protocol_targets
+            .iter()
+            .map(|id| short_npub(id))
+            .collect();
+        lines.push(format!("Queued devices {}", npubs.join(", ")));
     }
     if !trace.target_device_ids.is_empty() {
-        lines.push(format!(
-            "Devices {}",
-            short_message_identifier_list(&trace.target_device_ids)
-        ));
+        let npubs: Vec<String> = trace
+            .target_device_ids
+            .iter()
+            .map(|id| short_npub(id))
+            .collect();
+        lines.push(format!("Devices {}", npubs.join(", ")));
     }
     if let Some(error) = trace.last_transport_error.as_deref().filter(|error| !error.is_empty()) {
         lines.push(format!("Last send error {}", error));
@@ -1000,14 +995,6 @@ fn message_info_text(
     lines.join("\n")
 }
 
-fn message_info_direction(message: &ChatMessageSnapshot) -> &'static str {
-    match message.kind {
-        ChatMessageKind::System => "System message",
-        _ if message.is_outgoing => "Sent message",
-        _ => "Received message",
-    }
-}
-
 fn message_info_kind(message: &ChatMessageSnapshot) -> &'static str {
     match message.kind {
         ChatMessageKind::System => "System",
@@ -1025,7 +1012,23 @@ fn message_info_recipient_name(owner_pubkey_hex: &str, chat: &CurrentChatSnapsho
     if matches!(chat.kind, ChatKind::Direct) && chat.chat_id == owner_pubkey_hex {
         return chat.display_name.clone();
     }
-    short_message_identifier(owner_pubkey_hex)
+    short_npub(owner_pubkey_hex)
+}
+
+fn short_npub(pubkey_input: &str) -> String {
+    let npub = peer_input_to_npub(pubkey_input.to_string());
+    let value = if npub.is_empty() { pubkey_input } else { npub.as_str() };
+    short_message_identifier(value)
+}
+
+fn pretty_transport_channel(channel: &str) -> String {
+    if let Some(rest) = channel.strip_prefix("message server: ") {
+        return rest.to_string();
+    }
+    if channel == "message servers" {
+        return "Message server".to_string();
+    }
+    channel.to_string()
 }
 
 fn message_info_date_time(secs: u64) -> String {

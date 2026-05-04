@@ -64,26 +64,20 @@ public class MessageInfoWindow : Window
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var status = new StackPanel { Orientation = Orientation.Vertical, VerticalAlignment = VerticalAlignment.Center };
-        status.Children.Add(new TextBlock
+        var status = new TextBlock
         {
             Text = DeliveryLabel(_message.delivery),
             FontSize = 18,
             FontWeight = FontWeights.SemiBold,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
-        });
-        status.Children.Add(new TextBlock
-        {
-            Text = DirectionLabel(_message),
-            FontSize = 12,
-            Foreground = (Brush)Application.Current.Resources["TextMuted"],
-        });
+            VerticalAlignment = VerticalAlignment.Center,
+        };
         Grid.SetColumn(status, 0);
         grid.Children.Add(status);
 
         var copy = new Button
         {
-            Content = "Copy",
+            Content = "Copy info",
             Padding = new Thickness(12, 4, 12, 4),
             VerticalAlignment = VerticalAlignment.Center,
         };
@@ -187,7 +181,7 @@ public class MessageInfoWindow : Window
             foreach (var reactor in _message.reactors)
             {
                 var value = string.IsNullOrEmpty(reactor.emoji) ? "Removed" : reactor.emoji;
-                rows.Add(ValueRow(ShortIdentifier(reactor.author), value));
+                rows.Add(ValueRow(ShortNpub(reactor.author), value));
             }
         }
         return rows;
@@ -267,12 +261,6 @@ public class MessageInfoWindow : Window
         return grid;
     }
 
-    private static string DirectionLabel(ChatMessageSnapshot message)
-    {
-        if (message.kind == ChatMessageKind.System) return "System message";
-        return message.isOutgoing ? "Sent message" : "Received message";
-    }
-
     private static string KindLabel(ChatMessageSnapshot message) =>
         message.kind == ChatMessageKind.System ? "System" :
         (message.isOutgoing ? "Sent" : "Received");
@@ -306,6 +294,20 @@ public class MessageInfoWindow : Window
     {
         if (string.IsNullOrEmpty(value) || value.Length <= 16) return value ?? string.Empty;
         return $"{value[..8]}...{value[^8..]}";
+    }
+
+    private static string ShortNpub(string pubkeyInput)
+    {
+        if (string.IsNullOrEmpty(pubkeyInput)) return string.Empty;
+        try
+        {
+            var npub = Native.PeerInputToNpub(pubkeyInput);
+            return ShortIdentifier(string.IsNullOrEmpty(npub) ? pubkeyInput : npub);
+        }
+        catch
+        {
+            return ShortIdentifier(pubkeyInput);
+        }
     }
 
     private static string MessageInfoText(ChatMessageSnapshot message)

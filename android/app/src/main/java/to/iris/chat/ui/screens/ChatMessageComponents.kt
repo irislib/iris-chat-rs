@@ -66,7 +66,9 @@ import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.rust.MessageReactionSnapshot
 import to.iris.chat.rust.MessageReactor
 import to.iris.chat.rust.MessageRecipientDeliverySnapshot
+import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.ui.components.DeliveryGlyph
+import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisEmojiPickerSheet
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.formatMessageClock
@@ -122,6 +124,7 @@ internal fun MessageBubble(
         MessageActionsSheet(
             message = message,
             parsedBody = parsed.body,
+            reactions = reactions,
             onDismiss = { isActionsSheetOpen = false },
             onReact = { emoji ->
                 isActionsSheetOpen = false
@@ -423,6 +426,7 @@ private val QuickReactionEmojis = listOf("❤️", "👍", "😂", "😮", "😢
 private fun MessageActionsSheet(
     message: ChatMessageSnapshot,
     parsedBody: String,
+    reactions: List<MessageReactionSnapshot>,
     onDismiss: () -> Unit,
     onReact: (String) -> Unit,
     onShowFullReactionPicker: () -> Unit,
@@ -449,7 +453,7 @@ private fun MessageActionsSheet(
                 onPick = onReact,
                 onMore = onShowFullReactionPicker,
             )
-            MessagePreviewCard(message = message, parsedBody = parsedBody)
+            MessagePreviewCard(message = message, parsedBody = parsedBody, reactions = reactions)
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 MessageActionRow(
                     icon = Icons.AutoMirrored.Rounded.Reply,
@@ -533,6 +537,7 @@ private fun QuickReactionButton(emoji: String, onClick: () -> Unit) {
 private fun MessagePreviewCard(
     message: ChatMessageSnapshot,
     parsedBody: String,
+    reactions: List<MessageReactionSnapshot>,
 ) {
     val previewText =
         when {
@@ -540,7 +545,7 @@ private fun MessagePreviewCard(
             message.attachments.isNotEmpty() -> message.attachments.first().filename.ifBlank { "Attachment" }
             else -> ""
         }
-    if (previewText.isBlank() && message.attachments.isEmpty()) return
+    if (previewText.isBlank() && message.attachments.isEmpty() && reactions.isEmpty()) return
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = IrisTheme.palette.panel,
@@ -548,7 +553,7 @@ private fun MessagePreviewCard(
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text(
                 text = message.author,
@@ -571,6 +576,9 @@ private fun MessagePreviewCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = IrisTheme.palette.muted,
                 )
+            }
+            if (reactions.isNotEmpty()) {
+                ReactionRow(reactions = reactions)
             }
         }
     }
@@ -902,7 +910,7 @@ private fun MessageInfoDialog(
                 onClick = {
                     clipboard.setText("Message info", messageInfoText(message, chat))
                 },
-            ) { Text("Copy") }
+            ) { Text("Copy info") }
         },
         title = { Text("Message info") },
         text = {
@@ -919,18 +927,11 @@ private fun MessageInfoDialog(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     DeliveryGlyph(message.delivery, isOutgoing = message.isOutgoing)
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = deliveryLabel(message.delivery),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        Text(
-                            text = messageInfoDirection(message),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = palette.muted,
-                        )
-                    }
+                    Text(
+                        text = deliveryLabel(message.delivery),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
                 }
 
                 MessageInfoSection(title = "Status") {
@@ -964,30 +965,24 @@ private fun MessageInfoDialog(
                     }
                 }
 
+                val channels = trace.transportChannels.map(::prettyTransportChannel)
+                val queuedDeviceNpubs = trace.queuedProtocolTargets.map(::shortNpub)
                 val hasTransport =
-                    trace.transportChannels.isNotEmpty() ||
-                        trace.pendingRelayEventIds.isNotEmpty() ||
-                        trace.queuedProtocolTargets.isNotEmpty() ||
+                    channels.isNotEmpty() ||
+                        queuedDeviceNpubs.isNotEmpty() ||
                         !trace.lastTransportError.isNullOrBlank()
                 if (hasTransport) {
                     MessageInfoSection(title = "Transport") {
-                        if (trace.transportChannels.isNotEmpty()) {
+                        if (channels.isNotEmpty()) {
                             MessageInfoMultiValueRow(
                                 label = if (message.isOutgoing) "Sent over" else "Received over",
-                                values = trace.transportChannels,
+                                values = channels,
                             )
                         }
-                        if (trace.pendingRelayEventIds.isNotEmpty()) {
-                            MessageInfoMultiValueRow(
-                                label = "Pending message servers",
-                                values = trace.pendingRelayEventIds.map(::shortMessageIdentifier),
-                                monospaced = true,
-                            )
-                        }
-                        if (trace.queuedProtocolTargets.isNotEmpty()) {
+                        if (queuedDeviceNpubs.isNotEmpty()) {
                             MessageInfoMultiValueRow(
                                 label = "Queued devices",
-                                values = trace.queuedProtocolTargets.map(::shortMessageIdentifier),
+                                values = queuedDeviceNpubs,
                                 monospaced = true,
                             )
                         }
@@ -1016,7 +1011,10 @@ private fun MessageInfoDialog(
                         MessageInfoCopyList("Network events", trace.outerEventIds)
                     }
                     if (trace.targetDeviceIds.isNotEmpty()) {
-                        MessageInfoCopyList("Target devices", trace.targetDeviceIds)
+                        MessageInfoCopyList(
+                            label = "Target devices",
+                            values = trace.targetDeviceIds.map { peerInputToNpub(it) },
+                        )
                     }
                 }
 
@@ -1039,10 +1037,9 @@ private fun MessageInfoDialog(
                             MessageInfoValueRow(reaction.emoji, "${reaction.count}")
                         }
                         message.reactors.forEach { reactor ->
-                            MessageInfoValueRow(
-                                label = shortMessageIdentifier(reactor.author),
-                                value = if (reactor.emoji.isBlank()) "Removed" else reactor.emoji,
-                                monospaced = reactor.emoji.isBlank(),
+                            MessageInfoReactorRow(
+                                name = messageInfoRecipientName(reactor.author, chat),
+                                emoji = reactor.emoji,
                             )
                         }
                     }
@@ -1187,8 +1184,9 @@ private fun messageInfoText(message: ChatMessageSnapshot, chat: CurrentChatSnaps
     message.expiresAtSecs?.let {
         lines += "Deletes ${messageInfoDateTime(it.toLong())}"
     }
-    if (trace.transportChannels.isNotEmpty()) {
-        lines += "${if (message.isOutgoing) "Sent over" else "Received over"} ${trace.transportChannels.joinToString(", ")}"
+    val channels = trace.transportChannels.map(::prettyTransportChannel)
+    if (channels.isNotEmpty()) {
+        lines += "${if (message.isOutgoing) "Sent over" else "Received over"} ${channels.joinToString(", ")}"
     }
     if (message.recipientDeliveries.isNotEmpty()) {
         lines += "Recipients"
@@ -1203,14 +1201,11 @@ private fun messageInfoText(message: ChatMessageSnapshot, chat: CurrentChatSnaps
     if (trace.outerEventIds.isNotEmpty()) {
         lines += "Network IDs ${shortMessageIdentifierList(trace.outerEventIds)}"
     }
-    if (trace.pendingRelayEventIds.isNotEmpty()) {
-        lines += "Pending message servers ${shortMessageIdentifierList(trace.pendingRelayEventIds)}"
-    }
     if (trace.queuedProtocolTargets.isNotEmpty()) {
-        lines += "Queued targets ${shortMessageIdentifierList(trace.queuedProtocolTargets)}"
+        lines += "Queued devices ${trace.queuedProtocolTargets.joinToString(", ", transform = ::shortNpub)}"
     }
     if (trace.targetDeviceIds.isNotEmpty()) {
-        lines += "Devices ${shortMessageIdentifierList(trace.targetDeviceIds)}"
+        lines += "Devices ${trace.targetDeviceIds.joinToString(", ", transform = ::shortNpub)}"
     }
     trace.lastTransportError?.takeIf { it.isNotBlank() }?.let { error ->
         lines += "Last send error $error"
@@ -1249,7 +1244,49 @@ private fun messageInfoRecipientName(ownerPubkeyHex: String, chat: CurrentChatSn
     if (chat != null && chat.kind == ChatKind.DIRECT && chat.chatId == ownerPubkeyHex) {
         return chat.displayName
     }
-    return shortMessageIdentifier(ownerPubkeyHex)
+    return shortNpub(ownerPubkeyHex)
+}
+
+private fun shortNpub(pubkeyInput: String): String {
+    val npub = peerInputToNpub(pubkeyInput).ifBlank { pubkeyInput }
+    return shortMessageIdentifier(npub)
+}
+
+private fun prettyTransportChannel(channel: String): String =
+    when {
+        channel.startsWith("message server: ") -> channel.removePrefix("message server: ")
+        channel == "message servers" -> "Message server"
+        else -> channel
+    }
+
+@Composable
+private fun MessageInfoReactorRow(name: String, emoji: String) {
+    val palette = IrisTheme.palette
+    Row(
+        modifier = Modifier.padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IrisAvatar(label = name, size = 28.dp)
+        Text(
+            text = name,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        if (emoji.isBlank()) {
+            Text(
+                text = "Removed",
+                style = MaterialTheme.typography.labelMedium,
+                color = palette.muted,
+            )
+        } else {
+            Text(text = emoji, style = MaterialTheme.typography.titleLarge)
+        }
+    }
 }
 
 private fun messageInfoDateTime(secs: Long): String {

@@ -701,18 +701,13 @@ private struct MessageInfoSheet: View {
             HStack(alignment: .center, spacing: 12) {
                 IrisDeliveryGlyph(delivery: message.delivery)
                     .frame(width: 26, height: 26)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(irisDeliveryLabel(message.delivery))
-                        .font(.system(.title3, design: .rounded, weight: .bold))
-                        .foregroundStyle(palette.textPrimary)
-                        .accessibilityIdentifier("messageInfoStatus")
-                    Text(messageInfoDirection(message))
-                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.muted)
-                }
+                Text(irisDeliveryLabel(message.delivery))
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .foregroundStyle(palette.textPrimary)
+                    .accessibilityIdentifier("messageInfoStatus")
                 Spacer(minLength: 12)
                 IrisCopyButton(
-                    label: "Copy",
+                    label: "Copy info",
                     value: messageInfoText(message, chat: chat),
                     compact: true
                 )
@@ -759,28 +754,22 @@ private struct MessageInfoSheet: View {
     @ViewBuilder
     private var transportSection: some View {
         let trace = message.deliveryTrace
-        if !trace.transportChannels.isEmpty ||
-            !trace.pendingRelayEventIds.isEmpty ||
-            !trace.queuedProtocolTargets.isEmpty ||
+        let channels = trace.transportChannels.map(prettyTransportChannel)
+        let queuedDeviceNpubs = trace.queuedProtocolTargets.map(shortNpub)
+        if !channels.isEmpty ||
+            !queuedDeviceNpubs.isEmpty ||
             trace.lastTransportError?.isEmpty == false {
             MessageInfoSection(title: "Transport") {
-                if !trace.transportChannels.isEmpty {
+                if !channels.isEmpty {
                     MessageInfoMultiValueRow(
                         label: message.isOutgoing ? "Sent over" : "Received over",
-                        values: trace.transportChannels
+                        values: channels
                     )
                 }
-                if !trace.pendingRelayEventIds.isEmpty {
-                    MessageInfoMultiValueRow(
-                        label: "Pending message servers",
-                        values: trace.pendingRelayEventIds.map(shortMessageIdentifier),
-                        monospaced: true
-                    )
-                }
-                if !trace.queuedProtocolTargets.isEmpty {
+                if !queuedDeviceNpubs.isEmpty {
                     MessageInfoMultiValueRow(
                         label: "Queued devices",
-                        values: trace.queuedProtocolTargets.map(shortMessageIdentifier),
+                        values: queuedDeviceNpubs,
                         monospaced: true
                     )
                 }
@@ -808,7 +797,10 @@ private struct MessageInfoSheet: View {
                 MessageInfoCopyListRow(label: "Network events", values: trace.outerEventIds)
             }
             if !trace.targetDeviceIds.isEmpty {
-                MessageInfoCopyListRow(label: "Target devices", values: trace.targetDeviceIds)
+                MessageInfoCopyListRow(
+                    label: "Target devices",
+                    values: trace.targetDeviceIds.map { peerInputToNpub(input: $0) }
+                )
             }
         }
     }
@@ -840,14 +832,34 @@ private struct MessageInfoSheet: View {
                     )
                 }
                 ForEach(message.reactors, id: \.author) { reactor in
-                    MessageInfoValueRow(
-                        label: shortMessageIdentifier(reactor.author),
-                        value: reactor.emoji.isEmpty ? "Removed" : reactor.emoji,
-                        monospaced: reactor.emoji.isEmpty
+                    MessageInfoReactorRow(
+                        name: messageInfoRecipientName(reactor.author, chat: chat),
+                        emoji: reactor.emoji
                     )
                 }
             }
         }
+    }
+}
+
+private struct MessageInfoReactorRow: View {
+    @Environment(\.irisPalette) private var palette
+    let name: String
+    let emoji: String
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            IrisAvatar(label: name, size: 28)
+            Text(name)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+            Text(emoji.isEmpty ? "Removed" : emoji)
+                .font(emoji.isEmpty ? .system(.caption, design: .rounded, weight: .medium) : .system(size: 22))
+                .foregroundStyle(emoji.isEmpty ? palette.muted : palette.textPrimary)
+        }
+        .padding(.vertical, 6)
     }
 }
 
@@ -1202,8 +1214,8 @@ private struct ChatMessageActionsSheet: View {
 
     @ViewBuilder
     private var previewCard: some View {
-        if !previewText.isEmpty || !message.attachments.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+        if !previewText.isEmpty || !message.attachments.isEmpty || !message.reactions.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
                 Text(message.author)
                     .font(.system(.caption, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.muted)
@@ -1219,6 +1231,9 @@ private struct ChatMessageActionsSheet: View {
                     Text(message.attachments.count == 1 ? "1 attachment" : "\(message.attachments.count) attachments")
                         .font(.system(.caption2, design: .rounded, weight: .medium))
                         .foregroundStyle(palette.muted)
+                }
+                if !message.reactions.isEmpty {
+                    ReactionRow(reactions: message.reactions, isOutgoing: false)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -1925,8 +1940,9 @@ private func messageInfoText(_ message: ChatMessageSnapshot, chat: CurrentChatSn
         lines.append("Deletes \(messageInfoDateTime(expiresAtSecs))")
     }
     let trace = message.deliveryTrace
-    if !trace.transportChannels.isEmpty {
-        lines.append("\(message.isOutgoing ? "Sent over" : "Received over") \(trace.transportChannels.joined(separator: ", "))")
+    let channels = trace.transportChannels.map(prettyTransportChannel)
+    if !channels.isEmpty {
+        lines.append("\(message.isOutgoing ? "Sent over" : "Received over") \(channels.joined(separator: ", "))")
     }
     if !message.recipientDeliveries.isEmpty {
         lines.append("Recipients")
@@ -1940,14 +1956,11 @@ private func messageInfoText(_ message: ChatMessageSnapshot, chat: CurrentChatSn
     if !trace.outerEventIds.isEmpty {
         lines.append("Network IDs \(shortMessageIdentifierList(trace.outerEventIds))")
     }
-    if !trace.pendingRelayEventIds.isEmpty {
-        lines.append("Pending message servers \(shortMessageIdentifierList(trace.pendingRelayEventIds))")
-    }
     if !trace.queuedProtocolTargets.isEmpty {
-        lines.append("Queued targets \(shortMessageIdentifierList(trace.queuedProtocolTargets))")
+        lines.append("Queued devices \(trace.queuedProtocolTargets.map(shortNpub).joined(separator: ", "))")
     }
     if !trace.targetDeviceIds.isEmpty {
-        lines.append("Devices \(shortMessageIdentifierList(trace.targetDeviceIds))")
+        lines.append("Devices \(trace.targetDeviceIds.map(shortNpub).joined(separator: ", "))")
     }
     if let lastError = trace.lastTransportError, !lastError.isEmpty {
         lines.append("Last send error \(lastError)")
@@ -1990,7 +2003,24 @@ private func messageInfoRecipientName(_ ownerPubkeyHex: String, chat: CurrentCha
     if let chat, chat.kind == .direct && chat.chatId == ownerPubkeyHex {
         return chat.displayName
     }
-    return shortMessageIdentifier(ownerPubkeyHex)
+    return shortNpub(ownerPubkeyHex)
+}
+
+private func shortNpub(_ pubkeyInput: String) -> String {
+    let npub = peerInputToNpub(input: pubkeyInput)
+    let value = npub.isEmpty ? pubkeyInput : npub
+    return shortMessageIdentifier(value)
+}
+
+private func prettyTransportChannel(_ channel: String) -> String {
+    let prefix = "message server: "
+    if channel.hasPrefix(prefix) {
+        return String(channel.dropFirst(prefix.count))
+    }
+    if channel == "message servers" {
+        return "Message server"
+    }
+    return channel
 }
 
 private func messageInfoDateTime(_ secs: UInt64) -> String {
