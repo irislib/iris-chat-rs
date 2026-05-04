@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.13
+
+- Update to `nostr-double-ratchet` 0.0.137 with the merged htree/master private invite, linked-device fanout, and runtime durability work.
+
 ## 0.1.12
 
 - Create fresh one-use private invite links in the invite UI instead of exposing the relay-published local device invite secret.
