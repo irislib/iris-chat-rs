@@ -584,6 +584,8 @@ private class MockRustAppClient(
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = true
 
+    override fun ingestNearbyEventJsonWithTransport(eventJson: String, transport: String): Boolean = true
+
     override fun buildNearbyPresenceEventJson(
         peerId: String,
         myNonce: String,
