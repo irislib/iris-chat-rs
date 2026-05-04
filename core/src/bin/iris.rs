@@ -271,18 +271,17 @@ const IRIS_UPDATE_REFERENCE: &str =
     "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest";
 
 fn run_iris_update(cmd: &UpdateCommands) -> Result<()> {
-    let mut args = vec!["update".to_string()];
+    let mut args = vec!["install".to_string(), IRIS_UPDATE_REFERENCE.to_string()];
     let current_version = env!("CARGO_PKG_VERSION").to_string();
+    args.extend(["--current-version".into(), current_version]);
     match cmd {
         UpdateCommands::Check => {
-            args.extend(["check".into(), IRIS_UPDATE_REFERENCE.into()]);
-            args.extend(["--current-version".into(), current_version]);
+            args.push("--check".into());
         }
         UpdateCommands::Download { out } => {
-            args.extend(["download".into(), IRIS_UPDATE_REFERENCE.into()]);
-            args.extend(["--current-version".into(), current_version]);
+            args.push("--download-only".into());
             if let Some(out) = out {
-                args.extend(["-o".into(), out.display().to_string()]);
+                args.extend(["--to".into(), out.display().to_string()]);
             }
         }
         UpdateCommands::Install {
@@ -290,8 +289,6 @@ fn run_iris_update(cmd: &UpdateCommands) -> Result<()> {
             kind,
             only_if_newer,
         } => {
-            args.extend(["install".into(), IRIS_UPDATE_REFERENCE.into()]);
-            args.extend(["--current-version".into(), current_version]);
             let dest = match to {
                 Some(p) => p.clone(),
                 None => std::env::current_exe()

@@ -925,7 +925,18 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_
     name="$(basename "$asset_path")"
     size="$(stat -f%z "$asset_path" 2>/dev/null || stat -c%s "$asset_path")"
     if [[ $first -eq 1 ]]; then first=0; else printf ',\n'; fi
-    printf '    { "name": "%s", "path": "assets/%s", "size": %s }' "$name" "$name" "$size"
+    # CLI tarballs (iris-<target>.tar.gz) bundle iris/iris + install.sh.
+    # Setting `executable` makes hashtree-updater classify the asset as
+    # `binary-archive` and extract just the named entry on install,
+    # so users can run `htree install <ref>` without extra flags.
+    case "$name" in
+      iris-*.tar.gz)
+        printf '    { "name": "%s", "path": "assets/%s", "size": %s, "executable": "iris/iris" }' "$name" "$name" "$size"
+        ;;
+      *)
+        printf '    { "name": "%s", "path": "assets/%s", "size": %s }' "$name" "$name" "$size"
+        ;;
+    esac
   done
   printf '\n  ]\n'
   printf '}\n'
