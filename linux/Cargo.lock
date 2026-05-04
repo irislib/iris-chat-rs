@@ -1767,6 +1767,9 @@ dependencies = [
  "nostr 0.35.0",
  "nostr 0.44.2",
  "nostr-double-ratchet",
+ "nostr-double-ratchet-nostr",
+ "nostr-double-ratchet-pairwise-codec",
+ "nostr-double-ratchet-runtime",
  "nostr-sdk",
  "qrcode",
  "rand 0.8.6",
@@ -2125,8 +2128,6 @@ name = "nostr-double-ratchet"
 version = "0.0.136"
 dependencies = [
  "base64",
- "crossbeam-channel",
- "flate2",
  "hex",
  "hkdf",
  "nostr 0.44.2",
@@ -2134,6 +2135,49 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nostr-double-ratchet-nostr"
+version = "0.0.136"
+dependencies = [
+ "base64",
+ "hex",
+ "nostr 0.44.2",
+ "nostr-double-ratchet",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "urlencoding",
+]
+
+[[package]]
+name = "nostr-double-ratchet-pairwise-codec"
+version = "0.0.136"
+dependencies = [
+ "nostr 0.44.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "nostr-double-ratchet-runtime"
+version = "0.0.136"
+dependencies = [
+ "base64",
+ "crossbeam-channel",
+ "flate2",
+ "hex",
+ "nostr 0.44.2",
+ "nostr-double-ratchet",
+ "nostr-double-ratchet-nostr",
+ "nostr-double-ratchet-pairwise-codec",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
  "urlencoding",

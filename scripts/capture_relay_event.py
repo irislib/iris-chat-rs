@@ -113,6 +113,11 @@ def main() -> int:
     parser.add_argument("--timeout-secs", type=float, default=60.0)
     parser.add_argument("--count", type=int, default=1, help="number of matching events to capture")
     parser.add_argument(
+        "--live-only",
+        action="store_true",
+        help="ignore stored matching events returned before EOSE and capture only new live events",
+    )
+    parser.add_argument(
         "--format",
         choices=("single", "jsonl", "array"),
         default="single",
@@ -145,6 +150,7 @@ def main() -> int:
     sock.sendall(encode_frame(req.encode()))
 
     events = []
+    live = not args.live_only
     deadline = time.time() + args.timeout_secs
     while time.time() < deadline:
         try:
@@ -164,6 +170,8 @@ def main() -> int:
         if not isinstance(decoded, list) or not decoded:
             continue
         if decoded[0] == "EVENT" and len(decoded) >= 3:
+            if not live:
+                continue
             event = decoded[2]
             events.append(event)
             if len(events) >= args.count:
@@ -176,7 +184,9 @@ def main() -> int:
                     print(json.dumps(events[0]))
                 return 0
         if decoded[0] == "EOSE":
-            # No matching event yet; keep listening for new ones.
+            # No matching event yet, or --live-only skipped stored events;
+            # keep listening for new ones.
+            live = True
             continue
     print(f"timed out waiting for {args.count} event(s); captured {len(events)}", file=sys.stderr)
     return 1

@@ -23,7 +23,6 @@ impl AppCore {
             let mut invite = Invite::create_new(device_pubkey, Some(device_id), Some(1))?;
             invite.owner_public_key = Some(logged_in.owner_pubkey);
             invite.purpose = Some("private".to_string());
-            logged_in.ndr_runtime.register_invite(invite.clone())?;
             Ok(invite)
         })();
 
@@ -34,7 +33,8 @@ impl AppCore {
                 } else {
                     self.private_chat_invites
                         .insert(private_chat_invite_key(&invite), invite);
-                    self.process_runtime_events();
+                    self.mark_mobile_push_dirty();
+                    self.request_protocol_subscription_refresh();
                     self.persist_best_effort();
                 }
             }
@@ -79,23 +79,95 @@ impl AppCore {
             self.private_chat_invites.remove(key);
         }
         self.mark_mobile_push_dirty();
+        self.request_protocol_subscription_refresh();
     }
 
-    pub(super) fn private_chat_invite_response_keys(&self, event: &Event) -> Vec<String> {
+    pub(super) fn private_chat_invite_response_pubkeys(&self) -> Vec<PublicKey> {
+        let mut pubkeys = self
+            .private_chat_invites
+            .values()
+            .map(|invite| invite.inviter_ephemeral_public_key.to_nostr())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap_or_default();
+        pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
+        pubkeys.dedup();
+        pubkeys
+    }
+
+    pub(super) fn handle_private_chat_invite_response(&mut self, event: &Event) -> bool {
+        if event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND {
+            return false;
+        }
         let Some(logged_in) = self.logged_in.as_ref() else {
-            return Vec::new();
+            return false;
         };
         let device_secret = logged_in.device_keys.secret_key().to_secret_bytes();
-        self.private_chat_invites
+        let event_id = event.id.to_string();
+        let mut matched = None;
+        let invite_entries = self
+            .private_chat_invites
             .iter()
-            .filter_map(|(key, invite)| {
-                matches!(
-                    invite.process_invite_response(event, device_secret),
-                    Ok(Some(_))
-                )
-                .then(|| key.clone())
-            })
-            .collect()
+            .map(|(key, invite)| (key.clone(), invite.clone()))
+            .collect::<Vec<_>>();
+        for (key, invite) in invite_entries {
+            match nostr_double_ratchet_nostr::process_invite_response_event(
+                &invite,
+                event,
+                device_secret,
+            ) {
+                Ok(Some(response)) => {
+                    matched = Some((key.clone(), response));
+                    break;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    self.push_debug_log(
+                        "invite.private_response.error",
+                        format!("event_id={event_id} invite_key={key} error={error}"),
+                    );
+                }
+            }
+        }
+        let Some((invite_key, response)) = matched else {
+            return false;
+        };
+
+        let owner_pubkey = response
+            .owner_public_key
+            .unwrap_or(response.invitee_identity);
+        let peer_device_id = response
+            .device_id
+            .clone()
+            .unwrap_or_else(|| response.invitee_identity.to_hex());
+        let session_state = response.session.state;
+        let import_result = self
+            .logged_in
+            .as_ref()
+            .expect("checked logged in")
+            .ndr_runtime
+            .import_session_state(owner_pubkey, Some(peer_device_id.clone()), session_state);
+        if let Err(error) = import_result {
+            self.push_debug_log(
+                "invite.private_response.import",
+                format!(
+                    "event_id={event_id} owner={} error={error}",
+                    owner_pubkey.to_hex()
+                ),
+            );
+            return false;
+        }
+
+        let chat_id = owner_pubkey.to_hex();
+        self.ensure_thread_record(&chat_id, unix_now().get())
+            .unread_count = 0;
+        self.remember_recent_handshake_peer(chat_id, peer_device_id, unix_now().get());
+        self.forget_private_chat_invite_keys(&[invite_key]);
+        self.process_runtime_events();
+        self.push_debug_log(
+            "invite.private_response",
+            format!("event_id={event_id} owner={}", owner_pubkey.to_hex()),
+        );
+        true
     }
 
     pub(super) fn accept_invite(&mut self, invite_input: &str) {
@@ -117,7 +189,7 @@ impl AppCore {
 
         let result = match parse_public_invite_or_direct_chat_input(trimmed) {
             Ok(PublicInviteInput::Invite(invite)) => {
-                self.schedule_invite_owner_app_keys_preload(&invite);
+                self.preload_invite_owner_app_keys(&invite);
                 self.accept_parsed_invite(invite)
             }
             Ok(PublicInviteInput::DirectChat) => self.open_direct_chat_from_peer_input(trimmed),
@@ -167,7 +239,7 @@ impl AppCore {
         Ok(chat_id)
     }
 
-    fn schedule_invite_owner_app_keys_preload(&self, invite: &Invite) {
+    fn preload_invite_owner_app_keys(&mut self, invite: &Invite) {
         let Some(owner_pubkey) = invite.owner_public_key else {
             return;
         };
@@ -187,44 +259,42 @@ impl AppCore {
             .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
             .author(owner_pubkey)
             .limit(10);
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
+        let fetched = self.runtime.block_on(async {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, Duration::from_secs(2)).await;
-            let fetched = client.fetch_events(filter, Duration::from_secs(2)).await;
-            let Ok(events) = fetched else {
-                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                    category: "invite.app_keys.preload".to_string(),
-                    detail: format!("owner={} result=fetch_failed", owner_pubkey.to_hex()),
-                })));
-                return;
-            };
-
-            let latest = events
-                .iter()
-                .filter(|event| is_app_keys_event(event))
-                .max_by_key(|event| (event.created_at.as_secs(), event.id.to_hex()))
-                .cloned();
-            let Some(event) = latest else {
-                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                    category: "invite.app_keys.preload".to_string(),
-                    detail: format!("owner={} result=not_found", owner_pubkey.to_hex()),
-                })));
-                return;
-            };
-
-            let created_at = event.created_at.as_secs();
-            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                category: "invite.app_keys.preload".to_string(),
-                detail: format!(
-                    "owner={} result=queued created_at={created_at}",
-                    owner_pubkey.to_hex()
-                ),
-            })));
-            let _ = tx.send(CoreMsg::Internal(Box::new(
-                InternalEvent::FetchCatchUpEvents(vec![event]),
-            )));
+            client.fetch_events(filter, Duration::from_secs(2)).await
         });
+
+        let Ok(events) = fetched else {
+            self.push_debug_log(
+                "invite.app_keys.preload",
+                format!("owner={} result=fetch_failed", owner_pubkey.to_hex()),
+            );
+            return;
+        };
+
+        let latest = events
+            .iter()
+            .filter(|event| is_app_keys_event(event))
+            .max_by_key(|event| (event.created_at.as_secs(), event.id.to_hex()))
+            .cloned();
+        let Some(event) = latest else {
+            self.push_debug_log(
+                "invite.app_keys.preload",
+                format!("owner={} result=not_found", owner_pubkey.to_hex()),
+            );
+            return;
+        };
+
+        let created_at = event.created_at.as_secs();
+        self.apply_app_keys_event(&event);
+        self.push_debug_log(
+            "invite.app_keys.preload",
+            format!(
+                "owner={} result=applied created_at={created_at}",
+                owner_pubkey.to_hex()
+            ),
+        );
     }
 }
 
@@ -243,12 +313,13 @@ fn parse_public_invite_or_direct_chat_input(input: &str) -> anyhow::Result<Publi
 }
 
 pub(super) fn parse_public_invite_input(input: &str) -> anyhow::Result<Invite> {
-    if let Ok(invite) = Invite::from_url(input) {
+    if let Ok(invite) = nostr_double_ratchet_nostr::parse_invite_url(input) {
         return Ok(invite);
     }
 
     let Ok(url) = url::Url::parse(input) else {
-        return Invite::from_url(input).map_err(|error| anyhow::anyhow!(error.to_string()));
+        return nostr_double_ratchet_nostr::parse_invite_url(input)
+            .map_err(|error| anyhow::anyhow!(error.to_string()));
     };
 
     for (key, value) in url.query_pairs() {
@@ -275,14 +346,14 @@ pub(super) fn parse_public_invite_input(input: &str) -> anyhow::Result<Invite> {
         }
     }
 
-    Invite::from_url(input).map_err(|error| anyhow::anyhow!(error.to_string()))
+    nostr_double_ratchet_nostr::parse_invite_url(input)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 pub(super) fn private_chat_invite_key(invite: &Invite) -> String {
     format!(
         "{}{}",
-        PRIVATE_CHAT_INVITE_KEY_PREFIX,
-        invite.inviter_ephemeral_public_key.to_hex()
+        PRIVATE_CHAT_INVITE_KEY_PREFIX, invite.inviter_ephemeral_public_key
     )
 }
 
@@ -308,10 +379,10 @@ pub(super) fn load_private_chat_invites(
 
 fn parse_invite_candidate(candidate: &str) -> anyhow::Result<Invite> {
     let trimmed = candidate.trim().trim_start_matches('/');
-    if let Ok(invite) = Invite::from_url(trimmed) {
+    if let Ok(invite) = nostr_double_ratchet_nostr::parse_invite_url(trimmed) {
         return Ok(invite);
     }
-    Invite::from_url(&format!("{CHAT_INVITE_ROOT_URL}#{trimmed}"))
+    nostr_double_ratchet_nostr::parse_invite_url(&format!("{CHAT_INVITE_ROOT_URL}#{trimmed}"))
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
@@ -324,7 +395,7 @@ mod tests {
         let mut invite = Invite::create_new(keys.public_key(), Some("public".to_string()), None)
             .expect("invite");
         invite.owner_public_key = Some(keys.public_key());
-        invite.get_url(CHAT_INVITE_ROOT_URL).expect("invite url")
+        nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL).expect("invite url")
     }
 
     #[test]

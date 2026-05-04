@@ -98,7 +98,7 @@ impl AppCore {
                     subtitle,
                     picture_url: group_snapshot
                         .as_ref()
-                        .and_then(|group| group.picture.clone())
+                        .and_then(|_| None)
                         .or(direct_picture),
                     member_count,
                     last_message_preview: last_message.map(message_preview),
@@ -139,9 +139,9 @@ impl AppCore {
                         .or_else(|| self.owner_secondary_identifier(&thread.chat_id)),
                     picture_url: group_snapshot
                         .as_ref()
-                        .and_then(|group| group.picture.clone())
+                        .and_then(|_| None)
                         .or(direct_picture),
-                    group_id: group_snapshot.as_ref().map(|group| group.id.clone()),
+                    group_id: group_snapshot.as_ref().map(|group| group.group_id.clone()),
                     member_count: group_snapshot
                         .as_ref()
                         .map(|group| group.members.len() as u64)
@@ -386,12 +386,16 @@ impl AppCore {
     }
 
     pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
-        self.logged_in.as_ref()?;
         let invite = self
             .private_chat_invites
             .values()
-            .max_by_key(|invite| invite.created_at)?;
-        let url = invite.get_url(CHAT_INVITE_ROOT_URL).ok()?;
+            .max_by_key(|invite| invite.created_at)
+            .or_else(|| {
+                self.logged_in
+                    .as_ref()
+                    .map(|logged_in| &logged_in.local_invite)
+            })?;
+        let url = nostr_double_ratchet_nostr::invite_url(invite, CHAT_INVITE_ROOT_URL).ok()?;
         Some(PublicInviteSnapshot { url })
     }
 
@@ -403,7 +407,7 @@ impl AppCore {
         })
     }
 
-    pub(super) fn group_snapshot_for_chat_id(&self, chat_id: &str) -> Option<GroupData> {
+    pub(super) fn group_snapshot_for_chat_id(&self, chat_id: &str) -> Option<GroupSnapshot> {
         let group_id = parse_group_id_from_chat_id(chat_id)?;
         self.groups.get(&group_id).cloned()
     }
@@ -418,17 +422,22 @@ impl AppCore {
         let mut members = group
             .members
             .iter()
-            .map(|owner_hex| {
-                let owner = PublicKey::parse(owner_hex).ok();
+            .map(|owner| {
+                let owner_hex = owner.to_string();
+                let owner = PublicKey::parse(&owner_hex).ok();
                 GroupMemberSnapshot {
                     owner_pubkey_hex: owner_hex.clone(),
-                    display_name: self.owner_display_label(owner_hex),
+                    display_name: self.owner_display_label(&owner_hex),
                     npub: owner
                         .and_then(owner_npub_from_owner)
-                        .unwrap_or_else(|| owner_hex.clone()),
-                    is_admin: group.admins.iter().any(|admin| admin == owner_hex),
-                    is_creator: group.admins.first() == Some(owner_hex),
-                    is_local_owner: owner_hex == &local_owner_hex,
+                        .unwrap_or_else(|| owner_hex.to_string()),
+                    is_admin: group
+                        .admins
+                        .iter()
+                        .any(|admin| admin.to_string() == owner_hex),
+                    is_creator: group.admins.first().map(ToString::to_string).as_ref()
+                        == Some(&owner_hex),
+                    is_local_owner: owner_hex == local_owner_hex,
                 }
             })
             .collect::<Vec<_>>();
@@ -444,23 +453,26 @@ impl AppCore {
         let creator = group
             .admins
             .first()
-            .cloned()
+            .map(ToString::to_string)
             .unwrap_or_else(|| local_owner_hex.clone());
         let creator_npub = PublicKey::parse(&creator)
             .ok()
             .and_then(owner_npub_from_owner)
             .unwrap_or_else(|| creator.clone());
-        let is_muted = self.is_chat_muted(&group_chat_id(&group.id));
+        let is_muted = self.is_chat_muted(&group_chat_id(&group.group_id));
 
         Some(GroupDetailsSnapshot {
-            group_id: group.id,
+            group_id: group.group_id,
             name: group.name,
-            picture_url: group.picture,
+            picture_url: None,
             created_by_display_name: self.owner_display_label(&creator),
             created_by_npub: creator_npub,
-            can_manage: group.admins.iter().any(|admin| admin == &local_owner_hex),
+            can_manage: group
+                .admins
+                .iter()
+                .any(|admin| admin.to_string() == local_owner_hex),
             is_muted,
-            revision: group.created_at,
+            revision: group.revision,
             members,
         })
     }

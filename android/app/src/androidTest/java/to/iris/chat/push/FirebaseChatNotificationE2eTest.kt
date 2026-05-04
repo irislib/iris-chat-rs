@@ -37,6 +37,7 @@ class FirebaseChatNotificationE2eTest {
 
     @Test
     fun report_fcm_token() {
+        requireHarnessInvocation("FCM token report requires targeted Firebase E2E invocation")
         val token = fcmToken()
         assertTrue("FCM token was empty", token.isNotBlank())
         reportStatus(
@@ -251,6 +252,12 @@ class FirebaseChatNotificationE2eTest {
             }
 
     private fun optionalArg(name: String): String? = arguments.getString(name)?.takeIf { it.isNotBlank() }
+
+    private fun requireHarnessInvocation(reason: String) {
+        if (arguments.getString("class").isNullOrBlank()) {
+            assumeTrue(reason, false)
+        }
+    }
 
     private fun waitForSnapshot(
         label: String,

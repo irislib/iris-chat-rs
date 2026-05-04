@@ -45,10 +45,17 @@ impl AppCore {
         let message_author_pubkeys = sorted_hexes(message_author_pubkeys);
         let invite_response_pubkeys = if self.preferences.invite_acceptance_notifications_enabled {
             let mut pubkeys = HashSet::new();
-            pubkeys.insert(logged_in.local_invite.inviter_ephemeral_public_key.to_hex());
-            for invite in self.private_chat_invites.values() {
-                pubkeys.insert(invite.inviter_ephemeral_public_key.to_hex());
-            }
+            pubkeys.insert(
+                logged_in
+                    .local_invite
+                    .inviter_ephemeral_public_key
+                    .to_string(),
+            );
+            pubkeys.extend(
+                self.private_chat_invite_response_pubkeys()
+                    .into_iter()
+                    .map(|pubkey| pubkey.to_hex()),
+            );
             sorted_hexes(pubkeys)
         } else {
             Vec::new()
@@ -1119,7 +1126,6 @@ fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {
         MOBILE_PUSH_REACTION_KIND => reaction_push_body(content),
         kind if kind == TYPING_KIND as u64 => "is typing".to_string(),
         kind if kind == RECEIPT_KIND as u64 => "Seen".to_string(),
-        kind if kind == GROUP_METADATA_KIND as u64 => "Updated group".to_string(),
         kind if kind == CHAT_SETTINGS_KIND as u64 => "Updated chat".to_string(),
         kind if kind == APP_KEYS_EVENT_KIND as u64 => "Updated devices".to_string(),
         MOBILE_PUSH_INVITE_RESPONSE_KIND => "Someone joined your chat".to_string(),

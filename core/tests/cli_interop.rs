@@ -6,7 +6,11 @@ use std::{io::BufRead, io::BufReader};
 
 use iris_chat_core::local_relay::TestRelay;
 use nostr::{Event, Keys};
-use nostr_double_ratchet::{Invite, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND};
+use nostr_double_ratchet::{Invite, ProtocolContext, Session, UnixSeconds};
+use nostr_double_ratchet_nostr::{
+    invite_url, parse_message_event, process_invite_response_event, INVITE_RESPONSE_KIND,
+    MESSAGE_EVENT_KIND,
+};
 use serde_json::Value;
 use tempfile::TempDir;
 
@@ -198,11 +202,7 @@ fn read_stream_message(
     None
 }
 
-fn wait_for_decrypted_message(
-    relay: &TestRelay,
-    session: &mut nostr_double_ratchet::Session,
-    expected: &str,
-) -> Value {
+fn wait_for_decrypted_message(relay: &TestRelay, session: &mut Session, expected: &str) -> Value {
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(10) {
         for event in relay.events() {
@@ -210,9 +210,19 @@ fn wait_for_decrypted_message(
                 continue;
             }
             let event: Event = serde_json::from_value(event).expect("message event json");
-            let Ok(Some(plaintext)) = session.receive(&event) else {
+            let Ok(envelope) = parse_message_event(&event) else {
                 continue;
             };
+            if !session.matches_sender(envelope.sender) {
+                continue;
+            }
+            let mut rng = rand::rngs::OsRng;
+            let mut ctx = ProtocolContext::new(UnixSeconds(event.created_at.as_secs()), &mut rng);
+            let Ok(plan) = session.plan_receive(&mut ctx, &envelope) else {
+                continue;
+            };
+            let plaintext =
+                String::from_utf8(session.apply_receive(plan).payload).expect("decrypted utf8");
             let rumor: Value = serde_json::from_str(&plaintext).expect("inner event json");
             if rumor.get("content").and_then(Value::as_str) == Some(expected) {
                 return rumor;
@@ -232,7 +242,7 @@ fn iris_cli_sends_to_protocol_client() {
     let mut invite = Invite::create_new(alice_keys.public_key(), Some("interop".to_string()), None)
         .expect("invite");
     invite.owner_public_key = Some(alice_keys.public_key());
-    let invite_url = invite.get_url("https://chat.iris.to/").expect("invite url");
+    let invite_url = invite_url(&invite, "https://chat.iris.to/").expect("invite url");
 
     run_iris(iris_dir.path(), &["relay", "set", relay.url()]);
     let iris_account = run_iris(iris_dir.path(), &["account", "create", "--name", "Iris"]);
@@ -242,9 +252,11 @@ fn iris_cli_sends_to_protocol_client() {
         .as_str()
         .expect("chat id");
 
+    let sent = run_iris(iris_dir.path(), &["send", chat_id, "hello from iris cli"]);
+    assert_eq!(sent["data"]["body"], "hello from iris cli");
+
     let response_event = wait_for_relay_event(&relay, INVITE_RESPONSE_KIND as u64);
-    let response = invite
-        .process_invite_response(&response_event, alice_secret)
+    let response = process_invite_response_event(&invite, &response_event, alice_secret)
         .expect("process invite response")
         .expect("invite response");
     assert_eq!(
@@ -252,9 +264,6 @@ fn iris_cli_sends_to_protocol_client() {
         iris_account["data"]["user_id"].as_str().unwrap()
     );
     let mut protocol_session = response.session;
-
-    let sent = run_iris(iris_dir.path(), &["send", chat_id, "hello from iris cli"]);
-    assert_eq!(sent["data"]["body"], "hello from iris cli");
     wait_for_decrypted_message(&relay, &mut protocol_session, "hello from iris cli");
 }
 

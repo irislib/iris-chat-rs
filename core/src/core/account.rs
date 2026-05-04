@@ -1,4 +1,4 @@
-use super::invites::parse_public_invite_input;
+use super::invites::{load_private_chat_invites, parse_public_invite_input};
 use super::*;
 
 impl AppCore {
@@ -187,19 +187,23 @@ impl AppCore {
         let device_id = device_pubkey.to_hex();
         let mut invite = Invite::create_new(device_pubkey, Some(device_id), Some(1))?;
         invite.purpose = Some("link".to_string());
-        let url = invite.get_url(CHAT_INVITE_ROOT_URL)?;
+        let url = nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL)?;
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
-        self.runtime
-            .block_on(ensure_session_relays_configured(&client, &relay_urls));
         self.start_notifications_loop(client.clone());
 
         let filter = Filter::new()
             .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
-            .pubkeys(vec![invite.inviter_ephemeral_public_key]);
+            .pubkeys(vec![invite.inviter_ephemeral_public_key.to_nostr()?]);
         let client_for_subscription = client.clone();
+        let relay_urls_for_subscription = relay_urls.clone();
         self.runtime.spawn(async move {
+            ensure_session_relays_configured(
+                &client_for_subscription,
+                &relay_urls_for_subscription,
+            )
+            .await;
             connect_client_with_timeout(
                 &client_for_subscription,
                 Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
@@ -351,11 +355,22 @@ impl AppCore {
             ));
         }
         let owner_pubkey = logged_in.owner_pubkey;
-        let result = logged_in
-            .ndr_runtime
-            .accept_invite(&invite, Some(owner_pubkey))?;
-        self.upsert_local_app_key_device(owner_pubkey, result.inviter_device_pubkey);
+        let device_pubkey = logged_in.device_keys.public_key();
+        let (session, response) = invite.accept_with_owner(
+            device_pubkey,
+            logged_in.device_keys.secret_key().to_secret_bytes(),
+            Some(device_pubkey.to_hex()),
+            Some(owner_pubkey),
+        )?;
+        logged_in.ndr_runtime.import_session_state(
+            owner_pubkey,
+            Some(invite.inviter_device_pubkey.to_hex()),
+            session.state,
+        )?;
+        let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)?;
+        self.upsert_local_app_key_device(owner_pubkey, invite.inviter_device_pubkey.to_nostr()?);
         self.publish_local_app_keys();
+        self.publish_runtime_event(response_event, "runtime", None);
         self.mark_mobile_push_dirty();
         self.process_runtime_events();
         Ok(())
@@ -449,7 +464,6 @@ impl AppCore {
             ),
         );
         self.stop_pending_linked_device();
-        self.private_chat_invites.clear();
         if let Some(existing) = self.logged_in.take() {
             let client = existing.client;
             self.runtime.spawn(async move {
@@ -549,7 +563,7 @@ impl AppCore {
                 .groups
                 .iter()
                 .cloned()
-                .map(|group| (group.id.clone(), group))
+                .map(|group| (group.group_id.clone(), group))
                 .collect();
             self.threads = persisted
                 .threads
@@ -636,6 +650,7 @@ impl AppCore {
             owner_pubkey.to_hex(),
             device_pubkey.to_hex(),
         )) as Arc<dyn StorageAdapter>;
+        self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
         match import_legacy_ndr_storage(storage.as_ref(), owner_pubkey) {
             Ok(summary) => {
                 if summary.imported > 0 || summary.replaced_empty > 0 {
@@ -656,22 +671,21 @@ impl AppCore {
             }
         }
         let device_id = device_pubkey.to_hex();
-        let local_invite =
+        let mut local_invite =
             load_or_create_local_invite(storage.as_ref(), device_pubkey, &device_id, owner_pubkey)?;
         let ndr_runtime = NdrRuntime::new(
             device_pubkey,
             device_keys.secret_key().to_secret_bytes(),
             device_id,
             owner_pubkey,
-            Some(storage.clone()),
+            Some(storage),
             Some(local_invite.clone()),
         );
         ndr_runtime.init()?;
-        ndr_runtime.set_auto_adopt_chat_settings(true);
-        let private_chat_invites = super::invites::load_private_chat_invites(storage.as_ref())?;
-        for invite in private_chat_invites.values() {
-            ndr_runtime.register_invite(invite.clone())?;
+        if let Some(runtime_invite) = ndr_runtime.local_invite() {
+            local_invite = runtime_invite;
         }
+        ndr_runtime.set_auto_adopt_chat_settings(true);
 
         for app_keys in self.app_keys.values() {
             if let (Ok(owner), Some(keys)) = (
@@ -695,8 +709,6 @@ impl AppCore {
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
-        self.runtime
-            .block_on(ensure_session_relays_configured(&client, &relay_urls));
         self.start_notifications_loop(client.clone());
 
         self.logged_in = Some(LoggedInState {
@@ -709,7 +721,6 @@ impl AppCore {
             local_invite,
             authorization_state,
         });
-        self.private_chat_invites = private_chat_invites;
         match self
             .app_store
             .load_pending_relay_publishes(&owner_pubkey.to_hex())
@@ -775,6 +786,11 @@ impl AppCore {
                 created_at_secs: now,
                 devices: Vec::new(),
             });
+        let next_created_at = if now <= entry.created_at_secs {
+            entry.created_at_secs.saturating_add(1)
+        } else {
+            now
+        };
         if !entry
             .devices
             .iter()
@@ -782,10 +798,10 @@ impl AppCore {
         {
             entry.devices.push(KnownAppKeyDevice {
                 identity_pubkey_hex: device.to_hex(),
-                created_at_secs: now,
+                created_at_secs: next_created_at,
             });
         }
-        entry.created_at_secs = now;
+        entry.created_at_secs = next_created_at;
         entry
             .devices
             .sort_by(|left, right| left.identity_pubkey_hex.cmp(&right.identity_pubkey_hex));

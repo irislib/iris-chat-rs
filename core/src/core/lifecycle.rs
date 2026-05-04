@@ -111,7 +111,6 @@ impl AppCore {
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
                 InternalEvent::RelayPublishFinished { .. } => "RelayPublishFinished",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
-                InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
                     "ProfilePictureUploadFinished"
                 }
@@ -184,7 +183,6 @@ impl AppCore {
     pub(super) fn shutdown(&mut self) {
         self.push_debug_log("app.shutdown", "stopping core");
         self.stop_pending_linked_device();
-        self.private_chat_invites.clear();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.relay_status_watch_urls.clear();
@@ -441,9 +439,6 @@ impl AppCore {
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);
-            }
-            InternalEvent::GroupPictureUploadFinished { group_id, result } => {
-                self.handle_group_picture_upload_finished(group_id, result);
             }
             InternalEvent::ProfilePictureUploadFinished { result } => {
                 self.handle_profile_picture_upload_finished(result);

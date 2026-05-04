@@ -234,19 +234,20 @@ impl FfiApp {
 
     pub fn nearby_encode_frame(&self, envelope_json: String) -> Vec<u8> {
         ffi_or("ffiapp.nearby_encode_frame", Vec::new(), || {
-            nostr_double_ratchet::encode_nearby_frame_json(&envelope_json).unwrap_or_default()
+            nostr_double_ratchet_runtime::encode_nearby_frame_json(&envelope_json)
+                .unwrap_or_default()
         })
     }
 
     pub fn nearby_decode_frame(&self, frame: Vec<u8>) -> String {
         ffi_or("ffiapp.nearby_decode_frame", String::new(), || {
-            nostr_double_ratchet::decode_nearby_frame_json(&frame).unwrap_or_default()
+            nostr_double_ratchet_runtime::decode_nearby_frame_json(&frame).unwrap_or_default()
         })
     }
 
     pub fn nearby_frame_body_len_from_header(&self, header: Vec<u8>) -> i32 {
         ffi_or("ffiapp.nearby_frame_body_len_from_header", -1, || {
-            nostr_double_ratchet::nearby_frame_body_len_from_header(&header)
+            nostr_double_ratchet_runtime::nearby_frame_body_len_from_header(&header)
                 .and_then(|len| i32::try_from(len).ok())
                 .unwrap_or(-1)
         })

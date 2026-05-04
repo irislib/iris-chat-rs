@@ -8,7 +8,7 @@ use crate::state::{
     ChatMessageKind, ChatMessageSnapshot, DeliveryState, MessageDeliveryTraceSnapshot,
     MessageRecipientDeliverySnapshot, PreferencesSnapshot,
 };
-use nostr_double_ratchet::GroupData;
+use nostr_double_ratchet::GroupSnapshot;
 use rusqlite::{params, OptionalExtension, Row, Transaction};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -418,7 +418,7 @@ pub(crate) struct SaveSnapshot<'a> {
     pub owner_profiles: &'a BTreeMap<String, OwnerProfileRecord>,
     pub chat_message_ttl_seconds: &'a BTreeMap<String, u64>,
     pub app_keys: &'a BTreeMap<String, KnownAppKeys>,
-    pub groups: &'a BTreeMap<String, GroupData>,
+    pub groups: &'a BTreeMap<String, GroupSnapshot>,
     pub threads: &'a BTreeMap<String, ThreadRecord>,
     pub seen_event_order: &'a VecDeque<String>,
 }
@@ -616,8 +616,8 @@ fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     hasher.finish()
 }
 
-fn hash_groups(groups: &BTreeMap<String, GroupData>) -> u64 {
-    // GroupData isn't Hash, but its serde shape is canonical enough for
+fn hash_groups(groups: &BTreeMap<String, GroupSnapshot>) -> u64 {
+    // GroupSnapshot isn't Hash, but its serde shape is canonical enough for
     // change detection.
     hash_value(groups)
 }
@@ -992,20 +992,20 @@ fn write_app_keys(
     Ok(())
 }
 
-fn load_groups(conn: &rusqlite::Connection) -> anyhow::Result<Vec<GroupData>> {
+fn load_groups(conn: &rusqlite::Connection) -> anyhow::Result<Vec<GroupSnapshot>> {
     let mut stmt = conn.prepare("SELECT group_json FROM groups")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
     let mut groups = Vec::new();
     for row in rows {
         let json = row?;
-        if let Ok(group) = serde_json::from_str::<GroupData>(&json) {
+        if let Ok(group) = serde_json::from_str::<GroupSnapshot>(&json) {
             groups.push(group);
         }
     }
     Ok(groups)
 }
 
-fn write_groups(tx: &Transaction, groups: &BTreeMap<String, GroupData>) -> anyhow::Result<()> {
+fn write_groups(tx: &Transaction, groups: &BTreeMap<String, GroupSnapshot>) -> anyhow::Result<()> {
     tx.execute("DELETE FROM groups", [])?;
     let mut stmt = tx.prepare_cached(
         "INSERT INTO groups(group_id, name, picture, created_at_ms, updated_at_secs, group_json)
@@ -1014,11 +1014,11 @@ fn write_groups(tx: &Transaction, groups: &BTreeMap<String, GroupData>) -> anyho
     for group in groups.values() {
         let group_json = serde_json::to_string(group)?;
         stmt.execute(params![
-            group.id,
+            group.group_id,
             group.name,
-            group.picture,
-            group.created_at as i64,
-            group.created_at as i64 / 1000,
+            Option::<String>::None,
+            group.created_at.get() as i64 * 1000,
+            group.updated_at.get() as i64,
             group_json,
         ])?;
     }
@@ -1247,7 +1247,7 @@ mod tests {
         owner_profiles: &'a BTreeMap<String, OwnerProfileRecord>,
         chat_ttls: &'a BTreeMap<String, u64>,
         app_keys: &'a BTreeMap<String, KnownAppKeys>,
-        groups: &'a BTreeMap<String, GroupData>,
+        groups: &'a BTreeMap<String, GroupSnapshot>,
         threads: &'a BTreeMap<String, ThreadRecord>,
         seen_events: &'a VecDeque<String>,
     ) -> SaveSnapshot<'a> {

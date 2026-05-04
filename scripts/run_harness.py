@@ -43,9 +43,37 @@ def main() -> int:
 
     command.extend(["-e", "class", f"{args.class_name}#{args.test_name}", args.runner])
 
-    completed = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    sys.stdout.write(completed.stdout.decode("utf-8", errors="replace"))
-    return completed.returncode
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    saw_failure = False
+    saw_success_code = False
+    for line in process.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        stripped = line.strip()
+        if stripped == "INSTRUMENTATION_CODE: -1":
+            saw_success_code = True
+        if (
+            stripped.startswith("INSTRUMENTATION_STATUS_CODE: -")
+            or stripped == "FAILURES!!!"
+            or stripped.startswith("INSTRUMENTATION_RESULT: shortMsg=")
+        ):
+            saw_failure = True
+
+    exit_code = process.wait()
+    if exit_code != 0:
+        return exit_code
+    if saw_failure or not saw_success_code:
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

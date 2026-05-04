@@ -22,8 +22,8 @@ impl AppCore {
         event: Event,
         label: &'static str,
         completion: Option<(String, String)>,
-    ) {
-        self.publish_runtime_event_with_metadata(event, label, completion, None, None);
+    ) -> bool {
+        self.publish_runtime_event_with_metadata(event, label, completion, None, None)
     }
 
     pub(super) fn publish_runtime_event_with_metadata(
@@ -33,30 +33,33 @@ impl AppCore {
         completion: Option<(String, String)>,
         inner_event_id: Option<String>,
         target_device_id: Option<String>,
-    ) {
+    ) -> bool {
         if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
             self.push_debug_log(
                 "publish.runtime",
                 "label=runtime skipped=defer_owner_app_keys".to_string(),
             );
-            return;
+            return false;
         }
         self.remember_event(event.id.to_string());
         self.emit_nearby_published_event(&event);
         let event_id = event.id.to_string();
-        self.remember_pending_relay_publish(
+        let stored = self.remember_pending_relay_publish(
             &event,
             label,
             completion.clone(),
             inner_event_id,
             target_device_id,
         );
+        if !stored {
+            return false;
+        }
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
             .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
         else {
-            return;
+            return false;
         };
         if relay_urls.is_empty() {
             let (message_id, chat_id) = completion
@@ -70,10 +73,11 @@ impl AppCore {
                 Vec::new(),
                 format!("label={label} success=false relays=0 skipped=no_servers"),
             );
-            return;
+            return true;
         }
 
         self.spawn_relay_publish_attempt(event, label.to_string(), completion, client, relay_urls);
+        true
     }
 
     fn spawn_relay_publish_attempt(
@@ -134,29 +138,21 @@ impl AppCore {
         completion: Option<(String, String)>,
         inner_event_id: Option<String>,
         target_device_id: Option<String>,
-    ) {
+    ) -> bool {
         let Some(logged_in) = self.logged_in.as_ref() else {
-            return;
+            return false;
         };
         let owner_pubkey_hex = logged_in.owner_pubkey.to_hex();
         let event_json = match serde_json::to_string(event) {
             Ok(json) => json,
             Err(error) => {
                 self.push_debug_log("publish.runtime.queue", format!("serialize_failed={error}"));
-                return;
+                return false;
             }
         };
         let (message_id, chat_id) = completion
             .map(|(message_id, chat_id)| (Some(message_id), Some(chat_id)))
             .unwrap_or((None, None));
-        if let (Some(message_id), Some(chat_id)) = (message_id.as_deref(), chat_id.as_deref()) {
-            self.record_message_outer_event(
-                chat_id,
-                message_id,
-                &event.id.to_string(),
-                target_device_id.as_deref(),
-            );
-        }
         let pending = PendingRelayPublish {
             owner_pubkey_hex,
             event_id: event.id.to_string(),
@@ -170,8 +166,22 @@ impl AppCore {
             attempt_count: 0,
             last_error: None,
         };
+        if !self.prune_or_skip_superseded_app_keys_publish(event) {
+            return false;
+        }
         if let Err(error) = self.app_store.upsert_pending_relay_publish(&pending) {
             self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
+            return false;
+        }
+        if let (Some(message_id), Some(chat_id)) =
+            (pending.message_id.as_deref(), pending.chat_id.as_deref())
+        {
+            self.record_message_outer_event(
+                chat_id,
+                message_id,
+                &pending.event_id,
+                pending.target_device_id.as_deref(),
+            );
         }
         self.pending_relay_publishes
             .insert(pending.event_id.clone(), pending);
@@ -182,6 +192,7 @@ impl AppCore {
                 self.sync_message_delivery_trace(&chat_id, &message_id);
             }
         }
+        true
     }
 
     pub(super) fn retry_pending_relay_publishes(&mut self, reason: &'static str) {
@@ -301,6 +312,54 @@ impl AppCore {
         }
     }
 
+    fn prune_or_skip_superseded_app_keys_publish(&mut self, event: &Event) -> bool {
+        if !is_app_keys_event(event) {
+            return true;
+        }
+
+        let current_event_id = event.id.to_string();
+        let current_created_at = event.created_at.as_secs();
+        let mut superseded_by_newer = None;
+        let mut stale_event_ids = Vec::new();
+
+        for pending in self.pending_relay_publishes.values() {
+            if pending.event_id == current_event_id || pending.label != "app-keys" {
+                continue;
+            }
+            let Ok(pending_event) = serde_json::from_str::<Event>(&pending.event_json) else {
+                continue;
+            };
+            if !is_app_keys_event(&pending_event) || pending_event.pubkey != event.pubkey {
+                continue;
+            }
+            if pending_event.created_at.as_secs() > current_created_at {
+                superseded_by_newer = Some(pending.event_id.clone());
+            } else {
+                stale_event_ids.push(pending.event_id.clone());
+            }
+        }
+
+        if let Some(newer_event_id) = superseded_by_newer {
+            self.push_debug_log(
+                "publish.runtime.queue",
+                format!(
+                    "label=app-keys skipped=superseded_by_newer pending_event_id={newer_event_id}"
+                ),
+            );
+            return false;
+        }
+
+        for stale_event_id in stale_event_ids {
+            self.push_debug_log(
+                "publish.runtime.queue",
+                format!("label=app-keys dropped=superseded event_id={stale_event_id}"),
+            );
+            self.forget_pending_relay_publish(&stale_event_id);
+        }
+
+        true
+    }
+
     pub(super) fn sign_runtime_unsigned_event(&self, event: UnsignedEvent) -> Option<Event> {
         let logged_in = self.logged_in.as_ref()?;
         if event.pubkey == logged_in.device_keys.public_key() {
@@ -331,41 +390,55 @@ impl AppCore {
         let tx = self.core_sender.clone();
         let update_tx = self.update_tx.clone();
 
-        let mut events: Vec<(&'static str, Event)> = Vec::new();
+        let mut background_events: Vec<(&'static str, Event)> = Vec::new();
+        let mut durable_events: Vec<(&'static str, Event)> = Vec::new();
 
         if let (Some(keys), Some(profile)) = (owner_keys.clone(), local_profile) {
             if let Ok(event) =
                 EventBuilder::new(Kind::Metadata, build_profile_metadata_json(&profile))
                     .sign_with_keys(&keys)
             {
-                events.push(("metadata", event));
+                background_events.push(("metadata", event));
             }
         }
 
         if let (true, Some(keys), Some(app_keys)) = (publish_app_keys, owner_keys, local_app_keys) {
             if let Some(ndr_app_keys) = known_app_keys_to_ndr(&app_keys) {
-                if let Ok(unsigned) = ndr_app_keys.get_encrypted_event(&keys) {
+                if let Ok(unsigned) =
+                    ndr_app_keys.get_encrypted_event_at(&keys, app_keys.created_at_secs)
+                {
                     if let Ok(event) = unsigned.sign_with_keys(&keys) {
-                        events.push(("app-keys", event));
+                        durable_events.push(("app-keys", event));
                     }
                 }
             }
         }
 
-        if let Ok(unsigned) = local_invite.get_event() {
+        if let Ok(unsigned) = nostr_double_ratchet_nostr::invite_unsigned_event(&local_invite) {
             if let Ok(event) = unsigned.sign_with_keys(&device_keys) {
-                events.push(("invite", event));
+                durable_events.push(("invite", event));
             }
         }
 
-        for (_, event) in &events {
+        for (_, event) in &background_events {
             self.remember_event(event.id.to_string());
             send_nearby_published_event(&update_tx, event);
         }
+        for (label, event) in durable_events {
+            self.publish_runtime_event(event, label, None);
+        }
 
         self.runtime.spawn(async move {
-            for (label, event) in events {
-                let _ = publish_event_with_retry(&client, &relay_urls, event, label).await;
+            for (label, event) in background_events {
+                let detail =
+                    match publish_event_with_retry(&client, &relay_urls, event, label).await {
+                        Ok(()) => format!("label={label} success=true"),
+                        Err(error) => format!("label={label} success=false error={error}"),
+                    };
+                let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                    category: "publish.identity".to_string(),
+                    detail,
+                })));
             }
             let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
         });

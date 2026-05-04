@@ -79,6 +79,89 @@ final class InteropHarnessTests: XCTestCase {
         switch action {
         case "create_account_and_report_identity", "report_logged_in_identity":
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
+            reportIdentity(snapshot)
+        case "start_linked_device_and_report_identity":
+            let ownerInput = env["IRIS_IOS_HARNESS_OWNER_INPUT"] ?? ""
+            manager.startLinkedDevice(ownerInput: ownerInput)
+            let link = try await waitFor(label: "linked-device invite", timeout: 90) {
+                manager.state.linkDevice
+            }
+            status("link_url", link.url)
+            status("device_input", link.deviceInput)
+        case "start_linked_device_wait_authorized_from_args":
+            let ownerInput = env["IRIS_IOS_HARNESS_OWNER_INPUT"] ?? ""
+            manager.startLinkedDevice(ownerInput: ownerInput)
+            let link = try await waitFor(label: "linked-device invite", timeout: 90) {
+                manager.state.linkDevice
+            }
+            status("link_url", link.url)
+            status("device_input", link.deviceInput)
+            let snapshot: AccountSnapshot = try await waitFor(label: "linked-device authorization", timeout: 240) {
+                guard let account = manager.state.account else {
+                    return nil
+                }
+                let actual = String(describing: account.authorizationState).lowercased()
+                return actual == "authorized" ? account : nil
+            }
+            reportIdentity(snapshot)
+        case "add_authorized_device_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let deviceInput = try requiredEnv("IRIS_IOS_HARNESS_DEVICE_INPUT", env: env)
+            let initialDeviceCount = manager.state.deviceRoster?.devices.count ?? 0
+            manager.addAuthorizedDevice(deviceInput: deviceInput)
+            _ = try await waitFor(label: "device roster update", timeout: 90) {
+                let currentDeviceCount = manager.state.deviceRoster?.devices.count ?? 0
+                if currentDeviceCount > initialDeviceCount {
+                    return true
+                }
+                if let toast = manager.state.toast,
+                   !toast.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return true
+                }
+                return nil
+            }
+            if let roster = manager.state.deviceRoster {
+                status("device_count", String(roster.devices.count))
+                status("devices", roster.devices.map { $0.devicePubkeyHex }.joined(separator: ","))
+            }
+            status("toast", manager.state.toast ?? "")
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
+        case "wait_for_authorization_state_from_args":
+            let expected = try requiredEnv("IRIS_IOS_HARNESS_AUTHORIZATION_STATE", env: env).lowercased()
+            let snapshot: AccountSnapshot = try await waitFor(label: "authorization state \(expected)", timeout: 180) {
+                guard let account = manager.state.account else {
+                    return nil
+                }
+                let actual = String(describing: account.authorizationState).lowercased()
+                return actual == expected ? account : nil
+            }
+            reportIdentity(snapshot)
+        case "remove_authorized_device_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let deviceInput = try requiredEnv("IRIS_IOS_HARNESS_DEVICE_INPUT", env: env)
+            let normalizedDevice = normalizePeerInput(input: deviceInput)
+            manager.removeAuthorizedDevice(devicePubkeyHex: normalizedDevice)
+            let roster = try await waitFor(label: "removed authorized device \(normalizedDevice)", timeout: 90) {
+                manager.state.deviceRoster.flatMap { roster in
+                    let stillAuthorized = roster.devices.contains { device in
+                        self.sameIdentifier(device.devicePubkeyHex, normalizedDevice) &&
+                            device.isAuthorized &&
+                            !device.isStale
+                    }
+                    return stillAuthorized ? nil : roster
+                }
+            }
+            status("device_pubkey_hex", normalizedDevice)
+            status("device_removed", String(!roster.devices.contains { self.sameIdentifier($0.devicePubkeyHex, normalizedDevice) }))
+            status("device_stale", String(roster.devices.first(where: { self.sameIdentifier($0.devicePubkeyHex, normalizedDevice) })?.isStale ?? false))
+        case "wait_for_revoked_state":
+            let snapshot: AccountSnapshot = try await waitFor(label: "revoked device state", timeout: 180) {
+                guard let account = manager.state.account else {
+                    return nil
+                }
+                return String(describing: account.authorizationState).lowercased() == "revoked" ? account : nil
+            }
             reportIdentity(snapshot)
         case "create_public_invite_and_report_url":
             _ = try await ensureLoggedIn(manager: manager, env: env)
@@ -437,6 +520,7 @@ final class InteropHarnessTests: XCTestCase {
                 }
             }
 
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
             status("chat_id", chat.chatId)
             status("group_id", chat.groupId ?? "")
             status("group_name", chat.displayName)
@@ -470,6 +554,140 @@ final class InteropHarnessTests: XCTestCase {
             status("chat_id", chat.chatId)
             status("group_id", chat.groupId ?? "")
             status("member_count", String(chat.memberCount))
+        case "wait_for_group_name_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let chatID = try requiredEnv("IRIS_IOS_HARNESS_CHAT_ID", env: env)
+            let expectedName = try requiredEnv("IRIS_IOS_HARNESS_GROUP_NAME", env: env)
+            let chat = try await waitFor(label: "group name \(expectedName)", timeout: 180) {
+                manager.state.chatList.first(where: {
+                    self.sameIdentifier($0.chatId, chatID) && $0.displayName == expectedName
+                })
+            }
+            manager.dispatch(.openChat(chatId: chat.chatId))
+            status("chat_id", chat.chatId)
+            status("group_name", chat.displayName)
+            status("member_count", String(chat.memberCount))
+        case "update_group_name_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let groupID = try requiredEnv("IRIS_IOS_HARNESS_GROUP_ID", env: env)
+            let groupName = try requiredEnv("IRIS_IOS_HARNESS_GROUP_NAME", env: env)
+            manager.dispatch(.updateGroupName(groupId: groupID, name: groupName))
+            let chatID = "group:\(groupID)"
+            let chat = try await waitFor(label: "renamed group \(groupName)", timeout: 180) {
+                manager.state.chatList.first(where: {
+                    self.sameIdentifier($0.chatId, chatID) && $0.displayName == groupName
+                })
+            }
+            manager.dispatch(.openChat(chatId: chat.chatId))
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
+            status("chat_id", chat.chatId)
+            status("group_id", groupID)
+            status("group_name", chat.displayName)
+            status("member_count", String(chat.memberCount))
+        case "add_group_members_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let groupID = try requiredEnv("IRIS_IOS_HARNESS_GROUP_ID", env: env)
+            let chatID = env["IRIS_IOS_HARNESS_CHAT_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let expectedMemberCount = UInt64(env["IRIS_IOS_HARNESS_EXPECTED_MEMBER_COUNT"] ?? "")
+            let memberInputs = parseList(try requiredEnv("IRIS_IOS_HARNESS_MEMBER_INPUTS", env: env))
+            manager.dispatch(.addGroupMembers(groupId: groupID, memberInputs: memberInputs))
+            let resolvedChatID = chatID?.isEmpty == false ? chatID! : "group:\(groupID)"
+            let chat = try await waitFor(label: "added group members", timeout: 180) {
+                manager.state.chatList.first(where: { thread in
+                    guard self.sameIdentifier(thread.chatId, resolvedChatID) else { return false }
+                    guard let expectedMemberCount else { return true }
+                    return thread.memberCount == expectedMemberCount
+                })
+            }
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
+            status("chat_id", chat.chatId)
+            status("group_id", groupID)
+            status("member_count", String(chat.memberCount))
+        case "remove_group_member_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let groupID = env["IRIS_IOS_HARNESS_GROUP_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let chatID = env["IRIS_IOS_HARNESS_CHAT_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedGroupID = groupID?.isEmpty == false ? groupID! : (chatID ?? "").replacingOccurrences(of: "group:", with: "")
+            let resolvedChatID = chatID?.isEmpty == false ? chatID! : "group:\(resolvedGroupID)"
+            let memberInput = normalizePeerInput(input: try requiredEnv("IRIS_IOS_HARNESS_MEMBER_INPUT", env: env))
+            let expectedMemberCount = UInt64(env["IRIS_IOS_HARNESS_EXPECTED_MEMBER_COUNT"] ?? "")
+            manager.dispatch(.removeGroupMember(groupId: resolvedGroupID, ownerPubkeyHex: memberInput))
+            let chat = try await waitFor(label: "removed group member", timeout: 180) {
+                manager.state.chatList.first(where: { thread in
+                    guard self.sameIdentifier(thread.chatId, resolvedChatID) else { return false }
+                    guard let expectedMemberCount else { return true }
+                    return thread.memberCount == expectedMemberCount
+                })
+            }
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
+            status("chat_id", chat.chatId)
+            status("group_id", resolvedGroupID)
+            status("member_count", String(chat.memberCount))
+        case "set_group_admin_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let groupID = try requiredEnv("IRIS_IOS_HARNESS_GROUP_ID", env: env)
+            let memberInput = normalizePeerInput(input: try requiredEnv("IRIS_IOS_HARNESS_MEMBER_INPUT", env: env))
+            let isAdmin = ["1", "true", "yes"].contains((env["IRIS_IOS_HARNESS_IS_ADMIN"] ?? "true").lowercased())
+            manager.setGroupAdmin(groupId: groupID, ownerPubkeyHex: memberInput, isAdmin: isAdmin)
+            let details = try await waitForGroupDetails(manager: manager, groupID: groupID, timeout: 180) { details in
+                details.members.contains { member in
+                    self.sameIdentifier(member.ownerPubkeyHex, memberInput) && member.isAdmin == isAdmin
+                }
+            }
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
+            status("group_id", groupID)
+            status("member_input", memberInput)
+            status("is_admin", String(isAdmin))
+            status("revision", String(details.revision))
+        case "expect_send_rejected_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
+            let chatID = try await ensureChatOpen(
+                manager: manager,
+                dataDir: dataDir,
+                chatID: env["IRIS_IOS_HARNESS_CHAT_ID"],
+                peerInput: env["IRIS_IOS_HARNESS_PEER_INPUT"]
+            )
+            let initialCount = manager.state.currentChat?.messages.count ?? 0
+            manager.dispatch(.sendMessage(chatId: chatID, text: message))
+            let toast: String = try await waitFor(label: "rejected send", timeout: 60) { () -> String? in
+                guard let current = manager.state.currentChat,
+                      self.sameIdentifier(current.chatId, chatID) else {
+                    return nil
+                }
+                if current.messages.count != initialCount || current.messages.contains(where: { $0.body == message }) {
+                    return "unexpected-message-appended"
+                }
+                return manager.state.toast?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                    ? manager.state.toast
+                    : nil
+            }
+            if toast == "unexpected-message-appended" {
+                throw HarnessError.unexpected("Rejected send unexpectedly appended \(message)")
+            }
+            status("chat_id", chatID)
+            status("message", message)
+            status("toast", toast)
+        case "assert_message_absent_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
+            let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_TIMEOUT_MS"] ?? "") ?? 30000) / 1000.0
+            let chatID = try await ensureChatOpen(
+                manager: manager,
+                dataDir: dataDir,
+                chatID: env["IRIS_IOS_HARNESS_CHAT_ID"],
+                peerInput: env["IRIS_IOS_HARNESS_PEER_INPUT"]
+            )
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if self.messageExists(manager: manager, dataDir: dataDir, chatID: chatID, message: message, direction: "any", peerInput: env["IRIS_IOS_HARNESS_PEER_INPUT"]) {
+                    throw HarnessError.unexpected("message unexpectedly present: \(message)")
+                }
+                try await Task.sleep(nanoseconds: 500_000_000)
+            }
+            status("chat_id", chatID)
+            status("message", message)
+            status("absent", "true")
         default:
             throw HarnessError.unexpected("unknown harness action: \(action)")
         }
@@ -574,6 +792,23 @@ final class InteropHarnessTests: XCTestCase {
         }
     }
 
+    private func waitForGroupDetails(
+        manager: AppManager,
+        groupID: String,
+        timeout: TimeInterval,
+        predicate: @escaping (GroupDetailsSnapshot) -> Bool
+    ) async throws -> GroupDetailsSnapshot {
+        manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupID)))
+        return try await waitFor(label: "group details \(groupID)", timeout: timeout) {
+            guard let details = manager.state.groupDetails,
+                  self.sameIdentifier(details.groupId, groupID),
+                  predicate(details) else {
+                return nil
+            }
+            return details
+        }
+    }
+
     private func waitForCreatedChat(
         manager: AppManager,
         dataDir: URL,
@@ -608,23 +843,37 @@ final class InteropHarnessTests: XCTestCase {
             let persistedThreadCount = splitPersistenceThreadFiles(dataDir: dataDir).count
             let debugActiveChatID = stringValue(debug?["active_chat_id"])
             let currentChatList = joinValues(arrayValue(debug?["current_chat_list"]))
+            let persistedPeerChatID = splitPersistenceThreadFiles(dataDir: dataDir)
+                .compactMap { self.readJsonObject(at: $0) }
+                .map { self.stringValue($0["chat_id"]) }
+                .first {
+                    !self.stringValue($0).isEmpty &&
+                        self.chatMatchesExpectedChat(chatId: self.stringValue($0), peerInput: peerInput, expectedChatID: nil)
+                } ?? ""
 
             lastObservation = [
                 "state.current=\(summarizeCurrentChat(manager.state.currentChat))",
                 "state.chatList=\(summarizeChatList(manager.state.chatList))",
                 "persisted.active=\(persistedActiveChatID)",
+                "persisted.peer=\(persistedPeerChatID)",
                 "persisted.threads=\(persistedThreadCount)",
                 "debug.active=\(debugActiveChatID)",
                 "debug.current_chat_list=\(currentChatList)",
             ].joined(separator: " ")
 
+            if !persistedPeerChatID.isEmpty {
+                return persistedPeerChatID
+            }
+
             if !persistedActiveChatID.isEmpty &&
-                (!sameIdentifier(persistedActiveChatID, previousActiveChatID) || persistedThreadCount > previousThreadCount) {
+                !sameIdentifier(persistedActiveChatID, previousActiveChatID) &&
+                chatMatchesExpectedChat(chatId: persistedActiveChatID, peerInput: peerInput, expectedChatID: nil) {
                 return persistedActiveChatID
             }
 
             if !debugActiveChatID.isEmpty &&
-                (!sameIdentifier(debugActiveChatID, previousActiveChatID) || !currentChatList.isEmpty) {
+                !sameIdentifier(debugActiveChatID, previousActiveChatID) &&
+                chatMatchesExpectedChat(chatId: debugActiveChatID, peerInput: peerInput, expectedChatID: nil) {
                 return debugActiveChatID
             }
 
@@ -648,6 +897,29 @@ final class InteropHarnessTests: XCTestCase {
             try await Task.sleep(nanoseconds: pollIntervalNanoseconds)
         }
         throw HarnessError.timeout(label)
+    }
+
+    private func waitForRelayDrainIfRequested(manager: AppManager, env: [String: String]) async throws {
+        let raw = (env["IRIS_IOS_HARNESS_WAIT_FOR_RELAY_DRAIN"] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard ["1", "true", "yes"].contains(raw) else {
+            return
+        }
+
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_RELAY_DRAIN_TIMEOUT_SECS"] ?? "") ?? 180)
+        let networkStatus: NetworkStatusSnapshot = try await waitFor(label: "relay publish drain", timeout: timeout) {
+            guard let status = manager.state.networkStatus else {
+                return nil
+            }
+            if status.pendingOutboundCount == 0 && status.pendingGroupControlCount == 0 {
+                return status
+            }
+            return nil
+        }
+        status("pending_outbound_count", String(networkStatus.pendingOutboundCount))
+        status("pending_group_control_count", String(networkStatus.pendingGroupControlCount))
     }
 
     private func waitForNoVisibleDeliveredNotifications(timeout: TimeInterval) async throws -> [UNNotification] {
@@ -1504,5 +1776,21 @@ final class InteropHarnessTests: XCTestCase {
     private func status(_ key: String, _ value: String) {
         print("HARNESS_STATUS: \(key)=\(value)")
         fflush(stdout)
+        guard let path = ProcessInfo.processInfo.environment["IRIS_IOS_HARNESS_STATUS_FILE"],
+              !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return
+        }
+        let line = "\(key)=\(value)\n"
+        guard let data = line.data(using: .utf8) else {
+            return
+        }
+        if FileManager.default.fileExists(atPath: path),
+           let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
+            defer { try? handle.close() }
+            try? handle.seekToEnd()
+            try? handle.write(contentsOf: data)
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
+        }
     }
 }

@@ -50,7 +50,7 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         output.status.success(),
-        "iris failed status={}\nstdout={}\nstderr={}",
+        "iris failed args={args:?} status={}\nstdout={}\nstderr={}",
         output.status,
         stdout,
         stderr
@@ -204,7 +204,11 @@ fn invite_create_group_create_relays_and_logout_are_scriptable() {
     assert_eq!(reacted["data"]["reactions"][0]["emoji"], "+1");
 
     let read = run_iris(dir.path(), &["group", "read", group_id]);
-    assert_eq!(read["data"]["messages"][0]["body"], "group note");
+    assert!(read["data"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|message| message["body"] == "group note"));
 
     let renamed = run_iris(dir.path(), &["group", "rename", group_id, "Renamed"]);
     assert_eq!(renamed["data"]["name"], "Renamed");

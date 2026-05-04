@@ -177,6 +177,133 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
 }
 
 #[test]
+fn app_keys_publish_uses_durable_pending_publish_queue() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = logged_in_test_core_at_data_dir(
+        &owner,
+        &device,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+    let previous_created_at = core
+        .app_keys
+        .get_mut(&owner.public_key().to_hex())
+        .expect("local AppKeys")
+        .created_at_secs;
+    let linked_device = Keys::generate();
+    core.upsert_local_app_key_device(owner.public_key(), linked_device.public_key());
+    let app_keys_created_at = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("updated AppKeys")
+        .created_at_secs;
+    assert!(
+        app_keys_created_at > previous_created_at,
+        "AppKeys updates must advance replaceable-event timestamps even inside one Unix second"
+    );
+
+    core.publish_local_app_keys();
+
+    let pending = core
+        .pending_relay_publishes
+        .values()
+        .find(|pending| pending.label == "app-keys")
+        .expect("AppKeys should be tracked as a durable publish");
+    let event: Event = serde_json::from_str(&pending.event_json).expect("stored event json");
+
+    assert!(is_app_keys_event(&event));
+    assert_eq!(event.pubkey, owner.public_key());
+    assert_eq!(event.created_at.as_secs(), app_keys_created_at);
+    let device_tags = event
+        .tags
+        .iter()
+        .filter_map(|tag| {
+            let values = tag.clone().to_vec();
+            (values.first().map(|value| value.as_str()) == Some("device"))
+                .then(|| values.get(1).cloned())
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    assert!(device_tags.contains(&device.public_key().to_hex()));
+    assert!(device_tags.contains(&linked_device.public_key().to_hex()));
+    assert!(
+        pending
+            .last_error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("skipped=no_servers"),
+        "empty-relay publish should remain queued with a retryable error"
+    );
+}
+
+#[test]
+fn app_keys_publish_prunes_superseded_pending_publish() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = logged_in_test_core_at_data_dir(
+        &owner,
+        &device,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+    core.publish_local_app_keys();
+    let first_pending = core
+        .pending_relay_publishes
+        .values()
+        .find(|pending| pending.label == "app-keys")
+        .cloned()
+        .expect("first AppKeys publish should be queued");
+    let first_event: Event =
+        serde_json::from_str(&first_pending.event_json).expect("first AppKeys event");
+
+    let linked_device = Keys::generate();
+    core.upsert_local_app_key_device(owner.public_key(), linked_device.public_key());
+    core.publish_local_app_keys();
+
+    let app_key_publishes = core
+        .pending_relay_publishes
+        .values()
+        .filter(|pending| pending.label == "app-keys")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        app_key_publishes.len(),
+        1,
+        "stale replaceable AppKeys publishes should not block relay drain"
+    );
+    assert!(
+        !core
+            .pending_relay_publishes
+            .contains_key(&first_pending.event_id),
+        "older AppKeys event should be removed from the durable queue"
+    );
+    let current_event: Event =
+        serde_json::from_str(&app_key_publishes[0].event_json).expect("current AppKeys event");
+    assert_eq!(current_event.pubkey, owner.public_key());
+    assert!(current_event.created_at.as_secs() > first_event.created_at.as_secs());
+}
+
+#[test]
+fn relay_duplicate_or_newer_replaceable_rejection_is_terminal_success() {
+    assert!(relay_publish_failure_is_terminal_success(
+        "duplicate: already have this event"
+    ));
+    assert!(relay_publish_failure_is_terminal_success(
+        "replaced: have newer event"
+    ));
+    assert!(!relay_publish_failure_is_terminal_success(
+        "rate-limited: slow down"
+    ));
+    assert!(!relay_publish_failure_is_terminal_success(
+        "blocked: event rejected"
+    ));
+}
+
+#[test]
 fn network_status_includes_configured_relay_connection_status() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -253,6 +380,7 @@ fn ndr_runtime_invite_session_round_trips_text() {
     bob.accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob, &bob_keys, &alice);
+    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     alice
         .send_text(bob_keys.public_key(), "hello bob".to_string(), None)
@@ -485,8 +613,9 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     bob.accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob, &bob_keys, &alice);
+    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
-    let user_record_key = format!("user/{}", alice_keys.public_key().to_hex());
+    let user_record_key = "v2/runtime-state";
     let before = bob_storage
         .get(&user_record_key)
         .expect("read stored ratchet before notification")
@@ -621,6 +750,7 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
     bob.accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob, &bob_keys, &alice);
+    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     let message = "compacted apns preview";
     alice
@@ -698,6 +828,7 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         .accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
 
     let message = "push-only event";
     alice
@@ -814,6 +945,7 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
     bob.accept_invite(&invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob, &bob_keys, &alice);
+    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     alice
         .send_typing(bob_keys.public_key(), None)
@@ -1025,8 +1157,9 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         .accept_invite(&alice_invite, Some(alice_keys.public_key()))
         .expect("bob accepts alice invite");
     deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
     let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
-    let user_record_key = format!("user/{}", alice_keys.public_key().to_hex());
+    let user_record_key = "v2/runtime-state";
     let ratchet_before = bob_storage
         .get(&user_record_key)
         .expect("read bob ratchet before message")
@@ -1126,7 +1259,7 @@ fn mobile_push_fallback_suppresses_decrypted_non_message_kinds() {
         0_u64,
         TYPING_KIND as u64,
         RECEIPT_KIND as u64,
-        GROUP_METADATA_KIND as u64,
+        40_u64,
         CHAT_SETTINGS_KIND as u64,
         12345,
     ] {
@@ -1258,14 +1391,14 @@ fn mobile_push_snapshot_tracks_private_invite_when_enabled() {
         .expect("logged in")
         .local_invite
         .inviter_ephemeral_public_key
-        .to_hex();
+        .to_string();
     let private_invite_pubkey = core
         .private_chat_invites
         .values()
         .next()
         .expect("private invite")
         .inviter_ephemeral_public_key
-        .to_hex();
+        .to_string();
 
     assert!(snapshot
         .invite_response_pubkeys
@@ -1775,12 +1908,18 @@ fn app_keys_event_rerenders_device_roster_even_when_authorization_is_unchanged()
         1
     );
 
+    let local_created_at = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("local app keys")
+        .created_at_secs;
+    let remote_created_at = local_created_at + 1;
     let remote_app_keys = AppKeys::new(vec![
-        DeviceEntry::new(device.public_key(), 10),
-        DeviceEntry::new(other_device.public_key(), 10),
+        DeviceEntry::new(device.public_key(), local_created_at),
+        DeviceEntry::new(other_device.public_key(), remote_created_at),
     ]);
     let remote_event = remote_app_keys
-        .get_event(owner.public_key())
+        .get_event_at(owner.public_key(), remote_created_at)
         .sign_with_keys(&owner)
         .expect("app keys event");
     core.apply_app_keys_event(&remote_event);
@@ -1813,7 +1952,8 @@ fn start_linked_device_creates_ownerless_link_invite() {
         .link_device
         .as_ref()
         .expect("link-device snapshot");
-    let invite = Invite::from_url(&snapshot.url).expect("parse link invite");
+    let invite =
+        nostr_double_ratchet_nostr::parse_invite_url(&snapshot.url).expect("parse link invite");
     assert_eq!(invite.purpose.as_deref(), Some("link"));
     assert!(invite.owner_public_key.is_none());
     assert_eq!(
@@ -1845,7 +1985,8 @@ fn owner_device_accepts_link_invite_and_registers_new_device() {
     )
     .expect("link invite");
     invite.purpose = Some("link".to_string());
-    let invite_url = invite.get_url(CHAT_INVITE_ROOT_URL).expect("invite url");
+    let invite_url =
+        nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL).expect("invite url");
 
     core.handle_action(AppAction::AddAuthorizedDevice {
         device_input: invite_url,
@@ -1881,7 +2022,7 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         .pending_linked_device
         .as_ref()
         .expect("pending link invite");
-    let (_owner_session, response_event) = pending
+    let (_owner_session, response_envelope) = pending
         .invite
         .accept_with_owner(
             owner.public_key(),
@@ -1890,6 +2031,8 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
             Some(owner.public_key()),
         )
         .expect("owner accepts");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response_envelope)
+        .expect("invite response event");
 
     core.handle_relay_event(response_event);
 
@@ -1954,7 +2097,7 @@ fn recent_protocol_filters_include_runtime_invite_response_backfill() {
 }
 
 #[test]
-fn create_invite_generates_registered_private_link_without_public_republish() {
+fn create_invite_generates_private_link_without_public_republish() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("private-invite-create", &owner, &device);
@@ -1966,7 +2109,8 @@ fn create_invite_generates_registered_private_link_without_public_republish() {
         .as_ref()
         .expect("logged in")
         .local_invite
-        .inviter_ephemeral_public_key;
+        .inviter_ephemeral_public_key
+        .to_string();
 
     core.handle_action(AppAction::CreatePublicInvite);
 
@@ -1976,13 +2120,15 @@ fn create_invite_generates_registered_private_link_without_public_republish() {
         .public_invite
         .as_ref()
         .expect("private invite snapshot");
-    let invite = Invite::from_url(&snapshot.url).expect("parse private invite");
+    let invite =
+        nostr_double_ratchet_nostr::parse_invite_url(&snapshot.url).expect("parse private invite");
     assert_eq!(invite.purpose.as_deref(), Some("private"));
     assert_eq!(invite.max_uses, Some(1));
     assert_eq!(invite.owner_public_key, Some(owner.public_key()));
     assert_ne!(
-        invite.inviter_ephemeral_public_key, local_invite_response_pubkey,
-        "new invite links must not reuse the relay-published local invite secret"
+        invite.inviter_ephemeral_public_key.to_string(),
+        local_invite_response_pubkey,
+        "private invite links must not reuse the relay-published local invite secret"
     );
     assert_eq!(
         core.private_chat_invites
@@ -1991,17 +2137,20 @@ fn create_invite_generates_registered_private_link_without_public_republish() {
             .map(|invite| invite.inviter_ephemeral_public_key),
         Some(invite.inviter_ephemeral_public_key)
     );
+    assert!(
+        pending_events_with_kind(&core, INVITE_EVENT_KIND).is_empty(),
+        "creating a private invite link must not publish a relay-discoverable invite event"
+    );
 
-    let invite_pubkey_hex = invite.inviter_ephemeral_public_key.to_hex();
-    let subscribed_for_response = core
-        .protocol_subscription_runtime
-        .active_subscriptions
-        .values()
-        .any(|spec| {
-            serde_json::to_value(&spec.filter)
-                .ok()
-                .and_then(|filter| filter.get("#p").cloned())
-                .and_then(|pubkeys| pubkeys.as_array().cloned())
+    let invite_pubkey_hex = invite.inviter_ephemeral_public_key.to_string();
+    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let subscribed_for_response = filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .any(|filter| {
+            filter
+                .get("#p")
+                .and_then(|pubkeys| pubkeys.as_array())
                 .is_some_and(|pubkeys| {
                     pubkeys
                         .iter()
@@ -2009,15 +2158,10 @@ fn create_invite_generates_registered_private_link_without_public_republish() {
                 })
         });
     assert!(subscribed_for_response);
-
-    assert!(
-        pending_events_with_kind(&core, INVITE_EVENT_KIND).is_empty(),
-        "creating a private invite link must not publish a relay-discoverable invite event"
-    );
 }
 
 #[test]
-fn private_invite_link_round_trips_chat_session_between_app_cores() {
+fn private_invite_first_message_installs_creator_session() {
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
     let bob_owner = Keys::generate();
@@ -2045,20 +2189,13 @@ fn private_invite_link_round_trips_chat_session_between_app_cores() {
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
-
     assert_eq!(bob.state.toast, None);
     assert_eq!(bob.active_chat_id, Some(alice_owner.public_key().to_hex()));
-    assert!(
-        bob.logged_in
-            .as_ref()
-            .expect("bob logged in")
-            .ndr_runtime
-            .export_active_session_state(alice_owner.public_key())
-            .expect("bob session export")
-            .is_some(),
-        "Bob should store the private invite session under Alice's owner key"
-    );
 
+    bob.handle_action(AppAction::SendMessage {
+        chat_id: alice_owner.public_key().to_hex(),
+        text: "hello from private invite".to_string(),
+    });
     let response = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
         .into_iter()
         .next()
@@ -2074,7 +2211,7 @@ fn private_invite_link_round_trips_chat_session_between_app_cores() {
             .export_active_session_state(bob_owner.public_key())
             .expect("alice session export")
             .is_some(),
-        "Alice should install Bob's session from the registered private invite response"
+        "Alice should install Bob's session from the private invite response"
     );
     assert!(
         alice.private_chat_invites.is_empty(),
@@ -2778,42 +2915,152 @@ fn web_runtime_chat_message_expiration_tag_is_persisted() {
 }
 
 #[test]
-fn group_runtime_chat_message_expiration_tag_is_persisted() {
+fn prerelease_app_plaintext_controls_settings_reactions_and_expiration_flow() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("prerelease-app-plaintext-flow", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let message_id = "1".repeat(64);
+
+    let message_content = serde_json::json!({
+        "content": "pre-release app message",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_483u64,
+        "tags": [["expiration", "1777159543"]],
+        "pubkey": "0".repeat(64),
+        "id": message_id,
+    })
+    .to_string();
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        message_content,
+        Some("2".repeat(64)),
+    );
+
+    let thread = core.threads.get(&chat_id).expect("thread after message");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].body, "pre-release app message");
+    assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
+
+    core.apply_typing_event(
+        chat_id.clone(),
+        sender.public_key().to_hex(),
+        1_777_159_484,
+        None,
+    );
+    assert!(core.typing_indicators.values().any(|record| {
+        record.chat_id == chat_id && record.author_owner_hex == sender.public_key().to_hex()
+    }));
+
+    core.apply_incoming_reaction_to_chat(&chat_id, &message_id, &sender.public_key().to_hex(), "+");
+    let reacted = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| thread.messages.first())
+        .expect("reacted message");
+    assert_eq!(reacted.reactions.len(), 1);
+    assert_eq!(reacted.reactions[0].emoji, "+");
+
+    let settings_content = serde_json::json!({
+        "content": serde_json::json!({
+            "type": "chat-settings",
+            "v": 1,
+            "messageTtlSeconds": 3600u64,
+        }).to_string(),
+        "kind": CHAT_SETTINGS_KIND,
+        "created_at": 1_777_159_485u64,
+        "tags": [],
+        "pubkey": "0".repeat(64),
+        "id": "3".repeat(64),
+    })
+    .to_string();
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        settings_content,
+        Some("4".repeat(64)),
+    );
+    assert_eq!(core.chat_message_ttl_seconds.get(&chat_id), Some(&3600));
+    assert_eq!(stored_chat_ttl(&core, &chat_id), Some(3600));
+
+    core.handle_action(AppAction::SendDisappearingMessage {
+        chat_id: chat_id.clone(),
+        text: "local expiring reply".to_string(),
+        expires_at_secs: 1_777_160_000,
+    });
+    let reply = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.body == "local expiring reply")
+        })
+        .expect("local expiring reply");
+    assert_eq!(reply.expires_at_secs, Some(1_777_160_000));
+    assert_eq!(
+        stored_message_expiration(&core, &chat_id, &reply.id),
+        Some(1_777_160_000)
+    );
+}
+
+fn ndr_owner_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::OwnerPubkey {
+    nostr_double_ratchet::OwnerPubkey::from_bytes(pubkey.to_bytes())
+}
+
+fn ndr_device_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::DevicePubkey {
+    nostr_double_ratchet::DevicePubkey::from_bytes(pubkey.to_bytes())
+}
+
+fn test_group_snapshot(
+    group_id: &str,
+    name: &str,
+    created_by: PublicKey,
+    members: Vec<PublicKey>,
+    admins: Vec<PublicKey>,
+    revision: u64,
+) -> GroupSnapshot {
+    GroupSnapshot {
+        group_id: group_id.to_string(),
+        protocol: nostr_double_ratchet::GroupProtocol::sender_key_v1(),
+        name: name.to_string(),
+        created_by: ndr_owner_pubkey(created_by),
+        members: members.into_iter().map(ndr_owner_pubkey).collect(),
+        admins: admins.into_iter().map(ndr_owner_pubkey).collect(),
+        revision,
+        created_at: nostr_double_ratchet::UnixSeconds(1),
+        updated_at: nostr_double_ratchet::UnixSeconds(revision),
+    }
+}
+
+#[test]
+fn group_runtime_chat_message_is_persisted() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender_owner = Keys::generate();
     let sender_device = Keys::generate();
-    let mut core = logged_in_test_core("group-runtime-expiring-message", &owner, &device);
+    let mut core = logged_in_test_core("group-runtime-message", &owner, &device);
     core.preferences.send_read_receipts = false;
-    let group_id = "group-expiring-message".to_string();
+    let group_id = "group-runtime-message".to_string();
     let chat_id = group_chat_id(&group_id);
-    let mut inner = EventBuilder::new(Kind::from(CHAT_MESSAGE_KIND as u16), "group secret")
-        .custom_created_at(Timestamp::from(1_777_159_483u64))
-        .tag(nostr::Tag::parse(["expiration", "1777159543"]).expect("expiration tag"))
-        .build(sender_owner.public_key());
-    inner.ensure_id();
-    let inner_id = inner.id.as_ref().expect("inner id").to_string();
 
-    core.apply_group_decrypted_event(GroupDecryptedEvent {
-        group_id,
-        sender_event_pubkey: sender_device.public_key(),
-        sender_device_pubkey: sender_device.public_key(),
-        sender_owner_pubkey: Some(sender_owner.public_key()),
-        outer_event_id: "f".repeat(64),
-        outer_created_at: 1_777_159_484,
-        key_id: 0,
-        message_number: 0,
-        inner,
-    });
+    core.apply_group_decrypted_event(GroupIncomingEvent::Message(
+        nostr_double_ratchet::GroupReceivedMessage {
+            group_id,
+            sender_owner: ndr_owner_pubkey(sender_owner.public_key()),
+            sender_device: Some(ndr_device_pubkey(sender_device.public_key())),
+            body: b"group secret".to_vec(),
+            revision: 1,
+        },
+    ));
 
     let thread = core.threads.get(&chat_id).expect("group thread");
     assert_eq!(thread.messages.len(), 1);
     assert_eq!(thread.messages[0].body, "group secret");
-    assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
-    assert_eq!(
-        stored_message_expiration(&core, &chat_id, &inner_id),
-        Some(1_777_159_543)
-    );
+    assert_eq!(thread.messages[0].expires_at_secs, None);
 }
 
 #[test]
@@ -2937,9 +3184,14 @@ fn create_group_allows_self_only_group() {
     let current = core.state.current_chat.as_ref().expect("opened group chat");
     let group_id = current.group_id.as_ref().expect("group id").clone();
     let group = core.groups.get(&group_id).expect("stored group");
+    let owner = ndr_owner_pubkey(owner.public_key());
     assert_eq!(group.name, "Notes");
-    assert_eq!(group.members, vec![owner.public_key().to_hex()]);
-    assert_eq!(group.admins, vec![owner.public_key().to_hex()]);
+    assert_eq!(
+        group.protocol,
+        nostr_double_ratchet::GroupProtocol::sender_key_v1()
+    );
+    assert_eq!(group.members, vec![owner]);
+    assert_eq!(group.admins, vec![owner]);
 }
 
 #[test]
@@ -2949,39 +3201,53 @@ fn group_metadata_changes_create_system_notices() {
     let mut core = logged_in_test_core("group-metadata-notices", &owner, &device);
     let group_id = "group-notice-test".to_string();
     let chat_id = group_chat_id(&group_id);
-    let initial = GroupData {
-        id: group_id.clone(),
-        name: "Original".to_string(),
-        description: None,
-        picture: None,
-        members: vec![owner.public_key().to_hex()],
-        admins: vec![owner.public_key().to_hex()],
-        created_at: 1,
-        secret: None,
-        accepted: Some(true),
-    };
-    let renamed = GroupData {
-        name: "Renamed".to_string(),
-        ..initial.clone()
-    };
-    let member = Keys::generate().public_key().to_hex();
-    let with_member = GroupData {
-        members: vec![owner.public_key().to_hex(), member.clone()],
-        ..renamed.clone()
-    };
-    let member_removed = GroupData {
-        members: vec![owner.public_key().to_hex()],
-        ..with_member.clone()
-    };
+    let owner_pubkey = owner.public_key();
+    let member = Keys::generate().public_key();
+    let initial = test_group_snapshot(
+        &group_id,
+        "Original",
+        owner_pubkey,
+        vec![owner_pubkey],
+        vec![owner_pubkey],
+        1,
+    );
+    let renamed = test_group_snapshot(
+        &group_id,
+        "Renamed",
+        owner_pubkey,
+        vec![owner_pubkey],
+        vec![owner_pubkey],
+        2,
+    );
+    let with_member = test_group_snapshot(
+        &group_id,
+        "Renamed",
+        owner_pubkey,
+        vec![owner_pubkey, member],
+        vec![owner_pubkey],
+        3,
+    );
+    let member_removed = test_group_snapshot(
+        &group_id,
+        "Renamed",
+        owner_pubkey,
+        vec![owner_pubkey],
+        vec![owner_pubkey],
+        4,
+    );
 
     core.apply_group_metadata_notice(None, &initial);
     core.apply_group_metadata_notice(Some(&initial), &renamed);
     core.apply_group_metadata_notice(Some(&renamed), &with_member);
     core.apply_group_metadata_notice(Some(&with_member), &member_removed);
-    let with_admin = GroupData {
-        admins: with_member.members.clone(),
-        ..with_member.clone()
-    };
+    let with_admin = test_group_snapshot(
+        &group_id,
+        "Renamed",
+        owner_pubkey,
+        vec![owner_pubkey, member],
+        vec![owner_pubkey, member],
+        5,
+    );
     core.apply_group_metadata_notice(Some(&with_member), &with_admin);
 
     let messages = &core.threads.get(&chat_id).expect("group thread").messages;
@@ -3064,17 +3330,14 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
         );
         core.groups.insert(
             group_id.clone(),
-            GroupData {
-                id: group_id.clone(),
-                name: "Brunch".to_string(),
-                description: None,
-                picture: None,
-                members: vec![owner.public_key().to_hex()],
-                admins: vec![owner.public_key().to_hex()],
-                created_at: 1_000,
-                secret: None,
-                accepted: Some(true),
-            },
+            test_group_snapshot(
+                &group_id,
+                "Brunch",
+                owner.public_key(),
+                vec![owner.public_key()],
+                vec![owner.public_key()],
+                1_000,
+            ),
         );
         core.threads.insert(
             chat_id.clone(),
@@ -3676,6 +3939,22 @@ fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
         .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
         .filter(|event| event.kind.as_u16() as u32 == kind)
         .collect()
+}
+
+fn complete_first_contact(
+    acceptor: &NdrRuntime,
+    acceptor_keys: &Keys,
+    inviter_pubkey: PublicKey,
+    inviter: &NdrRuntime,
+) {
+    acceptor
+        .send_text(
+            inviter_pubkey,
+            "__ndr_first_contact_bootstrap__".to_string(),
+            None,
+        )
+        .expect("first-contact bootstrap send");
+    deliver_published_events(acceptor, acceptor_keys, inviter);
 }
 
 fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {

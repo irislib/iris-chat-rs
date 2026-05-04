@@ -3,8 +3,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use iris_chat_core::{
     peer_input_to_npub, proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind,
-    ChatMessageSnapshot, CurrentChatSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot,
-    OutgoingAttachment, PreferencesSnapshot, DeliveryState,
+    ChatMessageSnapshot, CurrentChatSnapshot, DeliveryState, MessageAttachmentSnapshot,
+    MessageReactionSnapshot, OutgoingAttachment, PreferencesSnapshot,
 };
 
 use crate::app_manager::AppManager;
@@ -177,7 +177,11 @@ fn present_message_info(
 
     // Status section
     let status_section = info_section("Status");
-    info_value_row(&status_section, "Time", &message_info_date_time(message.created_at_secs));
+    info_value_row(
+        &status_section,
+        "Time",
+        &message_info_date_time(message.created_at_secs),
+    );
     if let Some(expires) = message.expires_at_secs {
         info_value_row(&status_section, "Deletes", &message_info_date_time(expires));
     }
@@ -247,10 +251,27 @@ fn present_message_info(
                 false,
             );
         }
+        if !trace.pending_relay_event_ids.is_empty() {
+            let shortened: Vec<String> = trace
+                .pending_relay_event_ids
+                .iter()
+                .map(|id| short_message_identifier(id))
+                .collect();
+            info_multivalue_row(
+                &transport_section,
+                "Pending message servers",
+                &shortened,
+                true,
+            );
+        }
         if !queued_device_npubs.is_empty() {
             info_multivalue_row(&transport_section, "Queued devices", &queued_device_npubs, true);
         }
-        if let Some(error) = trace.last_transport_error.as_deref().filter(|s| !s.is_empty()) {
+        if let Some(error) = trace
+            .last_transport_error
+            .as_deref()
+            .filter(|s| !s.is_empty())
+        {
             info_value_row(&transport_section, "Last error", error);
         }
         content.append(&transport_section);
@@ -259,13 +280,12 @@ fn present_message_info(
     // IDs
     let ids_section = info_section("IDs");
     info_copy_row(&ids_section, "Message", &message.id, true);
-    if let Some(source_event_id) = message.source_event_id.as_deref().filter(|id| !id.is_empty()) {
-        info_copy_row(
-            &ids_section,
-            "Received event",
-            source_event_id,
-            true,
-        );
+    if let Some(source_event_id) = message
+        .source_event_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+    {
+        info_copy_row(&ids_section, "Received event", source_event_id, true);
     }
     for (idx, value) in trace.outer_event_ids.iter().enumerate() {
         info_copy_row(
@@ -895,10 +915,7 @@ fn delivery_label(state: &DeliveryState) -> &'static str {
     }
 }
 
-fn message_info_text(
-    message: &ChatMessageSnapshot,
-    chat: Option<&CurrentChatSnapshot>,
-) -> String {
+fn message_info_text(message: &ChatMessageSnapshot, chat: Option<&CurrentChatSnapshot>) -> String {
     let trace = &message.delivery_trace;
     let mut lines = vec![
         format!("Message {}", message.id),
@@ -960,10 +977,18 @@ fn message_info_text(
             .collect();
         lines.push(format!("Devices {}", npubs.join(", ")));
     }
-    if let Some(error) = trace.last_transport_error.as_deref().filter(|error| !error.is_empty()) {
+    if let Some(error) = trace
+        .last_transport_error
+        .as_deref()
+        .filter(|error| !error.is_empty())
+    {
         lines.push(format!("Last send error {}", error));
     }
-    if let Some(source_event_id) = message.source_event_id.as_deref().filter(|id| !id.is_empty()) {
+    if let Some(source_event_id) = message
+        .source_event_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+    {
         lines.push(format!(
             "Received as {}",
             short_message_identifier(source_event_id)

@@ -377,6 +377,7 @@ impl CliApp {
                 },
                 Duration::from_secs(3),
             )?;
+            cli_app.wait_for_restored_account(Duration::from_secs(6))?;
         }
         Ok(cli_app)
     }
@@ -437,6 +438,21 @@ impl CliApp {
             }
             thread::sleep(Duration::from_millis(20));
         }
+    }
+
+    fn wait_for_restored_account(&self, timeout: Duration) -> Result<AppState> {
+        let started = Instant::now();
+        while started.elapsed() < timeout {
+            let state = self.app.state();
+            fail_on_toast(&state)?;
+            if state.account.is_some() && !state.busy.restoring_session {
+                return Ok(state);
+            }
+            thread::sleep(Duration::from_millis(20));
+        }
+        let state = self.app.state();
+        fail_on_toast(&state)?;
+        anyhow::bail!("Timed out restoring account bundle.")
     }
 }
 
@@ -788,7 +804,7 @@ fn send_message(
             text: message.to_string(),
         }
     };
-    cli.dispatch_and_wait(action, Duration::from_secs(3))?;
+    cli.dispatch_and_wait_network(action, Duration::from_secs(8))?;
     let state = cli.app.state();
     fail_on_toast(&state)?;
     let current = state.current_chat.context("No chat is open.")?;
@@ -1047,7 +1063,8 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
     } else {
         None
     };
-    let state = cli.dispatch_and_wait(AppAction::AppForegrounded, Duration::from_secs(5))?;
+    let state =
+        cli.dispatch_and_wait_network(AppAction::AppForegrounded, Duration::from_secs(8))?;
     fail_on_toast(&state)?;
 
     print_stream_envelope(
@@ -1063,7 +1080,7 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
 
     loop {
         thread::sleep(interval);
-        if last_foreground.elapsed() >= Duration::from_secs(60) {
+        if last_foreground.elapsed() >= Duration::from_secs(2) {
             cli.app.dispatch(AppAction::AppForegrounded);
             last_foreground = Instant::now();
         }
@@ -1489,7 +1506,11 @@ fn is_busy(state: &AppState) -> bool {
 }
 
 fn is_busy_or_syncing(state: &AppState) -> bool {
-    is_busy(state) || state.busy.syncing_network
+    let pending_runtime_publishes = state
+        .network_status
+        .as_ref()
+        .is_some_and(|status| status.pending_outbound_count > 0);
+    is_busy(state) || state.busy.syncing_network || pending_runtime_publishes
 }
 
 fn chat_kind(kind: &ChatKind) -> &'static str {

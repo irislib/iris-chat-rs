@@ -1,5 +1,5 @@
 use super::SharedConnection;
-use nostr_double_ratchet::{Error as NdrError, Result as NdrResult, StorageAdapter};
+use nostr_double_ratchet_runtime::{Error as NdrError, Result as NdrResult, StorageAdapter};
 
 /// SQLite-backed implementation of `nostr_double_ratchet::StorageAdapter`.
 /// Keys are namespaced by (owner_pubkey_hex, device_pubkey_hex) so a

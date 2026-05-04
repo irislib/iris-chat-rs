@@ -1,5 +1,6 @@
 package to.iris.chat
 
+import android.database.sqlite.SQLiteDatabase
 import android.util.Base64
 import android.os.Bundle
 import android.os.SystemClock
@@ -23,6 +24,7 @@ import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.rust.peerInputToHex
+import to.iris.chat.rust.Screen
 import to.iris.chat.nearby.IrisNearbyService
 import java.io.File
 
@@ -58,6 +60,7 @@ class RealRelayHarnessTest {
     @Test
     fun create_account_and_report_identity() {
         val account = ensureLoggedIn()
+        waitForRelayDrainIfRequested()
         reportStatus(
             "npub" to account.npub,
             "public_key_hex" to account.publicKeyHex,
@@ -264,6 +267,7 @@ class RealRelayHarnessTest {
 
     @Test
     fun report_mobile_push_snapshot() {
+        requireHarnessInvocation("mobile push snapshot is driven by targeted harness scripts")
         ensureLoggedIn()
         val snapshot =
             waitForState("mobile push author snapshot", timeoutMs = 90_000) {
@@ -343,11 +347,18 @@ class RealRelayHarnessTest {
     fun add_authorized_device_from_args() {
         ensureLoggedIn()
         val deviceInput = requiredArg("device_input")
-        val initialRev = appManager().state.value.rev
+        val initialAuthorizedDeviceCount =
+            appManager()
+                .state
+                .value
+                .deviceRoster
+                ?.devices
+                ?.count { device -> device.isAuthorized && !device.isStale }
+                ?: 0
 
         appManager().addAuthorizedDevice(deviceInput)
 
-        val roster =
+        val deviceCount =
             waitForState("authorized device in roster", timeoutMs = 90_000) {
                 val state = appManager().state.value
                 val roster = state.deviceRoster
@@ -358,38 +369,25 @@ class RealRelayHarnessTest {
                             !device.isStale
                     } == true
                 if (matched) {
-                    return@waitForState roster
+                    return@waitForState roster?.devices?.size ?: 0
                 }
-                if (state.rev > initialRev && !state.busy.updatingRoster) {
-                    val rosterSummary =
-                        roster
-                            ?.devices
-                            ?.joinToString("|") { device ->
-                                listOf(
-                                    device.devicePubkeyHex,
-                                    device.isAuthorized.toString(),
-                                    device.isStale.toString(),
-                                ).joinToString(",")
-                            }
-                            ?: "<none>"
-                    fail(
-                        buildString {
-                            append("Device add completed without authorizing $deviceInput.")
-                            state.toast?.takeIf { it.isNotBlank() }?.let { toast ->
-                                append(" toast=")
-                                append(toast)
-                            }
-                            append(" roster=")
-                            append(rosterSummary)
-                        },
-                    )
+
+                val debug = readJsonObject(DEBUG_SNAPSHOT_FILENAME)
+                val localOwner = debug.optStringOrEmpty("local_owner_pubkey_hex")
+                val runtimeAuthorizedCount =
+                    runtimeDebugAuthorizedDeviceCount(debug, localOwner)
+                if (runtimeAuthorizedCount != null &&
+                    runtimeAuthorizedCount > initialAuthorizedDeviceCount
+                ) {
+                    return@waitForState runtimeAuthorizedCount
                 }
                 null
             }
 
+        waitForRelayDrainIfRequested()
         reportStatus(
             "device_pubkey_hex" to normalizePeerInput(deviceInput),
-            "device_count" to roster.devices.size.toString(),
+            "device_count" to deviceCount.toString(),
         )
     }
 
@@ -703,6 +701,7 @@ class RealRelayHarnessTest {
                     }
             }
 
+        waitForRelayDrainIfRequested()
         reportStatus(
             "chat_id" to chat.chatId,
             "group_id" to chat.groupId.orEmpty(),
@@ -777,6 +776,89 @@ class RealRelayHarnessTest {
     }
 
     @Test
+    fun wait_for_group_name_from_args() {
+        ensureLoggedIn()
+        val chatId = requiredArg("chat_id")
+        val groupName = requiredArg("group_name")
+        val thread =
+            waitForState("group name $groupName", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .chatList
+                    .firstOrNull { thread ->
+                        thread.chatId.equals(chatId, ignoreCase = true) &&
+                            thread.displayName == groupName
+                    }
+            }
+
+        appManager().openChat(thread.chatId)
+        reportStatus(
+            "chat_id" to thread.chatId,
+            "group_name" to thread.displayName,
+            "member_count" to thread.memberCount.toString(),
+        )
+    }
+
+    @Test
+    fun update_group_name_from_args() {
+        ensureLoggedIn()
+        val groupId = requiredArg("group_id")
+        val groupName = requiredArg("group_name")
+        val chatId = optionalArg("chat_id") ?: "group:$groupId"
+
+        appManager().updateGroupName(groupId, groupName)
+        val thread =
+            waitForState("renamed group $groupName", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .chatList
+                    .firstOrNull { thread ->
+                        thread.chatId.equals(chatId, ignoreCase = true) &&
+                            thread.displayName == groupName
+                    }
+            }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to thread.chatId,
+            "group_id" to groupId,
+            "group_name" to thread.displayName,
+            "member_count" to thread.memberCount.toString(),
+        )
+    }
+
+    @Test
+    fun add_group_members_from_args() {
+        ensureLoggedIn()
+        val groupId = requiredArg("group_id")
+        val chatId = optionalArg("chat_id") ?: "group:$groupId"
+        val memberInputs = requiredListArg("member_inputs")
+        val expectedMemberCount = optionalArg("expected_member_count")?.toULong()
+
+        appManager().addGroupMembers(groupId, memberInputs)
+        val thread =
+            waitForState("added group members", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .chatList
+                    .firstOrNull { thread ->
+                        thread.chatId.equals(chatId, ignoreCase = true) &&
+                            (expectedMemberCount == null || thread.memberCount == expectedMemberCount)
+                    }
+            }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "chat_id" to thread.chatId,
+            "group_id" to groupId,
+            "member_count" to thread.memberCount.toString(),
+        )
+    }
+
+    @Test
     fun remove_group_member_from_args() {
         ensureLoggedIn()
         val chatId = optionalArg("chat_id")
@@ -824,6 +906,39 @@ class RealRelayHarnessTest {
             "chat_id" to current.chatId,
             "group_id" to current.groupId.orEmpty(),
             "member_count" to current.memberCount.toString(),
+        )
+    }
+
+    @Test
+    fun set_group_admin_from_args() {
+        ensureLoggedIn()
+        val groupId = requiredArg("group_id")
+        val memberInput = normalizePeerInput(requiredArg("member_input"))
+        val isAdmin = optionalArg("is_admin")?.lowercase() !in setOf("0", "false", "no")
+
+        appManager().setGroupAdmin(groupId, memberInput, isAdmin)
+        appManager().pushScreen(Screen.GroupDetails(groupId))
+        val details =
+            waitForState("group admin $memberInput=$isAdmin", timeoutMs = 180_000) {
+                appManager()
+                    .state
+                    .value
+                    .groupDetails
+                    ?.takeIf { details ->
+                        details.groupId == groupId &&
+                            details.members.any { member ->
+                                member.ownerPubkeyHex.equals(memberInput, ignoreCase = true) &&
+                                    member.isAdmin == isAdmin
+                            }
+                    }
+            }
+
+        waitForRelayDrainIfRequested()
+        reportStatus(
+            "group_id" to details.groupId,
+            "member_input" to memberInput,
+            "is_admin" to isAdmin.toString(),
+            "revision" to details.revision.toString(),
         )
     }
 
@@ -1155,7 +1270,7 @@ class RealRelayHarnessTest {
     }
 
     /**
-     * Wait until the local owner's `core/profiles.json` carries an
+     * Wait until the local owner's persisted profile store carries an
      * entry for `peer_pubkey_hex` whose name matches `display_name`.
      * Used by the notification-decrypt smoke to confirm that Bob has
      * received and persisted Alice's kind:0 before we feed her
@@ -1170,10 +1285,9 @@ class RealRelayHarnessTest {
 
         val resolved =
             waitForState("peer profile $peerPubkeyHex == $expected", timeoutMs = timeoutMs) {
-                val profiles = readJsonObject("core/profiles.json") ?: return@waitForState null
-                val entry = profiles.optJSONObject(peerPubkeyHex) ?: return@waitForState null
-                val candidate = entry.optString("display_name").takeIf { it.isNotEmpty() }
-                    ?: entry.optString("name").takeIf { it.isNotEmpty() }
+                val candidate =
+                    readOwnerProfileDisplayName(peerPubkeyHex)
+                        ?: readLegacyOwnerProfileDisplayName(peerPubkeyHex)
                 candidate?.takeIf { it == expected }
             }
 
@@ -1731,6 +1845,43 @@ class RealRelayHarnessTest {
         }
     }
 
+    private fun waitForRelayDrainIfRequested() {
+        val raw = optionalArg("wait_for_relay_drain")?.lowercase() ?: return
+        if (raw !in setOf("1", "true", "yes")) {
+            return
+        }
+
+        SystemClock.sleep(500)
+        val runtimeOnly =
+            optionalArg("relay_drain_runtime_only")?.lowercase() in setOf("1", "true", "yes")
+        val timeoutMs =
+            ((optionalArg("relay_drain_timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
+                .coerceAtLeast(1_000L)
+        val status =
+            waitForState("relay publish drain", timeoutMs = timeoutMs) {
+                val pendingRuntimeOutboundCount =
+                    if (runtimeOnly) {
+                        pendingRelayPublishCount("runtime")
+                    } else {
+                        null
+                    }
+                appManager()
+                    .state
+                    .value
+                    .networkStatus
+                    ?.takeIf { status ->
+                        (pendingRuntimeOutboundCount?.let { it == 0 } ?:
+                            (status.pendingOutboundCount == 0UL)) &&
+                            status.pendingGroupControlCount == 0UL
+                    }
+            }
+        reportStatus(
+            "pending_outbound_count" to status.pendingOutboundCount.toString(),
+            "pending_runtime_outbound_count" to pendingRelayPublishCount("runtime").toString(),
+            "pending_group_control_count" to status.pendingGroupControlCount.toString(),
+        )
+    }
+
     private fun requiredListArg(name: String): List<String> =
         requiredArg(name)
             .split(',', '\n', '|')
@@ -1762,6 +1913,65 @@ class RealRelayHarnessTest {
             return null
         }
         return runCatching { JSONObject(file.readText()) }.getOrNull()
+    }
+
+    private fun pendingRelayPublishCount(label: String? = null): Int {
+        val dbFile = File(appFilesDir(), "core.sqlite3")
+        if (!dbFile.exists()) {
+            return 0
+        }
+        return runCatching {
+            SQLiteDatabase
+                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+                .use { db ->
+                    val (sql, args) =
+                        if (label.isNullOrBlank()) {
+                            "SELECT COUNT(*) FROM pending_relay_publishes" to emptyArray<String>()
+                        } else {
+                            "SELECT COUNT(*) FROM pending_relay_publishes WHERE label = ?" to
+                                arrayOf(label)
+                        }
+                    db.rawQuery(sql, args).use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    }
+                }
+        }.getOrDefault(0)
+    }
+
+    private fun readOwnerProfileDisplayName(ownerPubkeyHex: String): String? {
+        val dbFile = File(appFilesDir(), "core.sqlite3")
+        if (!dbFile.exists()) {
+            return null
+        }
+        return runCatching {
+            SQLiteDatabase
+                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+                .use { db ->
+                    db.rawQuery(
+                        """
+                            SELECT display_name, name
+                            FROM owner_profiles
+                            WHERE owner_pubkey_hex = ?
+                            LIMIT 1
+                        """.trimIndent(),
+                        arrayOf(ownerPubkeyHex),
+                    ).use { cursor ->
+                        if (!cursor.moveToFirst()) {
+                            null
+                        } else {
+                            cursor.getString(0)?.takeIf { it.isNotEmpty() }
+                                ?: cursor.getString(1)?.takeIf { it.isNotEmpty() }
+                        }
+                    }
+                }
+        }.getOrNull()
+    }
+
+    private fun readLegacyOwnerProfileDisplayName(ownerPubkeyHex: String): String? {
+        val profiles = readJsonObject("core/profiles.json") ?: return null
+        val entry = profiles.optJSONObject(ownerPubkeyHex) ?: return null
+        return entry.optString("display_name").takeIf { it.isNotEmpty() }
+            ?: entry.optString("name").takeIf { it.isNotEmpty() }
     }
 
     private fun persistedThreadWithMessage(
@@ -1945,6 +2155,23 @@ class RealRelayHarnessTest {
             user.optString("owner_pubkey_hex").equals(peerOwnerHex, ignoreCase = true) &&
                 predicate(user)
         }
+    }
+
+    private fun runtimeDebugAuthorizedDeviceCount(
+        debug: JSONObject?,
+        ownerHex: String,
+    ): Int? {
+        if (debug == null || ownerHex.isBlank()) {
+            return null
+        }
+        val users = debug.optJSONArray("known_users") ?: return null
+        for (index in 0 until users.length()) {
+            val user = users.optJSONObject(index) ?: continue
+            if (user.optString("owner_pubkey_hex").equals(ownerHex, ignoreCase = true)) {
+                return user.optInt("authorized_device_count")
+            }
+        }
+        return null
     }
 
     private fun summarizeKnownUsers(

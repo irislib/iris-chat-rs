@@ -240,7 +240,7 @@ pub(super) struct PersistedState {
     #[serde(default)]
     pub(super) app_keys: Vec<KnownAppKeys>,
     #[serde(default)]
-    pub(super) groups: Vec<GroupData>,
+    pub(super) groups: Vec<GroupSnapshot>,
     pub(super) threads: Vec<PersistedThread>,
     #[serde(default)]
     pub(super) seen_event_ids: Vec<String>,
