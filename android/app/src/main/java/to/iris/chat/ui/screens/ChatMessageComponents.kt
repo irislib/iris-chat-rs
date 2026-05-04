@@ -198,6 +198,7 @@ internal fun MessageBubble(
                 Surface(
                     modifier =
                         Modifier
+                            .widthIn(max = 300.dp)
                             .clip(bubbleShape)
                             .combinedClickable(
                                 onClick = {},
