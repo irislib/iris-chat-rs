@@ -53,9 +53,14 @@ final class IrisChatUITests: XCTestCase {
         element(app, "chatSendButton").tap()
 
         XCTAssertTrue(app.staticTexts["hello from ios ui test"].waitForExistence(timeout: 15))
+#if os(iOS)
+        app.staticTexts["hello from ios ui test"].press(forDuration: 0.6)
+        XCTAssertTrue(element(app, "messageActionsSheet").waitForExistence(timeout: 5))
+#else
         app.staticTexts["hello from ios ui test"].tap()
         XCTAssertTrue(element(app, "messageMoreButton").waitForExistence(timeout: 5))
         element(app, "messageMoreButton").tap()
+#endif
         XCTAssertTrue(app.buttons["Message info"].waitForExistence(timeout: 5))
         app.buttons["Message info"].tap()
         XCTAssertTrue(element(app, "messageInfoSheet").waitForExistence(timeout: 5))

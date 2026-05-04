@@ -13,6 +13,7 @@ import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -192,7 +193,7 @@ class PikaLikeUiTest {
     }
 
     @Test
-    fun tapping_message_on_mobile_reveals_actions() {
+    fun long_pressing_message_on_mobile_reveals_actions() {
         assumeTrue(composeRule.activity.resources.configuration.screenWidthDp < 600)
 
         composeRule.ensureChatList()
@@ -220,9 +221,11 @@ class PikaLikeUiTest {
                 ?.firstOrNull { it.body == message }
                 ?.id
                 .orEmpty()
-        composeRule.onNodeWithTag("chatMessage-$messageId", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("chatMessage-$messageId", useUnmergedTree = true)
+            .performTouchInput { longClick() }
 
-        composeRule.waitForTag("messageReactButton")
+        composeRule.waitForTag("messageActionsSheet")
+        composeRule.onNodeWithTag("messageActionsSheet", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag("messageReactButton", useUnmergedTree = true).assertIsDisplayed()
     }
 

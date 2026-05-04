@@ -19,7 +19,6 @@ struct ChatScreen: View {
     @State private var imageViewerItem: ImageViewerItem?
     @State private var lastTypingSentAt: Date?
     @State private var sentTypingIndicator = false
-    @State private var activeActionDockMessageId: String?
     @State private var messageInfoSelection: MessageInfoSelection?
     @FocusState private var isComposerFocused: Bool
 
@@ -62,7 +61,6 @@ struct ChatScreen: View {
                                                     isFirstInCluster: isFirstInCluster,
                                                     isLastInCluster: isLastInCluster,
                                                     reactions: message.reactions,
-                                                    activeActionDockMessageId: $activeActionDockMessageId,
                                                     onReply: {
                                                         replyTarget = message
                                                     },
@@ -76,7 +74,6 @@ struct ChatScreen: View {
                                                         )
                                                     },
                                                     onInfo: {
-                                                        activeActionDockMessageId = nil
                                                         messageInfoSelection = MessageInfoSelection(
                                                             chatId: chat.chatId,
                                                             messageId: message.id,
@@ -121,13 +118,6 @@ struct ChatScreen: View {
                                         .padding(.vertical, 10)
                                         .frame(minHeight: viewport.size.height, alignment: .bottom)
                                         .accessibilityIdentifier("chatTimeline")
-                                        .background(
-                                            Color.clear
-                                                .contentShape(Rectangle())
-                                                .onTapGesture {
-                                                    activeActionDockMessageId = nil
-                                                }
-                                        )
                                     }
                                     .simultaneousGesture(
                                         TapGesture().onEnded {
@@ -144,11 +134,6 @@ struct ChatScreen: View {
                                         }
                                     }
                                     .irisInteractiveKeyboardDismiss()
-                                }
-                                .irisOnChange(of: isComposerFocused) { focused in
-                                    if focused {
-                                        activeActionDockMessageId = nil
-                                    }
                                 }
                                 .irisOnChange(of: chatId) { _ in
                                     initialScrollPending = true
@@ -473,7 +458,6 @@ private struct ChatMessageRow: View {
     let isFirstInCluster: Bool
     let isLastInCluster: Bool
     let reactions: [MessageReactionSnapshot]
-    @Binding var activeActionDockMessageId: String?
     let onReply: () -> Void
     let onReact: (String) -> Void
     let onInfo: () -> Void
@@ -484,17 +468,14 @@ private struct ChatMessageRow: View {
 
     @State private var isHovering = false
     @State private var showReactionPicker = false
-
-    private var isMobileActionDockOpen: Bool {
-        activeActionDockMessageId == message.id
-    }
+    @State private var showActionsSheet = false
 
     private var bodyParts: ReplyParsedMessage {
         parseReplyEncodedMessage(message.body)
     }
 
     private var showActionDock: Bool {
-        IrisLayout.usesDesktopChrome ? isHovering : isMobileActionDockOpen
+        IrisLayout.usesDesktopChrome && isHovering
     }
 
     private var bubbleShape: ChatMessageBubbleShape {
@@ -603,21 +584,42 @@ private struct ChatMessageRow: View {
                     )
                     .clipShape(bubbleShape)
                     .contentShape(bubbleShape)
-                    .onTapGesture {
+                    .onLongPressGesture(minimumDuration: 0.4) {
                         if !IrisLayout.usesDesktopChrome {
-                            activeActionDockMessageId = isMobileActionDockOpen ? nil : message.id
+                            showActionsSheet = true
                         }
                     }
-                    .contextMenu {
-                        Button("Reply", action: onReply)
-                        Button("React") {
-                            showReactionPicker = true
-                        }
-                        Button("Copy") {
-                            PlatformClipboard.setString(copyableMessageText(message))
-                        }
-                        Button("Message info", action: onInfo)
-                        Button("Delete locally", role: .destructive, action: onDelete)
+                    .sheet(isPresented: $showActionsSheet) {
+                        ChatMessageActionsSheet(
+                            message: message,
+                            bodyText: bodyParts.body,
+                            onReact: { emoji in
+                                showActionsSheet = false
+                                onReact(emoji)
+                            },
+                            onShowFullReactionPicker: {
+                                showActionsSheet = false
+                                showReactionPicker = true
+                            },
+                            onReply: {
+                                showActionsSheet = false
+                                onReply()
+                            },
+                            onCopy: {
+                                showActionsSheet = false
+                                PlatformClipboard.setString(copyableMessageText(message))
+                            },
+                            onInfo: {
+                                showActionsSheet = false
+                                onInfo()
+                            },
+                            onDelete: {
+                                showActionsSheet = false
+                                onDelete()
+                            }
+                        )
+                        .presentationDetents([.medium])
+                        .presentationDragIndicator(.visible)
                     }
                     .sheet(isPresented: $showReactionPicker) {
                         IrisEmojiPicker(
@@ -1120,6 +1122,136 @@ private struct ChatMessageActionDock: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)
+    }
+}
+
+private let quickReactionEmojis: [String] = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"]
+
+private struct ChatMessageActionsSheet: View {
+    @Environment(\.irisPalette) private var palette
+    let message: ChatMessageSnapshot
+    let bodyText: String
+    let onReact: (String) -> Void
+    let onShowFullReactionPicker: () -> Void
+    let onReply: () -> Void
+    let onCopy: () -> Void
+    let onInfo: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            quickReactionRow
+            previewCard
+            VStack(spacing: 0) {
+                actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
+                actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
+                actionRow(icon: "info.circle", label: "Message info", action: onInfo)
+                actionRow(icon: "trash", label: "Delete locally", destructive: true, action: onDelete)
+            }
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(palette.panel)
+            )
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 14)
+        .padding(.bottom, 6)
+        .background(palette.background)
+        .accessibilityIdentifier("messageActionsSheet")
+    }
+
+    private var quickReactionRow: some View {
+        HStack(spacing: 4) {
+            ForEach(quickReactionEmojis, id: \.self) { emoji in
+                Button {
+                    onReact(emoji)
+                } label: {
+                    Text(emoji)
+                        .font(.system(size: 26))
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 40)
+                }
+                .buttonStyle(.plain)
+            }
+            Button(action: onShowFullReactionPicker) {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 40)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("messageReactButton")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(palette.panel)
+        )
+    }
+
+    private var previewText: String {
+        if !bodyText.isEmpty { return bodyText }
+        if let first = message.attachments.first {
+            return first.filename.isEmpty ? "Attachment" : first.filename
+        }
+        return ""
+    }
+
+    @ViewBuilder
+    private var previewCard: some View {
+        if !previewText.isEmpty || !message.attachments.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(message.author)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                if !previewText.isEmpty {
+                    Text(previewText)
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                }
+                if !message.attachments.isEmpty,
+                   previewText != message.attachments.first?.filename {
+                    Text(message.attachments.count == 1 ? "1 attachment" : "\(message.attachments.count) attachments")
+                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                        .foregroundStyle(palette.muted)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(palette.panel)
+            )
+        }
+    }
+
+    private func actionRow(
+        icon: String,
+        label: String,
+        destructive: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .frame(width: 22)
+                Text(label)
+                    .font(.system(.body, design: .rounded, weight: .medium))
+                Spacer()
+            }
+            .foregroundStyle(destructive ? Color.red : palette.textPrimary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }
 

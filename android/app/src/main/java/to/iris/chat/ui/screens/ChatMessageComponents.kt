@@ -22,15 +22,20 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.Reply
 import androidx.compose.material.icons.rounded.AddReaction
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -102,15 +107,55 @@ internal fun MessageBubble(
     val showDesktopActionDock = LocalConfiguration.current.screenWidthDp >= 600
     val hoverInteractionSource = remember { MutableInteractionSource() }
     val isHovering by hoverInteractionSource.collectIsHoveredAsState()
-    var isMobileActionDockOpen by remember(message.id) { mutableStateOf(false) }
+    val showActionDock = showDesktopActionDock && isHovering
     var isInfoOpen by remember(message.id) { mutableStateOf(false) }
-    val showActionDock =
-        (showDesktopActionDock && isHovering) || (!showDesktopActionDock && isMobileActionDockOpen)
+    var isActionsSheetOpen by remember(message.id) { mutableStateOf(false) }
+    var isReactionPickerOpen by remember(message.id) { mutableStateOf(false) }
     if (isInfoOpen) {
         MessageInfoDialog(
             message = message,
             chat = chat,
             onDismiss = { isInfoOpen = false },
+        )
+    }
+    if (isActionsSheetOpen) {
+        MessageActionsSheet(
+            message = message,
+            parsedBody = parsed.body,
+            onDismiss = { isActionsSheetOpen = false },
+            onReact = { emoji ->
+                isActionsSheetOpen = false
+                onReact(emoji)
+            },
+            onShowFullReactionPicker = {
+                isActionsSheetOpen = false
+                isReactionPickerOpen = true
+            },
+            onReply = {
+                isActionsSheetOpen = false
+                onReply()
+            },
+            onCopy = {
+                isActionsSheetOpen = false
+                clipboard.setText("Message", copyableMessageText(message))
+            },
+            onInfo = {
+                isActionsSheetOpen = false
+                isInfoOpen = true
+            },
+            onDelete = {
+                isActionsSheetOpen = false
+                onDelete()
+            },
+        )
+    }
+    if (isReactionPickerOpen) {
+        IrisEmojiPickerSheet(
+            onDismiss = { isReactionPickerOpen = false },
+            onPick = { emoji ->
+                isReactionPickerOpen = false
+                onReact(emoji)
+            },
         )
     }
     val bubbleShape =
@@ -147,13 +192,11 @@ internal fun MessageBubble(
                         Modifier
                             .clip(bubbleShape)
                             .combinedClickable(
-                                onClick = {
-                                    if (!showDesktopActionDock) {
-                                        isMobileActionDockOpen = !isMobileActionDockOpen
-                                    }
-                                },
+                                onClick = {},
                                 onLongClick = {
-                                    clipboard.setText("Message", copyableMessageText(message))
+                                    if (!showDesktopActionDock) {
+                                        isActionsSheetOpen = true
+                                    }
                                 },
                             )
                             .testTag("chatMessage-${message.id}"),
@@ -371,6 +414,203 @@ private fun ReactionPickerMenu(
         onDismiss = onDismiss,
         onPick = onEmoji,
     )
+}
+
+private val QuickReactionEmojis = listOf("❤️", "👍", "😂", "😮", "😢", "🙏", "🔥")
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MessageActionsSheet(
+    message: ChatMessageSnapshot,
+    parsedBody: String,
+    onDismiss: () -> Unit,
+    onReact: (String) -> Unit,
+    onShowFullReactionPicker: () -> Unit,
+    onReply: () -> Unit,
+    onCopy: () -> Unit,
+    onInfo: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+                    .testTag("messageActionsSheet"),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            QuickReactionRow(
+                onPick = onReact,
+                onMore = onShowFullReactionPicker,
+            )
+            MessagePreviewCard(message = message, parsedBody = parsedBody)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                MessageActionRow(
+                    icon = Icons.AutoMirrored.Rounded.Reply,
+                    label = "Reply",
+                    onClick = onReply,
+                )
+                MessageActionRow(
+                    icon = Icons.Rounded.ContentCopy,
+                    label = "Copy",
+                    onClick = onCopy,
+                )
+                MessageActionRow(
+                    icon = Icons.Rounded.Info,
+                    label = "Message info",
+                    onClick = onInfo,
+                )
+                MessageActionRow(
+                    icon = Icons.Rounded.Delete,
+                    label = "Delete message",
+                    destructive = true,
+                    onClick = onDelete,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickReactionRow(
+    onPick: (String) -> Unit,
+    onMore: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = IrisTheme.palette.panel,
+        shape = RoundedCornerShape(100.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            QuickReactionEmojis.forEach { emoji ->
+                QuickReactionButton(emoji = emoji, onClick = { onPick(emoji) })
+            }
+            Box(
+                modifier =
+                    Modifier
+                        .size(38.dp)
+                        .clip(CircleShape)
+                        .clickable(onClick = onMore)
+                        .testTag("messageReactButton"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.AddReaction,
+                    contentDescription = "More reactions",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun QuickReactionButton(emoji: String, onClick: () -> Unit) {
+    Box(
+        modifier =
+            Modifier
+                .size(38.dp)
+                .clip(CircleShape)
+                .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(text = emoji, style = MaterialTheme.typography.titleLarge)
+    }
+}
+
+@Composable
+private fun MessagePreviewCard(
+    message: ChatMessageSnapshot,
+    parsedBody: String,
+) {
+    val previewText =
+        when {
+            parsedBody.isNotBlank() -> parsedBody
+            message.attachments.isNotEmpty() -> message.attachments.first().filename.ifBlank { "Attachment" }
+            else -> ""
+        }
+    if (previewText.isBlank() && message.attachments.isEmpty()) return
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = IrisTheme.palette.panel,
+        shape = RoundedCornerShape(14.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = message.author,
+                style = MaterialTheme.typography.labelMedium,
+                color = IrisTheme.palette.muted,
+                fontWeight = FontWeight.SemiBold,
+            )
+            if (previewText.isNotBlank()) {
+                Text(
+                    text = previewText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (message.attachments.isNotEmpty() && previewText != message.attachments.first().filename) {
+                Text(
+                    text = "${message.attachments.size} attachment${if (message.attachments.size == 1) "" else "s"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = IrisTheme.palette.muted,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MessageActionRow(
+    icon: ImageVector,
+    label: String,
+    destructive: Boolean = false,
+    onClick: () -> Unit,
+) {
+    val tint =
+        if (destructive) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        }
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(onClick = onClick)
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = tint,
+        )
+    }
 }
 
 @Composable
