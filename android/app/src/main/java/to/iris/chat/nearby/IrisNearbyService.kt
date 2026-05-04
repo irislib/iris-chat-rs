@@ -1020,7 +1020,8 @@ class IrisNearbyService(
             rememberProfile(existing.eventJson, remotePeerId)
             return
         }
-        if (!appManager.ingestNearbyEventJson(eventJson)) {
+        val transport = transportLabel(remotePeerId)
+        if (!appManager.ingestNearbyEventJsonWithTransport(eventJson, transport)) {
             return
         }
         rememberProfile(eventJson, remotePeerId)
@@ -1128,6 +1129,11 @@ class IrisNearbyService(
             is NearbySource.Lan -> lanService.markPeer(source.connectionId, peerId)
         }
         pruneDuplicateBluetoothRoutes(peerId)
+    }
+
+    private fun transportLabel(remotePeerId: String?): String {
+        if (remotePeerId.isNullOrBlank()) return "nearby"
+        return if (recentBluetoothPeerIds().contains(remotePeerId)) "bluetooth" else "wifi"
     }
 
     private fun recentBluetoothPeerIds(nowMillis: Long = System.currentTimeMillis()): Set<String> =

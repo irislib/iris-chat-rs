@@ -109,6 +109,10 @@ private final class MockRustApp: RustAppClient {
         true
     }
 
+    func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool {
+        true
+    }
+
     func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String {
         ""
     }

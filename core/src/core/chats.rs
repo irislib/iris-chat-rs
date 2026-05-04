@@ -429,10 +429,6 @@ impl AppCore {
             &mut message.delivery_trace.pending_relay_event_ids,
             event_id,
         );
-        push_unique(
-            &mut message.delivery_trace.transport_channels,
-            "nearby offered",
-        );
         if let Some(target_device_id) = target_device_id {
             push_unique(
                 &mut message.delivery_trace.target_device_ids,

@@ -79,6 +79,17 @@ extension FfiApp {
         }
     }
 
+    func ingestNearbyEventJsonWithTransportSafely(eventJson: String, transport: String) -> Bool {
+        ffiBool("ffiapp.ingestNearbyEventJsonWithTransport") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_ingest_nearby_event_json_with_transport(
+                self.uniffiClonePointer(),
+                lowerString(eventJson),
+                lowerString(transport),
+                status
+            )
+        }
+    }
+
     @discardableResult
     func listenForUpdatesSafely(reconciler: AppReconciler) -> Bool {
         ffiVoid("ffiapp.listenForUpdates") { status in

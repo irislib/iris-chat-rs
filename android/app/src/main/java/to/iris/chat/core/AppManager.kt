@@ -64,6 +64,8 @@ interface RustAppClient {
 
     fun ingestNearbyEventJson(eventJson: String): Boolean
 
+    fun ingestNearbyEventJsonWithTransport(eventJson: String, transport: String): Boolean
+
     fun buildNearbyPresenceEventJson(
         peerId: String,
         myNonce: String,
@@ -104,6 +106,9 @@ private class LiveRustAppClient(
     }
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = ffi.ingestNearbyEventJson(eventJson)
+
+    override fun ingestNearbyEventJsonWithTransport(eventJson: String, transport: String): Boolean =
+        ffi.ingestNearbyEventJsonWithTransport(eventJson, transport)
 
     override fun buildNearbyPresenceEventJson(
         peerId: String,
@@ -398,6 +403,9 @@ class AppManager(
 
     fun ingestNearbyEventJson(eventJson: String): Boolean =
         runCatching { rust.ingestNearbyEventJson(eventJson) }.getOrDefault(false)
+
+    fun ingestNearbyEventJsonWithTransport(eventJson: String, transport: String): Boolean =
+        runCatching { rust.ingestNearbyEventJsonWithTransport(eventJson, transport) }.getOrDefault(false)
 
     fun buildNearbyPresenceEventJson(
         peerId: String,

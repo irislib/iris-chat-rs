@@ -302,7 +302,7 @@ struct ChatScreen: View {
         }
         .sheet(item: $messageInfoSelection) { selection in
             let context = messageInfoContext(for: selection)
-            MessageInfoSheet(message: context.message, chat: context.chat) {
+            MessageInfoSheet(message: context.message, chat: context.chat, manager: manager) {
                 messageInfoSelection = nil
             }
             .presentationDetents([.medium, .large])
@@ -662,7 +662,23 @@ private struct MessageInfoSheet: View {
     @Environment(\.irisPalette) private var palette
     let message: ChatMessageSnapshot
     let chat: CurrentChatSnapshot?
+    @ObservedObject var manager: AppManager
     let onClose: () -> Void
+
+    private func participantInfo(_ pubkeyHex: String) -> ParticipantInfo {
+        if let account = manager.state.account, account.publicKeyHex == pubkeyHex {
+            let name = account.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ParticipantInfo(
+                name: name.isEmpty ? "You" : name,
+                pictureUrl: account.pictureUrl,
+                isMe: true
+            )
+        }
+        if let chat, chat.kind == .direct, chat.chatId == pubkeyHex {
+            return ParticipantInfo(name: chat.displayName, pictureUrl: chat.pictureUrl, isMe: false)
+        }
+        return ParticipantInfo(name: shortNpub(pubkeyHex), pictureUrl: nil, isMe: false)
+    }
 
     var body: some View {
         NavigationStack {
@@ -733,19 +749,22 @@ private struct MessageInfoSheet: View {
                     MessageInfoValueRow(label: "Recipients", value: "No receipts")
                 } else {
                     ForEach(message.recipientDeliveries, id: \.ownerPubkeyHex) { recipient in
+                        let info = participantInfo(recipient.ownerPubkeyHex)
                         MessageInfoRecipientRow(
-                            title: messageInfoRecipientName(recipient.ownerPubkeyHex, chat: chat),
+                            info: info,
                             subtitle: messageInfoDateTime(recipient.updatedAtSecs),
-                            delivery: recipient.delivery
+                            delivery: recipient.delivery,
+                            manager: manager
                         )
                     }
                 }
             } else {
-                MessageInfoValueRow(label: "From", value: message.author)
+                let info = ParticipantInfo(name: message.author, pictureUrl: chat?.pictureUrl, isMe: false)
                 MessageInfoRecipientRow(
-                    title: "You",
+                    info: info,
                     subtitle: messageInfoDateTime(message.createdAtSecs),
-                    delivery: message.delivery
+                    delivery: message.delivery,
+                    manager: manager
                 )
             }
         }
@@ -833,8 +852,9 @@ private struct MessageInfoSheet: View {
                 }
                 ForEach(message.reactors, id: \.author) { reactor in
                     MessageInfoReactorRow(
-                        name: messageInfoRecipientName(reactor.author, chat: chat),
-                        emoji: reactor.emoji
+                        info: participantInfo(reactor.author),
+                        emoji: reactor.emoji,
+                        manager: manager
                     )
                 }
             }
@@ -842,15 +862,28 @@ private struct MessageInfoSheet: View {
     }
 }
 
+private struct ParticipantInfo {
+    let name: String
+    let pictureUrl: String?
+    let isMe: Bool
+}
+
 private struct MessageInfoReactorRow: View {
     @Environment(\.irisPalette) private var palette
-    let name: String
+    let info: ParticipantInfo
     let emoji: String
+    @ObservedObject var manager: AppManager
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            IrisAvatar(label: name, size: 28)
-            Text(name)
+            IrisAvatar(
+                label: info.name,
+                size: 32,
+                pictureUrl: info.pictureUrl,
+                preferences: manager.state.preferences,
+                manager: manager
+            )
+            Text(info.name)
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
                 .lineLimit(1)
@@ -959,16 +992,22 @@ private struct MessageInfoCopyListRow: View {
 
 private struct MessageInfoRecipientRow: View {
     @Environment(\.irisPalette) private var palette
-    let title: String
+    let info: ParticipantInfo
     let subtitle: String
     let delivery: DeliveryState
+    @ObservedObject var manager: AppManager
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            IrisDeliveryGlyph(delivery: delivery)
-                .frame(width: 22, height: 22)
+            IrisAvatar(
+                label: info.name,
+                size: 32,
+                pictureUrl: info.pictureUrl,
+                preferences: manager.state.preferences,
+                manager: manager
+            )
             VStack(alignment: .leading, spacing: 3) {
-                Text(title)
+                Text(info.name)
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
                 Text("\(irisDeliveryLabel(delivery)) - \(subtitle)")
@@ -976,6 +1015,8 @@ private struct MessageInfoRecipientRow: View {
                     .foregroundStyle(palette.muted)
             }
             Spacer(minLength: 0)
+            IrisDeliveryGlyph(delivery: delivery)
+                .frame(width: 18, height: 18)
         }
         .padding(.vertical, 8)
     }

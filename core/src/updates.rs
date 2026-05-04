@@ -39,7 +39,10 @@ pub(crate) enum CoreMsg {
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
     RelayEvent(Event),
-    NearbyEvent(Event),
+    NearbyEvent {
+        event: Event,
+        transport: String,
+    },
     FetchTrackedPeerCatchUp,
     ProtocolSubscriptionLivenessCheck {
         token: u64,

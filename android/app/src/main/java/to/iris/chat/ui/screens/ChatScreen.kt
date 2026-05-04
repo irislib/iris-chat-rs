@@ -402,6 +402,7 @@ fun ChatScreen(
                                     imageViewerItem = DownloadedImageAttachment(data = data, filename = filename)
                                 },
                                 chat = chat,
+                                appManager = appManager,
                             )
                         }
                     }

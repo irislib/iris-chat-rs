@@ -97,7 +97,7 @@ impl AppCore {
             },
             CoreMsg::Internal(event) => match event.as_ref() {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
-                InternalEvent::NearbyEvent(_) => "NearbyEvent",
+                InternalEvent::NearbyEvent { .. } => "NearbyEvent",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::FetchTrackedPeerCatchUp => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
@@ -354,11 +354,15 @@ impl AppCore {
             InternalEvent::RelayEvent(event) => {
                 self.handle_relay_event_with_channel(event, "message servers");
             }
-            InternalEvent::NearbyEvent(event) => {
+            InternalEvent::NearbyEvent { event, transport } => {
                 let event_id = event.id.to_string();
                 let kind = event.kind.as_u16() as u32;
-                self.push_debug_log("nearby.event", format!("kind_raw={kind} id={event_id}"));
-                self.handle_relay_event_with_channel(event, "nearby");
+                self.push_debug_log(
+                    "nearby.event",
+                    format!("kind_raw={kind} id={event_id} transport={transport}"),
+                );
+                let channel: &str = if transport.is_empty() { "nearby" } else { &transport };
+                self.handle_relay_event_with_channel(event, channel);
             }
             InternalEvent::FetchTrackedPeerCatchUp => {
                 let now = unix_now();

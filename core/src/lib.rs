@@ -161,6 +161,14 @@ impl FfiApp {
     }
 
     pub fn ingest_nearby_event_json(&self, event_json: String) -> bool {
+        self.ingest_nearby_event_json_with_transport(event_json, String::new())
+    }
+
+    pub fn ingest_nearby_event_json_with_transport(
+        &self,
+        event_json: String,
+        transport: String,
+    ) -> bool {
         ffi_or("ffiapp.ingest_nearby_event_json", false, || {
             let event = match serde_json::from_str::<nostr_sdk::prelude::Event>(&event_json) {
                 Ok(event) => event,
@@ -170,9 +178,10 @@ impl FfiApp {
                 return false;
             }
             self.core_tx
-                .send(CoreMsg::Internal(Box::new(InternalEvent::NearbyEvent(
+                .send(CoreMsg::Internal(Box::new(InternalEvent::NearbyEvent {
                     event,
-                ))))
+                    transport,
+                })))
                 .is_ok()
         })
     }

@@ -57,6 +57,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageKind
 import to.iris.chat.rust.ChatMessageSnapshot
@@ -66,6 +67,8 @@ import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.rust.MessageReactionSnapshot
 import to.iris.chat.rust.MessageReactor
 import to.iris.chat.rust.MessageRecipientDeliverySnapshot
+import to.iris.chat.core.AppManager
+import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.ui.components.DeliveryGlyph
 import to.iris.chat.ui.components.IrisAvatar
@@ -98,6 +101,7 @@ internal fun MessageBubble(
     downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
     onOpenImage: (ByteArray, String) -> Unit,
     chat: CurrentChatSnapshot? = null,
+    appManager: AppManager? = null,
 ) {
     if (message.kind == ChatMessageKind.SYSTEM) {
         SystemMessageChip(message = message)
@@ -117,6 +121,7 @@ internal fun MessageBubble(
         MessageInfoDialog(
             message = message,
             chat = chat,
+            appManager = appManager,
             onDismiss = { isInfoOpen = false },
         )
     }
@@ -895,11 +900,16 @@ private fun copyableMessageText(message: ChatMessageSnapshot): String {
 private fun MessageInfoDialog(
     message: ChatMessageSnapshot,
     chat: CurrentChatSnapshot?,
+    appManager: AppManager?,
     onDismiss: () -> Unit,
 ) {
     val clipboard = rememberIrisClipboard()
     val palette = IrisTheme.palette
     val trace = message.deliveryTrace
+    val account = appManager?.account?.collectAsStateWithLifecycle()?.value
+    val resolveParticipant: (String) -> ParticipantInfo = { pubkeyHex ->
+        participantInfo(pubkeyHex, chat = chat, account = account)
+    }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
@@ -949,16 +959,19 @@ private fun MessageInfoDialog(
                         } else {
                             message.recipientDeliveries.forEach { recipient ->
                                 MessageInfoRecipientRow(
-                                    title = messageInfoRecipientName(recipient.ownerPubkeyHex, chat),
+                                    info = resolveParticipant(recipient.ownerPubkeyHex),
                                     subtitle = messageInfoDateTime(recipient.updatedAtSecs.toLong()),
                                     delivery = recipient.delivery,
                                 )
                             }
                         }
                     } else {
-                        MessageInfoValueRow("From", message.author)
                         MessageInfoRecipientRow(
-                            title = "You",
+                            info = ParticipantInfo(
+                                name = message.author,
+                                pictureUrl = chat?.pictureUrl,
+                                isMe = false,
+                            ),
                             subtitle = messageInfoDateTime(message.createdAtSecs.toLong()),
                             delivery = message.delivery,
                         )
@@ -1038,7 +1051,7 @@ private fun MessageInfoDialog(
                         }
                         message.reactors.forEach { reactor ->
                             MessageInfoReactorRow(
-                                name = messageInfoRecipientName(reactor.author, chat),
+                                info = resolveParticipant(reactor.author),
                                 emoji = reactor.emoji,
                             )
                         }
@@ -1145,7 +1158,7 @@ private fun MessageInfoCopyList(label: String, values: List<String>) {
 
 @Composable
 private fun MessageInfoRecipientRow(
-    title: String,
+    info: ParticipantInfo,
     subtitle: String,
     delivery: DeliveryState,
 ) {
@@ -1155,13 +1168,15 @@ private fun MessageInfoRecipientRow(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        DeliveryGlyph(delivery, isOutgoing = true)
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        IrisAvatar(label = info.name, size = 32.dp, imageUrl = info.pictureUrl)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
-                text = title,
+                text = info.name,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
             Text(
                 text = "${deliveryLabel(delivery)} · $subtitle",
@@ -1169,6 +1184,7 @@ private fun MessageInfoRecipientRow(
                 color = palette.muted,
             )
         }
+        DeliveryGlyph(delivery, isOutgoing = true)
     }
 }
 
@@ -1259,17 +1275,38 @@ private fun prettyTransportChannel(channel: String): String =
         else -> channel
     }
 
+private data class ParticipantInfo(
+    val name: String,
+    val pictureUrl: String?,
+    val isMe: Boolean,
+)
+
+private fun participantInfo(
+    pubkeyHex: String,
+    chat: CurrentChatSnapshot?,
+    account: AccountSnapshot?,
+): ParticipantInfo {
+    if (account != null && account.publicKeyHex == pubkeyHex) {
+        val name = account.displayName.trim().ifEmpty { "You" }
+        return ParticipantInfo(name = name, pictureUrl = account.pictureUrl, isMe = true)
+    }
+    if (chat != null && chat.kind == ChatKind.DIRECT && chat.chatId == pubkeyHex) {
+        return ParticipantInfo(name = chat.displayName, pictureUrl = chat.pictureUrl, isMe = false)
+    }
+    return ParticipantInfo(name = shortNpub(pubkeyHex), pictureUrl = null, isMe = false)
+}
+
 @Composable
-private fun MessageInfoReactorRow(name: String, emoji: String) {
+private fun MessageInfoReactorRow(info: ParticipantInfo, emoji: String) {
     val palette = IrisTheme.palette
     Row(
         modifier = Modifier.padding(vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        IrisAvatar(label = name, size = 28.dp)
+        IrisAvatar(label = info.name, size = 32.dp, imageUrl = info.pictureUrl)
         Text(
-            text = name,
+            text = info.name,
             modifier = Modifier.weight(1f),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurface,

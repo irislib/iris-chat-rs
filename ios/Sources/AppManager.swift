@@ -228,6 +228,7 @@ protocol RustAppClient: AnyObject {
     func state() -> AppState
     func dispatch(action: AppAction) throws
     func ingestNearbyEventJson(eventJson: String) -> Bool
+    func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool
     func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String
     func verifyNearbyPresenceEventJson(eventJson: String, peerID: String, myNonce: String, theirNonce: String) -> String
     func nearbyEncodeFrame(envelopeJson: String) -> Data
@@ -254,6 +255,10 @@ final class LiveRustAppClient: RustAppClient {
 
     func ingestNearbyEventJson(eventJson: String) -> Bool {
         ffi.ingestNearbyEventJsonSafely(eventJson: eventJson)
+    }
+
+    func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool {
+        ffi.ingestNearbyEventJsonWithTransportSafely(eventJson: eventJson, transport: transport)
     }
 
     func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String {
@@ -467,8 +472,8 @@ final class AppManager: ObservableObject {
 #endif
 
 #if os(iOS) || os(macOS)
-        nearbyIris.ingestEventJson = { [weak self] eventJson in
-            self?.rust.ingestNearbyEventJson(eventJson: eventJson) ?? false
+        nearbyIris.ingestEventJson = { [weak self] eventJson, transport in
+            self?.rust.ingestNearbyEventJsonWithTransport(eventJson: eventJson, transport: transport) ?? false
         }
         nearbyIris.buildPresenceEventJson = { [weak self] peerID, myNonce, theirNonce, profileEventID in
             self?.rust.buildNearbyPresenceEventJson(

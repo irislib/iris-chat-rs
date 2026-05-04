@@ -70,7 +70,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var lastHelloAt = Date.distantPast
     private var lanService: IrisNearbyLanService?
 
-    var ingestEventJson: ((String) -> Bool)?
+    var ingestEventJson: ((_ eventJson: String, _ transport: String) -> Bool)?
     var buildPresenceEventJson: ((String, String, String, String?) -> String)?
     var verifyPresenceEventJson: ((String, String, String, String) -> String)?
     var encodeFrameJson: ((String) -> Data?)?
@@ -949,7 +949,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
             rememberProfile(from: existing.eventJson, remotePeerID: remotePeerID)
             return
         }
-        let accepted = ingestEventJson?(eventJson) ?? false
+        let transport = transportLabel(for: remotePeerID)
+        let accepted = ingestEventJson?(eventJson, transport) ?? false
         guard accepted else { return }
         rememberProfile(from: eventJson, remotePeerID: remotePeerID)
         forwarded[record.id] = record
@@ -1045,6 +1046,14 @@ final class IrisNearbyService: NSObject, ObservableObject {
             peerNonces.removeValue(forKey: peerID)
         }
         status = peers.isEmpty ? visibleIdleStatus : sidebarSubtitle
+    }
+
+    private func transportLabel(for remotePeerID: String?) -> String {
+        guard let remotePeerID, !remotePeerID.isEmpty else { return "nearby" }
+        if recentBluetoothPeerIDs.contains(remotePeerID) {
+            return "bluetooth"
+        }
+        return "wifi"
     }
 
     private var recentBluetoothPeerIDs: Set<String> {
