@@ -118,7 +118,7 @@ public partial class DeviceRosterView : UserControl
     private static string StatusText(DeviceEntrySnapshot d)
     {
         var status = d.isAuthorized ? (d.isStale ? "needs attention" : "linked") : "removed";
-        if (d.lastActivitySecs is { } secs && secs > 0)
+        if (d.addedAtSecs is { } secs && secs > 0)
         {
             var t = DateTimeOffset.FromUnixTimeSeconds((long)secs).LocalDateTime;
             var ago = DateTime.Now - t;
@@ -126,7 +126,7 @@ public partial class DeviceRosterView : UserControl
                        : ago.TotalHours < 1 ? $"{(int)ago.TotalMinutes}m ago"
                        : ago.TotalDays < 1 ? $"{(int)ago.TotalHours}h ago"
                        : $"{(int)ago.TotalDays}d ago";
-            return $"{status} · {when}";
+            return $"{status} · added {when}";
         }
         return status;
     }

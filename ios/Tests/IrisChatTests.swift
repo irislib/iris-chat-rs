@@ -426,6 +426,36 @@ final class IrisChatTests: XCTestCase {
 
         XCTAssertTrue(suppressed)
     }
+
+    @MainActor
+    func testForegroundDecryptedPushForActiveChatIsSuppressed() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let manager = AppManager(
+            rust: MockRustApp(
+                state: makeAppState(
+                    router: Router(defaultScreen: .chat(chatId: "chat-1"), screenStack: [])
+                )
+            ),
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+        let content = UNMutableNotificationContent()
+        content.title = "Bob"
+        content.body = "hello"
+        content.userInfo = [
+            "iris_foreground_decrypted_push": true,
+            "chat_id": "chat-1",
+            "title": "Bob",
+            "body": "hello",
+        ]
+
+        let options = await manager.foregroundPushPresentationOptions(content: content)
+
+        XCTAssertTrue(options.isEmpty)
+    }
 #endif
 
     @MainActor

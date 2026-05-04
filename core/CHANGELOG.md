@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.12
+
+- Create fresh one-use private invite links in the invite UI instead of exposing the relay-published local device invite secret.
+- Subscribe for private invite responses immediately and include them in mobile push invite-response filters.
+- Update to split `nostr-double-ratchet` 0.0.136 with private invite owner-key handling.
+
+## 0.1.11
+
+- Update to `nostr-double-ratchet` 0.0.135, including the current direct
+  subscription behavior, skipped-key sender coverage, and send-session
+  selection parity.
+
 ## 0.1.10
 
 - Update to `nostr-double-ratchet` 0.0.134, where low-level sessions only

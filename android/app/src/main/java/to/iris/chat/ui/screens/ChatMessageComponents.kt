@@ -10,6 +10,8 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -53,16 +55,27 @@ import androidx.compose.ui.unit.dp
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageKind
 import to.iris.chat.rust.ChatMessageSnapshot
+import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.rust.MessageReactionSnapshot
+import to.iris.chat.rust.MessageReactor
+import to.iris.chat.rust.MessageRecipientDeliverySnapshot
 import to.iris.chat.ui.components.DeliveryGlyph
 import to.iris.chat.ui.components.IrisEmojiPickerSheet
+import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.formatMessageClock
 import to.iris.chat.ui.components.isSameTimelineDay
 import to.iris.chat.ui.components.messageBubbleShape
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import java.text.DateFormat
+import java.util.Date
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -77,6 +90,7 @@ internal fun MessageBubble(
     onDelete: () -> Unit,
     downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
     onOpenImage: (ByteArray, String) -> Unit,
+    chat: CurrentChatSnapshot? = null,
 ) {
     if (message.kind == ChatMessageKind.SYSTEM) {
         SystemMessageChip(message = message)
@@ -89,8 +103,16 @@ internal fun MessageBubble(
     val hoverInteractionSource = remember { MutableInteractionSource() }
     val isHovering by hoverInteractionSource.collectIsHoveredAsState()
     var isMobileActionDockOpen by remember(message.id) { mutableStateOf(false) }
+    var isInfoOpen by remember(message.id) { mutableStateOf(false) }
     val showActionDock =
         (showDesktopActionDock && isHovering) || (!showDesktopActionDock && isMobileActionDockOpen)
+    if (isInfoOpen) {
+        MessageInfoDialog(
+            message = message,
+            chat = chat,
+            onDismiss = { isInfoOpen = false },
+        )
+    }
     val bubbleShape =
         messageBubbleShape(
             isOutgoing = message.isOutgoing,
@@ -116,12 +138,7 @@ internal fun MessageBubble(
                     MessageActionDock(
                         onReact = onReact,
                         onReply = onReply,
-                        onInfo = {
-                            clipboard.setText(
-                                "Message info",
-                                messageInfoText(message),
-                            )
-                        },
+                        onInfo = { isInfoOpen = true },
                         onDelete = onDelete,
                     )
                 }
@@ -237,12 +254,7 @@ internal fun MessageBubble(
                     MessageActionDock(
                         onReact = onReact,
                         onReply = onReply,
-                        onInfo = {
-                            clipboard.setText(
-                                "Message info",
-                                messageInfoText(message),
-                            )
-                        },
+                        onInfo = { isInfoOpen = true },
                         onDelete = onDelete,
                     )
                 }
@@ -631,23 +643,322 @@ private fun copyableMessageText(message: ChatMessageSnapshot): String {
     return pieces.joinToString("\n")
 }
 
-private fun messageInfoText(message: ChatMessageSnapshot): String {
+@Composable
+private fun MessageInfoDialog(
+    message: ChatMessageSnapshot,
+    chat: CurrentChatSnapshot?,
+    onDismiss: () -> Unit,
+) {
+    val clipboard = rememberIrisClipboard()
+    val palette = IrisTheme.palette
+    val trace = message.deliveryTrace
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+        dismissButton = {
+            TextButton(
+                onClick = {
+                    clipboard.setText("Message info", messageInfoText(message, chat))
+                },
+            ) { Text("Copy") }
+        },
+        title = { Text("Message info") },
+        text = {
+            Column(
+                modifier =
+                    Modifier
+                        .heightIn(max = 520.dp)
+                        .verticalScroll(rememberScrollState())
+                        .testTag("messageInfoDialog"),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    DeliveryGlyph(message.delivery, isOutgoing = message.isOutgoing)
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = deliveryLabel(message.delivery),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
+                        Text(
+                            text = messageInfoDirection(message),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = palette.muted,
+                        )
+                    }
+                }
+
+                MessageInfoSection(title = "Status") {
+                    MessageInfoValueRow("Time", messageInfoDateTime(message.createdAtSecs.toLong()))
+                    message.expiresAtSecs?.let {
+                        MessageInfoValueRow("Deletes", messageInfoDateTime(it.toLong()))
+                    }
+                    MessageInfoValueRow("Type", messageInfoKind(message))
+                }
+
+                MessageInfoSection(title = "People") {
+                    if (message.isOutgoing) {
+                        if (message.recipientDeliveries.isEmpty()) {
+                            MessageInfoValueRow("Recipients", "No receipts")
+                        } else {
+                            message.recipientDeliveries.forEach { recipient ->
+                                MessageInfoRecipientRow(
+                                    title = messageInfoRecipientName(recipient.ownerPubkeyHex, chat),
+                                    subtitle = messageInfoDateTime(recipient.updatedAtSecs.toLong()),
+                                    delivery = recipient.delivery,
+                                )
+                            }
+                        }
+                    } else {
+                        MessageInfoValueRow("From", message.author)
+                        MessageInfoRecipientRow(
+                            title = "You",
+                            subtitle = messageInfoDateTime(message.createdAtSecs.toLong()),
+                            delivery = message.delivery,
+                        )
+                    }
+                }
+
+                val hasTransport =
+                    trace.transportChannels.isNotEmpty() ||
+                        trace.pendingRelayEventIds.isNotEmpty() ||
+                        trace.queuedProtocolTargets.isNotEmpty() ||
+                        !trace.lastTransportError.isNullOrBlank()
+                if (hasTransport) {
+                    MessageInfoSection(title = "Transport") {
+                        if (trace.transportChannels.isNotEmpty()) {
+                            MessageInfoMultiValueRow(
+                                label = if (message.isOutgoing) "Sent over" else "Received over",
+                                values = trace.transportChannels,
+                            )
+                        }
+                        if (trace.pendingRelayEventIds.isNotEmpty()) {
+                            MessageInfoMultiValueRow(
+                                label = "Pending message servers",
+                                values = trace.pendingRelayEventIds.map(::shortMessageIdentifier),
+                                monospaced = true,
+                            )
+                        }
+                        if (trace.queuedProtocolTargets.isNotEmpty()) {
+                            MessageInfoMultiValueRow(
+                                label = "Queued devices",
+                                values = trace.queuedProtocolTargets.map(::shortMessageIdentifier),
+                                monospaced = true,
+                            )
+                        }
+                        trace.lastTransportError?.takeIf { it.isNotBlank() }?.let { error ->
+                            MessageInfoValueRow("Last error", error)
+                        }
+                    }
+                }
+
+                MessageInfoSection(title = "IDs") {
+                    MessageInfoValueRow(
+                        label = "Message",
+                        value = message.id,
+                        monospaced = true,
+                        copyValue = message.id,
+                    )
+                    message.sourceEventId?.takeIf { it.isNotBlank() }?.let { sourceEventId ->
+                        MessageInfoValueRow(
+                            label = "Received event",
+                            value = shortMessageIdentifier(sourceEventId),
+                            monospaced = true,
+                            copyValue = sourceEventId,
+                        )
+                    }
+                    if (trace.outerEventIds.isNotEmpty()) {
+                        MessageInfoCopyList("Network events", trace.outerEventIds)
+                    }
+                    if (trace.targetDeviceIds.isNotEmpty()) {
+                        MessageInfoCopyList("Target devices", trace.targetDeviceIds)
+                    }
+                }
+
+                if (message.attachments.isNotEmpty()) {
+                    MessageInfoSection(title = "Attachments") {
+                        message.attachments.forEach { attachment ->
+                            MessageInfoValueRow(
+                                label = if (attachment.filename.isBlank()) "File" else attachment.filename,
+                                value = attachment.htreeUrl,
+                                monospaced = true,
+                                copyValue = attachment.htreeUrl,
+                            )
+                        }
+                    }
+                }
+
+                if (message.reactions.isNotEmpty() || message.reactors.isNotEmpty()) {
+                    MessageInfoSection(title = "Reactions") {
+                        message.reactions.forEach { reaction ->
+                            MessageInfoValueRow(reaction.emoji, "${reaction.count}")
+                        }
+                        message.reactors.forEach { reactor ->
+                            MessageInfoValueRow(
+                                label = shortMessageIdentifier(reactor.author),
+                                value = if (reactor.emoji.isBlank()) "Removed" else reactor.emoji,
+                                monospaced = reactor.emoji.isBlank(),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+    )
+}
+
+@Composable
+private fun MessageInfoSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    IrisSectionCard(contentPadding = PaddingValues(14.dp)) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
+    }
+}
+
+@Composable
+private fun MessageInfoValueRow(
+    label: String,
+    value: String,
+    monospaced: Boolean = false,
+    copyValue: String? = null,
+) {
+    val palette = IrisTheme.palette
+    val clipboard = rememberIrisClipboard()
+    Row(
+        modifier = Modifier.padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.widthIn(min = 92.dp, max = 120.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = palette.muted,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            text = value,
+            modifier = Modifier.weight(1f),
+            style =
+                if (monospaced) {
+                    MaterialTheme.typography.labelMedium.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                } else {
+                    MaterialTheme.typography.bodyMedium
+                },
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        if (copyValue != null) {
+            TextButton(onClick = { clipboard.setText(label, copyValue) }) { Text("Copy") }
+        }
+    }
+}
+
+@Composable
+private fun MessageInfoMultiValueRow(
+    label: String,
+    values: List<String>,
+    monospaced: Boolean = false,
+) {
+    val palette = IrisTheme.palette
+    Column(
+        modifier = Modifier.padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium,
+            color = palette.muted,
+            fontWeight = FontWeight.SemiBold,
+        )
+        values.forEach { value ->
+            Text(
+                text = value,
+                style =
+                    if (monospaced) {
+                        MaterialTheme.typography.labelMedium.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                    } else {
+                        MaterialTheme.typography.bodyMedium
+                    },
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageInfoCopyList(label: String, values: List<String>) {
+    values.forEachIndexed { index, value ->
+        MessageInfoValueRow(
+            label = if (index == 0) label else "",
+            value = shortMessageIdentifier(value),
+            monospaced = true,
+            copyValue = value,
+        )
+    }
+}
+
+@Composable
+private fun MessageInfoRecipientRow(
+    title: String,
+    subtitle: String,
+    delivery: DeliveryState,
+) {
+    val palette = IrisTheme.palette
+    Row(
+        modifier = Modifier.padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        DeliveryGlyph(delivery, isOutgoing = true)
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                text = "${deliveryLabel(delivery)} · $subtitle",
+                style = MaterialTheme.typography.labelSmall,
+                color = palette.muted,
+            )
+        }
+    }
+}
+
+private fun messageInfoText(message: ChatMessageSnapshot, chat: CurrentChatSnapshot? = null): String {
     val trace = message.deliveryTrace
     val lines =
         mutableListOf(
             "Message ${message.id}",
-            "Time ${formatMessageClock(message.createdAtSecs.toLong())}",
+            "Time ${messageInfoDateTime(message.createdAtSecs.toLong())}",
+            "Type ${messageInfoKind(message)}",
             "Status ${deliveryLabel(message.delivery)}",
         )
+    message.expiresAtSecs?.let {
+        lines += "Deletes ${messageInfoDateTime(it.toLong())}"
+    }
     if (trace.transportChannels.isNotEmpty()) {
-        lines += "Channels ${trace.transportChannels.joinToString(", ")}"
+        lines += "${if (message.isOutgoing) "Sent over" else "Received over"} ${trace.transportChannels.joinToString(", ")}"
     }
     if (message.recipientDeliveries.isNotEmpty()) {
         lines += "Recipients"
         lines +=
             message.recipientDeliveries.map { recipient ->
-                "- ${shortMessageIdentifier(recipient.ownerPubkeyHex)} ${deliveryLabel(recipient.delivery)}"
+                "- ${messageInfoRecipientName(recipient.ownerPubkeyHex, chat)} ${deliveryLabel(recipient.delivery)} ${messageInfoDateTime(recipient.updatedAtSecs.toLong())}"
             }
+    } else if (!message.isOutgoing) {
+        lines += "From ${message.author}"
+        lines += "You ${deliveryLabel(message.delivery)}"
     }
     if (trace.outerEventIds.isNotEmpty()) {
         lines += "Network IDs ${shortMessageIdentifierList(trace.outerEventIds)}"
@@ -667,7 +978,43 @@ private fun messageInfoText(message: ChatMessageSnapshot): String {
     message.sourceEventId?.takeIf { it.isNotBlank() }?.let { sourceEventId ->
         lines += "Received as ${shortMessageIdentifier(sourceEventId)}"
     }
+    if (message.attachments.isNotEmpty()) {
+        lines += "Attachments"
+        lines +=
+            message.attachments.map { attachment ->
+                "- ${if (attachment.filename.isBlank()) "File" else attachment.filename} ${attachment.htreeUrl}"
+            }
+    }
+    if (message.reactions.isNotEmpty()) {
+        lines += "Reactions"
+        lines += message.reactions.map { "- ${it.emoji} ${it.count}" }
+    }
     return lines.joinToString("\n")
+}
+
+private fun messageInfoDirection(message: ChatMessageSnapshot): String =
+    when {
+        message.kind == ChatMessageKind.SYSTEM -> "System message"
+        message.isOutgoing -> "Sent message"
+        else -> "Received message"
+    }
+
+private fun messageInfoKind(message: ChatMessageSnapshot): String =
+    when (message.kind) {
+        ChatMessageKind.SYSTEM -> "System"
+        ChatMessageKind.USER -> if (message.isOutgoing) "Sent" else "Received"
+    }
+
+private fun messageInfoRecipientName(ownerPubkeyHex: String, chat: CurrentChatSnapshot?): String {
+    if (chat != null && chat.kind == ChatKind.DIRECT && chat.chatId == ownerPubkeyHex) {
+        return chat.displayName
+    }
+    return shortMessageIdentifier(ownerPubkeyHex)
+}
+
+private fun messageInfoDateTime(secs: Long): String {
+    val formatter = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+    return formatter.format(Date(secs * 1000L))
 }
 
 private fun shortMessageIdentifierList(values: List<String>): String =

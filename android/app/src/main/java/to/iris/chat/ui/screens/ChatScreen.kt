@@ -401,6 +401,7 @@ fun ChatScreen(
                                 onOpenImage = { data, filename ->
                                     imageViewerItem = DownloadedImageAttachment(data = data, filename = filename)
                                 },
+                                chat = chat,
                             )
                         }
                     }

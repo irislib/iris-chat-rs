@@ -284,7 +284,7 @@ impl AppCore {
                         is_current_device: device_pubkey_hex == current_device_pubkey_hex,
                         is_authorized: true,
                         is_stale: false,
-                        last_activity_secs: Some(device.created_at_secs),
+                        added_at_secs: Some(device.created_at_secs),
                     },
                 );
             }
@@ -304,7 +304,7 @@ impl AppCore {
                     logged_in.authorization_state,
                     LocalAuthorizationState::Revoked
                 ),
-                last_activity_secs: None,
+                added_at_secs: None,
             });
 
         let mut devices = entries.into_values().collect::<Vec<_>>();
@@ -386,7 +386,15 @@ impl AppCore {
     }
 
     pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
-        let invite = &self.logged_in.as_ref()?.local_invite;
+        let invite = self
+            .private_chat_invites
+            .values()
+            .max_by_key(|invite| invite.created_at)
+            .or_else(|| {
+                self.logged_in
+                    .as_ref()
+                    .map(|logged_in| &logged_in.local_invite)
+            })?;
         let url = nostr_double_ratchet_nostr::invite_url(invite, CHAT_INVITE_ROOT_URL).ok()?;
         Some(PublicInviteSnapshot { url })
     }

@@ -1,4 +1,4 @@
-use super::invites::parse_public_invite_input;
+use super::invites::{load_private_chat_invites, parse_public_invite_input};
 use super::*;
 
 impl AppCore {
@@ -265,6 +265,7 @@ impl AppCore {
         self.push_debug_log("session.logout", "clearing runtime state");
         let previous_rev = self.state.rev;
         self.stop_pending_linked_device();
+        self.private_chat_invites.clear();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
@@ -649,6 +650,7 @@ impl AppCore {
             owner_pubkey.to_hex(),
             device_pubkey.to_hex(),
         )) as Arc<dyn StorageAdapter>;
+        self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
         match import_legacy_ndr_storage(storage.as_ref(), owner_pubkey) {
             Ok(summary) => {
                 if summary.imported > 0 || summary.replaced_empty > 0 {

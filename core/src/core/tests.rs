@@ -1377,6 +1377,38 @@ fn mobile_push_snapshot_tracks_local_invite_when_enabled() {
 }
 
 #[test]
+fn mobile_push_snapshot_tracks_private_invite_when_enabled() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("mobile-push-private-invite-response", &owner, &device);
+    core.handle_action(AppAction::CreatePublicInvite);
+
+    let snapshot = core.build_mobile_push_sync_snapshot();
+
+    let local_invite_pubkey = core
+        .logged_in
+        .as_ref()
+        .expect("logged in")
+        .local_invite
+        .inviter_ephemeral_public_key
+        .to_string();
+    let private_invite_pubkey = core
+        .private_chat_invites
+        .values()
+        .next()
+        .expect("private invite")
+        .inviter_ephemeral_public_key
+        .to_string();
+
+    assert!(snapshot
+        .invite_response_pubkeys
+        .contains(&local_invite_pubkey));
+    assert!(snapshot
+        .invite_response_pubkeys
+        .contains(&private_invite_pubkey));
+}
+
+#[test]
 fn mobile_push_snapshot_omits_local_invite_when_disabled() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -2061,6 +2093,129 @@ fn recent_protocol_filters_include_runtime_invite_response_backfill() {
             .get("since")
             .and_then(|since| since.as_u64()),
         Some(1_777_159_500 - DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS)
+    );
+}
+
+#[test]
+fn create_invite_generates_private_link_without_public_republish() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("private-invite-create", &owner, &device);
+    core.process_runtime_events();
+    core.pending_relay_publishes.clear();
+
+    let local_invite_response_pubkey = core
+        .logged_in
+        .as_ref()
+        .expect("logged in")
+        .local_invite
+        .inviter_ephemeral_public_key
+        .to_string();
+
+    core.handle_action(AppAction::CreatePublicInvite);
+
+    assert_eq!(core.state.toast, None);
+    let snapshot = core
+        .state
+        .public_invite
+        .as_ref()
+        .expect("private invite snapshot");
+    let invite =
+        nostr_double_ratchet_nostr::parse_invite_url(&snapshot.url).expect("parse private invite");
+    assert_eq!(invite.purpose.as_deref(), Some("private"));
+    assert_eq!(invite.max_uses, Some(1));
+    assert_eq!(invite.owner_public_key, Some(owner.public_key()));
+    assert_ne!(
+        invite.inviter_ephemeral_public_key.to_string(),
+        local_invite_response_pubkey,
+        "private invite links must not reuse the relay-published local invite secret"
+    );
+    assert_eq!(
+        core.private_chat_invites
+            .values()
+            .next()
+            .map(|invite| invite.inviter_ephemeral_public_key),
+        Some(invite.inviter_ephemeral_public_key)
+    );
+    assert!(
+        pending_events_with_kind(&core, INVITE_EVENT_KIND).is_empty(),
+        "creating a private invite link must not publish a relay-discoverable invite event"
+    );
+
+    let invite_pubkey_hex = invite.inviter_ephemeral_public_key.to_string();
+    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let subscribed_for_response = filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .any(|filter| {
+            filter
+                .get("#p")
+                .and_then(|pubkeys| pubkeys.as_array())
+                .is_some_and(|pubkeys| {
+                    pubkeys
+                        .iter()
+                        .any(|pubkey| pubkey.as_str() == Some(invite_pubkey_hex.as_str()))
+                })
+        });
+    assert!(subscribed_for_response);
+}
+
+#[test]
+fn private_invite_first_message_installs_creator_session() {
+    let alice_owner = Keys::generate();
+    let alice_device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+
+    let mut alice = logged_in_test_core(
+        "private-invite-roundtrip-alice",
+        &alice_owner,
+        &alice_device,
+    );
+    alice.process_runtime_events();
+    alice.pending_relay_publishes.clear();
+    alice.handle_action(AppAction::CreatePublicInvite);
+    let invite_url = alice
+        .state
+        .public_invite
+        .as_ref()
+        .expect("alice invite")
+        .url
+        .clone();
+
+    let mut bob = logged_in_test_core("private-invite-roundtrip-bob", &bob_owner, &bob_device);
+    bob.process_runtime_events();
+    bob.pending_relay_publishes.clear();
+    bob.handle_action(AppAction::AcceptInvite {
+        invite_input: invite_url,
+    });
+    assert_eq!(bob.state.toast, None);
+    assert_eq!(bob.active_chat_id, Some(alice_owner.public_key().to_hex()));
+
+    bob.handle_action(AppAction::SendMessage {
+        chat_id: alice_owner.public_key().to_hex(),
+        text: "hello from private invite".to_string(),
+    });
+    let response = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
+        .into_iter()
+        .next()
+        .expect("invite response event");
+    alice.handle_relay_event(response);
+
+    assert!(
+        alice
+            .logged_in
+            .as_ref()
+            .expect("alice logged in")
+            .ndr_runtime
+            .export_active_session_state(bob_owner.public_key())
+            .expect("alice session export")
+            .is_some(),
+        "Alice should install Bob's session from the private invite response"
+    );
+    assert!(
+        alice.private_chat_invites.is_empty(),
+        "one-use private invite should be removed after a matching response"
     );
 }
 
@@ -3776,6 +3931,14 @@ fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
     for event in drain_signed_events(from, signer) {
         to.process_received_event(event);
     }
+}
+
+fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
+    core.pending_relay_publishes
+        .values()
+        .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
+        .filter(|event| event.kind.as_u16() as u32 == kind)
+        .collect()
 }
 
 fn complete_first_contact(

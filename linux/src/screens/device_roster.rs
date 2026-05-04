@@ -4,6 +4,7 @@ use adw::prelude::*;
 use iris_chat_core::{AppAction, AppState, DeviceEntrySnapshot, DeviceRosterSnapshot};
 
 use crate::app_manager::AppManager;
+use crate::screens::chat_list::{relative_time, unix_now};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let scrolled = gtk::ScrolledWindow::new();
@@ -128,6 +129,12 @@ fn device_row(
         "Linked device".to_string()
     };
     let row = adw::ActionRow::builder().title(title).build();
+    if let Some(secs) = device.added_at_secs {
+        let ago = relative_time(secs, unix_now());
+        if !ago.is_empty() {
+            row.set_subtitle(&format!("Added {} ago", ago));
+        }
+    }
 
     let status = gtk::Label::new(Some(if device.is_authorized {
         "Linked"

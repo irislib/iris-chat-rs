@@ -3,8 +3,8 @@ use std::rc::Rc;
 use adw::prelude::*;
 use iris_chat_core::{
     proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot,
-    CurrentChatSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot, OutgoingAttachment,
-    PreferencesSnapshot, DeliveryState,
+    CurrentChatSnapshot, DeliveryState, MessageAttachmentSnapshot, MessageReactionSnapshot,
+    OutgoingAttachment, PreferencesSnapshot,
 };
 
 use crate::app_manager::AppManager;
@@ -129,6 +129,335 @@ pub fn present_chat_info(
 
     dialog.set_child(Some(&content));
     dialog.present(parent);
+}
+
+fn present_message_info(
+    parent: Option<&gtk::Window>,
+    message: &ChatMessageSnapshot,
+    chat: &CurrentChatSnapshot,
+) {
+    let dialog = adw::Dialog::builder()
+        .title("Message info")
+        .content_width(420)
+        .content_height(560)
+        .build();
+
+    let scroll = gtk::ScrolledWindow::new();
+    scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    scroll.set_vscrollbar_policy(gtk::PolicyType::Automatic);
+    scroll.set_propagate_natural_height(true);
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    content.set_margin_top(20);
+    content.set_margin_bottom(20);
+    content.set_margin_start(20);
+    content.set_margin_end(20);
+
+    let header_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    header_row.set_halign(gtk::Align::Start);
+    let glyph = gtk::Label::new(Some(delivery_glyph(&message.delivery)));
+    glyph.add_css_class("title-2");
+    header_row.append(&glyph);
+    let header_text = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    let status_label = gtk::Label::new(Some(delivery_label(&message.delivery)));
+    status_label.add_css_class("title-3");
+    status_label.set_xalign(0.0);
+    header_text.append(&status_label);
+    let direction_label = gtk::Label::new(Some(message_info_direction(message)));
+    direction_label.add_css_class("dim-label");
+    direction_label.set_xalign(0.0);
+    header_text.append(&direction_label);
+    header_row.append(&header_text);
+    let header_spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    header_spacer.set_hexpand(true);
+    header_row.append(&header_spacer);
+    let copy_all = gtk::Button::with_label("Copy");
+    copy_all.add_css_class("flat");
+    let info_text = message_info_text(message, Some(chat));
+    copy_all.connect_clicked(move |_| {
+        crate::platform::clipboard::copy(&info_text);
+    });
+    header_row.append(&copy_all);
+    content.append(&header_row);
+    content.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+
+    // Status section
+    let status_section = info_section("Status");
+    info_value_row(
+        &status_section,
+        "Time",
+        &message_info_date_time(message.created_at_secs),
+    );
+    if let Some(expires) = message.expires_at_secs {
+        info_value_row(&status_section, "Deletes", &message_info_date_time(expires));
+    }
+    info_value_row(&status_section, "Type", message_info_kind(message));
+    content.append(&status_section);
+
+    // People
+    let people_section = info_section("People");
+    if message.is_outgoing {
+        if message.recipient_deliveries.is_empty() {
+            info_value_row(&people_section, "Recipients", "No receipts");
+        } else {
+            for recipient in &message.recipient_deliveries {
+                info_recipient_row(
+                    &people_section,
+                    &message_info_recipient_name(&recipient.owner_pubkey_hex, chat),
+                    &format!(
+                        "{} · {}",
+                        delivery_label(&recipient.delivery),
+                        message_info_date_time(recipient.updated_at_secs)
+                    ),
+                    &recipient.delivery,
+                );
+            }
+        }
+    } else {
+        info_value_row(&people_section, "From", &message.author);
+        info_recipient_row(
+            &people_section,
+            "You",
+            &format!(
+                "{} · {}",
+                delivery_label(&message.delivery),
+                message_info_date_time(message.created_at_secs)
+            ),
+            &message.delivery,
+        );
+    }
+    content.append(&people_section);
+
+    // Transport
+    let trace = &message.delivery_trace;
+    let has_transport = !trace.transport_channels.is_empty()
+        || !trace.pending_relay_event_ids.is_empty()
+        || !trace.queued_protocol_targets.is_empty()
+        || trace
+            .last_transport_error
+            .as_deref()
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+    if has_transport {
+        let transport_section = info_section("Transport");
+        if !trace.transport_channels.is_empty() {
+            info_multivalue_row(
+                &transport_section,
+                if message.is_outgoing {
+                    "Sent over"
+                } else {
+                    "Received over"
+                },
+                &trace.transport_channels,
+                false,
+            );
+        }
+        if !trace.pending_relay_event_ids.is_empty() {
+            let shortened: Vec<String> = trace
+                .pending_relay_event_ids
+                .iter()
+                .map(|id| short_message_identifier(id))
+                .collect();
+            info_multivalue_row(
+                &transport_section,
+                "Pending message servers",
+                &shortened,
+                true,
+            );
+        }
+        if !trace.queued_protocol_targets.is_empty() {
+            let shortened: Vec<String> = trace
+                .queued_protocol_targets
+                .iter()
+                .map(|id| short_message_identifier(id))
+                .collect();
+            info_multivalue_row(&transport_section, "Queued devices", &shortened, true);
+        }
+        if let Some(error) = trace
+            .last_transport_error
+            .as_deref()
+            .filter(|s| !s.is_empty())
+        {
+            info_value_row(&transport_section, "Last error", error);
+        }
+        content.append(&transport_section);
+    }
+
+    // IDs
+    let ids_section = info_section("IDs");
+    info_copy_row(&ids_section, "Message", &message.id, true);
+    if let Some(source_event_id) = message
+        .source_event_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+    {
+        info_copy_row(&ids_section, "Received event", source_event_id, true);
+    }
+    for (idx, value) in trace.outer_event_ids.iter().enumerate() {
+        info_copy_row(
+            &ids_section,
+            if idx == 0 { "Network events" } else { "" },
+            value,
+            true,
+        );
+    }
+    for (idx, value) in trace.target_device_ids.iter().enumerate() {
+        info_copy_row(
+            &ids_section,
+            if idx == 0 { "Target devices" } else { "" },
+            value,
+            true,
+        );
+    }
+    content.append(&ids_section);
+
+    // Attachments
+    if !message.attachments.is_empty() {
+        let attach_section = info_section("Attachments");
+        for attachment in &message.attachments {
+            let label = if attachment.filename.is_empty() {
+                "File".to_string()
+            } else {
+                attachment.filename.clone()
+            };
+            info_copy_row(&attach_section, &label, &attachment.htree_url, true);
+        }
+        content.append(&attach_section);
+    }
+
+    // Reactions
+    if !message.reactions.is_empty() || !message.reactors.is_empty() {
+        let react_section = info_section("Reactions");
+        for reaction in &message.reactions {
+            info_value_row(&react_section, &reaction.emoji, &reaction.count.to_string());
+        }
+        for reactor in &message.reactors {
+            let value = if reactor.emoji.is_empty() {
+                "Removed".to_string()
+            } else {
+                reactor.emoji.clone()
+            };
+            info_value_row(
+                &react_section,
+                &short_message_identifier(&reactor.author),
+                &value,
+            );
+        }
+        content.append(&react_section);
+    }
+
+    scroll.set_child(Some(&content));
+    dialog.set_child(Some(&scroll));
+    dialog.present(parent);
+}
+
+fn info_section(title: &str) -> gtk::Box {
+    let section = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    section.add_css_class("card");
+    section.set_margin_top(2);
+    section.set_margin_bottom(2);
+    let title_label = gtk::Label::new(Some(title));
+    title_label.add_css_class("heading");
+    title_label.set_xalign(0.0);
+    title_label.set_margin_top(10);
+    title_label.set_margin_bottom(2);
+    title_label.set_margin_start(12);
+    title_label.set_margin_end(12);
+    section.append(&title_label);
+    section
+}
+
+fn info_value_row(parent: &gtk::Box, label: &str, value: &str) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.set_margin_top(2);
+    row.set_margin_start(12);
+    row.set_margin_end(12);
+    let label_widget = gtk::Label::new(Some(label));
+    label_widget.add_css_class("dim-label");
+    label_widget.set_xalign(0.0);
+    label_widget.set_width_chars(14);
+    row.append(&label_widget);
+    let value_widget = gtk::Label::new(Some(value));
+    value_widget.set_xalign(0.0);
+    value_widget.set_wrap(true);
+    value_widget.set_selectable(true);
+    value_widget.set_hexpand(true);
+    row.append(&value_widget);
+    parent.append(&row);
+}
+
+fn info_multivalue_row(parent: &gtk::Box, label: &str, values: &[String], monospace: bool) {
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    column.set_margin_top(2);
+    column.set_margin_start(12);
+    column.set_margin_end(12);
+    let label_widget = gtk::Label::new(Some(label));
+    label_widget.add_css_class("dim-label");
+    label_widget.set_xalign(0.0);
+    column.append(&label_widget);
+    for value in values {
+        let value_widget = gtk::Label::new(Some(value));
+        value_widget.set_xalign(0.0);
+        value_widget.set_wrap(true);
+        value_widget.set_selectable(true);
+        if monospace {
+            value_widget.add_css_class("monospace");
+        }
+        column.append(&value_widget);
+    }
+    parent.append(&column);
+}
+
+fn info_copy_row(parent: &gtk::Box, label: &str, value: &str, monospace: bool) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.set_margin_top(2);
+    row.set_margin_start(12);
+    row.set_margin_end(12);
+    let label_widget = gtk::Label::new(Some(label));
+    label_widget.add_css_class("dim-label");
+    label_widget.set_xalign(0.0);
+    label_widget.set_width_chars(14);
+    row.append(&label_widget);
+    let display = short_message_identifier(value);
+    let value_widget = gtk::Label::new(Some(&display));
+    value_widget.set_xalign(0.0);
+    value_widget.set_wrap(true);
+    value_widget.set_selectable(true);
+    value_widget.set_hexpand(true);
+    if monospace {
+        value_widget.add_css_class("monospace");
+    }
+    row.append(&value_widget);
+    let copy = gtk::Button::from_icon_name("edit-copy-symbolic");
+    copy.add_css_class("flat");
+    let value_owned = value.to_string();
+    copy.connect_clicked(move |_| {
+        crate::platform::clipboard::copy(&value_owned);
+    });
+    row.append(&copy);
+    parent.append(&row);
+}
+
+fn info_recipient_row(parent: &gtk::Box, title: &str, subtitle: &str, delivery: &DeliveryState) {
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    row.set_margin_top(4);
+    row.set_margin_bottom(4);
+    row.set_margin_start(12);
+    row.set_margin_end(12);
+    let glyph = gtk::Label::new(Some(delivery_glyph(delivery)));
+    row.append(&glyph);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 1);
+    let title_widget = gtk::Label::new(Some(title));
+    title_widget.set_xalign(0.0);
+    title_widget.add_css_class("body");
+    column.append(&title_widget);
+    let subtitle_widget = gtk::Label::new(Some(subtitle));
+    subtitle_widget.add_css_class("caption");
+    subtitle_widget.add_css_class("dim-label");
+    subtitle_widget.set_xalign(0.0);
+    column.append(&subtitle_widget);
+    row.append(&column);
+    parent.append(&row);
 }
 
 fn ttl_strip(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widget {
@@ -382,7 +711,7 @@ fn render_message(
         bubble.append(&footer);
     }
 
-    let popover = build_message_popover(message, manager);
+    let popover = build_message_popover(message, chat, manager);
     popover.set_parent(&bubble);
     let popover_for_gesture = popover.clone();
     let gesture = gtk::GestureClick::new();
@@ -423,7 +752,11 @@ fn render_message(
     row.upcast()
 }
 
-fn build_message_popover(message: &ChatMessageSnapshot, manager: &Rc<AppManager>) -> gtk::Popover {
+fn build_message_popover(
+    message: &ChatMessageSnapshot,
+    chat: &CurrentChatSnapshot,
+    manager: &Rc<AppManager>,
+) -> gtk::Popover {
     let popover = gtk::Popover::new();
     popover.set_has_arrow(false);
     popover.set_position(gtk::PositionType::Top);
@@ -467,16 +800,18 @@ fn build_message_popover(message: &ChatMessageSnapshot, manager: &Rc<AppManager>
     });
     column.append(&copy);
 
-    let copy_info = gtk::Button::with_label("Copy info");
-    copy_info.add_css_class("flat");
-    copy_info.set_halign(gtk::Align::Fill);
-    let info = message_info_text(message);
+    let info_btn = gtk::Button::with_label("Message info");
+    info_btn.add_css_class("flat");
+    info_btn.set_halign(gtk::Align::Fill);
     let popover_for_info = popover.clone();
-    copy_info.connect_clicked(move |_| {
-        crate::platform::clipboard::copy(&info);
+    let info_message = message.clone();
+    let info_chat = chat.clone();
+    info_btn.connect_clicked(move |btn| {
+        let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+        present_message_info(parent.as_ref(), &info_message, &info_chat);
         popover_for_info.popdown();
     });
-    column.append(&copy_info);
+    column.append(&info_btn);
 
     let delete = gtk::Button::with_label("Delete locally");
     delete.add_css_class("flat");
@@ -584,25 +919,44 @@ fn delivery_label(state: &DeliveryState) -> &'static str {
     }
 }
 
-fn message_info_text(message: &ChatMessageSnapshot) -> String {
+fn message_info_text(message: &ChatMessageSnapshot, chat: Option<&CurrentChatSnapshot>) -> String {
     let trace = &message.delivery_trace;
     let mut lines = vec![
         format!("Message {}", message.id),
-        format!("Time {}", relative_time(message.created_at_secs, unix_now())),
+        format!("Time {}", message_info_date_time(message.created_at_secs)),
+        format!("Type {}", message_info_kind(message)),
         format!("Status {}", delivery_label(&message.delivery)),
     ];
+    if let Some(expires) = message.expires_at_secs {
+        lines.push(format!("Deletes {}", message_info_date_time(expires)));
+    }
     if !trace.transport_channels.is_empty() {
-        lines.push(format!("Channels {}", trace.transport_channels.join(", ")));
+        lines.push(format!(
+            "{} {}",
+            if message.is_outgoing {
+                "Sent over"
+            } else {
+                "Received over"
+            },
+            trace.transport_channels.join(", "),
+        ));
     }
     if !message.recipient_deliveries.is_empty() {
         lines.push("Recipients".to_string());
         lines.extend(message.recipient_deliveries.iter().map(|recipient| {
+            let name = chat
+                .map(|c| message_info_recipient_name(&recipient.owner_pubkey_hex, c))
+                .unwrap_or_else(|| short_message_identifier(&recipient.owner_pubkey_hex));
             format!(
-                "- {} {}",
-                short_message_identifier(&recipient.owner_pubkey_hex),
-                delivery_label(&recipient.delivery)
+                "- {} {} {}",
+                name,
+                delivery_label(&recipient.delivery),
+                message_info_date_time(recipient.updated_at_secs),
             )
         }));
+    } else if !message.is_outgoing {
+        lines.push(format!("From {}", message.author));
+        lines.push(format!("You {}", delivery_label(&message.delivery)));
     }
     if !trace.outer_event_ids.is_empty() {
         lines.push(format!(
@@ -628,16 +982,86 @@ fn message_info_text(message: &ChatMessageSnapshot) -> String {
             short_message_identifier_list(&trace.target_device_ids)
         ));
     }
-    if let Some(error) = trace.last_transport_error.as_deref().filter(|error| !error.is_empty()) {
+    if let Some(error) = trace
+        .last_transport_error
+        .as_deref()
+        .filter(|error| !error.is_empty())
+    {
         lines.push(format!("Last send error {}", error));
     }
-    if let Some(source_event_id) = message.source_event_id.as_deref().filter(|id| !id.is_empty()) {
+    if let Some(source_event_id) = message
+        .source_event_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+    {
         lines.push(format!(
             "Received as {}",
             short_message_identifier(source_event_id)
         ));
     }
+    if !message.attachments.is_empty() {
+        lines.push("Attachments".to_string());
+        lines.extend(message.attachments.iter().map(|attachment| {
+            format!(
+                "- {} {}",
+                if attachment.filename.is_empty() {
+                    "File"
+                } else {
+                    attachment.filename.as_str()
+                },
+                attachment.htree_url,
+            )
+        }));
+    }
+    if !message.reactions.is_empty() {
+        lines.push("Reactions".to_string());
+        lines.extend(
+            message
+                .reactions
+                .iter()
+                .map(|reaction| format!("- {} {}", reaction.emoji, reaction.count)),
+        );
+    }
     lines.join("\n")
+}
+
+fn message_info_direction(message: &ChatMessageSnapshot) -> &'static str {
+    match message.kind {
+        ChatMessageKind::System => "System message",
+        _ if message.is_outgoing => "Sent message",
+        _ => "Received message",
+    }
+}
+
+fn message_info_kind(message: &ChatMessageSnapshot) -> &'static str {
+    match message.kind {
+        ChatMessageKind::System => "System",
+        _ => {
+            if message.is_outgoing {
+                "Sent"
+            } else {
+                "Received"
+            }
+        }
+    }
+}
+
+fn message_info_recipient_name(owner_pubkey_hex: &str, chat: &CurrentChatSnapshot) -> String {
+    if matches!(chat.kind, ChatKind::Direct) && chat.chat_id == owner_pubkey_hex {
+        return chat.display_name.clone();
+    }
+    short_message_identifier(owner_pubkey_hex)
+}
+
+fn message_info_date_time(secs: u64) -> String {
+    let glib_dt = match gtk::glib::DateTime::from_unix_local(secs as i64) {
+        Ok(v) => v,
+        Err(_) => return relative_time(secs, unix_now()),
+    };
+    glib_dt
+        .format("%b %-d, %Y · %H:%M")
+        .map(|s| s.to_string())
+        .unwrap_or_else(|_| relative_time(secs, unix_now()))
 }
 
 fn short_message_identifier_list(values: &[String]) -> String {

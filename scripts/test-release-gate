@@ -88,6 +88,8 @@ run_step() {
 
 echo "iris chat release gate (${MODE})"
 
+run_step "release publish guard" "${ROOT_DIR}/scripts/test_release_publish_guard"
+
 run_step "fast local tests" "${ROOT_DIR}/scripts/test_fast.sh"
 
 if [[ "${RUN_NATIVE_CONTRACT}" == "1" ]]; then

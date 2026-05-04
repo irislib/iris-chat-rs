@@ -123,7 +123,7 @@ pub struct DeviceEntrySnapshot {
     pub is_current_device: bool,
     pub is_authorized: bool,
     pub is_stale: bool,
-    pub last_activity_secs: Option<u64>,
+    pub added_at_secs: Option<u64>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

@@ -1,6 +1,5 @@
-# Iris Chat 3.0.9
+# Iris Chat 3.0.12
 
-- Nearby is now available in the Windows and Linux desktop apps over Wi-Fi.
-- Opening Nearby enables Wi-Fi discovery on first use so the OS can request network access when needed.
-- Nearby and settings copy now uses simpler Wi-Fi labels.
-- Uses nostr-double-ratchet 0.0.127.
+- Adds message info views for inspecting message status, recipients, transport IDs, attachments, and reactions.
+- Shows device add dates in the linked-device roster.
+- Uses nostr-double-ratchet 0.0.136 with private one-use invite links.

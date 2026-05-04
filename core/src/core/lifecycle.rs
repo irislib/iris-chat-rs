@@ -40,6 +40,7 @@ impl AppCore {
             state: state.clone(),
             logged_in: None,
             pending_linked_device: None,
+            private_chat_invites: BTreeMap::new(),
             threads: BTreeMap::new(),
             active_chat_id: None,
             screen_stack: Vec::new(),

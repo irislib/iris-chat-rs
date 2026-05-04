@@ -44,7 +44,19 @@ impl AppCore {
         );
         let message_author_pubkeys = sorted_hexes(message_author_pubkeys);
         let invite_response_pubkeys = if self.preferences.invite_acceptance_notifications_enabled {
-            vec![logged_in.local_invite.inviter_ephemeral_public_key.to_hex()]
+            let mut pubkeys = HashSet::new();
+            pubkeys.insert(
+                logged_in
+                    .local_invite
+                    .inviter_ephemeral_public_key
+                    .to_string(),
+            );
+            pubkeys.extend(
+                self.private_chat_invite_response_pubkeys()
+                    .into_iter()
+                    .map(|pubkey| pubkey.to_hex()),
+            );
+            sorted_hexes(pubkeys)
         } else {
             Vec::new()
         };
@@ -330,6 +342,10 @@ pub(crate) fn decrypt_mobile_push_notification(
         "sender_pubkey".to_string(),
         serde_json::Value::String(sender_owner.to_hex()),
     );
+    resolved_payload.insert(
+        "chat_id".to_string(),
+        serde_json::Value::String(resolved_chat_id),
+    );
     if let Some(group_id) = group_id {
         resolved_payload.insert("group_id".to_string(), serde_json::Value::String(group_id));
     }
@@ -428,6 +444,10 @@ fn lookup_mobile_push_preview(
     payload.insert(
         "inner_kind".to_string(),
         serde_json::Value::String(MOBILE_PUSH_CHAT_MESSAGE_KIND.to_string()),
+    );
+    payload.insert(
+        "chat_id".to_string(),
+        serde_json::Value::String(chat_id.clone()),
     );
     if let Some(pubkey) = sender_pubkey {
         payload.insert(
@@ -1139,4 +1159,45 @@ fn should_show_mobile_push_kind(kind: u64) -> bool {
         kind,
         MOBILE_PUSH_CHAT_MESSAGE_KIND | MOBILE_PUSH_INVITE_RESPONSE_KIND
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::params;
+
+    #[test]
+    fn sqlite_preview_resolution_keeps_chat_id_for_foreground_suppression() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let conn = open_database(tmp.path()).expect("open database");
+        let conn = conn.lock().expect("lock database");
+        conn.execute(
+            "INSERT INTO threads(chat_id, unread_count, updated_at_secs) VALUES (?1, 1, 99)",
+            ["direct-chat-id"],
+        )
+        .expect("insert thread");
+        conn.execute(
+            "INSERT INTO messages(
+                chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery, source_event_id
+             ) VALUES (?1, ?2, 'user', ?3, ?4, 0, 99, 'received', ?5)",
+            params![
+                "direct-chat-id",
+                "message-1",
+                "Alice",
+                "hello",
+                "outer-event-id"
+            ],
+        )
+        .expect("insert message");
+
+        let resolution = lookup_mobile_push_preview(tmp.path().to_str().unwrap(), "outer-event-id")
+            .expect("resolved preview");
+        let payload: serde_json::Value =
+            serde_json::from_str(&resolution.payload_json).expect("payload json");
+
+        assert_eq!(
+            payload.get("chat_id").and_then(|value| value.as_str()),
+            Some("direct-chat-id")
+        );
+    }
 }

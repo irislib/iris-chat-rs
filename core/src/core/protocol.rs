@@ -1,6 +1,7 @@
 use super::*;
 
 const GROUP_OUTER_SUBSCRIPTION_ID: &str = "ndr-group-outer";
+const PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID: &str = "ndr-private-invite-responses";
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 
@@ -211,6 +212,18 @@ impl AppCore {
             options.message_lookback_seconds = CATCH_UP_LOOKBACK_SECS;
             filters.extend(logged_in.ndr_runtime.protocol_backfill_filters(options));
         }
+        let private_invite_response_pubkeys = self.private_chat_invite_response_pubkeys();
+        if !private_invite_response_pubkeys.is_empty() {
+            filters.push(
+                Filter::new()
+                    .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
+                    .pubkeys(private_invite_response_pubkeys)
+                    .since(Timestamp::from(
+                        now.get()
+                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
+                    )),
+            );
+        }
         filters
     }
 
@@ -408,7 +421,7 @@ impl AppCore {
             return;
         }
 
-        let subscription_filters_changed = if !group_authors.is_empty() {
+        let group_subscription_changed = if !group_authors.is_empty() {
             let filter = Filter::new()
                 .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
                 .authors(group_authors.clone());
@@ -438,6 +451,35 @@ impl AppCore {
             }
             removed
         };
+        let private_invite_response_pubkeys = self.private_chat_invite_response_pubkeys();
+        let private_invite_subscription_changed = if !private_invite_response_pubkeys.is_empty() {
+            let filter = Filter::new()
+                .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
+                .pubkeys(private_invite_response_pubkeys);
+            self.upsert_protocol_subscription(
+                PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID.to_string(),
+                filter,
+            )
+        } else {
+            let removed = self
+                .protocol_subscription_runtime
+                .active_subscriptions
+                .remove(PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID)
+                .is_some();
+            if removed {
+                let client = client.clone();
+                self.runtime.spawn(async move {
+                    let _ = client
+                        .unsubscribe(&SubscriptionId::new(
+                            PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID,
+                        ))
+                        .await;
+                });
+            }
+            removed
+        };
+        let subscription_filters_changed =
+            group_subscription_changed || private_invite_subscription_changed;
 
         // Only bump the refresh token + emit a debug log entry when the
         // computed plan has actually changed since the last emission.
