@@ -130,7 +130,9 @@ SCRIPT_ARGS=(--relay "${RELAY}")
 [[ "${FRESH}" -eq 1 ]] && SCRIPT_ARGS+=(--fresh)
 [[ "${SKIP_BUILD}" -eq 1 ]] && SCRIPT_ARGS+=(--skip-build)
 [[ "${HEADLESS}" -eq 1 ]] && SCRIPT_ARGS+=(--headless)
-SCRIPT_ARGS+=("${EXTRA_ARGS[@]}")
+if [[ ${#EXTRA_ARGS[@]} -gt 0 ]]; then
+  SCRIPT_ARGS+=("${EXTRA_ARGS[@]}")
+fi
 
 case "${FLOW}:${SETUP}" in
   F01:ios)
