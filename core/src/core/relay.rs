@@ -73,7 +73,7 @@ impl AppCore {
                     return;
                 }
             }
-            GROUP_SENDER_KEY_MESSAGE_KIND => {
+            MESSAGE_EVENT_KIND => {
                 let group_events = self
                     .logged_in
                     .as_ref()
@@ -91,8 +91,6 @@ impl AppCore {
                     self.emit_state();
                     return;
                 }
-            }
-            MESSAGE_EVENT_KIND => {
                 self.debug_event_counters.message_events += 1;
             }
             _ => {
