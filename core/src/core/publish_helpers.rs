@@ -101,7 +101,11 @@ async fn publish_event_to_any_relay(
                     .next()
                     .cloned()
                     .unwrap_or_else(|| "no relay accepted event".to_string());
-                failures.push(format!("{relay_label}: {reason}"));
+                if relay_publish_failure_is_terminal_success(&reason) {
+                    successes.push(relay_label);
+                } else {
+                    failures.push(format!("{relay_label}: {reason}"));
+                }
             }
             Ok(Err(error)) => failures.push(format!("{relay_label}: {error}")),
             Err(_) => failures.push(format!("{relay_label}: publish timed out")),
@@ -121,4 +125,11 @@ async fn publish_event_to_any_relay(
         ));
     }
     Ok(successes)
+}
+
+pub(super) fn relay_publish_failure_is_terminal_success(reason: &str) -> bool {
+    let lower = reason.to_ascii_lowercase();
+    lower.contains("duplicate")
+        || lower.contains("already have")
+        || (lower.contains("replaced") && lower.contains("newer"))
 }

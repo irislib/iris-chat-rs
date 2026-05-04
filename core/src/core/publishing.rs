@@ -166,6 +166,9 @@ impl AppCore {
             attempt_count: 0,
             last_error: None,
         };
+        if !self.prune_or_skip_superseded_app_keys_publish(event) {
+            return false;
+        }
         if let Err(error) = self.app_store.upsert_pending_relay_publish(&pending) {
             self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
             return false;
@@ -307,6 +310,54 @@ impl AppCore {
         if let Err(error) = self.app_store.delete_pending_relay_publish(event_id) {
             self.push_debug_log("publish.runtime.queue", format!("delete_failed={error}"));
         }
+    }
+
+    fn prune_or_skip_superseded_app_keys_publish(&mut self, event: &Event) -> bool {
+        if !is_app_keys_event(event) {
+            return true;
+        }
+
+        let current_event_id = event.id.to_string();
+        let current_created_at = event.created_at.as_secs();
+        let mut superseded_by_newer = None;
+        let mut stale_event_ids = Vec::new();
+
+        for pending in self.pending_relay_publishes.values() {
+            if pending.event_id == current_event_id || pending.label != "app-keys" {
+                continue;
+            }
+            let Ok(pending_event) = serde_json::from_str::<Event>(&pending.event_json) else {
+                continue;
+            };
+            if !is_app_keys_event(&pending_event) || pending_event.pubkey != event.pubkey {
+                continue;
+            }
+            if pending_event.created_at.as_secs() > current_created_at {
+                superseded_by_newer = Some(pending.event_id.clone());
+            } else {
+                stale_event_ids.push(pending.event_id.clone());
+            }
+        }
+
+        if let Some(newer_event_id) = superseded_by_newer {
+            self.push_debug_log(
+                "publish.runtime.queue",
+                format!(
+                    "label=app-keys skipped=superseded_by_newer pending_event_id={newer_event_id}"
+                ),
+            );
+            return false;
+        }
+
+        for stale_event_id in stale_event_ids {
+            self.push_debug_log(
+                "publish.runtime.queue",
+                format!("label=app-keys dropped=superseded event_id={stale_event_id}"),
+            );
+            self.forget_pending_relay_publish(&stale_event_id);
+        }
+
+        true
     }
 
     pub(super) fn sign_runtime_unsigned_event(&self, event: UnsignedEvent) -> Option<Event> {

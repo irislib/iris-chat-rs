@@ -240,6 +240,70 @@ fn app_keys_publish_uses_durable_pending_publish_queue() {
 }
 
 #[test]
+fn app_keys_publish_prunes_superseded_pending_publish() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = logged_in_test_core_at_data_dir(
+        &owner,
+        &device,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+    core.publish_local_app_keys();
+    let first_pending = core
+        .pending_relay_publishes
+        .values()
+        .find(|pending| pending.label == "app-keys")
+        .cloned()
+        .expect("first AppKeys publish should be queued");
+    let first_event: Event =
+        serde_json::from_str(&first_pending.event_json).expect("first AppKeys event");
+
+    let linked_device = Keys::generate();
+    core.upsert_local_app_key_device(owner.public_key(), linked_device.public_key());
+    core.publish_local_app_keys();
+
+    let app_key_publishes = core
+        .pending_relay_publishes
+        .values()
+        .filter(|pending| pending.label == "app-keys")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        app_key_publishes.len(),
+        1,
+        "stale replaceable AppKeys publishes should not block relay drain"
+    );
+    assert!(
+        !core
+            .pending_relay_publishes
+            .contains_key(&first_pending.event_id),
+        "older AppKeys event should be removed from the durable queue"
+    );
+    let current_event: Event =
+        serde_json::from_str(&app_key_publishes[0].event_json).expect("current AppKeys event");
+    assert_eq!(current_event.pubkey, owner.public_key());
+    assert!(current_event.created_at.as_secs() > first_event.created_at.as_secs());
+}
+
+#[test]
+fn relay_duplicate_or_newer_replaceable_rejection_is_terminal_success() {
+    assert!(relay_publish_failure_is_terminal_success(
+        "duplicate: already have this event"
+    ));
+    assert!(relay_publish_failure_is_terminal_success(
+        "replaced: have newer event"
+    ));
+    assert!(!relay_publish_failure_is_terminal_success(
+        "rate-limited: slow down"
+    ));
+    assert!(!relay_publish_failure_is_terminal_success(
+        "blocked: event rejected"
+    ));
+}
+
+#[test]
 fn network_status_includes_configured_relay_connection_status() {
     let owner = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");

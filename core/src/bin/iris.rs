@@ -1506,7 +1506,11 @@ fn is_busy(state: &AppState) -> bool {
 }
 
 fn is_busy_or_syncing(state: &AppState) -> bool {
-    is_busy(state) || state.busy.syncing_network
+    let pending_runtime_publishes = state
+        .network_status
+        .as_ref()
+        .is_some_and(|status| status.pending_outbound_count > 0);
+    is_busy(state) || state.busy.syncing_network || pending_runtime_publishes
 }
 
 fn chat_kind(kind: &ChatKind) -> &'static str {
