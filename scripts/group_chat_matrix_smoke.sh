@@ -176,6 +176,63 @@ extract_status() {
   sed -n "s/^INSTRUMENTATION_STATUS: ${key}=//p" | tail -n 1
 }
 
+# Run a harness test in the background, streaming its output into action_log.
+# Sets the global IRIS_BACKGROUND_PID and writes the harness exit code into
+# exit_file once the test finishes.
+run_test_background() {
+  local serial="$1"
+  local test_name="$2"
+  local action_log="$3"
+  local exit_file="$4"
+  shift 4
+
+  "${ADB}" -s "${serial}" shell am force-stop "${TEST_PACKAGE_NAME}" >/dev/null 2>&1 || true
+
+  local cmd=(
+    python3
+    "${HARNESS}"
+    --adb "${ADB}"
+    --serial "${serial}"
+    --runner "${RUNNER}"
+    --class-name "${CLASS}"
+    --test-name "${test_name}"
+    --user "${AM_USER}"
+  )
+  while [[ $# -gt 0 ]]; do
+    cmd+=(--arg "$1=$2")
+    shift 2
+  done
+
+  : >"${action_log}"
+  : >"${exit_file}"
+  (
+    set +e
+    "${cmd[@]}" >"${action_log}" 2>&1
+    printf '%s\n' "$?" >"${exit_file}"
+  ) &
+  IRIS_BACKGROUND_PID="$!"
+}
+
+wait_for_status_in_file() {
+  local file="$1"
+  local key="$2"
+  local timeout_secs="$3"
+  local deadline=$((SECONDS + timeout_secs))
+  local value=""
+  while (( SECONDS < deadline )); do
+    if [[ -f "${file}" ]]; then
+      value="$(extract_status "${key}" <"${file}")"
+      if [[ -n "${value}" ]]; then
+        printf '%s\n' "${value}"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  echo "Timed out waiting for ${key} in ${file}" >&2
+  return 1
+}
+
 require_value() {
   local name="$1"
   local value="$2"
@@ -231,16 +288,32 @@ require_value PRIMARY_OWNER_NPUB "${PRIMARY_OWNER_NPUB}"
 require_value PRIMARY_OWNER_HEX "${PRIMARY_OWNER_HEX}"
 
 echo "Starting linked device on ${LINKED_SERIAL}"
-LINKED_IDENTITY="$(run_test "${LINKED_SERIAL}" start_linked_device_and_report_identity \
-  owner_input "${PRIMARY_OWNER_NPUB}")"
-LINKED_DEVICE_NPUB="$(printf '%s\n' "${LINKED_IDENTITY}" | extract_status device_npub)"
-require_value LINKED_DEVICE_NPUB "${LINKED_DEVICE_NPUB}"
+LINK_LOG="$(mktemp -t iris-matrix-link-log.XXXXXX)"
+LINK_EXIT="$(mktemp -t iris-matrix-link-exit.XXXXXX)"
+IRIS_BACKGROUND_PID=""
+run_test_background "${LINKED_SERIAL}" start_link_invite_and_wait_for_authorization_from_args \
+  "${LINK_LOG}" "${LINK_EXIT}" \
+  owner_input "${PRIMARY_OWNER_NPUB}" \
+  authorization_state AUTHORIZED
+LINK_PID="${IRIS_BACKGROUND_PID}"
+
+LINK_URL="$(wait_for_status_in_file "${LINK_LOG}" invite_url 120)"
+require_value LINK_URL "${LINK_URL}"
 
 echo "Authorizing linked device on ${PRIMARY_SERIAL}"
 run_test "${PRIMARY_SERIAL}" add_authorized_device_from_args \
-  device_input "${LINKED_DEVICE_NPUB}" >/dev/null
-run_test "${LINKED_SERIAL}" wait_for_authorization_state_from_args \
-  authorization_state AUTHORIZED >/dev/null
+  device_input "${LINK_URL}" >/dev/null
+
+wait "${LINK_PID}" || true
+LINK_STATUS="$(cat "${LINK_EXIT}")"
+if [[ "${LINK_STATUS}" -ne 0 ]]; then
+  echo "Linked-device authorization harness failed with exit code ${LINK_STATUS}" >&2
+  cat "${LINK_LOG}" >&2 || true
+  exit "${LINK_STATUS}"
+fi
+LINKED_IDENTITY="$(cat "${LINK_LOG}")"
+LINKED_DEVICE_NPUB="$(printf '%s\n' "${LINKED_IDENTITY}" | extract_status device_npub)"
+require_value LINKED_DEVICE_NPUB "${LINKED_DEVICE_NPUB}"
 LINKED_AUTHORIZED_IDENTITY="$(run_test "${LINKED_SERIAL}" report_logged_in_identity)"
 LINKED_OWNER_HEX="$(printf '%s\n' "${LINKED_AUTHORIZED_IDENTITY}" | extract_status public_key_hex)"
 LINKED_OWNER_NPUB="$(printf '%s\n' "${LINKED_AUTHORIZED_IDENTITY}" | extract_status npub)"

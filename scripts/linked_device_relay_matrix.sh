@@ -119,6 +119,68 @@ extract_status() {
   sed -n "s/^INSTRUMENTATION_STATUS: ${key}=//p" | tail -n 1
 }
 
+# Run a harness test in the background, streaming its output into action_log.
+# Sets the global IRIS_BACKGROUND_PID and writes the harness exit code into
+# exit_file once the test finishes.
+run_instrumentation_background() {
+  local serial="$1"
+  local class_name="$2"
+  local action_log="$3"
+  local exit_file="$4"
+  shift 4
+
+  local test_class="${class_name%%#*}"
+  local test_name="${class_name#*#}"
+  local cmd=(
+    python3
+    "${HARNESS}"
+    --adb "${ADB}"
+    --serial "${serial}"
+    --runner "${RUNNER}"
+    --class-name "${test_class}"
+    --test-name "${test_name}"
+    --arg "clearPackageData=false"
+  )
+  while [[ $# -gt 0 ]]; do
+    if [[ "$1" == "-e" ]]; then
+      cmd+=(--arg "$2=$3")
+      shift 3
+    else
+      echo "Unsupported instrumentation argument sequence: $1" >&2
+      return 1
+    fi
+  done
+
+  : >"${action_log}"
+  : >"${exit_file}"
+  (
+    set +e
+    "${cmd[@]}" >"${action_log}" 2>&1
+    printf '%s\n' "$?" >"${exit_file}"
+  ) &
+  IRIS_BACKGROUND_PID="$!"
+}
+
+wait_for_status_in_file() {
+  local file="$1"
+  local key="$2"
+  local timeout_secs="$3"
+  local deadline=$((SECONDS + timeout_secs))
+  local value=""
+  while (( SECONDS < deadline )); do
+    if [[ -f "${file}" ]]; then
+      value="$(extract_status "${key}" <"${file}")"
+      if [[ -n "${value}" ]]; then
+        printf '%s\n' "${value}"
+        return 0
+      fi
+    fi
+    sleep 1
+  done
+  echo "Timed out waiting for ${key} in ${file}" >&2
+  return 1
+}
+
 add_unique_serial() {
   local serial="$1"
   local existing
@@ -192,13 +254,30 @@ OWNER_X_NPUB="$(printf '%s\n' "${ACCOUNT_A}" | extract_status "npub")"
 OWNER_X_HEX="$(printf '%s\n' "${ACCOUNT_A}" | extract_status "public_key_hex")"
 
 echo "Starting linked device on ${SERIAL_B}"
-LINKED_B="$(run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#start_linked_device_and_report_identity" -e owner_input "${OWNER_X_NPUB}")"
-DEVICE_B_NPUB="$(printf '%s\n' "${LINKED_B}" | extract_status "device_npub")"
-DEVICE_B_HEX="$(printf '%s\n' "${LINKED_B}" | extract_status "device_public_key_hex")"
+LINK_LOG="$(mktemp -t iris-relay-matrix-link-log.XXXXXX)"
+LINK_EXIT="$(mktemp -t iris-relay-matrix-link-exit.XXXXXX)"
+IRIS_BACKGROUND_PID=""
+run_instrumentation_background "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#start_link_invite_and_wait_for_authorization_from_args" \
+  "${LINK_LOG}" "${LINK_EXIT}" \
+  -e owner_input "${OWNER_X_NPUB}" \
+  -e authorization_state AUTHORIZED
+LINK_PID="${IRIS_BACKGROUND_PID}"
+
+LINK_URL="$(wait_for_status_in_file "${LINK_LOG}" invite_url 120)"
 
 echo "Authorizing linked device on ${SERIAL_A}"
-run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#add_authorized_device_from_args" -e device_input "${DEVICE_B_NPUB}" >/dev/null
-run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_authorization_state_from_args" -e authorization_state AUTHORIZED >/dev/null
+run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#add_authorized_device_from_args" -e device_input "${LINK_URL}" >/dev/null
+
+wait "${LINK_PID}" || true
+LINK_STATUS="$(cat "${LINK_EXIT}")"
+if [[ "${LINK_STATUS}" -ne 0 ]]; then
+  echo "Linked-device authorization harness failed with exit code ${LINK_STATUS}" >&2
+  cat "${LINK_LOG}" >&2 || true
+  exit "${LINK_STATUS}"
+fi
+LINKED_B="$(cat "${LINK_LOG}")"
+DEVICE_B_NPUB="$(printf '%s\n' "${LINKED_B}" | extract_status "device_npub")"
+DEVICE_B_HEX="$(printf '%s\n' "${LINKED_B}" | extract_status "device_public_key_hex")"
 
 echo "Creating owner Y peer on ${SERIAL_C}"
 ACCOUNT_C="$(run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity")"
