@@ -113,6 +113,9 @@ enum Commands {
     Group(GroupCommands),
     #[command(subcommand)]
     Relay(RelayCommands),
+    /// Check for and install a newer iris binary published via hashtree
+    #[command(subcommand)]
+    Update(UpdateCommands),
 }
 
 #[derive(Subcommand)]
@@ -234,6 +237,84 @@ enum RelayCommands {
     Remove { url: String },
     Set { urls: Vec<String> },
     Reset,
+}
+
+/// Resolve, download, and install iris updates by shelling out to the
+/// published `htree update` CLI (from `hashtree-cli`). We don't link the
+/// updater library directly because iris-chat-rs pins hashtree-core 0.2.8
+/// while the updater needs 0.2.45+.
+#[derive(Subcommand)]
+enum UpdateCommands {
+    /// Print the latest published version and the asset that would be picked
+    Check,
+    /// Download the matching asset to a path (defaults to alongside the
+    /// running binary)
+    Download {
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+    /// Replace the running binary with the newer one
+    Install {
+        /// Override the install destination (defaults to current_exe())
+        #[arg(long)]
+        to: Option<PathBuf>,
+        /// Override the asset kind (defaults to inferred from filename)
+        #[arg(long)]
+        kind: Option<String>,
+        /// Skip if the published version is not newer than current
+        #[arg(long)]
+        only_if_newer: bool,
+    },
+}
+
+const IRIS_UPDATE_REFERENCE: &str =
+    "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest";
+
+fn run_iris_update(cmd: &UpdateCommands) -> Result<()> {
+    let mut args = vec!["update".to_string()];
+    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    match cmd {
+        UpdateCommands::Check => {
+            args.extend(["check".into(), IRIS_UPDATE_REFERENCE.into()]);
+            args.extend(["--current-version".into(), current_version]);
+        }
+        UpdateCommands::Download { out } => {
+            args.extend(["download".into(), IRIS_UPDATE_REFERENCE.into()]);
+            args.extend(["--current-version".into(), current_version]);
+            if let Some(out) = out {
+                args.extend(["-o".into(), out.display().to_string()]);
+            }
+        }
+        UpdateCommands::Install {
+            to,
+            kind,
+            only_if_newer,
+        } => {
+            args.extend(["install".into(), IRIS_UPDATE_REFERENCE.into()]);
+            args.extend(["--current-version".into(), current_version]);
+            let dest = match to {
+                Some(p) => p.clone(),
+                None => std::env::current_exe()
+                    .context("could not determine current_exe() for install destination")?,
+            };
+            args.extend(["--to".into(), dest.display().to_string(), "--executable".into()]);
+            if let Some(kind) = kind {
+                args.extend(["--kind".into(), kind.clone()]);
+            }
+            if *only_if_newer {
+                args.push("--only-if-newer".into());
+            }
+        }
+    }
+
+    let status = std::process::Command::new("htree")
+        .args(&args)
+        .status()
+        .context("failed to spawn htree (install hashtree-cli with `cargo install hashtree-cli`)")?;
+    if !status.success() {
+        anyhow::bail!("htree {} exited with status {status}", args.join(" "));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
@@ -741,6 +822,10 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
                 Duration::from_secs(3),
             )?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
+        }
+        Commands::Update(cmd) => {
+            run_iris_update(&cmd)?;
+            Ok(json!({ "ok": true }))
         }
     }
 }
@@ -1283,6 +1368,7 @@ fn command_name(command: &Commands) -> &'static str {
         Commands::Link(_) => "link",
         Commands::Group(_) => "group",
         Commands::Relay(_) => "relay",
+        Commands::Update(_) => "update",
     }
 }
 
