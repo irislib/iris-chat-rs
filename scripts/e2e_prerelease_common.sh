@@ -83,3 +83,22 @@ iris_e2e_run_and_log() {
   } | tee -a "${log_file}" >&2
   "$@" 2>&1 | tee -a "${log_file}"
 }
+
+iris_e2e_ensure_android_package() {
+  local adb="$1"
+  local serial="$2"
+  local package_name="$3"
+  local apk_path="$4"
+  local log_file="$5"
+
+  if "${adb}" -s "${serial}" shell pm path "${package_name}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  {
+    printf 'Android package %s missing on %s; reinstalling %s\n' \
+      "${package_name}" "${serial}" "${apk_path}"
+  } | tee -a "${log_file}" >&2
+  "${adb}" -s "${serial}" install -r "${apk_path}" 2>&1 | tee -a "${log_file}"
+  "${adb}" -s "${serial}" shell pm path "${package_name}" >/dev/null
+}
