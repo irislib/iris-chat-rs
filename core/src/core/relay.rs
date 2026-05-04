@@ -283,6 +283,7 @@ impl AppCore {
                     content,
                     event_id,
                 } => {
+                    let ack_event_id = event_id.clone();
                     if let Some(event_id) = event_id.as_ref() {
                         decrypted_event_ids.insert(event_id.clone());
                     }
@@ -296,6 +297,21 @@ impl AppCore {
                     // Decrypting a DM advances the double-ratchet state,
                     // so the cached mobile-push snapshot needs a refresh.
                     self.mark_mobile_push_dirty();
+                    if let Some(event_id) = ack_event_id {
+                        let ack_result = self.logged_in.as_ref().map(|logged_in| {
+                            logged_in.ndr_runtime.ack_decrypted_delivery(&event_id)
+                        });
+                        match ack_result {
+                            Some(Ok(effects)) if !effects.is_empty() => {
+                                self.process_runtime_effects(effects);
+                            }
+                            Some(Err(error)) => self.push_debug_log(
+                                "runtime.decrypt.ack",
+                                format!("event_id={event_id} error={error}"),
+                            ),
+                            _ => {}
+                        }
+                    }
                 }
             }
         }

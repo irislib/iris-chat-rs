@@ -2348,6 +2348,122 @@ fn web_runtime_message_duplicates_dedupe_by_inner_rumor_id() {
 }
 
 #[test]
+fn remote_runtime_rumor_pubkey_and_p_tags_do_not_choose_direct_chat() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let forged_peer = Keys::generate();
+    let mut core = logged_in_test_core("runtime-forged-remote-route", &owner, &device);
+    let inner_id = "1".repeat(64);
+    let content = serde_json::json!({
+        "content": "route must stay on authenticated sender",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_493u64,
+        "tags": [["p", forged_peer.public_key().to_hex()], ["recipient-owner", forged_peer.public_key().to_hex()]],
+        "pubkey": forged_peer.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("2".repeat(64)));
+
+    let sender_chat_id = sender.public_key().to_hex();
+    let forged_chat_id = forged_peer.public_key().to_hex();
+    assert!(core
+        .threads
+        .get(&sender_chat_id)
+        .is_some_and(|thread| thread.messages.iter().any(|message| message.id == inner_id)));
+    assert!(
+        !core.threads.contains_key(&forged_chat_id),
+        "remote plaintext p/pubkey hints must not create or select a forged peer chat"
+    );
+}
+
+#[test]
+fn self_sync_runtime_metadata_overrides_malicious_inner_p_tag() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let real_peer = Keys::generate();
+    let forged_peer = Keys::generate();
+    let mut core = logged_in_test_core("runtime-forged-self-sync-route", &owner, &device);
+    let inner_id = "3".repeat(64);
+    let content = serde_json::json!({
+        "content": "self sync route comes from runtime metadata",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_500u64,
+        "tags": [["p", forged_peer.public_key().to_hex()]],
+        "pubkey": forged_peer.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        owner.public_key(),
+        Some(sibling_device.public_key()),
+        Some(real_peer.public_key()),
+        content,
+        Some("4".repeat(64)),
+    );
+
+    let real_chat_id = real_peer.public_key().to_hex();
+    let forged_chat_id = forged_peer.public_key().to_hex();
+    assert!(core
+        .threads
+        .get(&real_chat_id)
+        .is_some_and(|thread| thread.messages.iter().any(|message| message.id == inner_id)));
+    assert!(
+        !core.threads.contains_key(&forged_chat_id),
+        "self-sync plaintext p tag must not override authenticated runtime conversation metadata"
+    );
+}
+
+#[test]
+fn receipt_runtime_rumor_uses_authenticated_sender_chat_not_malicious_tags() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let forged_peer = Keys::generate();
+    let mut core = logged_in_test_core("runtime-forged-receipt-route", &owner, &device);
+    let sender_chat_id = sender.public_key().to_hex();
+    let message_id = "5".repeat(64);
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &sender_chat_id,
+        "pending outbound".to_string(),
+        1_777_159_492,
+        None,
+        DeliveryState::Sent,
+    );
+    let content = serde_json::json!({
+        "content": "seen",
+        "kind": RECEIPT_KIND,
+        "created_at": 1_777_159_493u64,
+        "tags": [["e", message_id], ["p", forged_peer.public_key().to_hex()]],
+        "pubkey": forged_peer.public_key().to_hex(),
+        "id": "6".repeat(64),
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("7".repeat(64)));
+
+    let message = core
+        .threads
+        .get(&sender_chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("sender chat message");
+    assert_eq!(message.delivery, DeliveryState::Seen);
+    assert!(!core
+        .threads
+        .contains_key(&forged_peer.public_key().to_hex()));
+}
+
+#[test]
 fn self_synced_direct_message_is_rendered_as_outgoing_on_linked_device() {
     let owner = Keys::generate();
     let device = Keys::generate();
