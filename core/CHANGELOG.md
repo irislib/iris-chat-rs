@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.14
+
+- Update to `nostr-double-ratchet` 0.0.138 with snapshot-only group metadata and the restored legacy sender-key wire format.
+
 ## 0.1.13
 
 - Update to `nostr-double-ratchet` 0.0.137 with the merged htree/master private invite, linked-device fanout, and runtime durability work.
