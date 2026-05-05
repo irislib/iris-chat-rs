@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.16
+
+- Republish 0.1.15 bundle as 3.0.17 because TestFlight rejected the 3.0.16 upload (cfBundleVersion 31600 was already on file from an earlier partial upload).
+
 ## 0.1.15
 
 - Plumb the marketing version (`IRIS_APP_VERSION_NAME`) all the way into the running binary so `iris --version`, the FFI app constructor, and the Linux About panel agree on the same string instead of falling back to the cargo crate semver.
