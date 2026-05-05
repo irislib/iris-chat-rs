@@ -106,6 +106,69 @@ fn read_json_line(reader: &mut BufReader<std::process::ChildStdout>) -> Value {
 }
 
 #[test]
+fn help_groups_top_level_commands() {
+    let output = Command::new(iris_binary())
+        .arg("--help")
+        .output()
+        .expect("run iris help");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "iris help failed status={}\nstdout={}\nstderr={}",
+        output.status,
+        stdout,
+        stderr
+    );
+
+    for heading in [
+        "Account:",
+        "Messages:",
+        "Groups:",
+        "Invites and Devices:",
+        "Message Servers:",
+        "Maintenance:",
+    ] {
+        assert!(
+            stdout.contains(heading),
+            "missing heading {heading}\nstdout={stdout}"
+        );
+    }
+    assert!(
+        stdout.find("Account:").unwrap() < stdout.find("Messages:").unwrap(),
+        "help headings are out of order\nstdout={stdout}"
+    );
+}
+
+#[test]
+fn whoami_does_not_emit_perf_logs_by_default() {
+    let dir = TempDir::new().unwrap();
+    run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
+
+    let output = Command::new(iris_binary())
+        .env_remove("IRIS_PERF_LOG")
+        .arg("--data-dir")
+        .arg(dir.path())
+        .arg("whoami")
+        .output()
+        .expect("run iris whoami");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "iris whoami failed status={}\nstdout={}\nstderr={}",
+        output.status,
+        stdout,
+        stderr
+    );
+    assert!(stdout.contains("\"user_id\""), "unexpected stdout={stdout}");
+    assert!(
+        !stdout.contains("IrisPerf") && !stderr.contains("IrisPerf"),
+        "perf logs leaked into cli output\nstdout={stdout}\nstderr={stderr}"
+    );
+}
+
+#[test]
 fn account_create_persists_and_restores_for_next_process() {
     let dir = TempDir::new().unwrap();
 

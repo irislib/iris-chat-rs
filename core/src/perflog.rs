@@ -1,5 +1,5 @@
 //! Minimal millisecond-resolution perf logger that writes straight to
-//! Android logcat (or stderr off-Android) without pulling in `log` +
+//! Android logcat (or stderr off-Android with `IRIS_PERF_LOG=1`) without pulling in `log` +
 //! `android_logger` crates. Used to diagnose where time goes between an
 //! FFI dispatch, the core thread processing, and the UI reconcile.
 
@@ -36,10 +36,28 @@ mod sink {
             }
         }
     }
+
+    pub fn enabled() -> bool {
+        true
+    }
 }
 
 #[cfg(not(target_os = "android"))]
 mod sink {
+    use std::sync::OnceLock;
+
+    pub fn enabled() -> bool {
+        static ENABLED: OnceLock<bool> = OnceLock::new();
+        *ENABLED.get_or_init(|| {
+            std::env::var("IRIS_PERF_LOG")
+                .map(|value| {
+                    let value = value.trim().to_ascii_lowercase();
+                    !value.is_empty() && value != "0" && value != "false" && value != "off"
+                })
+                .unwrap_or(false)
+        })
+    }
+
     pub fn write(tag: &str, msg: &str) {
         eprintln!("{tag}: {msg}");
     }
@@ -55,6 +73,9 @@ macro_rules! perflog {
 
 #[doc(hidden)]
 pub fn __write(args: std::fmt::Arguments<'_>) {
+    if !sink::enabled() {
+        return;
+    }
     let msg = format!("{} {}", now_ms(), args);
     sink::write("IrisPerf", &msg);
 }

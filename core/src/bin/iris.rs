@@ -16,10 +16,53 @@ use rusqlite::Connection;
 use serde::Serialize;
 use serde_json::{json, Value};
 
+const TOP_LEVEL_HELP: &str = "\
+Account:
+  login      Use a secret key
+  restore    Use a secret key
+  logout     Forget this device
+  whoami     Show this profile
+  account    Profile tools
+
+Messages:
+  chat       Chat tools
+  send       Send a message
+  read       Show messages
+  seen       Mark messages seen
+  react      React to a message
+  typing     Send typing status
+  receipt    Send delivery status
+  search     Search messages
+  tail       Show recent messages
+  listen     Watch for messages
+
+Groups:
+  group      Group chat tools
+
+Invites and Devices:
+  invite     Invite someone
+  link       Link this device
+
+Message Servers:
+  relay      Message server tools
+
+Maintenance:
+  state      Show local state
+  sync       Sync now
+  update     Update iris
+  help       Print help";
+
 #[derive(Parser)]
 #[command(name = "iris")]
 #[command(version = env!("IRIS_APP_VERSION"))]
 #[command(about = "Iris Chat command line client")]
+#[command(after_help = TOP_LEVEL_HELP)]
+#[command(help_template = "\
+{before-help}{about-with-newline}
+{usage-heading} {usage}{after-help}
+
+Options:
+{options}")]
 struct Cli {
     #[arg(short, long, global = true)]
     json: bool,
@@ -33,6 +76,22 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    #[command(flatten)]
+    Account(AccountTopCommands),
+    #[command(flatten)]
+    Messages(MessageTopCommands),
+    #[command(flatten)]
+    Groups(GroupTopCommands),
+    #[command(flatten)]
+    InvitesAndDevices(InviteDeviceTopCommands),
+    #[command(flatten)]
+    MessageServers(MessageServerTopCommands),
+    #[command(flatten)]
+    Maintenance(MaintenanceTopCommands),
+}
+
+#[derive(Subcommand)]
+enum AccountTopCommands {
     Login {
         secret_key: String,
     },
@@ -41,10 +100,45 @@ enum Commands {
     },
     Logout,
     Whoami,
-    State,
-    Sync {
-        #[arg(long, default_value_t = 1500)]
-        wait_ms: u64,
+    #[command(subcommand)]
+    Account(AccountCommands),
+}
+
+#[derive(Subcommand)]
+enum MessageTopCommands {
+    #[command(subcommand)]
+    Chat(ChatCommands),
+    Send {
+        chat: String,
+        message: String,
+        #[arg(long)]
+        ttl: Option<u64>,
+        #[arg(long, value_name = "UNIX_SECONDS")]
+        expires_at: Option<u64>,
+    },
+    Read {
+        chat: String,
+        #[arg(short, long, default_value_t = 50)]
+        limit: usize,
+    },
+    Seen {
+        chat: String,
+        message_ids: Vec<String>,
+    },
+    React {
+        chat: String,
+        message_id: String,
+        emoji: String,
+    },
+    Typing {
+        chat: String,
+        #[arg(long)]
+        stop: bool,
+    },
+    Receipt {
+        chat: String,
+        receipt_type: String,
+        message_ids: Vec<String>,
     },
     Search {
         query: String,
@@ -69,50 +163,35 @@ enum Commands {
         #[arg(long)]
         nearby_lan: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum GroupTopCommands {
     #[command(subcommand)]
-    Account(AccountCommands),
-    #[command(subcommand)]
-    Chat(ChatCommands),
-    Send {
-        chat: String,
-        message: String,
-        #[arg(long)]
-        ttl: Option<u64>,
-        #[arg(long, value_name = "UNIX_SECONDS")]
-        expires_at: Option<u64>,
-    },
-    React {
-        chat: String,
-        message_id: String,
-        emoji: String,
-    },
-    Typing {
-        chat: String,
-        #[arg(long)]
-        stop: bool,
-    },
-    Receipt {
-        chat: String,
-        receipt_type: String,
-        message_ids: Vec<String>,
-    },
-    Read {
-        chat: String,
-        #[arg(short, long, default_value_t = 50)]
-        limit: usize,
-    },
-    Seen {
-        chat: String,
-        message_ids: Vec<String>,
-    },
+    Group(GroupCommands),
+}
+
+#[derive(Subcommand)]
+enum InviteDeviceTopCommands {
     #[command(subcommand)]
     Invite(InviteCommands),
     #[command(subcommand)]
     Link(LinkCommands),
-    #[command(subcommand)]
-    Group(GroupCommands),
+}
+
+#[derive(Subcommand)]
+enum MessageServerTopCommands {
     #[command(subcommand)]
     Relay(RelayCommands),
+}
+
+#[derive(Subcommand)]
+enum MaintenanceTopCommands {
+    State,
+    Sync {
+        #[arg(long, default_value_t = 1500)]
+        wait_ms: u64,
+    },
     /// Check for and install a newer iris binary published via hashtree
     #[command(subcommand)]
     Update(UpdateCommands),
@@ -407,24 +486,26 @@ fn run(cli: Cli) -> Result<()> {
         .with_context(|| format!("create data dir {}", data_dir.display()))?;
     let command_name = command_name(&cli.command).to_string();
     let data = match cli.command {
-        Commands::Search { query, limit } => search_messages(&data_dir, &query, limit)?,
-        Commands::Tail {
+        Commands::Messages(MessageTopCommands::Search { query, limit }) => {
+            search_messages(&data_dir, &query, limit)?
+        }
+        Commands::Messages(MessageTopCommands::Tail {
             limit,
             follow,
             chat,
             interval_ms,
-        } => {
+        }) => {
             if follow {
                 follow_messages(&data_dir, chat.as_deref(), interval_ms, "tail")?;
                 return Ok(());
             }
             tail_messages(&data_dir, limit, chat.as_deref())?
         }
-        Commands::Listen {
+        Commands::Messages(MessageTopCommands::Listen {
             chat,
             interval_ms,
             nearby_lan,
-        } => {
+        }) => {
             listen(&data_dir, chat.as_deref(), interval_ms, nearby_lan)?;
             return Ok(());
         }
@@ -542,36 +623,50 @@ impl CliApp {
 
 fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Value> {
     match command {
-        Commands::Login { secret_key } | Commands::Restore { secret_key } => {
+        Commands::Account(command) => handle_account_top_command(cli, data_dir, command),
+        Commands::Messages(command) => handle_message_top_command(cli, command),
+        Commands::Groups(GroupTopCommands::Group(command)) => handle_group_command(cli, command),
+        Commands::InvitesAndDevices(command) => handle_invite_device_command(cli, command),
+        Commands::MessageServers(MessageServerTopCommands::Relay(command)) => {
+            handle_relay_command(cli, command)
+        }
+        Commands::Maintenance(command) => handle_maintenance_command(cli, command),
+    }
+}
+
+fn handle_account_top_command(
+    cli: &CliApp,
+    data_dir: &Path,
+    command: AccountTopCommands,
+) -> Result<Value> {
+    match command {
+        AccountTopCommands::Login { secret_key } | AccountTopCommands::Restore { secret_key } => {
             restore_account(cli, &secret_key)
         }
-        Commands::Logout => {
+        AccountTopCommands::Logout => {
             cli.dispatch_and_wait(AppAction::Logout, Duration::from_secs(2))?;
             let _ = std::fs::remove_file(account_bundle_path(data_dir));
             Ok(json!({ "logged_out": true }))
         }
-        Commands::Whoami => Ok(account_json(&require_account(&cli.app.state())?)),
-        Commands::State => Ok(state_json(&cli.app.state())),
-        Commands::Sync { wait_ms } => {
-            let state = cli.dispatch_and_wait_network(
-                AppAction::AppForegrounded,
-                Duration::from_millis(wait_ms.max(100)),
-            )?;
-            Ok(state_json(&state))
-        }
-        Commands::Search { .. } | Commands::Tail { .. } | Commands::Listen { .. } => {
-            unreachable!("streaming and read-only commands are handled before regular dispatch")
-        }
-        Commands::Account(AccountCommands::Create { name }) => {
+        AccountTopCommands::Whoami => Ok(account_json(&require_account(&cli.app.state())?)),
+        AccountTopCommands::Account(command) => handle_account_command(cli, data_dir, command),
+    }
+}
+
+fn handle_account_command(
+    cli: &CliApp,
+    data_dir: &Path,
+    command: AccountCommands,
+) -> Result<Value> {
+    match command {
+        AccountCommands::Create { name } => {
             cli.dispatch_and_wait(AppAction::CreateAccount { name }, Duration::from_secs(4))?;
             let state = cli.app.state();
             fail_on_toast(&state)?;
             Ok(account_json(&require_account(&state)?))
         }
-        Commands::Account(AccountCommands::Restore { secret_key }) => {
-            restore_account(cli, &secret_key)
-        }
-        Commands::Account(AccountCommands::Bundle) => {
+        AccountCommands::Restore { secret_key } => restore_account(cli, &secret_key),
+        AccountCommands::Bundle => {
             let bundle = read_account_bundle(data_dir)?.context("No saved account bundle.")?;
             Ok(json!({
                 "owner_pubkey_hex": bundle.owner_pubkey_hex,
@@ -579,23 +674,13 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
                 "has_device_secret": !bundle.device_nsec.is_empty(),
             }))
         }
-        Commands::Chat(ChatCommands::List) => {
-            Ok(json!({ "chats": chat_list_json(&cli.app.state()) }))
-        }
-        Commands::Chat(ChatCommands::Create { user_id }) => create_chat(cli, &user_id),
-        Commands::Chat(ChatCommands::Open { chat }) => {
-            open_chat(cli, &chat).map(|chat| chat_json(&chat, usize::MAX))
-        }
-        Commands::Chat(ChatCommands::Read { chat, limit }) | Commands::Read { chat, limit } => {
-            open_chat(cli, &chat).map(|chat| chat_json(&chat, limit))
-        }
-        Commands::Chat(ChatCommands::Send {
-            chat,
-            message,
-            ttl,
-            expires_at,
-        })
-        | Commands::Send {
+    }
+}
+
+fn handle_message_top_command(cli: &CliApp, command: MessageTopCommands) -> Result<Value> {
+    match command {
+        MessageTopCommands::Chat(command) => handle_chat_command(cli, command),
+        MessageTopCommands::Send {
             chat,
             message,
             ttl,
@@ -604,20 +689,50 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             let expires_at = message_expiration(ttl, expires_at)?;
             send_message(cli, &chat, &message, expires_at)
         }
-        Commands::React {
+        MessageTopCommands::Read { chat, limit } => {
+            open_chat(cli, &chat).map(|chat| chat_json(&chat, limit))
+        }
+        MessageTopCommands::Seen { chat, message_ids } => mark_seen(cli, &chat, message_ids),
+        MessageTopCommands::React {
             chat,
             message_id,
             emoji,
         } => react(cli, &chat, &message_id, &emoji),
-        Commands::Typing { chat, stop } => typing(cli, &chat, stop),
-        Commands::Receipt {
+        MessageTopCommands::Typing { chat, stop } => typing(cli, &chat, stop),
+        MessageTopCommands::Receipt {
             chat,
             receipt_type,
             message_ids,
         } => receipt(cli, &chat, &receipt_type, message_ids),
-        Commands::Chat(ChatCommands::Seen { chat, message_ids })
-        | Commands::Seen { chat, message_ids } => mark_seen(cli, &chat, message_ids),
-        Commands::Chat(ChatCommands::Delete { chat }) => {
+        MessageTopCommands::Search { .. }
+        | MessageTopCommands::Tail { .. }
+        | MessageTopCommands::Listen { .. } => {
+            unreachable!("streaming and read-only commands are handled before regular dispatch")
+        }
+    }
+}
+
+fn handle_chat_command(cli: &CliApp, command: ChatCommands) -> Result<Value> {
+    match command {
+        ChatCommands::List => Ok(json!({ "chats": chat_list_json(&cli.app.state()) })),
+        ChatCommands::Create { user_id } => create_chat(cli, &user_id),
+        ChatCommands::Open { chat } => {
+            open_chat(cli, &chat).map(|chat| chat_json(&chat, usize::MAX))
+        }
+        ChatCommands::Read { chat, limit } => {
+            open_chat(cli, &chat).map(|chat| chat_json(&chat, limit))
+        }
+        ChatCommands::Send {
+            chat,
+            message,
+            ttl,
+            expires_at,
+        } => {
+            let expires_at = message_expiration(ttl, expires_at)?;
+            send_message(cli, &chat, &message, expires_at)
+        }
+        ChatCommands::Seen { chat, message_ids } => mark_seen(cli, &chat, message_ids),
+        ChatCommands::Delete { chat } => {
             let chat_id = resolve_chat_id(&cli.app.state(), &chat)?;
             cli.dispatch_and_wait(
                 AppAction::DeleteChat {
@@ -627,7 +742,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             )?;
             Ok(json!({ "chat_id": chat_id, "deleted": true }))
         }
-        Commands::Chat(ChatCommands::Ttl { chat, seconds }) => {
+        ChatCommands::Ttl { chat, seconds } => {
             let chat_id = resolve_chat_id(&cli.app.state(), &chat)?;
             cli.dispatch_and_wait(
                 AppAction::SetChatMessageTtl {
@@ -638,7 +753,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             )?;
             Ok(json!({ "chat_id": chat_id, "message_ttl_seconds": seconds }))
         }
-        Commands::Chat(ChatCommands::Mute { chat, muted }) => {
+        ChatCommands::Mute { chat, muted } => {
             let chat_id = resolve_chat_id(&cli.app.state(), &chat)?;
             cli.dispatch_and_wait(
                 AppAction::SetChatMuted {
@@ -649,14 +764,19 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             )?;
             Ok(json!({ "chat_id": chat_id, "muted": muted }))
         }
-        Commands::Invite(InviteCommands::Create) => {
+    }
+}
+
+fn handle_invite_device_command(cli: &CliApp, command: InviteDeviceTopCommands) -> Result<Value> {
+    match command {
+        InviteDeviceTopCommands::Invite(InviteCommands::Create) => {
             cli.dispatch_and_wait(AppAction::CreatePublicInvite, Duration::from_secs(3))?;
             let state = cli.app.state();
             fail_on_toast(&state)?;
             let invite = state.public_invite.context("No invite was created.")?;
             Ok(json!({ "url": invite.url }))
         }
-        Commands::Invite(InviteCommands::Accept { invite }) => {
+        InviteDeviceTopCommands::Invite(InviteCommands::Accept { invite }) => {
             cli.dispatch_and_wait(
                 AppAction::AcceptInvite {
                     invite_input: invite,
@@ -670,7 +790,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
                 "current_chat": state.current_chat.as_ref().map(|chat| chat_summary_json(chat)),
             }))
         }
-        Commands::Link(LinkCommands::Create) => {
+        InviteDeviceTopCommands::Link(LinkCommands::Create) => {
             cli.dispatch_and_wait(
                 AppAction::StartLinkedDevice {
                     owner_input: String::new(),
@@ -685,7 +805,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
                 "device_input": link.device_input,
             }))
         }
-        Commands::Link(LinkCommands::Accept { invite }) => {
+        InviteDeviceTopCommands::Link(LinkCommands::Accept { invite }) => {
             cli.dispatch_and_wait(
                 AppAction::AddAuthorizedDevice {
                     device_input: invite,
@@ -712,7 +832,12 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
                 }),
             }))
         }
-        Commands::Group(GroupCommands::Create { name, members }) => {
+    }
+}
+
+fn handle_group_command(cli: &CliApp, command: GroupCommands) -> Result<Value> {
+    match command {
+        GroupCommands::Create { name, members } => {
             cli.dispatch_and_wait(
                 AppAction::CreateGroup {
                     name,
@@ -727,17 +852,15 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
                 "current_chat": state.current_chat.as_ref().map(|chat| chat_summary_json(chat)),
             }))
         }
-        Commands::Group(GroupCommands::List) => {
-            Ok(json!({ "groups": group_list_json(&cli.app.state()) }))
-        }
-        Commands::Group(GroupCommands::Show { group }) => show_group(cli, &group),
-        Commands::Group(GroupCommands::Send { group, message }) => {
+        GroupCommands::List => Ok(json!({ "groups": group_list_json(&cli.app.state()) })),
+        GroupCommands::Show { group } => show_group(cli, &group),
+        GroupCommands::Send { group, message } => {
             send_message(cli, &normalize_group_chat(&group), &message, None)
         }
-        Commands::Group(GroupCommands::Read { group, limit }) => {
+        GroupCommands::Read { group, limit } => {
             open_chat(cli, &normalize_group_chat(&group)).map(|chat| chat_json(&chat, limit))
         }
-        Commands::Group(GroupCommands::Add { group, members }) => {
+        GroupCommands::Add { group, members } => {
             let group_id = resolve_group_id(&cli.app.state(), &group)?;
             cli.dispatch_and_wait(
                 AppAction::AddGroupMembers {
@@ -748,7 +871,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             )?;
             show_group(cli, &group_id)
         }
-        Commands::Group(GroupCommands::Remove { group, members }) => {
+        GroupCommands::Remove { group, members } => {
             let group_id = resolve_group_id(&cli.app.state(), &group)?;
             if members.is_empty() {
                 anyhow::bail!("At least one member is required.");
@@ -765,13 +888,11 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             }
             show_group(cli, &group_id)
         }
-        Commands::Group(GroupCommands::AddAdmin { group, member }) => {
-            set_group_admin(cli, &group, &member, true)
-        }
-        Commands::Group(GroupCommands::RemoveAdmin { group, member }) => {
+        GroupCommands::AddAdmin { group, member } => set_group_admin(cli, &group, &member, true),
+        GroupCommands::RemoveAdmin { group, member } => {
             set_group_admin(cli, &group, &member, false)
         }
-        Commands::Group(GroupCommands::Rename { group, name }) => {
+        GroupCommands::Rename { group, name } => {
             let group_id = resolve_group_id(&cli.app.state(), &group)?;
             cli.dispatch_and_wait(
                 AppAction::UpdateGroupName {
@@ -782,12 +903,12 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             )?;
             show_group(cli, &group_id)
         }
-        Commands::Group(GroupCommands::React {
+        GroupCommands::React {
             group,
             message_id,
             emoji,
-        }) => react(cli, &normalize_group_chat(&group), &message_id, &emoji),
-        Commands::Group(GroupCommands::Delete { group }) => {
+        } => react(cli, &normalize_group_chat(&group), &message_id, &emoji),
+        GroupCommands::Delete { group } => {
             let group_id = resolve_group_id(&cli.app.state(), &group)?;
             let chat_id = normalize_group_chat(&group_id);
             cli.dispatch_and_wait(
@@ -798,35 +919,53 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
             )?;
             Ok(json!({ "chat_id": chat_id, "group_id": group_id, "deleted": true }))
         }
-        Commands::Relay(RelayCommands::List) => {
+    }
+}
+
+fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
+    match command {
+        RelayCommands::List => {
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
-        Commands::Relay(RelayCommands::Add { url }) => {
+        RelayCommands::Add { url } => {
             cli.dispatch_and_wait(
                 AppAction::AddNostrRelay { relay_url: url },
                 Duration::from_secs(2),
             )?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
-        Commands::Relay(RelayCommands::Remove { url }) => {
+        RelayCommands::Remove { url } => {
             cli.dispatch_and_wait(
                 AppAction::RemoveNostrRelay { relay_url: url },
                 Duration::from_secs(2),
             )?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
-        Commands::Relay(RelayCommands::Reset) => {
+        RelayCommands::Reset => {
             cli.dispatch_and_wait(AppAction::ResetNostrRelays, Duration::from_secs(2))?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
-        Commands::Relay(RelayCommands::Set { urls }) => {
+        RelayCommands::Set { urls } => {
             cli.dispatch_and_wait(
                 AppAction::SetNostrRelays { relay_urls: urls },
                 Duration::from_secs(3),
             )?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
         }
-        Commands::Update(cmd) => {
+    }
+}
+
+fn handle_maintenance_command(cli: &CliApp, command: MaintenanceTopCommands) -> Result<Value> {
+    match command {
+        MaintenanceTopCommands::State => Ok(state_json(&cli.app.state())),
+        MaintenanceTopCommands::Sync { wait_ms } => {
+            let state = cli.dispatch_and_wait_network(
+                AppAction::AppForegrounded,
+                Duration::from_millis(wait_ms.max(100)),
+            )?;
+            Ok(state_json(&state))
+        }
+        MaintenanceTopCommands::Update(cmd) => {
             run_iris_update(&cmd)?;
             Ok(json!({ "ok": true }))
         }
@@ -1350,28 +1489,36 @@ fn print_output(json_output: bool, command: &str, data: Value) -> Result<()> {
 
 fn command_name(command: &Commands) -> &'static str {
     match command {
-        Commands::Login { .. } => "login",
-        Commands::Restore { .. } => "restore",
-        Commands::Logout => "logout",
-        Commands::Whoami => "whoami",
-        Commands::State => "state",
-        Commands::Sync { .. } => "sync",
-        Commands::Search { .. } => "search",
-        Commands::Tail { .. } => "tail",
-        Commands::Listen { .. } => "listen",
-        Commands::Account(_) => "account",
-        Commands::Chat(_) => "chat",
-        Commands::Send { .. } => "send",
-        Commands::React { .. } => "react",
-        Commands::Typing { .. } => "typing",
-        Commands::Receipt { .. } => "receipt",
-        Commands::Read { .. } => "read",
-        Commands::Seen { .. } => "seen",
-        Commands::Invite(_) => "invite",
-        Commands::Link(_) => "link",
-        Commands::Group(_) => "group",
-        Commands::Relay(_) => "relay",
-        Commands::Update(_) => "update",
+        Commands::Account(command) => match command {
+            AccountTopCommands::Login { .. } => "login",
+            AccountTopCommands::Restore { .. } => "restore",
+            AccountTopCommands::Logout => "logout",
+            AccountTopCommands::Whoami => "whoami",
+            AccountTopCommands::Account(_) => "account",
+        },
+        Commands::Messages(command) => match command {
+            MessageTopCommands::Chat(_) => "chat",
+            MessageTopCommands::Send { .. } => "send",
+            MessageTopCommands::Read { .. } => "read",
+            MessageTopCommands::Seen { .. } => "seen",
+            MessageTopCommands::React { .. } => "react",
+            MessageTopCommands::Typing { .. } => "typing",
+            MessageTopCommands::Receipt { .. } => "receipt",
+            MessageTopCommands::Search { .. } => "search",
+            MessageTopCommands::Tail { .. } => "tail",
+            MessageTopCommands::Listen { .. } => "listen",
+        },
+        Commands::Groups(_) => "group",
+        Commands::InvitesAndDevices(command) => match command {
+            InviteDeviceTopCommands::Invite(_) => "invite",
+            InviteDeviceTopCommands::Link(_) => "link",
+        },
+        Commands::MessageServers(_) => "relay",
+        Commands::Maintenance(command) => match command {
+            MaintenanceTopCommands::State => "state",
+            MaintenanceTopCommands::Sync { .. } => "sync",
+            MaintenanceTopCommands::Update(_) => "update",
+        },
     }
 }
 
