@@ -364,14 +364,22 @@ impl AppCore {
     }
 
     pub(super) fn request_protocol_subscription_refresh(&mut self) {
-        self.request_protocol_subscription_refresh_inner(false);
+        self.request_protocol_subscription_refresh_inner(false, false);
     }
 
     pub(super) fn request_protocol_subscription_refresh_forced(&mut self) {
-        self.request_protocol_subscription_refresh_inner(true);
+        self.request_protocol_subscription_refresh_inner(true, false);
     }
 
-    pub(super) fn request_protocol_subscription_refresh_inner(&mut self, force: bool) {
+    pub(super) fn request_protocol_subscription_refresh_forced_reconnect_if_offline(&mut self) {
+        self.request_protocol_subscription_refresh_inner(true, true);
+    }
+
+    pub(super) fn request_protocol_subscription_refresh_inner(
+        &mut self,
+        force: bool,
+        force_reconnect_if_offline: bool,
+    ) {
         let Some((client, owners, group_authors)) = self.logged_in.as_ref().map(|logged_in| {
             (
                 logged_in.client.clone(),
@@ -509,7 +517,7 @@ impl AppCore {
             } else {
                 "plan_changed"
             };
-            self.reconcile_protocol_subscriptions(reason, false);
+            self.reconcile_protocol_subscriptions(reason, force_reconnect_if_offline);
         }
         self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
             PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,

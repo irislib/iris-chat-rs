@@ -409,6 +409,7 @@ final class AppManager: ObservableObject {
     @Published private(set) var state: AppState
     @Published private(set) var bootstrapInFlight = true
     @Published private(set) var pendingShare: PendingShare?
+    @Published private(set) var lastForegroundedAt = Date()
     @Published var toastMessage: String?
 
     private let rust: RustAppClient
@@ -912,6 +913,7 @@ final class AppManager: ObservableObject {
     }
 
     func appForegrounded() {
+        lastForegroundedAt = Date()
         backgroundSuspendPrepared = false
         dispatchToRust(.appForegrounded)
 #if os(iOS) || os(macOS)

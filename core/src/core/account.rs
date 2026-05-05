@@ -40,7 +40,7 @@ impl AppCore {
         }
         self.push_debug_log("app.foreground", "refresh relay session");
         self.schedule_session_connect();
-        self.request_protocol_subscription_refresh_forced();
+        self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
         let fetching_recent_protocol_state = self.fetch_recent_protocol_state();
         self.fetch_recent_messages_for_tracked_peers(now);
         self.retry_pending_relay_publishes("app_foreground");

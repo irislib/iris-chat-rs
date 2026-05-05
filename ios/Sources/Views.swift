@@ -19,6 +19,7 @@ private let disappearingMessageOptions: [(String, UInt64?)] = [
     ("1 month", 2_592_000),
     ("3 months", 7_776_000),
 ]
+private let offlineBannerGraceInterval: TimeInterval = 30
 
 private func hasHttpPicture(_ url: String?) -> Bool {
     guard let trimmed = url?.trimmingCharacters(in: .whitespacesAndNewlines), !trimmed.isEmpty else {
@@ -310,6 +311,7 @@ struct RootView: View {
             OfflineStatusBanner(
                 networkStatus: manager.state.networkStatus,
                 nearbyService: manager.nearbyIris,
+                foregroundedAt: manager.lastForegroundedAt,
                 onTap: {
                     manager.dispatch(.pushScreen(screen: .settings))
                 }
@@ -557,6 +559,7 @@ private struct OfflineStatusBanner: View {
 
     let networkStatus: NetworkStatusSnapshot?
     @ObservedObject var nearbyService: IrisNearbyService
+    let foregroundedAt: Date
     let onTap: () -> Void
 
     var body: some View {
@@ -590,7 +593,8 @@ private struct OfflineStatusBanner: View {
               !status.relayUrls.isEmpty,
               status.connectedRelayCount == 0,
               let offlineSince = status.allRelaysOfflineSinceSecs,
-              date.timeIntervalSince1970 - TimeInterval(offlineSince) >= 5 else {
+              date.timeIntervalSince1970 - TimeInterval(offlineSince) >= offlineBannerGraceInterval,
+              date.timeIntervalSince(foregroundedAt) >= offlineBannerGraceInterval else {
             return nil
         }
         let bluetoothStatus = nearbyService.isBluetoothOn ? "on" : "off"

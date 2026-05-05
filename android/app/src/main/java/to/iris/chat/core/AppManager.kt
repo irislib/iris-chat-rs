@@ -268,6 +268,7 @@ class AppManager(
     private var restoreCheckComplete = false
 
     private val mutableState = MutableStateFlow(rust.state())
+    private val mutableForegroundedAtSecs = MutableStateFlow(currentTimeSeconds())
 
     /**
      * Whole-state flow for callers that genuinely need the consolidated
@@ -277,6 +278,7 @@ class AppManager(
      * relay event, even those that don't change anything the screen renders.
      */
     val state: StateFlow<AppState> = mutableState.asStateFlow()
+    val foregroundedAtSecs: StateFlow<Long> = mutableForegroundedAtSecs.asStateFlow()
 
     // Per-slice flows. Each derives from `mutableState` via
     // `map { ... }.distinctUntilChanged()` so a Compose subscriber only
@@ -452,6 +454,7 @@ class AppManager(
 
     fun appForegrounded() {
         appInForeground = true
+        mutableForegroundedAtSecs.value = currentTimeSeconds()
         dispatchToRust(AppAction.AppForegrounded, showsToastOnFailure = false)
     }
 
@@ -1158,6 +1161,9 @@ class AppManager(
                 context.packageManager.getPackageInfo(context.packageName, 0).versionName
             }.getOrNull()
                 ?: "0.1.0"
+
+        fun currentTimeSeconds(): Long =
+            System.currentTimeMillis() / 1_000L
     }
 
     private fun createRustApp(): RustAppClient =

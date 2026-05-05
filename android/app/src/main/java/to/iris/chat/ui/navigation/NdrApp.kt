@@ -74,6 +74,7 @@ fun NdrApp(
     val splashViewModel = remember { SplashViewModel(appManager) }
     val bootstrapState by splashViewModel.bootstrapState.collectAsStateWithLifecycle()
     val appState by appManager.state.collectAsStateWithLifecycle()
+    val foregroundedAtSecs by appManager.foregroundedAtSecs.collectAsStateWithLifecycle()
     val pendingShare by appManager.pendingShare.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showingNearbyIris by remember { mutableStateOf(false) }
@@ -112,7 +113,7 @@ fun NdrApp(
                 status.connectedRelayCount == 0uL &&
                 offlineSinceSecs != null
         } == true
-    LaunchedEffect(allRelaysOffline, offlineSinceSecs) {
+    LaunchedEffect(allRelaysOffline, offlineSinceSecs, foregroundedAtSecs) {
         while (allRelaysOffline) {
             offlineNowSecs = System.currentTimeMillis() / 1_000L
             delay(1_000L)
@@ -122,7 +123,8 @@ fun NdrApp(
         if (
             allRelaysOffline &&
             offlineSinceSecs != null &&
-            offlineNowSecs.saturatingSubtract(offlineSinceSecs) >= 5L
+            offlineNowSecs.saturatingSubtract(offlineSinceSecs) >= OFFLINE_BANNER_GRACE_SECS &&
+            offlineNowSecs.saturatingSubtract(foregroundedAtSecs) >= OFFLINE_BANNER_GRACE_SECS
         ) {
             val nearbySnapshot = nearbySnapshotProvider()
             val bluetoothState = if (nearbyBluetoothEnabled(nearbySnapshot)) "on" else "off"
@@ -470,3 +472,5 @@ private val nearbyWifiBlockingStatuses =
 
 private fun Long.saturatingSubtract(other: Long): Long =
     if (this >= other) this - other else 0L
+
+private const val OFFLINE_BANNER_GRACE_SECS = 30L

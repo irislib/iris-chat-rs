@@ -31,6 +31,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
     fileprivate static let fragmentTTL: TimeInterval = 30
     fileprivate static let maxEventBytes = 128 * 1024
     fileprivate static let maxMailbagEvents = 500
+    private static let maxWriteWithoutResponseChunksPerFlush = 32
+    private static let maxNotificationChunksPerDrain = 32
+    private static let maxPendingNotifications = 256
+    private static let maxPendingNotificationBytes = 2 * 1024 * 1024
     private static let nearbyPresenceKind: UInt32 = 22242
     private static let nonIrisBackoff: TimeInterval = 60
     private static let helloInterval: TimeInterval = 5
@@ -51,6 +55,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var subscribedCentrals: [UUID: IrisNearbyCentralChannel] = [:]
     private var centralAssemblers: [UUID: IrisNearbyFrameAssembler] = [:]
     private var pendingNotifications: [(data: Data, channel: IrisNearbyCentralChannel?)] = []
+    private var pendingNotificationBytes = 0
+    private var notificationDrainScheduled = false
     private var peerIDByPeripheral: [UUID: String] = [:]
     private var peerIDByCentral: [UUID: String] = [:]
     private var bluetoothPeerLastSeen: [String: Date] = [:]
@@ -425,7 +431,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peripheralWriteQueues.removeAll()
         subscribedCentrals.removeAll()
         centralAssemblers.removeAll()
-        pendingNotifications.removeAll()
+        clearPendingNotifications()
         let bluetoothPeerIDs = recentBluetoothPeerIDs
         peerIDByPeripheral.removeAll()
         peerIDByCentral.removeAll()
@@ -765,6 +771,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func flushWriteQueue(for peripheralID: UUID) {
+        var chunkBudget = Self.maxWriteWithoutResponseChunksPerFlush
+        flushWriteQueue(for: peripheralID, chunkBudget: &chunkBudget)
+        if chunkBudget == 0, peripheralWriteQueues[peripheralID]?.writeType == .withoutResponse {
+            DispatchQueue.main.async { [weak self] in
+                self?.flushWriteQueue(for: peripheralID)
+            }
+        }
+    }
+
+    private func flushWriteQueue(for peripheralID: UUID, chunkBudget: inout Int) {
         guard var queue = peripheralWriteQueues[peripheralID],
               let peripheral = peripherals[peripheralID],
               let characteristic = writableCharacteristics[peripheralID] else { return }
@@ -784,9 +800,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
             peripheralWriteQueues[peripheralID] = queue
             peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
         case .withoutResponse:
-            while !queue.chunks.isEmpty && peripheral.canSendWriteWithoutResponse {
+            while !queue.chunks.isEmpty && chunkBudget > 0 && peripheral.canSendWriteWithoutResponse {
                 let chunk = queue.chunks.removeFirst()
                 peripheral.writeValue(chunk, for: characteristic, type: .withoutResponse)
+                chunkBudget -= 1
             }
             if queue.chunks.isEmpty {
                 peripheralWriteQueues.removeValue(forKey: peripheralID)
@@ -799,11 +816,23 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func notify(_ data: Data, to channel: IrisNearbyCentralChannel?) {
-        guard let peripheralManager else { return }
-        guard let characteristic = channel?.characteristic ?? localCharacteristic else { return }
+        var chunkBudget = Self.maxNotificationChunksPerDrain
+        if !notify(data, to: channel, chunkBudget: &chunkBudget), chunkBudget == 0 {
+            scheduleNotificationDrain()
+        }
+    }
+
+    @discardableResult
+    private func notify(
+        _ data: Data,
+        to channel: IrisNearbyCentralChannel?,
+        chunkBudget: inout Int
+    ) -> Bool {
+        guard let peripheralManager else { return true }
+        guard let characteristic = channel?.characteristic ?? localCharacteristic else { return true }
         let maxLength = max(20, channel?.central.maximumUpdateValueLength ?? 180)
         var offset = 0
-        while offset < data.count {
+        while offset < data.count, chunkBudget > 0 {
             let end = min(offset + maxLength, data.count)
             let sent = peripheralManager.updateValue(
                 Data(data[offset..<end]),
@@ -811,10 +840,69 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 onSubscribedCentrals: channel.map { [$0.central] }
             )
             if !sent {
-                pendingNotifications.append((Data(data[offset..<data.count]), channel))
-                return
+                enqueuePendingNotification(Data(data[offset..<data.count]), channel)
+                return false
             }
             offset = end
+            chunkBudget -= 1
+        }
+        if offset < data.count {
+            enqueuePendingNotification(Data(data[offset..<data.count]), channel)
+            return false
+        }
+        return true
+    }
+
+    private func enqueuePendingNotification(_ data: Data, _ channel: IrisNearbyCentralChannel?) {
+        guard !data.isEmpty else { return }
+        pendingNotifications.append((data, channel))
+        pendingNotificationBytes += data.count
+        trimPendingNotifications()
+    }
+
+    private func trimPendingNotifications() {
+        while pendingNotifications.count > Self.maxPendingNotifications ||
+            pendingNotificationBytes > Self.maxPendingNotificationBytes {
+            let dropped = pendingNotifications.removeFirst()
+            pendingNotificationBytes = max(0, pendingNotificationBytes - dropped.data.count)
+        }
+    }
+
+    private func clearPendingNotifications() {
+        pendingNotifications.removeAll()
+        pendingNotificationBytes = 0
+        notificationDrainScheduled = false
+    }
+
+    private func removePendingNotifications(where shouldRemove: ((data: Data, channel: IrisNearbyCentralChannel?)) -> Bool) {
+        pendingNotifications.removeAll(where: shouldRemove)
+        pendingNotificationBytes = pendingNotifications.reduce(0) { $0 + $1.data.count }
+    }
+
+    private func scheduleNotificationDrain() {
+        guard !notificationDrainScheduled else { return }
+        notificationDrainScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            self?.drainPendingNotifications()
+        }
+    }
+
+    private func drainPendingNotifications() {
+        notificationDrainScheduled = false
+        var chunkBudget = Self.maxNotificationChunksPerDrain
+        while chunkBudget > 0, !pendingNotifications.isEmpty {
+            let item = pendingNotifications.removeFirst()
+            pendingNotificationBytes = max(0, pendingNotificationBytes - item.data.count)
+            if let centralID = item.channel?.central.identifier,
+               subscribedCentrals[centralID] == nil {
+                continue
+            }
+            if !notify(item.data, to: item.channel, chunkBudget: &chunkBudget) {
+                break
+            }
+        }
+        if !pendingNotifications.isEmpty, chunkBudget == 0 {
+            scheduleNotificationDrain()
         }
     }
 
@@ -1028,7 +1116,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             subscribedCentrals.removeValue(forKey: centralID)
             centralAssemblers.removeValue(forKey: centralID)
         }
-        pendingNotifications.removeAll { item in
+        removePendingNotifications { item in
             guard let centralID = item.channel?.central.identifier else { return false }
             return staleCentralIDs.contains(centralID)
         }
@@ -1596,11 +1684,7 @@ extension IrisNearbyService: CBPeripheralManagerDelegate {
     }
 
     func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
-        let pending = pendingNotifications
-        pendingNotifications.removeAll()
-        for item in pending {
-            notify(item.data, to: item.channel)
-        }
+        drainPendingNotifications()
     }
 }
 
