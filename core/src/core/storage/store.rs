@@ -281,7 +281,7 @@ impl AppStore {
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let mut stmt = conn.prepare(
             "SELECT owner_pubkey_hex, event_id, label, event_json, inner_event_id,
-                    target_device_id, message_id, chat_id, created_at_secs,
+                    target_owner_pubkey_hex, target_device_id, message_id, chat_id, created_at_secs,
                     attempt_count, last_error
              FROM pending_relay_publishes
              WHERE owner_pubkey_hex = ?1
@@ -294,12 +294,13 @@ impl AppStore {
                 label: row.get(2)?,
                 event_json: row.get(3)?,
                 inner_event_id: row.get(4)?,
-                target_device_id: row.get(5)?,
-                message_id: row.get(6)?,
-                chat_id: row.get(7)?,
-                created_at_secs: row.get::<_, i64>(8)?.max(0) as u64,
-                attempt_count: row.get::<_, i64>(9)?.max(0) as u64,
-                last_error: row.get(10)?,
+                target_owner_pubkey_hex: row.get(5)?,
+                target_device_id: row.get(6)?,
+                message_id: row.get(7)?,
+                chat_id: row.get(8)?,
+                created_at_secs: row.get::<_, i64>(9)?.max(0) as u64,
+                attempt_count: row.get::<_, i64>(10)?.max(0) as u64,
+                last_error: row.get(11)?,
             })
         })?;
         let mut pending = Vec::new();
@@ -320,14 +321,16 @@ impl AppStore {
         conn.execute(
             "INSERT INTO pending_relay_publishes(
                 event_id, owner_pubkey_hex, label, event_json, inner_event_id,
-                target_device_id, message_id, chat_id, created_at_secs, attempt_count, last_error
+                target_owner_pubkey_hex, target_device_id, message_id, chat_id, created_at_secs,
+                attempt_count, last_error
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT(event_id) DO UPDATE SET
                 owner_pubkey_hex = excluded.owner_pubkey_hex,
                 label = excluded.label,
                 event_json = excluded.event_json,
                 inner_event_id = COALESCE(excluded.inner_event_id, pending_relay_publishes.inner_event_id),
+                target_owner_pubkey_hex = COALESCE(excluded.target_owner_pubkey_hex, pending_relay_publishes.target_owner_pubkey_hex),
                 target_device_id = COALESCE(excluded.target_device_id, pending_relay_publishes.target_device_id),
                 message_id = COALESCE(excluded.message_id, pending_relay_publishes.message_id),
                 chat_id = COALESCE(excluded.chat_id, pending_relay_publishes.chat_id),
@@ -340,6 +343,7 @@ impl AppStore {
                 &pending.label,
                 &pending.event_json,
                 &pending.inner_event_id,
+                &pending.target_owner_pubkey_hex,
                 &pending.target_device_id,
                 &pending.message_id,
                 &pending.chat_id,

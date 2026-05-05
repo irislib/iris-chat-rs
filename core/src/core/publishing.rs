@@ -23,7 +23,7 @@ impl AppCore {
         label: &'static str,
         completion: Option<(String, String)>,
     ) -> bool {
-        self.publish_runtime_event_with_metadata(event, label, completion, None, None)
+        self.publish_runtime_event_with_metadata(event, label, completion, None, None, None)
     }
 
     pub(super) fn publish_runtime_event_with_metadata(
@@ -32,6 +32,7 @@ impl AppCore {
         label: &'static str,
         completion: Option<(String, String)>,
         inner_event_id: Option<String>,
+        target_owner_pubkey_hex: Option<String>,
         target_device_id: Option<String>,
     ) -> bool {
         if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
@@ -49,6 +50,7 @@ impl AppCore {
             label,
             completion.clone(),
             inner_event_id,
+            target_owner_pubkey_hex,
             target_device_id,
         );
         if !stored {
@@ -137,6 +139,7 @@ impl AppCore {
         label: &str,
         completion: Option<(String, String)>,
         inner_event_id: Option<String>,
+        target_owner_pubkey_hex: Option<String>,
         target_device_id: Option<String>,
     ) -> bool {
         let Some(logged_in) = self.logged_in.as_ref() else {
@@ -159,6 +162,7 @@ impl AppCore {
             label: label.to_string(),
             event_json,
             inner_event_id,
+            target_owner_pubkey_hex,
             target_device_id,
             message_id,
             chat_id,
@@ -276,7 +280,17 @@ impl AppCore {
         self.pending_relay_publish_inflight.remove(&event_id);
         self.push_debug_log("publish.runtime", detail.clone());
         if success {
+            let pending = self.pending_relay_publishes.get(&event_id).cloned();
             self.forget_pending_relay_publish(&event_id);
+            if let (Some(message_id), Some(chat_id)) = (message_id.as_deref(), chat_id.as_deref()) {
+                self.mark_message_publish_succeeded(
+                    chat_id,
+                    message_id,
+                    pending
+                        .as_ref()
+                        .and_then(|pending| pending.target_owner_pubkey_hex.as_deref()),
+                );
+            }
         } else if let Some(pending) = self.pending_relay_publishes.get_mut(&event_id) {
             pending.attempt_count = pending.attempt_count.saturating_add(1);
             pending.last_error = Some(detail.clone());
@@ -292,13 +306,11 @@ impl AppCore {
                     &format!("message server: {relay_url}"),
                 );
             }
-            let delivery = if success {
-                DeliveryState::Sent
-            } else {
-                DeliveryState::Queued
-            };
-            self.update_message_delivery(&chat_id, &message_id, delivery);
+            if !success {
+                self.update_message_delivery(&chat_id, &message_id, DeliveryState::Queued);
+            }
             self.sync_message_delivery_trace(&chat_id, &message_id);
+            self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
         }
         self.rebuild_state();
         self.persist_best_effort();

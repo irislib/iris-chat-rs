@@ -78,6 +78,7 @@ impl AppCore {
                 .collect::<BTreeMap<_, _>>();
             self.process_protocol_engine_effects_with_completions(result.effects, &completions);
             self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
+            self.reconcile_outgoing_message_delivery(&result.chat_id, &result.message_id);
         }
         for group_event in batch.group_result.events {
             self.apply_group_decrypted_event(group_event);

@@ -314,6 +314,7 @@ impl AppCore {
                 ProtocolEffect::PublishSignedForInnerEvent {
                     event,
                     inner_event_id,
+                    target_owner_pubkey_hex,
                     target_device_id,
                 } => {
                     let event_id = event.id.to_string();
@@ -327,6 +328,7 @@ impl AppCore {
                         "appcore-protocol",
                         completion,
                         inner_event_id,
+                        target_owner_pubkey_hex,
                         target_device_id,
                     );
                 }

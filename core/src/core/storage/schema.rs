@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS pending_relay_publishes (
     label TEXT NOT NULL,
     event_json TEXT NOT NULL,
     inner_event_id TEXT,
+    target_owner_pubkey_hex TEXT,
     target_device_id TEXT,
     message_id TEXT,
     chat_id TEXT,
@@ -242,6 +243,12 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             tx.execute_batch(
                 "ALTER TABLE pending_relay_publishes
                  ADD COLUMN target_device_id TEXT;",
+            )?;
+        }
+        if !column_exists(&tx, "pending_relay_publishes", "target_owner_pubkey_hex")? {
+            tx.execute_batch(
+                "ALTER TABLE pending_relay_publishes
+                 ADD COLUMN target_owner_pubkey_hex TEXT;",
             )?;
         }
         if !column_exists(&tx, "pending_relay_publishes", "attempt_count")? {

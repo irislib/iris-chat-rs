@@ -127,6 +127,7 @@ pub(super) struct PendingRelayPublish {
     pub(super) label: String,
     pub(super) event_json: String,
     pub(super) inner_event_id: Option<String>,
+    pub(super) target_owner_pubkey_hex: Option<String>,
     pub(super) target_device_id: Option<String>,
     pub(super) message_id: Option<String>,
     pub(super) chat_id: Option<String>,

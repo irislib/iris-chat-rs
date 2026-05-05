@@ -493,6 +493,61 @@ impl AppCore {
         }
     }
 
+    pub(super) fn mark_message_publish_succeeded(
+        &mut self,
+        chat_id: &str,
+        message_id: &str,
+        target_owner_pubkey_hex: Option<&str>,
+    ) {
+        let local_owner = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        match target_owner_pubkey_hex {
+            Some(target_owner) if local_owner.as_deref() == Some(target_owner) => {}
+            Some(target_owner) => {
+                if let Some(recipient) = message
+                    .recipient_deliveries
+                    .iter_mut()
+                    .find(|recipient| recipient.owner_pubkey_hex == target_owner)
+                {
+                    if matches!(
+                        recipient.delivery,
+                        DeliveryState::Pending | DeliveryState::Queued
+                    ) {
+                        recipient.delivery = DeliveryState::Sent;
+                        recipient.updated_at_secs = unix_now().get();
+                    }
+                }
+            }
+            None => {
+                if message.recipient_deliveries.is_empty() {
+                    message.delivery = DeliveryState::Sent;
+                } else {
+                    for recipient in &mut message.recipient_deliveries {
+                        if matches!(
+                            recipient.delivery,
+                            DeliveryState::Pending | DeliveryState::Queued
+                        ) {
+                            recipient.delivery = DeliveryState::Sent;
+                            recipient.updated_at_secs = unix_now().get();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub(super) fn record_message_outer_event(
         &mut self,
         chat_id: &str,
@@ -601,6 +656,55 @@ impl AppCore {
         message.delivery_trace.pending_relay_event_ids = pending_relay_event_ids;
         message.delivery_trace.queued_protocol_targets = queued_protocol_targets;
         message.delivery_trace.last_transport_error = last_transport_error;
+    }
+
+    pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
+        let local_owner = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
+        let pending_relay = self.pending_relay_publishes.values().any(|pending| {
+            pending.chat_id.as_deref() == Some(chat_id)
+                && pending.message_id.as_deref() == Some(message_id)
+                && pending.target_owner_pubkey_hex.as_deref() != local_owner.as_deref()
+        });
+        let queued_protocol = self
+            .protocol_engine
+            .as_ref()
+            .is_some_and(|protocol_engine| {
+                protocol_engine.has_queued_remote_message_work(message_id)
+            });
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        if !message.is_outgoing || matches!(message.delivery, DeliveryState::Failed) {
+            return;
+        }
+        let recipients_complete = message.recipient_deliveries.iter().all(|recipient| {
+            matches!(
+                recipient.delivery,
+                DeliveryState::Sent | DeliveryState::Received | DeliveryState::Seen
+            )
+        });
+        if pending_relay || queued_protocol || !recipients_complete {
+            if matches!(message.delivery, DeliveryState::Sent) {
+                message.delivery = DeliveryState::Pending;
+            }
+            return;
+        }
+        if matches!(
+            message.delivery,
+            DeliveryState::Pending | DeliveryState::Queued
+        ) {
+            message.delivery = DeliveryState::Sent;
+        }
     }
 
     pub(super) fn push_outgoing_message_with_id(

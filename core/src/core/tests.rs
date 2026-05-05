@@ -537,33 +537,84 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
 }
 
 #[test]
+fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+
+    let result = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "first",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+
+    let published_peer_targets = result
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::PublishSignedForInnerEvent {
+                target_owner_pubkey_hex,
+                ..
+            } => target_owner_pubkey_hex.clone(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !published_peer_targets.contains(&peer_owner.public_key().to_hex()),
+        "peer owner must not be considered published before peer protocol state exists"
+    );
+    let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
+    assert_eq!(result.queued_targets, vec![owner_marker.clone()]);
+    let snapshot = engine.debug_snapshot();
+    assert_eq!(snapshot.pending_outbound_count, 1);
+    assert_eq!(snapshot.pending_outbound_targets, vec![owner_marker]);
+}
+
+#[test]
+fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pending() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+
+    let result = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "first",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
+    assert_eq!(result.queued_targets, vec![owner_marker.clone()]);
+
+    let retries = engine
+        .retry_pending_outbound(NdrUnixSeconds(10_000))
+        .expect("retry pending outbound");
+    assert_eq!(retries.len(), 1);
+    assert_eq!(retries[0].message_id, result.message_id);
+    assert!(retries[0].event_ids.is_empty());
+    assert!(retries[0].effects.is_empty());
+    assert_eq!(retries[0].queued_targets, vec![owner_marker.clone()]);
+    let snapshot = engine.debug_snapshot();
+    assert_eq!(snapshot.pending_outbound_count, 1);
+    assert_eq!(snapshot.pending_outbound_targets, vec![owner_marker]);
+}
+
+#[test]
 fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_missing_device() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer_owner = Keys::generate();
     let peer_phone = Keys::generate();
     let peer_laptop = Keys::generate();
-    let storage =
-        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
-    let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
-    let local_invite = Invite::create_new(
-        device.public_key(),
-        Some(device.public_key().to_hex()),
-        None,
-    )
-    .expect("local invite");
-    let session_manager =
-        SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
-    let group_manager = NostrGroupManager::new(local_owner).snapshot();
-    let mut engine = ProtocolEngine::load_or_seed(
-        storage,
-        owner.public_key(),
-        &device,
-        local_invite,
-        session_manager,
-        group_manager,
-    )
-    .expect("protocol engine");
+    let mut engine = test_protocol_engine(&owner, &device);
 
     let peer_app_keys = AppKeys::new(vec![
         DeviceEntry::new(peer_phone.public_key(), 1),
@@ -606,6 +657,178 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
     assert_eq!(
         result.queued_targets,
         vec![peer_laptop.public_key().to_hex()]
+    );
+
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(120), &mut rng);
+    let laptop_invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_laptop.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("laptop invite");
+    let laptop_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&laptop_invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_laptop)
+        .expect("signed invite");
+    let batch = engine
+        .observe_invite_event(&laptop_invite_event)
+        .expect("observe laptop invite");
+
+    assert_eq!(batch.direct_results.len(), 1);
+    let retry = &batch.direct_results[0];
+    assert_eq!(retry.message_id, result.message_id);
+    assert_eq!(retry.event_ids.len(), 1);
+    assert!(
+        retry.queued_targets.is_empty(),
+        "all remote devices should be prepared after the missing invite arrives"
+    );
+    assert_eq!(engine.debug_snapshot().pending_outbound_count, 0);
+}
+
+#[test]
+fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("local-sibling-ack-direct-delivery", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "direct-first".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "first".to_string(),
+        1_777_159_500,
+        None,
+        DeliveryState::Pending,
+    );
+
+    let local_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "local sibling")
+        .sign_with_keys(&device)
+        .expect("local sibling event");
+    let local_event_id = local_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        local_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: local_event_id.clone(),
+            label: "test".to_string(),
+            event_json: serde_json::to_string(&local_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(owner.public_key().to_hex()),
+            target_device_id: Some(sibling.public_key().to_hex()),
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: local_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+    core.handle_relay_publish_finished(
+        local_event_id,
+        Some(message_id.clone()),
+        Some(chat_id.clone()),
+        true,
+        vec!["wss://relay.example".to_string()],
+        "local sibling ack".to_string(),
+    );
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after local ack");
+    assert_eq!(message.delivery, DeliveryState::Pending);
+    assert_eq!(message.recipient_deliveries.len(), 1);
+    assert_eq!(
+        message.recipient_deliveries[0].owner_pubkey_hex,
+        peer.public_key().to_hex()
+    );
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Pending
+    );
+
+    let lingering_local_event =
+        EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "local still pending")
+            .sign_with_keys(&device)
+            .expect("lingering local event");
+    let lingering_local_event_id = lingering_local_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        lingering_local_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: lingering_local_event_id.clone(),
+            label: "test".to_string(),
+            event_json: serde_json::to_string(&lingering_local_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(owner.public_key().to_hex()),
+            target_device_id: Some(sibling.public_key().to_hex()),
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: lingering_local_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+
+    let peer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "peer")
+        .sign_with_keys(&device)
+        .expect("peer event");
+    let peer_event_id = peer_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        peer_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: peer_event_id.clone(),
+            label: "test".to_string(),
+            event_json: serde_json::to_string(&peer_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+            target_device_id: Some(peer.public_key().to_hex()),
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: peer_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+    core.handle_relay_publish_finished(
+        peer_event_id,
+        Some(message_id.clone()),
+        Some(chat_id.clone()),
+        true,
+        vec!["wss://relay.example".to_string()],
+        "peer ack".to_string(),
+    );
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after peer ack");
+    assert!(
+        core.pending_relay_publishes
+            .contains_key(&lingering_local_event_id),
+        "local sibling pending relay work should not decide peer recipient delivery"
+    );
+    assert_eq!(message.delivery, DeliveryState::Sent);
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Sent
     );
 }
 
@@ -4646,6 +4869,30 @@ fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String
     )) as Arc<dyn StorageAdapter>;
     install_test_protocol_engine(&mut core, owner, device, storage, None, None);
     core
+}
+
+fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
+    let storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
+    let local_invite = Invite::create_new(
+        device.public_key(),
+        Some(device.public_key().to_hex()),
+        None,
+    )
+    .expect("local invite");
+    let session_manager =
+        SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
+    let group_manager = NostrGroupManager::new(local_owner).snapshot();
+    ProtocolEngine::load_or_seed(
+        storage,
+        owner.public_key(),
+        device,
+        local_invite,
+        session_manager,
+        group_manager,
+    )
+    .expect("protocol engine")
 }
 
 fn install_test_protocol_engine(

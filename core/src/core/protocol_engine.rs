@@ -86,6 +86,7 @@ pub(super) enum ProtocolEffect {
     PublishSignedForInnerEvent {
         event: Event,
         inner_event_id: Option<String>,
+        target_owner_pubkey_hex: Option<String>,
         target_device_id: Option<String>,
     },
     EmitDecrypted {
@@ -119,6 +120,15 @@ pub(super) enum ProtocolPendingReason {
     MissingRoster,
     MissingDeviceInvite,
     PublishRetry,
+}
+
+impl ProtocolPendingOutbound {
+    fn waits_for_remote_protocol_state(&self) -> bool {
+        matches!(
+            self.reason,
+            ProtocolPendingReason::MissingRoster | ProtocolPendingReason::MissingDeviceInvite
+        )
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -608,6 +618,13 @@ impl ProtocolEngine {
         targets.sort();
         targets.dedup();
         targets
+    }
+
+    pub(super) fn has_queued_remote_message_work(&self, message_id: &str) -> bool {
+        self.pending_outbound.iter().any(|pending| {
+            pending.message_id == message_id
+                && !self.pending_remote_target_hexes(pending).is_empty()
+        })
     }
 
     pub(super) fn ingest_app_keys_snapshot(
@@ -1221,6 +1238,18 @@ impl ProtocolEngine {
                 self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
 
             if remote_targets.is_empty() && local_targets.is_empty() {
+                let queued_targets = self.pending_target_hexes(&pending);
+                if pending.waits_for_remote_protocol_state() && !queued_targets.is_empty() {
+                    pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                    still_pending.push(pending.clone());
+                    results.push(ProtocolRetryResult {
+                        message_id: pending.message_id.clone(),
+                        chat_id: pending.chat_id.clone(),
+                        event_ids: Vec::new(),
+                        effects: Vec::new(),
+                        queued_targets,
+                    });
+                }
                 continue;
             }
 
@@ -1274,7 +1303,9 @@ impl ProtocolEngine {
 
             let queued_targets = self.pending_target_hexes(&pending);
             if !queued_targets.is_empty() || !gaps.is_empty() {
-                pending.reason = pending_reason_from_gaps(&gaps);
+                if !gaps.is_empty() {
+                    pending.reason = pending_reason_from_gaps(&gaps);
+                }
                 pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
                 still_pending.push(pending.clone());
             }
@@ -1797,17 +1828,41 @@ impl ProtocolEngine {
             .collect()
     }
 
+    fn has_roster_for_owner(&self, owner: NdrOwnerPubkey) -> bool {
+        self.session_manager
+            .snapshot()
+            .users
+            .into_iter()
+            .find(|user| user.owner_pubkey == owner)
+            .and_then(|user| user.roster)
+            .is_some_and(|roster| !roster.devices().is_empty())
+    }
+
     fn pending_target_hexes(&self, pending: &ProtocolPendingOutbound) -> Vec<String> {
-        let mut targets = Vec::new();
-        if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
-            for target in self
-                .remaining_remote_targets(ndr_owner(owner), &pending.delivered_remote_device_hexes)
-            {
-                targets.push(target.to_hex());
-            }
-        }
+        let mut targets = self.pending_remote_target_hexes(pending);
         for target in self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes) {
             targets.push(target.to_hex());
+        }
+        targets.sort();
+        targets.dedup();
+        targets
+    }
+
+    fn pending_remote_target_hexes(&self, pending: &ProtocolPendingOutbound) -> Vec<String> {
+        let mut targets = Vec::new();
+        if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
+            let ndr_owner = ndr_owner(owner);
+            let remote_targets =
+                self.remaining_remote_targets(ndr_owner, &pending.delivered_remote_device_hexes);
+            for target in remote_targets {
+                targets.push(target.to_hex());
+            }
+            if targets.is_empty()
+                && matches!(pending.reason, ProtocolPendingReason::MissingRoster)
+                && !self.has_roster_for_owner(ndr_owner)
+            {
+                targets.push(format!("owner:{}", owner.to_hex()));
+            }
         }
         targets.sort();
         targets.dedup();
@@ -1851,6 +1906,7 @@ fn protocol_effects_from_prepared(
         effects.push(ProtocolEffect::PublishSignedForInnerEvent {
             event,
             inner_event_id: inner_event_id.clone(),
+            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
             target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
         });
     }
@@ -1873,6 +1929,7 @@ fn protocol_effects_from_group_prepared_publish(
         effects.push(ProtocolEffect::PublishSignedForInnerEvent {
             event,
             inner_event_id: inner_event_id.clone(),
+            target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
             target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
         });
     }
