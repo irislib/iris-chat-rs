@@ -8,6 +8,7 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     for key in [
         "IRIS_APP_VERSION",
+        "IRIS_APP_VERSION_NAME",
         "IRIS_BUILD_CHANNEL",
         "IRIS_BUILD_GIT_SHA",
         "IRIS_BUILD_TIMESTAMP_UTC",
@@ -19,9 +20,16 @@ fn main() {
         println!("cargo:rerun-if-env-changed={key}");
     }
 
+    // Marketing version drives release tags, store metadata, and the value
+    // the app reports in its UI. The release pipeline exports it as
+    // IRIS_APP_VERSION_NAME (Android/iOS gradle/xcconfig consume that name);
+    // accept either spelling and fall back to the crate semver only for
+    // local development builds.
     emit(
         "IRIS_APP_VERSION",
-        env::var("IRIS_APP_VERSION").unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
+        env::var("IRIS_APP_VERSION_NAME")
+            .or_else(|_| env::var("IRIS_APP_VERSION"))
+            .unwrap_or_else(|_| env!("CARGO_PKG_VERSION").to_string()),
     );
     emit(
         "IRIS_BUILD_CHANNEL",

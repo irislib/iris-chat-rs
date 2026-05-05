@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 
 #[derive(Parser)]
 #[command(name = "iris")]
-#[command(version)]
+#[command(version = env!("IRIS_APP_VERSION"))]
 #[command(about = "Iris Chat command line client")]
 struct Cli {
     #[arg(short, long, global = true)]
@@ -272,7 +272,7 @@ const IRIS_UPDATE_REFERENCE: &str =
 
 fn run_iris_update(cmd: &UpdateCommands) -> Result<()> {
     let mut args = vec!["install".to_string(), IRIS_UPDATE_REFERENCE.to_string()];
-    let current_version = env!("CARGO_PKG_VERSION").to_string();
+    let current_version = env!("IRIS_APP_VERSION").to_string();
     args.extend(["--current-version".into(), current_version]);
     match cmd {
         UpdateCommands::Check => {
@@ -437,7 +437,7 @@ impl CliApp {
         let app = FfiApp::new(
             data_dir.to_string_lossy().to_string(),
             String::new(),
-            env!("CARGO_PKG_VERSION").to_string(),
+            env!("IRIS_APP_VERSION").to_string(),
         );
         let reconciler = Arc::new(CliReconciler {
             data_dir: data_dir.to_path_buf(),
