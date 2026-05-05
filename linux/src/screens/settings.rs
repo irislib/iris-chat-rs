@@ -29,6 +29,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     page.add(&media_group(&state.preferences, manager));
     page.add(&relays_group(&state.preferences, manager));
     page.add(&security_group(manager));
+    page.add(&updates_group());
     page.add(&about_group(state));
     page.add(&support_group(manager));
 
@@ -114,6 +115,93 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
     group.add(&reset);
 
     group
+}
+
+fn updates_group() -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder().title("Updates").build();
+
+    let version = adw::ActionRow::builder()
+        .title("Current version")
+        .subtitle(iris_chat_core::app_version())
+        .build();
+    group.add(&version);
+
+    let check = adw::ActionRow::builder()
+        .title("Check for updates")
+        .subtitle("Compares the running version with the latest published release")
+        .activatable(true)
+        .build();
+    let icon = gtk::Image::from_icon_name("software-update-available-symbolic");
+    check.add_prefix(&icon);
+    let status = gtk::Label::builder()
+        .css_classes(["dim-label"])
+        .ellipsize(gtk::pango::EllipsizeMode::End)
+        .build();
+    check.add_suffix(&status);
+    let busy = Rc::new(Cell::new(false));
+    {
+        let busy = busy.clone();
+        let status = status.clone();
+        check.connect_activated(move |_| {
+            if busy.get() {
+                return;
+            }
+            busy.set(true);
+            status.set_text("Checking…");
+            let busy = busy.clone();
+            let status = status.clone();
+            glib::MainContext::default().spawn_local(async move {
+                let summary = run_update_check().await;
+                status.set_text(&summary);
+                busy.set(false);
+            });
+        });
+    }
+    group.add(&check);
+
+    group
+}
+
+const IRIS_UPDATE_REFERENCE: &str =
+    "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest";
+
+async fn run_update_check() -> String {
+    let current = iris_chat_core::app_version();
+    let result = gtk::gio::spawn_blocking(move || {
+        std::process::Command::new("htree")
+            .args([
+                "install",
+                IRIS_UPDATE_REFERENCE,
+                "--check",
+                "--current-version",
+                &current,
+            ])
+            .output()
+    })
+    .await;
+    match result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let combined = format!("{stdout}\n{stderr}");
+            if output.status.success() {
+                if combined.contains("up to date") || combined.contains("Up to date") {
+                    "Up to date".to_string()
+                } else if let Some(line) = combined
+                    .lines()
+                    .find(|line| line.to_lowercase().contains("available"))
+                {
+                    line.trim().to_string()
+                } else {
+                    "Up to date".to_string()
+                }
+            } else {
+                "Update check failed".to_string()
+            }
+        }
+        Ok(Err(_)) => "htree not found — install hashtree-cli".to_string(),
+        Err(_) => "Update check cancelled".to_string(),
+    }
 }
 
 fn support_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
@@ -477,7 +565,7 @@ fn about_group(state: &AppState) -> adw::PreferencesGroup {
 
     let version = adw::ActionRow::builder()
         .title("Version")
-        .subtitle(env!("CARGO_PKG_VERSION"))
+        .subtitle(iris_chat_core::app_version())
         .build();
     group.add(&version);
 

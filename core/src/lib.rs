@@ -599,6 +599,15 @@ pub fn is_trusted_test_build() -> bool {
     )
 }
 
+/// Marketing version baked in at build time from `IRIS_APP_VERSION_NAME`
+/// (or `IRIS_APP_VERSION`), falling back to the crate semver. Use this
+/// instead of `env!("CARGO_PKG_VERSION")` so UI/release artifacts agree
+/// on a single version string.
+#[uniffi::export]
+pub fn app_version() -> String {
+    crate::core::app_version_string().to_string()
+}
+
 #[uniffi::export]
 pub fn resolve_mobile_push_notification_payload(
     raw_payload_json: String,

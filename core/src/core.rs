@@ -88,7 +88,9 @@ use account::known_app_keys_to_ndr;
 use attachment_upload::upload_profile_picture_to_hashtree;
 use attachments::*;
 use config::*;
-pub(crate) use config::{build_summary, configured_relays, relay_set_id, trusted_test_build_flag};
+pub(crate) use config::{
+    app_version_string, build_summary, configured_relays, relay_set_id, trusted_test_build_flag,
+};
 use identity::*;
 pub(crate) use identity::{normalize_peer_input_for_display, parse_peer_input};
 pub(crate) use mobile_push::{

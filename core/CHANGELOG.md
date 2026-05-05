@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.15
+
+- Plumb the marketing version (`IRIS_APP_VERSION_NAME`) all the way into the running binary so `iris --version`, the FFI app constructor, and the Linux About panel agree on the same string instead of falling back to the cargo crate semver.
+- Expose `app_version()` from the core crate so shells don't have to reach for `CARGO_PKG_VERSION`.
+- Add a Linux Settings → Updates panel with the current version and a "Check for updates" button that compares against the published htree release.
+
 ## 0.1.14
 
 - Update to `nostr-double-ratchet` 0.0.138 with snapshot-only group metadata and the restored legacy sender-key wire format.

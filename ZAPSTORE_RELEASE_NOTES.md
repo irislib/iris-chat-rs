@@ -1,6 +1,5 @@
-# Iris Chat 3.0.15
+# Iris Chat 3.0.16
 
-- Adds an `iris update {check, download, install}` subcommand for self-updating the CLI from hashtree releases.
-- Routes legacy group sender-key events through the new wire format so older peers and snapshot consumers stay in sync.
-- Caps Android chat bubble width at 300dp for cleaner long-message layout.
-- Updates to nostr-double-ratchet 0.0.138 with snapshot-only group metadata.
+- Reports the marketing version everywhere instead of the unrelated cargo crate version, so `iris --version` and the in-app About panel match the release tag.
+- Adds a Linux Settings → Updates panel with current version and a manual "Check for updates" button.
+- Updates to nostr-double-ratchet 0.0.138.

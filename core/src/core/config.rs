@@ -120,6 +120,10 @@ pub(crate) fn build_summary() -> String {
     format!("{APP_VERSION} ({BUILD_GIT_SHA})")
 }
 
+pub(crate) fn app_version_string() -> &'static str {
+    APP_VERSION
+}
+
 pub(crate) fn relay_set_id() -> &'static str {
     RELAY_SET_ID
 }
