@@ -53,6 +53,7 @@ import to.iris.chat.rust.AppUpdate
 import to.iris.chat.rust.FfiApp
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.rust.OutgoingAttachment
+import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.downloadHashtreeAttachment
 import to.iris.chat.push.AndroidMobilePushRuntime
@@ -87,6 +88,8 @@ interface RustAppClient {
     fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int
 
     fun exportSupportBundleJson(): String
+
+    fun peerProfileDebug(ownerInput: String): PeerProfileDebugSnapshot?
 
     fun listenForUpdates(reconciler: AppReconciler)
 
@@ -146,6 +149,9 @@ private class LiveRustAppClient(
         ffi.nearbyFrameBodyLenFromHeader(header = header)
 
     override fun exportSupportBundleJson(): String = ffi.exportSupportBundleJson()
+
+    override fun peerProfileDebug(ownerInput: String): PeerProfileDebugSnapshot? =
+        ffi.peerProfileDebug(ownerInput = ownerInput)
 
     override fun listenForUpdates(reconciler: AppReconciler) {
         ffi.listenForUpdates(reconciler)
@@ -769,6 +775,11 @@ class AppManager(
     suspend fun exportSupportBundleJson(): String =
         withContext(ioDispatcher) {
             rust.exportSupportBundleJson()
+        }
+
+    suspend fun peerProfileDebug(ownerInput: String): PeerProfileDebugSnapshot? =
+        withContext(ioDispatcher) {
+            rust.peerProfileDebug(ownerInput)
         }
 
     fun resetAppState() {

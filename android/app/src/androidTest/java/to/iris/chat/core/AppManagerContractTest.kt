@@ -44,6 +44,7 @@ import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.MobilePushNotificationResolution
 import to.iris.chat.rust.MobilePushSyncSnapshot
+import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.Router
 import to.iris.chat.rust.Screen
@@ -571,6 +572,7 @@ private class MockRustAppClient(
     var currentState: AppState,
 ) : RustAppClient {
     val dispatchedActions = mutableListOf<AppAction>()
+    var peerDebug: PeerProfileDebugSnapshot? = null
     var dispatchError: Throwable? = null
     var shutdownCount = 0
     private var reconciler: AppReconciler? = null
@@ -607,6 +609,8 @@ private class MockRustAppClient(
     override fun nearbyFrameBodyLenFromHeader(header: ByteArray): Int = -1
 
     override fun exportSupportBundleJson(): String = """{"ok":true}"""
+
+    override fun peerProfileDebug(ownerInput: String): PeerProfileDebugSnapshot? = peerDebug
 
     override fun listenForUpdates(reconciler: AppReconciler) {
         this.reconciler = reconciler

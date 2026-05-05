@@ -22,14 +22,23 @@ impl AppCore {
         let known_users = self
             .app_keys
             .values()
-            .map(|known| RuntimeKnownUserDebug {
-                owner_pubkey_hex: known.owner_pubkey_hex.clone(),
-                has_roster: true,
-                roster_device_count: known.devices.len(),
-                device_count: known.devices.len(),
-                authorized_device_count: known.devices.len(),
-                active_session_device_count: 0,
-                inactive_session_count: 0,
+            .map(|known| {
+                let owner_pubkey = PublicKey::parse(&known.owner_pubkey_hex).ok();
+                let counts = owner_pubkey
+                    .map(|owner| self.peer_debug_session_counts(owner))
+                    .unwrap_or_default();
+                RuntimeKnownUserDebug {
+                    owner_pubkey_hex: known.owner_pubkey_hex.clone(),
+                    has_roster: true,
+                    roster_device_count: known.devices.len(),
+                    device_count: known.devices.len(),
+                    authorized_device_count: known.devices.len(),
+                    active_session_device_count: counts.active_session_count as usize,
+                    inactive_session_count: counts
+                        .session_count
+                        .saturating_sub(counts.active_session_count)
+                        as usize,
+                }
             })
             .collect::<Vec<_>>();
 
@@ -61,6 +70,58 @@ impl AppCore {
     pub(super) fn export_support_bundle_json(&self) -> String {
         serde_json::to_string_pretty(&self.build_support_bundle())
             .unwrap_or_else(|_| "{}".to_string())
+    }
+
+    pub(super) fn build_peer_profile_debug_snapshot(
+        &self,
+        owner_input: &str,
+    ) -> Option<PeerProfileDebugSnapshot> {
+        let (owner_pubkey_hex, owner_pubkey) = parse_peer_input(owner_input).ok()?;
+        if is_group_chat_id(&owner_pubkey_hex) {
+            return None;
+        }
+
+        let roster_device_count = self
+            .app_keys
+            .get(&owner_pubkey_hex)
+            .map(|known| known.devices.len() as u64)
+            .unwrap_or(0);
+        let known_device_count = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| {
+                logged_in
+                    .ndr_runtime
+                    .known_device_identity_pubkeys_for_owner(owner_pubkey)
+                    .len() as u64
+            })
+            .unwrap_or(0);
+        let counts = self.peer_debug_session_counts(owner_pubkey);
+        let recent_handshakes = self
+            .recent_handshake_peers
+            .values()
+            .filter(|peer| peer.owner_hex == owner_pubkey_hex)
+            .collect::<Vec<_>>();
+        let recent_handshake_device_count = recent_handshakes.len() as u64;
+        let last_handshake_at_secs = recent_handshakes
+            .iter()
+            .map(|peer| peer.observed_at_secs)
+            .max();
+
+        Some(PeerProfileDebugSnapshot {
+            owner_pubkey_hex: owner_pubkey_hex.clone(),
+            owner_npub: owner_npub_from_owner(owner_pubkey)
+                .unwrap_or_else(|| owner_pubkey_hex.clone()),
+            roster_device_count,
+            known_device_count,
+            active_session_count: counts.active_session_count,
+            session_count: counts.session_count,
+            receiving_session_count: counts.receiving_session_count,
+            tracked_sender_count: counts.tracked_sender_count,
+            recent_handshake_device_count,
+            last_handshake_at_secs,
+            tracked_for_messages: self.tracked_peer_owner_hexes().contains(&owner_pubkey_hex),
+        })
     }
 
     pub(super) fn build_support_bundle(&self) -> SupportBundle {
@@ -115,6 +176,38 @@ impl AppCore {
         }
     }
 
+    fn peer_debug_session_counts(&self, owner_pubkey: PublicKey) -> PeerDebugSessionCounts {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return PeerDebugSessionCounts::default();
+        };
+
+        let sessions = logged_in
+            .ndr_runtime
+            .get_message_push_session_states(owner_pubkey);
+        let tracked_sender_count = sessions
+            .iter()
+            .flat_map(|session| session.tracked_sender_pubkeys.iter())
+            .map(|sender| sender.to_hex())
+            .collect::<HashSet<_>>()
+            .len() as u64;
+        let active_session_count = logged_in
+            .ndr_runtime
+            .export_active_sessions()
+            .into_iter()
+            .filter(|(owner, _, _)| *owner == owner_pubkey)
+            .count() as u64;
+
+        PeerDebugSessionCounts {
+            active_session_count,
+            session_count: sessions.len() as u64,
+            receiving_session_count: sessions
+                .iter()
+                .filter(|session| session.has_receiving_capability)
+                .count() as u64,
+            tracked_sender_count,
+        }
+    }
+
     pub(super) fn push_debug_log(&mut self, category: &str, detail: impl Into<String>) {
         self.debug_log.push_back(DebugLogEntry {
             timestamp_secs: unix_now().get(),
@@ -133,4 +226,12 @@ impl AppCore {
         self.persist_debug_snapshot_best_effort();
         self.emit_state();
     }
+}
+
+#[derive(Default)]
+struct PeerDebugSessionCounts {
+    active_session_count: u64,
+    session_count: u64,
+    receiving_session_count: u64,
+    tracked_sender_count: u64,
 }

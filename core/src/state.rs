@@ -331,6 +331,21 @@ pub struct MobilePushSyncSnapshot {
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct PeerProfileDebugSnapshot {
+    pub owner_pubkey_hex: String,
+    pub owner_npub: String,
+    pub roster_device_count: u64,
+    pub known_device_count: u64,
+    pub active_session_count: u64,
+    pub session_count: u64,
+    pub receiving_session_count: u64,
+    pub tracked_sender_count: u64,
+    pub recent_handshake_device_count: u64,
+    pub last_handshake_at_secs: Option<u64>,
+    pub tracked_for_messages: bool,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct MobilePushNotificationResolution {
     pub should_show: bool,
     pub title: String,

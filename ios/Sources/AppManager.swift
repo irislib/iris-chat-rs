@@ -235,6 +235,7 @@ protocol RustAppClient: AnyObject {
     func nearbyDecodeFrame(frame: Data) -> String
     func nearbyFrameBodyLenFromHeader(header: Data) -> Int
     func exportSupportBundleJson() -> String
+    func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot?
     func prepareForSuspend()
     func listenForUpdates(reconciler: AppReconciler)
 }
@@ -294,6 +295,10 @@ final class LiveRustAppClient: RustAppClient {
 
     func exportSupportBundleJson() -> String {
         ffi.exportSupportBundleJsonSafely()
+    }
+
+    func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
+        ffi.peerProfileDebug(ownerInput: ownerInput)
     }
 
     func prepareForSuspend() {
@@ -1263,6 +1268,10 @@ final class AppManager: ObservableObject {
 
     func supportBundleJson() -> String {
         supportBundleJsonWithClientLog(rust.exportSupportBundleJson())
+    }
+
+    func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
+        rust.peerProfileDebug(ownerInput: ownerInput)
     }
 
     func exportOwnerNsec() -> String? {

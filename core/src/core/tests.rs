@@ -1478,6 +1478,41 @@ fn app_keys_device_projection_is_deterministic() {
 }
 
 #[test]
+fn peer_profile_debug_reports_known_user_context() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("peer-profile-debug", &owner, &device);
+    let peer_hex = peer.public_key().to_hex();
+    let peer_device_hex = peer_device.public_key().to_hex();
+    let app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 10)]);
+
+    core.apply_known_app_keys_snapshot(peer.public_key(), &app_keys, 10);
+    core.logged_in
+        .as_ref()
+        .expect("logged in")
+        .ndr_runtime
+        .ingest_app_keys_snapshot(peer.public_key(), app_keys, 10);
+    core.remember_recent_handshake_peer(peer_hex.clone(), peer_device_hex, 123);
+    core.handle_action(AppAction::CreateChat {
+        peer_input: peer_hex.clone(),
+    });
+
+    let debug = core
+        .build_peer_profile_debug_snapshot(&peer_hex)
+        .expect("peer debug");
+    assert_eq!(debug.owner_pubkey_hex, peer_hex);
+    assert_eq!(debug.roster_device_count, 1);
+    assert_eq!(debug.known_device_count, 1);
+    assert_eq!(debug.session_count, 0);
+    assert_eq!(debug.active_session_count, 0);
+    assert_eq!(debug.recent_handshake_device_count, 1);
+    assert_eq!(debug.last_handshake_at_secs, Some(123));
+    assert!(debug.tracked_for_messages);
+}
+
+#[test]
 fn linked_device_authorization_follows_app_keys() {
     let owner = Keys::generate();
     let device = Keys::generate();

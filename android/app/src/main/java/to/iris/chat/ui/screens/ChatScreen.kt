@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -46,6 +47,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInParent
@@ -53,6 +55,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -67,6 +70,7 @@ import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.OutgoingAttachment
+import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.rust.proxiedImageUrl
@@ -544,6 +548,8 @@ private fun DirectChatInfoSheet(
     val preferences by appManager.preferences.collectAsStateWithLifecycle()
     val chat = currentChat?.takeIf { it.chatId == chatId } ?: return
     val avatarBytes by rememberNhashImageData(appManager, chat.pictureUrl)
+    var advancedOpen by remember(chatId) { mutableStateOf(false) }
+    var profileDebug by remember(chatId) { mutableStateOf<PeerProfileDebugSnapshot?>(null) }
     val proxiedAvatarUrl =
         chat.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
@@ -556,6 +562,12 @@ private fun DirectChatInfoSheet(
                     square = true,
                 )
             }
+
+    LaunchedEffect(advancedOpen, chatId) {
+        if (advancedOpen && profileDebug == null) {
+            profileDebug = appManager.peerProfileDebug(chatId)
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -648,6 +660,12 @@ private fun DirectChatInfoSheet(
                         },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    DirectChatAdvancedCard(
+                        debug = profileDebug,
+                        expanded = advancedOpen,
+                        onToggle = { advancedOpen = !advancedOpen },
+                        modifier = Modifier.testTag("directChatAdvancedCard"),
+                    )
                     IrisInlineAction(
                         text = "Delete chat",
                         onClick = {
@@ -665,6 +683,106 @@ private fun DirectChatInfoSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun DirectChatAdvancedCard(
+    debug: PeerProfileDebugSnapshot?,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    IrisSectionCard(modifier = modifier) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggle),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = IrisIcons.Devices,
+                contentDescription = null,
+                tint = IrisTheme.palette.accent,
+            )
+            Text(
+                text = "Advanced",
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Icon(
+                imageVector = IrisIcons.ChevronRight,
+                contentDescription = null,
+                tint = IrisTheme.palette.muted,
+                modifier = Modifier.graphicsLayer { rotationZ = if (expanded) 90f else 0f },
+            )
+        }
+
+        if (expanded) {
+            if (debug == null) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp,
+                    color = IrisTheme.palette.accent,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ProfileDebugRow("Sessions", debug.sessionCount.toString())
+                    ProfileDebugRow("Active sessions", debug.activeSessionCount.toString())
+                    ProfileDebugRow("Receiving sessions", debug.receivingSessionCount.toString())
+                    ProfileDebugRow("Known devices", debug.knownDeviceCount.toString())
+                    ProfileDebugRow("Device roster", debug.rosterDeviceCount.toString())
+                    ProfileDebugRow("Tracked senders", debug.trackedSenderCount.toString())
+                    ProfileDebugRow("Recent handshakes", debug.recentHandshakeDeviceCount.toString())
+                    ProfileDebugRow("Last handshake", lastHandshakeText(debug.lastHandshakeAtSecs))
+                    ProfileDebugRow("Message tracking", if (debug.trackedForMessages) "On" else "Off")
+                    ProfileDebugRow("User ID", debug.ownerNpub, monospaced = true)
+                    ProfileDebugRow("Public key", debug.ownerPubkeyHex, monospaced = true)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileDebugRow(
+    label: String,
+    value: String,
+    monospaced: Boolean = false,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            text = label,
+            modifier = Modifier.weight(0.9f),
+            style = MaterialTheme.typography.bodyMedium,
+            color = IrisTheme.palette.muted,
+        )
+        Text(
+            text = value,
+            modifier = Modifier.weight(1.1f),
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            fontFamily = if (monospaced) FontFamily.Monospace else null,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+private fun lastHandshakeText(seconds: ULong?): String {
+    val value = seconds?.toLong() ?: return "Never"
+    val ageSecs = ((System.currentTimeMillis() / 1_000L) - value).coerceAtLeast(0L)
+    return when {
+        ageSecs < 60L -> "Just now"
+        ageSecs < 3_600L -> "${ageSecs / 60L}m ago"
+        ageSecs < 86_400L -> "${ageSecs / 3_600L}h ago"
+        else -> "${ageSecs / 86_400L}d ago"
     }
 }
 

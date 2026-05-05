@@ -118,6 +118,7 @@ impl AppCore {
             },
             CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
+            CoreMsg::PeerProfileDebug { .. } => "PeerProfileDebug",
             CoreMsg::PrepareForSuspend(_) => "PrepareForSuspend",
             CoreMsg::Shutdown(_) => "Shutdown",
         };
@@ -140,6 +141,12 @@ impl AppCore {
             }
             CoreMsg::ExportSupportBundle(reply_tx) => {
                 let _ = reply_tx.send(self.export_support_bundle_json());
+            }
+            CoreMsg::PeerProfileDebug {
+                owner_input,
+                reply_tx,
+            } => {
+                let _ = reply_tx.send(self.build_peer_profile_debug_snapshot(&owner_input));
             }
             CoreMsg::PrepareForSuspend(reply_tx) => {
                 self.prepare_for_suspend();

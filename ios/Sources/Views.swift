@@ -1134,6 +1134,9 @@ private struct DirectChatInfoSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject var manager: AppManager
     let chatId: String
+    @State private var advancedExpanded = false
+    @State private var profileDebug: PeerProfileDebugSnapshot?
+    @State private var loadedProfileDebugFor: String?
 
     private var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
@@ -1211,6 +1214,16 @@ private struct DirectChatInfoSheet: View {
                             }
                         }
 
+                        DirectChatAdvancedCard(
+                            debug: profileDebug,
+                            isExpanded: $advancedExpanded
+                        )
+                        .accessibilityIdentifier("directChatAdvancedCard")
+                        .onAppear(perform: loadProfileDebugIfNeeded)
+                        .irisOnChange(of: advancedExpanded) { _ in
+                            loadProfileDebugIfNeeded()
+                        }
+
                         Button {
                             manager.dispatch(.deleteChat(chatId: chatId))
                             dismiss()
@@ -1244,6 +1257,82 @@ private struct DirectChatInfoSheet: View {
             #endif
         }
     }
+
+    private func loadProfileDebugIfNeeded() {
+        guard advancedExpanded else { return }
+        if loadedProfileDebugFor != chatId {
+            profileDebug = nil
+            loadedProfileDebugFor = chatId
+        }
+        guard profileDebug == nil else { return }
+        profileDebug = manager.peerProfileDebug(ownerInput: chatId)
+    }
+}
+
+private struct DirectChatAdvancedCard: View {
+    @Environment(\.irisPalette) private var palette
+    let debug: PeerProfileDebugSnapshot?
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        IrisSectionCard {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                if let debug {
+                    VStack(alignment: .leading, spacing: 10) {
+                        DirectChatDebugRow(label: "Sessions", value: "\(debug.sessionCount)")
+                        DirectChatDebugRow(label: "Active sessions", value: "\(debug.activeSessionCount)")
+                        DirectChatDebugRow(label: "Receiving sessions", value: "\(debug.receivingSessionCount)")
+                        DirectChatDebugRow(label: "Known devices", value: "\(debug.knownDeviceCount)")
+                        DirectChatDebugRow(label: "Device roster", value: "\(debug.rosterDeviceCount)")
+                        DirectChatDebugRow(label: "Tracked senders", value: "\(debug.trackedSenderCount)")
+                        DirectChatDebugRow(label: "Recent handshakes", value: "\(debug.recentHandshakeDeviceCount)")
+                        DirectChatDebugRow(label: "Last handshake", value: lastHandshakeText(debug.lastHandshakeAtSecs))
+                        DirectChatDebugRow(label: "Message tracking", value: debug.trackedForMessages ? "On" : "Off")
+                        MonoValue(label: "User ID", value: debug.ownerNpub)
+                        MonoValue(label: "Public key", value: debug.ownerPubkeyHex)
+                    }
+                    .padding(.top, 10)
+                } else {
+                    ProgressView()
+                        .padding(.top, 10)
+                }
+            } label: {
+                HStack(spacing: 9) {
+                    Image(systemName: "wrench.and.screwdriver.fill")
+                        .foregroundStyle(palette.accent)
+                    Text("Advanced")
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                }
+            }
+        }
+    }
+}
+
+private struct DirectChatDebugRow: View {
+    @Environment(\.irisPalette) private var palette
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label)
+                .font(.system(.body, design: .rounded))
+                .foregroundStyle(palette.muted)
+            Spacer(minLength: 12)
+            Text(value)
+                .font(.system(.body, design: .rounded, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(palette.textPrimary)
+                .multilineTextAlignment(.trailing)
+        }
+    }
+}
+
+private func lastHandshakeText(_ seconds: UInt64?) -> String {
+    guard let seconds else { return "Never" }
+    return Date(timeIntervalSince1970: TimeInterval(seconds))
+        .formatted(date: .abbreviated, time: .shortened)
 }
 
 private func relayStatusColor(_ status: NetworkStatusSnapshot?, palette: IrisPalette) -> Color {

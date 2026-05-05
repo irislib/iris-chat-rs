@@ -6,8 +6,8 @@ use crate::state::{
     MessageAttachmentSnapshot, MessageDeliveryTraceSnapshot, MessageReactionSnapshot,
     MessageReactor, MessageRecipientDeliverySnapshot, MobilePushNotificationResolution,
     MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
-    OutgoingAttachment, PreferencesSnapshot, PublicInviteSnapshot, RelayConnectionSnapshot, Router,
-    Screen, TypingIndicatorSnapshot,
+    OutgoingAttachment, PeerProfileDebugSnapshot, PreferencesSnapshot, PublicInviteSnapshot,
+    RelayConnectionSnapshot, Router, Screen, TypingIndicatorSnapshot,
 };
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;

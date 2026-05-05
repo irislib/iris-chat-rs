@@ -37,6 +37,7 @@ private final class MockRustApp: RustAppClient {
     var currentState: AppState
     var dispatchedActions: [AppAction] = []
     var supportBundleJson = "{\"ok\":true}"
+    var peerDebug: PeerProfileDebugSnapshot?
     var dispatchError: Error?
     var onDispatch: ((AppAction) -> Void)?
     private var prepareForSuspendCalls = 0
@@ -143,6 +144,10 @@ private final class MockRustApp: RustAppClient {
 
     func exportSupportBundleJson() -> String {
         supportBundleJson
+    }
+
+    func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
+        peerDebug
     }
 
     func prepareForSuspend() {

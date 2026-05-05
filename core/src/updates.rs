@@ -1,5 +1,5 @@
 use crate::actions::AppAction;
-use crate::state::AppState;
+use crate::state::{AppState, PeerProfileDebugSnapshot};
 use flume::Sender;
 use nostr_sdk::prelude::{Event, RelayStatus};
 
@@ -33,6 +33,10 @@ pub(crate) enum CoreMsg {
         reply_tx: Sender<String>,
     },
     ExportSupportBundle(Sender<String>),
+    PeerProfileDebug {
+        owner_input: String,
+        reply_tx: Sender<Option<PeerProfileDebugSnapshot>>,
+    },
     PrepareForSuspend(Sender<()>),
     Shutdown(Option<Sender<()>>),
 }

@@ -273,6 +273,23 @@ impl FfiApp {
         )
     }
 
+    pub fn peer_profile_debug(&self, owner_input: String) -> Option<PeerProfileDebugSnapshot> {
+        ffi_or("ffiapp.peer_profile_debug", None, || {
+            let (reply_tx, reply_rx) = flume::bounded(1);
+            if self
+                .core_tx
+                .send(CoreMsg::PeerProfileDebug {
+                    owner_input,
+                    reply_tx,
+                })
+                .is_err()
+            {
+                return None;
+            }
+            reply_rx.recv_timeout(Duration::from_secs(2)).ok().flatten()
+        })
+    }
+
     pub fn prepare_for_suspend(&self) {
         ffi_or("ffiapp.prepare_for_suspend", (), || {
             let (reply_tx, reply_rx) = flume::bounded(1);
