@@ -344,6 +344,40 @@ final class IrisChatTests: XCTestCase {
         XCTAssertEqual(defaults.string(forKey: AppLaunchRecovery.disabledVersionKey), "3.0.18")
     }
 
+    func testAppLaunchRecoveryClearsDisabledVersionAfterHealthyRecoveryLaunch() {
+        let (defaults, suiteName) = makeIsolatedUserDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        _ = AppLaunchRecovery.begin(
+            appVersion: "3.0.18",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        let recovery = AppLaunchRecovery.begin(
+            appVersion: "3.0.18",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_005)
+        )
+
+        XCTAssertTrue(recovery.isRecoveryLaunch)
+
+        recovery.markHealthy()
+
+        XCTAssertNil(defaults.string(forKey: AppLaunchRecovery.disabledVersionKey))
+        let nextLaunch = AppLaunchRecovery.begin(
+            appVersion: "3.0.18",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_010)
+        )
+        XCTAssertFalse(nextLaunch.isRecoveryLaunch)
+    }
+
     func testAppLaunchRecoveryDoesNotCarryDisabledVersionAcrossUpdates() {
         let (defaults, suiteName) = makeIsolatedUserDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }

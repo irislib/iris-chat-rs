@@ -487,8 +487,7 @@ struct AppLaunchRecovery {
         userDefaults.removeObject(forKey: Self.launchIDKey)
         userDefaults.removeObject(forKey: Self.versionKey)
         userDefaults.removeObject(forKey: Self.startedAtKey)
-        if !isRecoveryLaunch,
-           userDefaults.string(forKey: Self.disabledVersionKey) == appVersion {
+        if userDefaults.string(forKey: Self.disabledVersionKey) == appVersion {
             userDefaults.removeObject(forKey: Self.disabledVersionKey)
         }
     }

@@ -65,7 +65,7 @@ final class InteropHarnessTests: XCTestCase {
         let manager = AppManager(
             secretStore: secretStore,
             dataDir: dataDir,
-            environment: [:]
+            environment: ["IRIS_UI_TEST_RUN_ID": "harness-\(runID)"]
         )
 
         _ = try await waitFor(label: "bootstrap completion", timeout: 30) {
@@ -1787,7 +1787,7 @@ final class InteropHarnessTests: XCTestCase {
         if FileManager.default.fileExists(atPath: path),
            let handle = try? FileHandle(forWritingTo: URL(fileURLWithPath: path)) {
             defer { try? handle.close() }
-            try? handle.seekToEnd()
+            _ = try? handle.seekToEnd()
             try? handle.write(contentsOf: data)
         } else {
             try? data.write(to: URL(fileURLWithPath: path), options: .atomic)
