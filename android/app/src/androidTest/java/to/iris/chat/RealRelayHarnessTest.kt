@@ -545,6 +545,9 @@ class RealRelayHarnessTest {
         val state = appManager().state.value
         val debug = readJsonObject(DEBUG_SNAPSHOT_FILENAME)
         val plan = debug?.optJSONObject("current_protocol_plan")
+        val protocolEngine = debug?.optJSONObject("protocol_engine")
+        val pendingProtocolOutbound = protocolEngine.optStringArray("pending_outbound_targets")
+        val legacyPendingOutbound = summarizeRuntimePendingOutbound(debug?.optJSONArray("pending_outbound"))
 
         reportStatus(
             "data_dir" to appFilesDir().absolutePath,
@@ -568,7 +571,10 @@ class RealRelayHarnessTest {
             "plan_message_authors" to plan.optStringArray("message_authors"),
             "plan_invite_response_recipient" to plan.optStringOrEmpty("invite_response_recipient"),
             "known_users" to summarizeRuntimeKnownUsers(debug?.optJSONArray("known_users")),
-            "pending_outbound" to summarizeRuntimePendingOutbound(debug?.optJSONArray("pending_outbound")),
+            "pending_protocol_outbound_count" to protocolEngine.optStringOrEmpty("pending_outbound_count"),
+            "pending_protocol_outbound" to pendingProtocolOutbound,
+            "pending_outbound" to (legacyPendingOutbound.ifEmpty { pendingProtocolOutbound }),
+            "pending_relay_publishes" to summarizeRuntimePendingRelayPublishes(debug?.optJSONArray("pending_relay_publishes")),
             "pending_group_controls" to summarizeRuntimePendingGroupControls(debug?.optJSONArray("pending_group_controls")),
             "recent_handshake_peers" to summarizeRecentHandshakePeers(debug?.optJSONArray("recent_handshake_peers")),
             "event_counts" to summarizeEventCounts(debug?.optJSONObject("event_counts")),
@@ -2228,6 +2234,18 @@ class RealRelayHarnessTest {
                 entry.optString("reason"),
                 entry.optString("publish_mode"),
                 "inFlight=${entry.optBoolean("in_flight")}",
+            ).joinToString(",")
+        }
+
+    private fun summarizeRuntimePendingRelayPublishes(entries: JSONArray?): String =
+        entries.joinObjects { entry ->
+            listOf(
+                entry.optString("event_id"),
+                entry.optString("label"),
+                entry.optString("target_owner_pubkey_hex"),
+                entry.optString("target_device_id"),
+                "attempts=${entry.optInt("attempt_count")}",
+                "error=${entry.optString("last_error")}",
             ).joinToString(",")
         }
 

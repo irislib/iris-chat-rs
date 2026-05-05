@@ -103,6 +103,21 @@ iris_e2e_ensure_android_package() {
   "${adb}" -s "${serial}" shell pm path "${package_name}" >/dev/null
 }
 
+iris_e2e_install_android_package() {
+  local adb="$1"
+  local serial="$2"
+  local package_name="$3"
+  local apk_path="$4"
+  local log_file="$5"
+
+  {
+    printf 'Installing Android package %s on %s from %s\n' \
+      "${package_name}" "${serial}" "${apk_path}"
+  } | tee -a "${log_file}" >&2
+  "${adb}" -s "${serial}" install -r "${apk_path}" 2>&1 | tee -a "${log_file}"
+  "${adb}" -s "${serial}" shell pm path "${package_name}" >/dev/null
+}
+
 iris_e2e_wait_android_public_network() {
   local adb="$1"
   local serial="$2"

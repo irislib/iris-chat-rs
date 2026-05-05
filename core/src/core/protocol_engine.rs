@@ -483,6 +483,11 @@ impl ProtocolEngine {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn local_invite_for_test(&self) -> Option<Invite> {
+        self.session_manager.snapshot().local_invite
+    }
+
     pub(super) fn known_message_author_pubkeys(&self) -> Vec<PublicKey> {
         let mut authors = HashSet::new();
         for user in self.session_manager.snapshot().users {

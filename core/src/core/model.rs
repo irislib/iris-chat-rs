@@ -102,12 +102,17 @@ pub(super) enum LocalAuthorizationState {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ProtocolSubscriptionPlan {
     pub(crate) runtime_subscriptions: Vec<String>,
+    pub(crate) roster_authors: Vec<String>,
+    pub(crate) invite_authors: Vec<String>,
+    pub(crate) message_authors: Vec<String>,
+    pub(crate) invite_response_recipient: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) active_subscriptions: BTreeMap<String, ProtocolSubscriptionSpec>,
     pub(super) refresh_token: u64,
+    pub(super) liveness_due_at: Option<Instant>,
     /// Last subscription plan summary that was actually emitted via the
     /// debug log / refresh-token bump. Lets the refresh path bail out early
     /// when nothing has changed since the previous call.
@@ -162,6 +167,7 @@ pub(super) struct RuntimeDebugSnapshot {
     pub(super) active_chat_id: Option<String>,
     pub(super) current_protocol_plan: Option<RuntimeProtocolPlanDebug>,
     pub(super) protocol_engine: Option<ProtocolEngineDebugSnapshot>,
+    pub(super) pending_relay_publishes: Vec<RuntimePendingRelayPublishDebug>,
     pub(super) tracked_owner_hexes: Vec<String>,
     pub(super) known_users: Vec<RuntimeKnownUserDebug>,
     pub(super) recent_handshake_peers: Vec<RuntimeRecentHandshakeDebug>,
@@ -195,6 +201,7 @@ pub(super) struct SupportBundle {
     pub(super) unread_chat_count: usize,
     pub(super) protocol: Option<RuntimeProtocolPlanDebug>,
     pub(super) protocol_engine: Option<ProtocolEngineDebugSnapshot>,
+    pub(super) pending_relay_publishes: Vec<RuntimePendingRelayPublishDebug>,
     pub(super) tracked_owner_hexes: Vec<String>,
     pub(super) known_users: Vec<RuntimeKnownUserDebug>,
     pub(super) recent_handshake_peers: Vec<RuntimeRecentHandshakeDebug>,
@@ -207,6 +214,27 @@ pub(super) struct SupportBundle {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(super) struct RuntimeProtocolPlanDebug {
     pub(super) runtime_subscriptions: Vec<String>,
+    #[serde(default)]
+    pub(super) roster_authors: Vec<String>,
+    #[serde(default)]
+    pub(super) invite_authors: Vec<String>,
+    #[serde(default)]
+    pub(super) message_authors: Vec<String>,
+    #[serde(default)]
+    pub(super) invite_response_recipient: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct RuntimePendingRelayPublishDebug {
+    pub(super) event_id: String,
+    pub(super) label: String,
+    pub(super) inner_event_id: Option<String>,
+    pub(super) target_owner_pubkey_hex: Option<String>,
+    pub(super) target_device_id: Option<String>,
+    pub(super) message_id: Option<String>,
+    pub(super) chat_id: Option<String>,
+    pub(super) attempt_count: u64,
+    pub(super) last_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -45,7 +45,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, sleep_until, Duration, Instant};
 
 mod account;
 mod attachment_upload;
@@ -202,6 +202,23 @@ pub struct AppCore {
 }
 
 async fn connect_client_with_timeout(client: &Client, timeout: Duration) {
-    client.connect().await;
-    client.wait_for_connection(timeout).await;
+    for attempt in 0..3 {
+        let _ = client.try_connect(timeout).await;
+        if connected_relay_count_for_client(client).await > 0 {
+            return;
+        }
+        if attempt < 2 {
+            let _ = client.disconnect().await;
+            sleep(Duration::from_millis(250 * (attempt + 1) as u64)).await;
+        }
+    }
+}
+
+async fn connected_relay_count_for_client(client: &Client) -> usize {
+    client
+        .relays()
+        .await
+        .values()
+        .filter(|relay| relay.status() == RelayStatus::Connected)
+        .count()
 }

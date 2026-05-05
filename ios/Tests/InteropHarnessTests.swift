@@ -1380,6 +1380,9 @@ final class InteropHarnessTests: XCTestCase {
         let state = manager.state
         let debug = readJsonObject(at: dataDir.appendingPathComponent(debugSnapshotFilename))
         let plan = dictValue(debug?["current_protocol_plan"])
+        let protocolEngine = dictValue(debug?["protocol_engine"])
+        let pendingProtocolOutbound = joinValues(arrayValue(protocolEngine?["pending_outbound_targets"]))
+        let legacyPendingOutbound = summarizeRuntimePendingOutbound(arrayValue(debug?["pending_outbound"]))
 
         status("data_dir", dataDir.path)
         status("rev", String(state.rev))
@@ -1399,7 +1402,10 @@ final class InteropHarnessTests: XCTestCase {
         status("plan_message_authors", joinValues(arrayValue(plan?["message_authors"])))
         status("plan_invite_response_recipient", stringValue(plan?["invite_response_recipient"]))
         status("known_users", summarizeRuntimeKnownUsers(arrayValue(debug?["known_users"])))
-        status("pending_outbound", summarizeRuntimePendingOutbound(arrayValue(debug?["pending_outbound"])))
+        status("pending_protocol_outbound_count", stringValue(protocolEngine?["pending_outbound_count"]))
+        status("pending_protocol_outbound", pendingProtocolOutbound)
+        status("pending_outbound", legacyPendingOutbound.isEmpty ? pendingProtocolOutbound : legacyPendingOutbound)
+        status("pending_relay_publishes", summarizeRuntimePendingRelayPublishes(arrayValue(debug?["pending_relay_publishes"])))
         status("pending_group_controls", summarizeRuntimePendingGroupControls(arrayValue(debug?["pending_group_controls"])))
         status("recent_handshake_peers", summarizeRecentHandshakePeers(arrayValue(debug?["recent_handshake_peers"])))
         status("event_counts", summarizeEventCounts(dictValue(debug?["event_counts"])))
@@ -1583,6 +1589,19 @@ final class InteropHarnessTests: XCTestCase {
                 stringValue(entry["reason"]),
                 stringValue(entry["publish_mode"]),
                 "inFlight=\(boolValue(entry["in_flight"]))",
+            ].joined(separator: ",")
+        }
+    }
+
+    private func summarizeRuntimePendingRelayPublishes(_ entries: JsonArray) -> String {
+        joinObjects(entries) { entry in
+            [
+                stringValue(entry["event_id"]),
+                stringValue(entry["label"]),
+                stringValue(entry["target_owner_pubkey_hex"]),
+                stringValue(entry["target_device_id"]),
+                "attempts=\(intValue(entry["attempt_count"]))",
+                "error=\(stringValue(entry["last_error"]))",
             ].joined(separator: ",")
         }
     }

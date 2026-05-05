@@ -238,14 +238,14 @@ if [[ "${SKIP_BUILD}" -eq 0 ]]; then
     cd "${ROOT_DIR}/android" &&
       IRIS_DEBUG_RELAYS="${RELAYS}" \
       IRIS_DEBUG_RELAY_SET_ID="${RELAY_SET_ID}" \
-      ./gradlew :app:installDebug :app:installDebugAndroidTest
+      ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
   ) 2>&1 | tee -a "${LOG_FILE}"
   for serial in "${ALICE_SERIAL}" "${ALICE_LINKED_SERIAL}" "${BOB_SERIAL}" "${CHARLIE_SERIAL}"; do
-    iris_e2e_ensure_android_package \
+    iris_e2e_install_android_package \
       "${ADB}" "${serial}" "${APP_PACKAGE}" \
       "${ROOT_DIR}/android/app/build/outputs/apk/debug/app-debug.apk" \
       "${LOG_FILE}"
-    iris_e2e_ensure_android_package \
+    iris_e2e_install_android_package \
       "${ADB}" "${serial}" "${TEST_PACKAGE}" \
       "${ROOT_DIR}/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" \
       "${LOG_FILE}"

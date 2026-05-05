@@ -40,23 +40,8 @@ pub(super) async fn publish_event_fire_and_forget(
 }
 
 async fn ensure_publish_connection(client: &Client, relay_urls: &[RelayUrl]) {
-    client.connect().await;
-    let deadline = tokio::time::Instant::now() + Duration::from_millis(500);
-    loop {
-        let connected = client
-            .relays()
-            .await
-            .iter()
-            .filter(|(relay_url, relay)| {
-                relay_urls.iter().any(|configured| configured == *relay_url)
-                    && relay.status() == RelayStatus::Connected
-            })
-            .count();
-        if connected > 0 || tokio::time::Instant::now() >= deadline {
-            return;
-        }
-        sleep(Duration::from_millis(25)).await;
-    }
+    ensure_session_relays_configured(client, relay_urls).await;
+    connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
 }
 
 pub(super) async fn publish_event_once(

@@ -6,6 +6,10 @@ impl AppCore {
             self.compute_protocol_subscription_plan()
                 .map(|plan| RuntimeProtocolPlanDebug {
                     runtime_subscriptions: plan.runtime_subscriptions,
+                    roster_authors: plan.roster_authors,
+                    invite_authors: plan.invite_authors,
+                    message_authors: plan.message_authors,
+                    invite_response_recipient: plan.invite_response_recipient,
                 });
         let tracked_owner_hexes = sorted_hexes(self.tracked_peer_owner_hexes());
         let current_chat_list = self.threads.keys().cloned().collect::<Vec<_>>();
@@ -53,6 +57,21 @@ impl AppCore {
                 .protocol_engine
                 .as_ref()
                 .map(ProtocolEngine::debug_snapshot),
+            pending_relay_publishes: self
+                .pending_relay_publishes
+                .values()
+                .map(|pending| RuntimePendingRelayPublishDebug {
+                    event_id: pending.event_id.clone(),
+                    label: pending.label.clone(),
+                    inner_event_id: pending.inner_event_id.clone(),
+                    target_owner_pubkey_hex: pending.target_owner_pubkey_hex.clone(),
+                    target_device_id: pending.target_device_id.clone(),
+                    message_id: pending.message_id.clone(),
+                    chat_id: pending.chat_id.clone(),
+                    attempt_count: pending.attempt_count,
+                    last_error: pending.last_error.clone(),
+                })
+                .collect(),
             tracked_owner_hexes,
             known_users,
             recent_handshake_peers: self
@@ -170,6 +189,7 @@ impl AppCore {
             unread_chat_count,
             protocol: runtime.current_protocol_plan,
             protocol_engine: runtime.protocol_engine,
+            pending_relay_publishes: runtime.pending_relay_publishes,
             tracked_owner_hexes: runtime.tracked_owner_hexes,
             known_users: runtime.known_users,
             recent_handshake_peers: runtime.recent_handshake_peers,

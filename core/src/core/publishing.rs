@@ -297,6 +297,15 @@ impl AppCore {
             if let Err(error) = self.app_store.upsert_pending_relay_publish(pending) {
                 self.push_debug_log("publish.runtime.queue", format!("update_failed={error}"));
             }
+            if self
+                .logged_in
+                .as_ref()
+                .is_some_and(|logged_in| !logged_in.relay_urls.is_empty())
+            {
+                self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                    crate::core::protocol::PROTOCOL_RECONNECT_CHECK_SECS,
+                ));
+            }
         }
         if let (Some(message_id), Some(chat_id)) = (message_id, chat_id) {
             for relay_url in &relay_urls {

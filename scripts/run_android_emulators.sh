@@ -34,6 +34,8 @@ HEADLESS=0
 WIPE_DATA=0
 LIST_ONLY=0
 AVDS=()
+LAUNCHED_EMULATOR_PID=""
+LAUNCHED_EMULATOR_LOG=""
 
 usage() {
   cat <<'EOF'
@@ -129,7 +131,10 @@ launch_headless_avd() {
   if [[ ${WIPE_DATA} -eq 1 ]]; then
     args+=(-wipe-data)
   fi
+  : >"${log_file}"
   nohup "${args[@]}" >"${log_file}" 2>&1 &
+  LAUNCHED_EMULATOR_PID="$!"
+  LAUNCHED_EMULATOR_LOG="${log_file}"
 }
 
 ensure_avd_running() {
@@ -137,6 +142,8 @@ ensure_avd_running() {
   local serial
   serial="$(find_serial_for_avd "${avd_name}" || true)"
   if [[ -z "${serial}" ]]; then
+    LAUNCHED_EMULATOR_PID=""
+    LAUNCHED_EMULATOR_LOG=""
     if [[ ${HEADLESS} -eq 1 ]]; then
       launch_headless_avd "${avd_name}"
     else
@@ -153,6 +160,19 @@ ensure_avd_running() {
         echo "${serial}"
         return 0
       fi
+    elif [[ -n "${LAUNCHED_EMULATOR_PID}" ]] && ! kill -0 "${LAUNCHED_EMULATOR_PID}" 2>/dev/null; then
+      echo "Emulator ${avd_name} exited during startup." >&2
+      if [[ -n "${LAUNCHED_EMULATOR_LOG}" && -f "${LAUNCHED_EMULATOR_LOG}" ]]; then
+        tail -80 "${LAUNCHED_EMULATOR_LOG}" >&2 || true
+      fi
+      return 1
+    elif [[ -n "${LAUNCHED_EMULATOR_LOG}" && -f "${LAUNCHED_EMULATOR_LOG}" ]] && grep -Eq 'FATAL|not enough disk space' "${LAUNCHED_EMULATOR_LOG}"; then
+      echo "Emulator ${avd_name} reported a startup failure." >&2
+      tail -80 "${LAUNCHED_EMULATOR_LOG}" >&2 || true
+      if [[ -n "${LAUNCHED_EMULATOR_PID}" ]]; then
+        kill "${LAUNCHED_EMULATOR_PID}" 2>/dev/null || true
+      fi
+      return 1
     fi
     sleep 2
   done

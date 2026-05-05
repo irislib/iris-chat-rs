@@ -163,7 +163,12 @@ impl AppCore {
             None => return false,
         };
         self.process_protocol_engine_retry_batch("private_invite_response", retry_batch);
+        self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
+        if self.fetch_recent_protocol_state() {
+            self.state.busy.syncing_network = true;
+        }
         self.fetch_recent_messages_for_tracked_peers(unix_now());
+        self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
 
         let chat_id = owner_pubkey.to_hex();
         self.ensure_thread_record(&chat_id, unix_now().get())
