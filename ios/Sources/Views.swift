@@ -114,6 +114,7 @@ struct RootView: View {
 
                 if manager.bootstrapInFlight {
                     LoadingOverlay()
+                        .allowsHitTesting(false)
                 }
             }
         .sheet(

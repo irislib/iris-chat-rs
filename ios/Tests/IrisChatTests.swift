@@ -39,8 +39,15 @@ private final class MockRustApp: RustAppClient {
     var supportBundleJson = "{\"ok\":true}"
     var dispatchError: Error?
     var onDispatch: ((AppAction) -> Void)?
-    var prepareForSuspendCallCount = 0
+    private var prepareForSuspendCalls = 0
+    private let prepareForSuspendLock = NSLock()
     private var reconciler: AppReconciler?
+
+    var prepareForSuspendCallCount: Int {
+        prepareForSuspendLock.lock()
+        defer { prepareForSuspendLock.unlock() }
+        return prepareForSuspendCalls
+    }
 
     init(state: AppState = AppState(
         rev: 0,
@@ -139,7 +146,9 @@ private final class MockRustApp: RustAppClient {
     }
 
     func prepareForSuspend() {
-        prepareForSuspendCallCount += 1
+        prepareForSuspendLock.lock()
+        prepareForSuspendCalls += 1
+        prepareForSuspendLock.unlock()
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
@@ -356,10 +365,12 @@ final class IrisChatTests: XCTestCase {
 
         manager.appBackgrounded()
         manager.appBackgrounded()
+        try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(rust.prepareForSuspendCallCount, 1)
 
         manager.appForegrounded()
         manager.appBackgrounded()
+        try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(rust.prepareForSuspendCallCount, 2)
         XCTAssertEqual(rust.dispatchedActions.last, .appForegrounded)
     }

@@ -429,6 +429,7 @@ final class AppManager: ObservableObject {
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
     private var backgroundSuspendPrepared = false
+    private var storedAccountBundle: StoredAccountBundle?
     private var nearbySettingsWasOpened = false
     private lazy var reconciler = UpdateBridge(owner: self)
 
@@ -527,6 +528,14 @@ final class AppManager: ObservableObject {
 
         Task {
             restorePersistedSession()
+        }
+        Task {
+            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            guard bootstrapInFlight else {
+                return
+            }
+            appendClientDebugLog(category: "bootstrap.timeout", detail: "cleared loading overlay")
+            bootstrapInFlight = false
         }
 
 #if os(macOS)
@@ -936,10 +945,16 @@ final class AppManager: ObservableObject {
             nearbyIris.setLanVisible(false)
         }
 
+        let rust = rust
         let taskID = UIApplication.shared.beginBackgroundTask(withName: "IrisSuspend") {}
-        rust.prepareForSuspend()
-        if taskID != .invalid {
-            UIApplication.shared.endBackgroundTask(taskID)
+        DispatchQueue.global(qos: .utility).async {
+            rust.prepareForSuspend()
+            guard taskID != .invalid else {
+                return
+            }
+            DispatchQueue.main.async {
+                UIApplication.shared.endBackgroundTask(taskID)
+            }
         }
 #endif
     }
@@ -1275,10 +1290,11 @@ final class AppManager: ObservableObject {
     func logout() {
         // Logout ownership stays in Rust. The shell clears native secrets and local files only.
 #if os(iOS)
-        mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: secretStore.load()?.ownerNsec)
+        mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: storedAccountBundle?.ownerNsec ?? secretStore.load()?.ownerNsec)
 #endif
         dispatchToRust(.logout)
         secretStore.clear()
+        storedAccountBundle = nil
         try? fileManager.removeItem(at: dataDir)
         try? fileManager.createDirectory(at: dataDir, withIntermediateDirectories: true)
         apply(update: .fullState(rust.state()))
@@ -1288,13 +1304,13 @@ final class AppManager: ObservableObject {
         switch update {
         case .persistAccountBundle(_, let ownerNsec, let ownerPubkeyHex, let deviceNsec):
             // Secure persistence is a shell side effect and must be applied even if snapshot revs race.
-            secretStore.save(
-                StoredAccountBundle(
-                    ownerNsec: ownerNsec,
-                    ownerPubkeyHex: ownerPubkeyHex,
-                    deviceNsec: deviceNsec
-                )
+            let bundle = StoredAccountBundle(
+                ownerNsec: ownerNsec,
+                ownerPubkeyHex: ownerPubkeyHex,
+                deviceNsec: deviceNsec
             )
+            secretStore.save(bundle)
+            storedAccountBundle = bundle
         case .nearbyPublishedEvent(let eventID, let kind, let createdAtSecs, let eventJson):
 #if os(iOS) || os(macOS)
             nearbyIris.publish(
@@ -1324,7 +1340,7 @@ final class AppManager: ObservableObject {
 #endif
 #if os(iOS)
             shareSuggestionDonor.syncRecentChats(nextState.chatList)
-            mobilePushRuntime.sync(state: nextState, ownerNsec: secretStore.load()?.ownerNsec)
+            mobilePushRuntime.sync(state: nextState, ownerNsec: storedAccountBundle?.ownerNsec)
 #endif
             bootstrapInFlight = false
             if let toast = nextState.toast, !toast.isEmpty {
@@ -1339,8 +1355,10 @@ final class AppManager: ObservableObject {
             bootstrapInFlight = false
         }
         guard let bundle = secretStore.load() else {
+            storedAccountBundle = nil
             return
         }
+        storedAccountBundle = bundle
         dispatchToRust(
             .restoreAccountBundle(
                 ownerNsec: bundle.ownerNsec,
