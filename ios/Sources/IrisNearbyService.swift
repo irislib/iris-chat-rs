@@ -32,6 +32,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     fileprivate static let maxEventBytes = 128 * 1024
     fileprivate static let maxMailbagEvents = 500
     private static let maxWriteWithoutResponseChunksPerFlush = 32
+    private static let maxPendingWriteChunks = 512
+    private static let maxPendingWriteBytes = 2 * 1024 * 1024
     private static let maxNotificationChunksPerDrain = 32
     private static let maxPendingNotifications = 256
     private static let maxPendingNotificationBytes = 2 * 1024 * 1024
@@ -98,9 +100,6 @@ final class IrisNearbyService: NSObject, ObservableObject {
             },
             onStatus: { [weak self] status in
                 self?.handleLanStatus(status)
-                if status == "Connected" {
-                    self?.announceToConnectedPeers()
-                }
             }
         )
     }
@@ -347,6 +346,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         guard isLanVisible || status == "Off" else {
             return
         }
+        let previousStatus = lanStatus
         lanStatus = status
         if status == "No local network access" {
             lanPermissionNeedsSettings = true
@@ -354,6 +354,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
         } else if status == "Visible" || status == "Connected" {
             lanPermissionNeedsSettings = false
             onLanPermissionGranted?()
+        }
+        if status == "Connected", previousStatus != "Connected" {
+            announceToConnectedPeersIfDue()
         }
     }
 
@@ -506,6 +509,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
         sendHello(excludingPeerID: nil)
     }
 
+    private func announceToConnectedPeersIfDue(now: Date = Date()) {
+        guard now.timeIntervalSince(lastHelloAt) >= Self.helloInterval else { return }
+        announceToConnectedPeers()
+    }
+
     private func startMaintenance() {
         stopMaintenance()
         lastHelloAt = .distantPast
@@ -572,6 +580,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func sendHello(excludingPeerID: String?) {
+        guard isNearbyActive else { return }
+        lastHelloAt = Date()
         let envelope: [String: Any] = [
             "v": 1,
             "type": "hello",
@@ -757,14 +767,21 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
         let maxLength = max(20, peripheral.maximumWriteValueLength(for: writeType))
         var queue = peripheralWriteQueues[peripheral.identifier] ?? IrisNearbyPeripheralWriteQueue()
-        if queue.chunks.isEmpty {
+        if queue.isEmpty {
             queue.writeType = writeType
         }
         var offset = 0
         while offset < data.count {
             let end = min(offset + maxLength, data.count)
-            queue.chunks.append(Data(data[offset..<end]))
+            queue.append(Data(data[offset..<end]))
             offset = end
+        }
+        let droppedChunks = queue.trimToLimits(
+            maxChunks: Self.maxPendingWriteChunks,
+            maxBytes: Self.maxPendingWriteBytes
+        )
+        if droppedChunks > 0 {
+            NSLog("Iris nearby: dropped stale Bluetooth write chunks \(droppedChunks)")
         }
         peripheralWriteQueues[peripheral.identifier] = queue
         flushWriteQueue(for: peripheral.identifier)
@@ -787,7 +804,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
         switch queue.writeType {
         case .withResponse:
-            if queue.chunks.isEmpty {
+            if queue.isEmpty {
                 peripheralWriteQueues.removeValue(forKey: peripheralID)
                 return
             }
@@ -795,17 +812,20 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 peripheralWriteQueues[peripheralID] = queue
                 return
             }
-            let chunk = queue.chunks.removeFirst()
+            guard let chunk = queue.popFirst() else {
+                peripheralWriteQueues.removeValue(forKey: peripheralID)
+                return
+            }
             queue.waitingForResponse = true
             peripheralWriteQueues[peripheralID] = queue
             peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
         case .withoutResponse:
-            while !queue.chunks.isEmpty && chunkBudget > 0 && peripheral.canSendWriteWithoutResponse {
-                let chunk = queue.chunks.removeFirst()
+            while !queue.isEmpty && chunkBudget > 0 && peripheral.canSendWriteWithoutResponse {
+                guard let chunk = queue.popFirst() else { break }
                 peripheral.writeValue(chunk, for: characteristic, type: .withoutResponse)
                 chunkBudget -= 1
             }
-            if queue.chunks.isEmpty {
+            if queue.isEmpty {
                 peripheralWriteQueues.removeValue(forKey: peripheralID)
             } else {
                 peripheralWriteQueues[peripheralID] = queue
@@ -1693,10 +1713,59 @@ private struct IrisNearbyCentralChannel {
     let characteristic: CBMutableCharacteristic
 }
 
-private struct IrisNearbyPeripheralWriteQueue {
-    var chunks: [Data] = []
+struct IrisNearbyPeripheralWriteQueue {
+    private var chunks: [Data] = []
+    private var headIndex = 0
+    private(set) var pendingBytes = 0
     var writeType: CBCharacteristicWriteType = .withResponse
     var waitingForResponse = false
+
+    var isEmpty: Bool {
+        headIndex >= chunks.count
+    }
+
+    var count: Int {
+        max(0, chunks.count - headIndex)
+    }
+
+    mutating func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        chunks.append(chunk)
+        pendingBytes += chunk.count
+    }
+
+    mutating func popFirst() -> Data? {
+        guard headIndex < chunks.count else {
+            compactIfNeeded()
+            return nil
+        }
+        let chunk = chunks[headIndex]
+        headIndex += 1
+        pendingBytes = max(0, pendingBytes - chunk.count)
+        compactIfNeeded()
+        return chunk
+    }
+
+    @discardableResult
+    mutating func trimToLimits(maxChunks: Int, maxBytes: Int) -> Int {
+        var dropped = 0
+        while count > maxChunks || pendingBytes > maxBytes {
+            guard popFirst() != nil else { break }
+            dropped += 1
+        }
+        return dropped
+    }
+
+    private mutating func compactIfNeeded() {
+        guard headIndex > 0 else { return }
+        if headIndex >= chunks.count {
+            chunks.removeAll(keepingCapacity: true)
+            headIndex = 0
+        } else if headIndex > 64, headIndex * 2 >= chunks.count {
+            chunks.removeFirst(headIndex)
+            headIndex = 0
+        }
+    }
 }
 
 private enum IrisNearbySource {
