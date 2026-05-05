@@ -286,14 +286,22 @@ impl AppCore {
         };
 
         let created_at = event.created_at.as_secs();
-        self.apply_app_keys_event(&event);
-        self.push_debug_log(
-            "invite.app_keys.preload",
-            format!(
-                "owner={} result=applied created_at={created_at}",
-                owner_pubkey.to_hex()
+        match self.apply_app_keys_event(&event) {
+            Ok(_) => self.push_debug_log(
+                "invite.app_keys.preload",
+                format!(
+                    "owner={} result=applied created_at={created_at}",
+                    owner_pubkey.to_hex()
+                ),
             ),
-        );
+            Err(error) => self.push_debug_log(
+                "invite.app_keys.preload",
+                format!(
+                    "owner={} result=apply_failed error={error}",
+                    owner_pubkey.to_hex()
+                ),
+            ),
+        }
     }
 }
 

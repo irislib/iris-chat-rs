@@ -820,6 +820,7 @@ impl AppCore {
         }
     }
 
+    #[cfg(test)]
     pub(super) fn apply_known_app_keys_snapshot(
         &mut self,
         owner: PublicKey,

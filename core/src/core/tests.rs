@@ -1,5 +1,48 @@
 use super::*;
 
+#[derive(Clone)]
+struct SwitchableFailStorage {
+    inner: nostr_double_ratchet_runtime::InMemoryStorage,
+    fail_puts: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SwitchableFailStorage {
+    fn new() -> Self {
+        Self {
+            inner: nostr_double_ratchet_runtime::InMemoryStorage::new(),
+            fail_puts: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn set_fail_puts(&self, fail: bool) {
+        self.fail_puts
+            .store(fail, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl StorageAdapter for SwitchableFailStorage {
+    fn get(&self, key: &str) -> nostr_double_ratchet_runtime::Result<Option<String>> {
+        self.inner.get(key)
+    }
+
+    fn put(&self, key: &str, value: String) -> nostr_double_ratchet_runtime::Result<()> {
+        if self.fail_puts.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(nostr_double_ratchet_runtime::Error::Storage(
+                "injected storage failure".to_string(),
+            ));
+        }
+        self.inner.put(key, value)
+    }
+
+    fn del(&self, key: &str) -> nostr_double_ratchet_runtime::Result<()> {
+        self.inner.del(key)
+    }
+
+    fn list(&self, prefix: &str) -> nostr_double_ratchet_runtime::Result<Vec<String>> {
+        self.inner.list(prefix)
+    }
+}
+
 #[test]
 fn restoring_invalid_secret_key_shows_normie_error() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -1873,6 +1916,112 @@ fn app_keys_cache_merges_same_timestamp_roster_events() {
 }
 
 #[test]
+fn app_keys_runtime_storage_failure_does_not_mark_seen_or_mutate_app_cache() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let remote_owner = Keys::generate();
+    let remote_device = Keys::generate();
+    let runtime_storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "appkeys-runtime-storage-failure",
+        &owner,
+        &device,
+        runtime_storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    let remote_event = AppKeys::new(vec![DeviceEntry::new(remote_device.public_key(), 1)])
+        .get_event(remote_owner.public_key())
+        .sign_with_keys(&remote_owner)
+        .expect("remote app keys event");
+    let event_id = remote_event.id.to_string();
+
+    runtime_storage.set_fail_puts(true);
+    core.handle_relay_event(remote_event.clone());
+
+    assert!(
+        !core.seen_event_ids.contains(&event_id),
+        "transient runtime persistence failure must not dedupe the protocol event"
+    );
+    assert!(
+        !core
+            .app_keys
+            .contains_key(&remote_owner.public_key().to_hex()),
+        "app projection must not commit AppKeys that runtime failed to persist"
+    );
+    assert!(
+        core.logged_in
+            .as_ref()
+            .unwrap()
+            .ndr_runtime
+            .known_device_identity_pubkeys_for_owner(remote_owner.public_key())
+            .is_empty(),
+        "runtime roster must remain unchanged after failed persistence"
+    );
+
+    runtime_storage.set_fail_puts(false);
+    core.handle_relay_event(remote_event);
+
+    assert!(core.seen_event_ids.contains(&event_id));
+    assert!(core
+        .app_keys
+        .get(&remote_owner.public_key().to_hex())
+        .is_some_and(|known| known
+            .devices
+            .iter()
+            .any(|entry| { entry.identity_pubkey_hex == remote_device.public_key().to_hex() })));
+    assert_eq!(
+        core.logged_in
+            .as_ref()
+            .unwrap()
+            .ndr_runtime
+            .known_device_identity_pubkeys_for_owner(remote_owner.public_key()),
+        vec![remote_device.public_key()]
+    );
+}
+
+#[test]
+fn invite_runtime_storage_failure_does_not_mark_seen() {
+    use nostr_double_ratchet_nostr::InviteNostrExt;
+
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let remote_owner = Keys::generate();
+    let remote_device = Keys::generate();
+    let runtime_storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "invite-runtime-storage-failure",
+        &owner,
+        &device,
+        runtime_storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    let mut invite = Invite::create_new(
+        remote_device.public_key(),
+        Some(remote_device.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("remote invite");
+    invite.owner_public_key = Some(remote_owner.public_key());
+    let invite_event = invite
+        .get_event()
+        .expect("invite unsigned event")
+        .sign_with_keys(&remote_device)
+        .expect("invite event");
+    let event_id = invite_event.id.to_string();
+
+    runtime_storage.set_fail_puts(true);
+    core.handle_relay_event(invite_event.clone());
+
+    assert!(
+        !core.seen_event_ids.contains(&event_id),
+        "transient runtime persistence failure must not dedupe invite events"
+    );
+
+    runtime_storage.set_fail_puts(false);
+    core.handle_relay_event(invite_event);
+
+    assert!(core.seen_event_ids.contains(&event_id));
+}
+
+#[test]
 fn restored_owner_session_does_not_publish_single_device_app_keys_before_backfill() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -2029,7 +2178,8 @@ fn restored_owner_app_keys_backfill_merges_current_device_and_republishes() {
         .get_event(owner.public_key())
         .sign_with_keys(&owner)
         .expect("remote app keys event");
-    core.apply_app_keys_event(&remote_event);
+    core.apply_app_keys_event(&remote_event)
+        .expect("apply remote app keys");
 
     let known = core
         .app_keys
@@ -2103,7 +2253,8 @@ fn app_keys_event_rerenders_device_roster_even_when_authorization_is_unchanged()
         .get_event_at(owner.public_key(), remote_created_at)
         .sign_with_keys(&owner)
         .expect("app keys event");
-    core.apply_app_keys_event(&remote_event);
+    core.apply_app_keys_event(&remote_event)
+        .expect("apply remote app keys");
 
     let roster = core.state.device_roster.as_ref().expect("device roster");
     assert_eq!(roster.devices.len(), 2);
@@ -4151,6 +4302,49 @@ fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
             .to_string_lossy()
             .to_string(),
     )
+}
+
+fn logged_in_test_core_with_storage(
+    label: &str,
+    owner: &Keys,
+    device: &Keys,
+    storage: Arc<dyn StorageAdapter>,
+) -> AppCore {
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-{label}-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let device_id = device.public_key().to_hex();
+    let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+        .expect("local invite");
+    let runtime = NdrRuntime::new(
+        device.public_key(),
+        device.secret_key().to_secret_bytes(),
+        device_id,
+        owner.public_key(),
+        Some(storage),
+        Some(invite.clone()),
+    );
+    runtime.init().expect("runtime init");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: runtime,
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    core
 }
 
 fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String) -> AppCore {

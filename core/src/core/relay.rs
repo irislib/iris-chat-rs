@@ -58,7 +58,25 @@ impl AppCore {
         match kind {
             APP_KEYS_EVENT_KIND if is_app_keys_event(&event) => {
                 self.debug_event_counters.app_keys_events += 1;
-                self.apply_app_keys_event(&event);
+                match self.apply_app_keys_event(&event) {
+                    Ok(_) => {
+                        self.remember_event(event_id);
+                        self.setup_user_done.clear();
+                        self.request_protocol_subscription_refresh();
+                        if self.fetch_recent_protocol_state() {
+                            self.state.busy.syncing_network = true;
+                        }
+                        self.persist_best_effort();
+                        self.rebuild_state();
+                        self.emit_state();
+                    }
+                    Err(error) => {
+                        self.push_debug_log("runtime.app_keys.error", error.to_string());
+                        self.rebuild_state();
+                        self.emit_state();
+                    }
+                }
+                return;
             }
             INVITE_EVENT_KIND => {
                 self.debug_event_counters.invite_events += 1;
@@ -119,7 +137,10 @@ impl AppCore {
             Some(Ok(effects)) => effects,
             Some(Err(error)) => {
                 self.push_debug_log("runtime.event.error", error.to_string());
-                Vec::new()
+                self.persist_best_effort();
+                self.rebuild_state();
+                self.emit_state();
+                return;
             }
             None => Vec::new(),
         };
@@ -443,7 +464,7 @@ impl AppCore {
     /// Process an app-keys event (kind 30078) — adds/removes devices
     /// for an owner. The mobile-push snapshot indexes by tracked owner
     /// + device, so any change there invalidates the cache.
-    pub(super) fn apply_app_keys_event(&mut self, event: &Event) {
+    pub(super) fn apply_app_keys_event(&mut self, event: &Event) -> anyhow::Result<bool> {
         let should_publish_backfilled_owner_app_keys =
             self.logged_in.as_ref().is_some_and(|logged_in| {
                 self.defer_owner_app_keys_publish
@@ -462,42 +483,55 @@ impl AppCore {
             })
             .or_else(|| AppKeys::from_event(event).ok());
         let Some(app_keys) = app_keys else {
-            return;
+            return Ok(false);
         };
-        let applied =
-            self.apply_known_app_keys_snapshot(event.pubkey, &app_keys, event.created_at.as_secs());
-        let Some((mut effective_app_keys, mut effective_created_at)) = applied else {
-            if should_publish_backfilled_owner_app_keys {
-                self.defer_owner_app_keys_publish = false;
-            }
-            return;
-        };
+
+        let owner_hex = event.pubkey.to_hex();
+        let current = self.app_keys.get(&owner_hex).cloned();
+        let current_app_keys = current.as_ref().and_then(known_app_keys_to_ndr);
+        let current_created_at = current
+            .as_ref()
+            .map(|known| known.created_at_secs)
+            .unwrap_or_default();
+        let required_device = self
+            .logged_in
+            .as_ref()
+            .filter(|logged_in| {
+                self.defer_owner_app_keys_publish
+                    && logged_in.owner_keys.is_some()
+                    && logged_in.owner_pubkey == event.pubkey
+            })
+            .map(|logged_in| {
+                DeviceEntry::new(logged_in.device_keys.public_key(), unix_now().get())
+            });
+        let applied = apply_app_keys_snapshot_with_required_device(
+            current_app_keys.as_ref(),
+            current_created_at,
+            &app_keys,
+            event.created_at.as_secs(),
+            required_device,
+        );
+        let effective_app_keys = applied.app_keys;
+        let effective_created_at = applied.created_at;
+
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            let effects = logged_in.ndr_runtime.ingest_app_keys_snapshot(
+                event.pubkey,
+                effective_app_keys.clone(),
+                effective_created_at,
+            )?;
+            self.process_runtime_effects(effects);
+        }
+
+        let known =
+            known_app_keys_from_ndr(event.pubkey, &effective_app_keys, effective_created_at);
+        if current.as_ref() != Some(&known) {
+            self.app_keys.insert(owner_hex, known);
+        }
         if should_publish_backfilled_owner_app_keys {
-            if let Some((owner, device)) = self
-                .logged_in
-                .as_ref()
-                .map(|logged_in| (logged_in.owner_pubkey, logged_in.device_keys.public_key()))
-            {
-                self.upsert_local_app_key_device(owner, device);
-                if let Some(known) = self.app_keys.get(&owner.to_hex()) {
-                    if let Some(app_keys) = known_app_keys_to_ndr(known) {
-                        effective_app_keys = app_keys;
-                        effective_created_at = known.created_at_secs;
-                    }
-                }
-            }
             self.defer_owner_app_keys_publish = false;
         }
         self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            if let Ok(effects) = logged_in.ndr_runtime.ingest_app_keys_snapshot(
-                event.pubkey,
-                effective_app_keys,
-                effective_created_at,
-            ) {
-                self.process_runtime_effects(effects);
-            }
-        }
         self.mark_mobile_push_dirty();
         let _authorization_changed = self.refresh_local_authorization_state();
         self.rebuild_state();
@@ -506,6 +540,7 @@ impl AppCore {
         if should_publish_backfilled_owner_app_keys {
             self.publish_local_app_keys();
         }
+        Ok(true)
     }
 }
 
