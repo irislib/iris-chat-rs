@@ -131,6 +131,11 @@ CHARLIE_SERIAL="${SERIALS[3]}"
 for serial in "${ALICE_SERIAL}" "${ALICE_LINKED_SERIAL}" "${BOB_SERIAL}" "${CHARLIE_SERIAL}"; do
   "${ADB}" -s "${serial}" get-state >/dev/null
 done
+if [[ "${RELAY_MODE}" == "public" ]]; then
+  for serial in "${ALICE_SERIAL}" "${ALICE_LINKED_SERIAL}" "${BOB_SERIAL}" "${CHARLIE_SERIAL}"; do
+    iris_e2e_wait_android_public_network "${ADB}" "${serial}" 90
+  done
+fi
 
 {
   printf 'setup=android\n'

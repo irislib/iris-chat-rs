@@ -389,6 +389,153 @@ fn relay_status_events_match_normalized_relay_urls() {
 }
 
 #[test]
+fn liveness_retries_protocol_backfill_for_tracked_peer_missing_appkeys_when_connected() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let relay = crate::local_relay::TestRelay::start();
+    let mut core = logged_in_test_core("tracked-peer-liveness-backfill", &owner, &device);
+
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
+    {
+        let logged_in = core.logged_in.as_mut().expect("logged in");
+        logged_in.relay_urls = relay_urls.clone();
+        let client = logged_in.client.clone();
+        let connected = core.runtime.block_on(async {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                let connected = client
+                    .relays()
+                    .await
+                    .values()
+                    .filter(|relay| relay.status() == RelayStatus::Connected)
+                    .count();
+                if connected > 0 || tokio::time::Instant::now() >= deadline {
+                    break connected;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        });
+        assert!(connected > 0, "test relay must be connected");
+    }
+
+    core.active_chat_id = Some(peer.public_key().to_hex());
+    core.request_protocol_subscription_refresh_forced();
+    assert!(
+        !core
+            .protocol_subscription_runtime
+            .active_subscriptions
+            .is_empty(),
+        "tracked peer setup should create runtime protocol subscriptions"
+    );
+
+    core.debug_log.clear();
+    let token = core.protocol_reconnect_token;
+    core.handle_protocol_subscription_liveness_check(token);
+
+    assert!(
+        core.debug_log
+            .iter()
+            .any(|entry| entry.category == "protocol.catch_up.fetch"),
+        "connected-relay liveness must still backfill tracked peers with missing AppKeys"
+    );
+}
+
+#[test]
+fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_session() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let unrelated_author = Keys::generate();
+    let relay = crate::local_relay::TestRelay::start();
+    let mut core = logged_in_test_core("tracked-peer-roster-no-session-backfill", &owner, &device);
+
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
+    {
+        let logged_in = core.logged_in.as_mut().expect("logged in");
+        logged_in.relay_urls = relay_urls.clone();
+        let client = logged_in.client.clone();
+        let connected = core.runtime.block_on(async {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                let connected = client
+                    .relays()
+                    .await
+                    .values()
+                    .filter(|relay| relay.status() == RelayStatus::Connected)
+                    .count();
+                if connected > 0 || tokio::time::Instant::now() >= deadline {
+                    break connected;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        });
+        assert!(connected > 0, "test relay must be connected");
+    }
+
+    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
+    {
+        let logged_in = core.logged_in.as_ref().expect("logged in");
+        let effects = logged_in
+            .ndr_runtime
+            .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys.clone(), 1)
+            .expect("ingest peer appkeys");
+        core.process_runtime_effects(effects);
+    }
+    core.app_keys.insert(
+        peer_owner.public_key().to_hex(),
+        known_app_keys_from_ndr(peer_owner.public_key(), &peer_app_keys, 1),
+    );
+    core.active_chat_id = Some(peer_owner.public_key().to_hex());
+
+    let unrelated_filter = Filter::new()
+        .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
+        .authors(vec![unrelated_author.public_key()]);
+    core.direct_message_subscriptions.register_subscription(
+        "ndr-runtime-messages",
+        serde_json::to_string(&unrelated_filter).expect("filter json"),
+    );
+    assert!(
+        !core
+            .direct_message_subscriptions
+            .tracked_authors()
+            .is_empty(),
+        "the regression requires other active message authors"
+    );
+    assert!(
+        core.logged_in
+            .as_ref()
+            .expect("logged in")
+            .ndr_runtime
+            .get_message_push_author_pubkeys(peer_owner.public_key())
+            .is_empty(),
+        "peer roster without invite response must not have message authors yet"
+    );
+    core.upsert_protocol_subscription(
+        "ndr-runtime-protocol".to_string(),
+        Filter::new().kind(Kind::from(APP_KEYS_EVENT_KIND as u16)),
+    );
+
+    core.debug_log.clear();
+    let token = core.protocol_reconnect_token;
+    core.handle_protocol_subscription_liveness_check(token);
+
+    assert!(
+        core.debug_log
+            .iter()
+            .any(|entry| entry.category == "protocol.catch_up.fetch"),
+        "connected-relay liveness must backfill tracked peers that have AppKeys but no session authors"
+    );
+}
+
+#[test]
 fn ndr_runtime_invite_session_round_trips_text() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

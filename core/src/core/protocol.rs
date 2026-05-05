@@ -277,6 +277,27 @@ impl AppCore {
         self.fetch_recent_protocol_state();
     }
 
+    fn tracked_peer_protocol_backfill_needed(&self) -> bool {
+        let tracked_peer_owners = self.tracked_peer_owner_hexes();
+        if tracked_peer_owners.is_empty() {
+            return false;
+        }
+
+        tracked_peer_owners
+            .iter()
+            .any(|owner_hex| !self.app_keys.contains_key(owner_hex))
+            || self.logged_in.as_ref().is_some_and(|logged_in| {
+                tracked_peer_owners.iter().any(|owner_hex| {
+                    PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
+                        logged_in
+                            .ndr_runtime
+                            .get_message_push_author_pubkeys(owner_pubkey)
+                            .is_empty()
+                    })
+                })
+            })
+    }
+
     pub(super) fn start_notifications_loop(&self, client: Client) {
         let mut notifications = client.notifications();
         let tx = self.core_sender.clone();
@@ -659,8 +680,10 @@ impl AppCore {
                 })
             })
             .unwrap_or(0);
+        let should_retry_backfill =
+            connected_relays == 0 || self.tracked_peer_protocol_backfill_needed();
         self.reconcile_protocol_subscriptions("liveness_check", true);
-        if connected_relays == 0 {
+        if should_retry_backfill {
             self.fetch_recent_protocol_state();
             self.fetch_recent_messages_for_tracked_peers(unix_now());
         }

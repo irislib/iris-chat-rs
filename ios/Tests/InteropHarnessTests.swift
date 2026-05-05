@@ -62,10 +62,11 @@ final class InteropHarnessTests: XCTestCase {
         }
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
 
+        let managerEnvironment = harnessManagerEnvironment(runID: runID)
         let manager = AppManager(
             secretStore: secretStore,
             dataDir: dataDir,
-            environment: ["IRIS_UI_TEST_RUN_ID": "harness-\(runID)"]
+            environment: managerEnvironment
         )
 
         _ = try await waitFor(label: "bootstrap completion", timeout: 30) {
@@ -77,7 +78,11 @@ final class InteropHarnessTests: XCTestCase {
         status("data_dir", dataDir.path)
 
         switch action {
-        case "create_account_and_report_identity", "report_logged_in_identity":
+        case "create_account_and_report_identity":
+            let snapshot = try await createOrLoadAccount(manager: manager, env: env)
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
+            reportIdentity(snapshot)
+        case "report_logged_in_identity":
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
             try await waitForRelayDrainIfRequested(manager: manager, env: env)
             reportIdentity(snapshot)
@@ -479,23 +484,35 @@ final class InteropHarnessTests: XCTestCase {
             let requestedChatID = env["IRIS_IOS_HARNESS_CHAT_ID"]?.trimmingCharacters(in: .whitespacesAndNewlines)
             let peerInput = env["IRIS_IOS_HARNESS_PEER_INPUT"]?.trimmingCharacters(in: .whitespacesAndNewlines)
             let expectedChatID = requestedChatID?.isEmpty == false ? requestedChatID : nil
+            let seededChatID: String?
+            if expectedChatID != nil || peerInput?.isEmpty == false {
+                seededChatID = try await ensureChatOpen(
+                    manager: manager,
+                    dataDir: dataDir,
+                    chatID: expectedChatID,
+                    peerInput: peerInput
+                )
+            } else {
+                seededChatID = nil
+            }
+            let resolvedChatID = expectedChatID ?? seededChatID
 
             let matchedChatID = try await waitFor(label: "message \(message)", timeout: 180) {
                 let state = manager.state
                 if let current = state.currentChat,
-                   self.chatMatchesExpectedChat(chatId: current.chatId, peerInput: peerInput, expectedChatID: expectedChatID),
+                   self.chatMatchesExpectedChat(chatId: current.chatId, peerInput: peerInput, expectedChatID: resolvedChatID),
                    current.messages.contains(where: { $0.body == message && self.directionMatches(isOutgoing: $0.isOutgoing, direction: direction) }) {
                     return current.chatId
                 }
                 if let thread = state.chatList.first(where: {
                     $0.lastMessagePreview == message &&
-                    self.chatMatchesExpectedChat(chatId: $0.chatId, peerInput: peerInput, expectedChatID: expectedChatID)
+                    self.chatMatchesExpectedChat(chatId: $0.chatId, peerInput: peerInput, expectedChatID: resolvedChatID)
                 }) {
                     return thread.chatId
                 }
                 if let chatID = self.splitPersistenceThreadWithMessage(
                     dataDir: dataDir,
-                    chatID: expectedChatID,
+                    chatID: resolvedChatID,
                     expectedMessage: message,
                     direction: direction,
                     peerInput: peerInput
@@ -698,10 +715,24 @@ final class InteropHarnessTests: XCTestCase {
             return account
         }
 
+        throw HarnessError.unexpected("missing logged-in account; run create_account_and_report_identity first")
+    }
+
+    private func createOrLoadAccount(manager: AppManager, env: [String: String]) async throws -> AccountSnapshot {
+        if let account = manager.state.account {
+            return account
+        }
+
         manager.dispatch(.createAccount(name: env["IRIS_IOS_HARNESS_DISPLAY_NAME"] ?? ""))
         return try await waitFor(label: "logged in account", timeout: 90) {
             manager.state.account
         }
+    }
+
+    private func harnessManagerEnvironment(runID: String) -> [String: String] {
+        [
+            "IRIS_UI_TEST_RUN_ID": "harness-\(runID)"
+        ]
     }
 
     private func maybeDisableRelays(manager: AppManager, env: [String: String]) async throws {

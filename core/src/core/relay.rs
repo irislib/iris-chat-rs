@@ -420,7 +420,11 @@ impl AppCore {
             self.emit_state();
         }
         for author in added_authors {
-            self.fetch_recent_messages_for_author(author, unix_now(), CATCH_UP_LOOKBACK_SECS);
+            self.fetch_recent_messages_for_author(
+                author,
+                unix_now(),
+                NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
+            );
         }
         self.reconcile_protocol_subscriptions("runtime_subscribe", false);
         self.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));

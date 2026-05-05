@@ -153,6 +153,11 @@ open -a Simulator >/dev/null 2>&1 || true
 for serial in "${ANDROID_A_SERIAL}" "${ANDROID_B_SERIAL}"; do
   "${ADB}" -s "${serial}" get-state >/dev/null
 done
+if [[ "${RELAY_MODE}" == "public" ]]; then
+  for serial in "${ANDROID_A_SERIAL}" "${ANDROID_B_SERIAL}"; do
+    iris_e2e_wait_android_public_network "${ADB}" "${serial}" 90
+  done
+fi
 
 if [[ "${ALICE_PRIMARY_PLATFORM}" == "ios" ]]; then
   ALICE_PLATFORM="ios"; ALICE_ID="${IOS_A_UDID}"; ALICE_RUN_ID="alice"
