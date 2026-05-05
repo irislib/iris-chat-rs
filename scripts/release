@@ -431,6 +431,122 @@ release_gateway_base_url() {
     "$TAG"
 }
 
+USED_NOTE_ASSETS=()
+
+asset_link() {
+  local name="$1"
+  printf '[%s](assets/%s)' "$name" "$name"
+}
+
+mark_note_asset_used() {
+  USED_NOTE_ASSETS+=("$1")
+}
+
+note_asset_was_used() {
+  local name="$1"
+  local used
+  for used in "${USED_NOTE_ASSETS[@]}"; do
+    [[ "$used" == "$name" ]] && return 0
+  done
+  return 1
+}
+
+find_staged_asset() {
+  local pattern
+  local asset_path
+  for pattern in "$@"; do
+    for asset_path in "$STAGE_DIR"/assets/$pattern; do
+      [[ -e "$asset_path" ]] || continue
+      basename "$asset_path"
+      return 0
+    done
+  done
+  return 1
+}
+
+download_asset_description() {
+  local name="$1"
+  case "$name" in
+    iris-chat-*-macos-arm64.dmg) printf '%s\n' "macOS Apple Silicon disk image" ;;
+    iris-chat-*-windows-x64-setup.exe) printf '%s\n' "Windows x64 installer" ;;
+    iris-chat-*-windows-x64.zip) printf '%s\n' "Windows x64 portable zip" ;;
+    iris-chat-*-android-arm64.apk) printf '%s\n' "Android APK" ;;
+    iris-chat-*-android-arm64.aab) printf '%s\n' "Android App Bundle" ;;
+    iris-chat-*-linux-x64.deb) printf '%s\n' "Linux x64 Debian package" ;;
+    iris-chat-*-linux-x64.tar.gz) printf '%s\n' "Linux x64 portable tarball" ;;
+    iris-chat-*-ios.xcarchive.zip) printf '%s\n' "iOS archive" ;;
+    iris-aarch64-apple-darwin.tar.gz) printf '%s\n' "macOS Apple Silicon CLI" ;;
+    iris-x86_64-apple-darwin.tar.gz) printf '%s\n' "macOS Intel CLI" ;;
+    iris-x86_64-unknown-linux-gnu.tar.gz) printf '%s\n' "Linux x64 CLI" ;;
+    iris-aarch64-unknown-linux-gnu.tar.gz) printf '%s\n' "Linux ARM64 CLI" ;;
+    *) printf '%s\n' "$name" ;;
+  esac
+}
+
+write_download_pick() {
+  local label="$1"
+  shift
+  local name
+  if name="$(find_staged_asset "$@")"; then
+    mark_note_asset_used "$name"
+    printf -- '- %s: %s\n' "$label" "$(asset_link "$name")"
+  fi
+}
+
+write_download_sections() {
+  echo "## Downloads"
+  echo
+  echo "### Most People Will Want"
+  echo
+  write_download_pick "Iris Chat for macOS (Apple Silicon)" "iris-chat-${TAG}-macos-arm64.dmg"
+  write_download_pick "Iris Chat for Windows" "iris-chat-${TAG}-windows-x64-setup.exe"
+  write_download_pick "Iris Chat for Android" "iris-chat-${TAG}-android-arm64.apk"
+  write_download_pick "Iris Chat for Debian/Ubuntu (.deb)" "iris-chat-${TAG}-linux-x64.deb"
+
+  local cli_count=0
+  local cli_lines=()
+  local name
+  for name in \
+    "iris-aarch64-apple-darwin.tar.gz" \
+    "iris-x86_64-apple-darwin.tar.gz" \
+    "iris-x86_64-unknown-linux-gnu.tar.gz" \
+    "iris-aarch64-unknown-linux-gnu.tar.gz"; do
+    if [[ -f "$STAGE_DIR/assets/$name" ]]; then
+      mark_note_asset_used "$name"
+      cli_lines+=("- $(download_asset_description "$name"): $(asset_link "$name")")
+      cli_count=$((cli_count + 1))
+    fi
+  done
+
+  if [[ "$cli_count" -gt 0 || -f "$STAGE_DIR/install.sh" ]]; then
+    echo
+    echo "### Command Line"
+    echo
+    if [[ -f "$STAGE_DIR/install.sh" ]]; then
+      echo "- Install script: \`curl -fsSL $(release_gateway_base_url)/install.sh | sh\`"
+    fi
+    if [[ "$cli_count" -gt 0 ]]; then
+      printf '%s\n' "${cli_lines[@]}"
+    fi
+  fi
+
+  local other_lines=()
+  local asset_path
+  for asset_path in "$STAGE_DIR"/assets/*; do
+    [[ -e "$asset_path" ]] || continue
+    name="$(basename "$asset_path")"
+    note_asset_was_used "$name" && continue
+    other_lines+=("- $(download_asset_description "$name"): $(asset_link "$name")")
+  done
+
+  if [[ "${#other_lines[@]}" -gt 0 ]]; then
+    echo
+    echo "### Other Files"
+    echo
+    printf '%s\n' "${other_lines[@]}"
+  fi
+}
+
 default_cli_targets() {
   case "$(uname -s)" in
     Darwin)
@@ -947,22 +1063,8 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_
   echo "# Iris Chat $TAG"
   echo
   echo "Built from commit \`$COMMIT\`."
-  if [[ -f "$STAGE_DIR/install.sh" ]]; then
-    echo
-    echo "Command line install:"
-    echo
-    echo "\`\`\`bash"
-    echo "curl -fsSL $(release_gateway_base_url)/install.sh | sh"
-    echo "\`\`\`"
-  fi
   echo
-  echo "## Downloads"
-  echo
-  for asset_path in "$STAGE_DIR"/assets/*; do
-    [[ -e "$asset_path" ]] || continue
-    name="$(basename "$asset_path")"
-    echo "- \`$name\`"
-  done
+  write_download_sections
   if [[ "${#BUILT_LINES[@]}" -gt 0 ]]; then
     echo
     echo "## Build summary"
