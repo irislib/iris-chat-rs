@@ -146,16 +146,21 @@ impl AppCore {
             .expect("checked logged in")
             .ndr_runtime
             .import_session_state(owner_pubkey, Some(peer_device_id.clone()), session_state);
-        if let Err(error) = import_result {
-            self.push_debug_log(
-                "invite.private_response.import",
-                format!(
-                    "event_id={event_id} owner={} error={error}",
-                    owner_pubkey.to_hex()
-                ),
-            );
-            return false;
-        }
+        let effects = match import_result {
+            Ok(effects) => effects,
+            Err(error) => {
+                self.push_debug_log(
+                    "invite.private_response.import",
+                    format!(
+                        "event_id={event_id} owner={} error={error}",
+                        owner_pubkey.to_hex()
+                    ),
+                );
+                return false;
+            }
+        };
+        self.process_runtime_effects(effects);
+        self.fetch_recent_messages_for_tracked_peers(unix_now());
 
         let chat_id = owner_pubkey.to_hex();
         self.ensure_thread_record(&chat_id, unix_now().get())

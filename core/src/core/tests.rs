@@ -1678,7 +1678,8 @@ fn peer_profile_debug_reports_known_user_context() {
     let app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 10)]);
 
     core.apply_known_app_keys_snapshot(peer.public_key(), &app_keys, 10);
-    core.logged_in
+    let _ = core
+        .logged_in
         .as_ref()
         .expect("logged in")
         .ndr_runtime
@@ -1812,7 +1813,7 @@ fn restored_authorized_linked_device_is_not_revoked_by_cached_roster() {
 }
 
 #[test]
-fn app_keys_cache_ignores_older_roster_events() {
+fn app_keys_cache_merges_older_roster_events_additively() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let old_device = Keys::generate();
@@ -1840,8 +1841,8 @@ fn app_keys_cache_ignores_older_roster_events() {
     let stale = AppKeys::new(vec![DeviceEntry::new(old_device.public_key(), 10)]);
     assert!(
         core.apply_known_app_keys_snapshot(owner.public_key(), &stale, 10)
-            .is_none(),
-        "older app-key events must not replace the cached roster"
+            .is_some(),
+        "older owner-signed app-key events should add missing devices without replacing the cached timestamp"
     );
 
     let cached = core
@@ -1853,7 +1854,7 @@ fn app_keys_cache_ignores_older_roster_events() {
         .devices
         .iter()
         .any(|entry| entry.identity_pubkey_hex == device.public_key().to_hex()));
-    assert!(!cached
+    assert!(cached
         .devices
         .iter()
         .any(|entry| entry.identity_pubkey_hex == old_device.public_key().to_hex()));

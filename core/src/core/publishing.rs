@@ -440,7 +440,6 @@ impl AppCore {
                     detail,
                 })));
             }
-            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::SyncComplete)));
         });
     }
 

@@ -66,6 +66,7 @@ impl AppCore {
                         if self.fetch_recent_protocol_state() {
                             self.state.busy.syncing_network = true;
                         }
+                        self.fetch_recent_messages_for_tracked_peers(unix_now());
                         self.persist_best_effort();
                         self.rebuild_state();
                         self.emit_state();
@@ -144,8 +145,14 @@ impl AppCore {
             }
             None => Vec::new(),
         };
+        let runtime_effects_empty = effects.is_empty();
         let decrypted_event_ids = self.process_runtime_effects(effects);
-        if kind != MESSAGE_EVENT_KIND || decrypted_event_ids.contains(&event_id) {
+        let should_remember_event = match kind {
+            MESSAGE_EVENT_KIND => decrypted_event_ids.contains(&event_id),
+            INVITE_RESPONSE_KIND => !runtime_effects_empty,
+            _ => true,
+        };
+        if should_remember_event {
             self.remember_event(event_id);
         }
         if protocol_inputs_changed {
@@ -230,6 +237,7 @@ impl AppCore {
         completions: &BTreeMap<String, (String, String)>,
     ) -> HashSet<String> {
         let mut decrypted_event_ids = HashSet::new();
+        let mut fetch_backfill_requested = false;
         for effect in effects {
             match effect {
                 RuntimeEffect::PublishUnsigned(unsigned) => {
@@ -294,6 +302,10 @@ impl AppCore {
                 RuntimeEffect::Unsubscribe(subid) => {
                     self.remove_runtime_subscription(subid);
                 }
+                RuntimeEffect::FetchBackfill => {
+                    self.push_debug_log("runtime.backfill", "requested");
+                    fetch_backfill_requested = true;
+                }
                 RuntimeEffect::EmitDecrypted {
                     sender,
                     sender_device,
@@ -320,6 +332,12 @@ impl AppCore {
                     }
                 }
             }
+        }
+        if fetch_backfill_requested {
+            if self.fetch_recent_protocol_state() {
+                self.state.busy.syncing_network = true;
+            }
+            self.fetch_recent_messages_for_tracked_peers(unix_now());
         }
         decrypted_event_ids
     }
