@@ -1252,6 +1252,154 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
 }
 
 #[test]
+fn appcore_persists_pending_group_sender_key_outer_when_no_group_message_emits() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender_event = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.start_primary_session(owner.clone(), device.clone(), false, false)
+        .expect("primary session");
+    let outer = unknown_group_sender_key_outer_event(&sender_event);
+    let event_id = outer.id.to_string();
+
+    core.handle_relay_event(outer);
+
+    assert!(
+        core.seen_event_ids.contains(&event_id),
+        "unknown group sender-key outer should be consumed by group runtime instead of falling through to pairwise decrypt"
+    );
+    assert_eq!(
+        stored_pending_group_sender_key_message_count(&core, &owner, &device),
+        1,
+        "group runtime pending outer must be durably stored even when no app-visible group message is emitted yet"
+    );
+}
+
+#[test]
+fn appcore_defers_decrypted_delivery_ack_until_app_state_is_persisted() {
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_path_buf();
+    let bob_shared_conn = crate::core::storage::open_database(&data_dir).expect("bob db");
+    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        bob_shared_conn.clone(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+
+    let mut alice_invite = Invite::create_new(
+        alice_keys.public_key(),
+        Some(alice_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("alice invite");
+    alice_invite.owner_public_key = Some(alice_keys.public_key());
+
+    let alice = NdrRuntime::new(
+        alice_keys.public_key(),
+        alice_keys.secret_key().to_secret_bytes(),
+        alice_keys.public_key().to_hex(),
+        alice_keys.public_key(),
+        None,
+        Some(alice_invite.clone()),
+    );
+    alice.init().expect("alice init");
+
+    let bob_runtime = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        Some(bob_storage.clone()),
+        None,
+    );
+    bob_runtime.init().expect("bob init");
+    accept_invite_and_deliver(
+        &bob_runtime,
+        &bob_keys,
+        &alice_invite,
+        alice_keys.public_key(),
+        &alice,
+    );
+    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
+    let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
+
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir.to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let bob_local_invite = Invite::create_new(
+        bob_keys.public_key(),
+        Some(bob_keys.public_key().to_hex()),
+        None,
+    )
+    .expect("bob local invite");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: bob_keys.public_key(),
+        owner_keys: Some(bob_keys.clone()),
+        device_keys: bob_keys.clone(),
+        client: Client::new(bob_keys.clone()),
+        relay_urls: Vec::new(),
+        ndr_runtime: bob_runtime,
+        local_invite: bob_local_invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+
+    let message = "ack after app persist";
+    alice
+        .send_text(bob_keys.public_key(), message.to_string(), None)
+        .expect("alice sends");
+    let message_event = drain_signed_events(&alice, &alice_keys)
+        .into_iter()
+        .find(|event| {
+            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
+                && bob_message_authors.contains(&event.pubkey)
+        })
+        .expect("message event for Bob");
+
+    core.enter_batch();
+    core.handle_relay_event(message_event);
+
+    assert!(
+        core.threads
+            .get(&alice_keys.public_key().to_hex())
+            .is_some_and(|thread| thread
+                .messages
+                .iter()
+                .any(|message| message.body == "ack after app persist")),
+        "decrypted message should be applied in memory immediately"
+    );
+    assert_eq!(
+        stored_message_count(&core),
+        1,
+        "notification-preview durability may write the message row immediately, but full app-state persistence is still batch-deferred"
+    );
+    assert_eq!(
+        stored_pending_decrypted_delivery_count(&core, &bob_keys, &bob_keys),
+        1,
+        "runtime decrypted delivery must remain pending until app state is durably saved"
+    );
+
+    core.exit_batch();
+
+    assert_eq!(stored_message_count(&core), 1);
+    assert_eq!(
+        stored_pending_decrypted_delivery_count(&core, &bob_keys, &bob_keys),
+        0,
+        "persisting app state should ack and clear the runtime decrypted delivery"
+    );
+}
+
+#[test]
 fn mobile_push_fallback_suppresses_decrypted_non_message_kinds() {
     for kind in [
         0_u64,
@@ -4074,6 +4222,52 @@ fn stored_chat_ttl(core: &AppCore, chat_id: &str) -> Option<u64> {
     rows.next()
         .unwrap()
         .map(|row| row.get::<_, i64>(0).unwrap() as u64)
+}
+
+fn runtime_state_json(core: &AppCore, owner: &Keys, device: &Keys) -> serde_json::Value {
+    let storage = crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        owner.public_key().to_hex(),
+        device.public_key().to_hex(),
+    );
+    let value = storage
+        .get("v2/runtime-state")
+        .expect("read runtime state")
+        .expect("runtime state exists");
+    serde_json::from_str(&value).expect("runtime state json")
+}
+
+fn stored_pending_group_sender_key_message_count(
+    core: &AppCore,
+    owner: &Keys,
+    device: &Keys,
+) -> usize {
+    runtime_state_json(core, owner, device)
+        .get("pending_group_sender_key_messages")
+        .and_then(|value| value.as_array())
+        .map(Vec::len)
+        .unwrap_or_default()
+}
+
+fn stored_pending_decrypted_delivery_count(core: &AppCore, owner: &Keys, device: &Keys) -> usize {
+    runtime_state_json(core, owner, device)
+        .get("pending_decrypted_deliveries")
+        .and_then(|value| value.as_array())
+        .map(Vec::len)
+        .unwrap_or_default()
+}
+
+fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
+    use base64::Engine;
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&7_u32.to_be_bytes());
+    payload.extend_from_slice(&1_u32.to_be_bytes());
+    payload.extend_from_slice(&[42_u8; 32]);
+    let content = base64::engine::general_purpose::STANDARD.encode(payload);
+    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
+        .sign_with_keys(sender_event)
+        .expect("unknown group sender-key outer")
 }
 
 fn delivered_texts() -> &'static std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>> {

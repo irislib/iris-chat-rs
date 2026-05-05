@@ -66,6 +66,7 @@ impl AppCore {
             all_relays_offline_since_secs: None,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
+            pending_decrypted_delivery_acks: HashSet::new(),
             event_transport_channels: BTreeMap::new(),
             pending_mobile_push_events: VecDeque::new(),
             debug_log: VecDeque::new(),

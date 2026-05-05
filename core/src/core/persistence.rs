@@ -47,8 +47,13 @@ impl AppCore {
             threads: &self.threads,
             seen_event_order: &self.seen_event_order,
         };
-        if let Err(error) = self.app_store.save_state(&snapshot) {
-            self.push_debug_log("storage.save_failed", error.to_string());
+        match self.app_store.save_state(&snapshot) {
+            Ok(()) => {
+                self.ack_pending_decrypted_deliveries_after_app_persist();
+            }
+            Err(error) => {
+                self.push_debug_log("storage.save_failed", error.to_string());
+            }
         }
 
         self.persist_debug_snapshot_best_effort();

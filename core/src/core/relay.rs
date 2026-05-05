@@ -79,7 +79,7 @@ impl AppCore {
                     .as_ref()
                     .map(|logged_in| logged_in.ndr_runtime.group_handle_outer_event(&event))
                     .unwrap_or_default();
-                if !group_result.events.is_empty() {
+                if !group_result.events.is_empty() || !group_result.effects.is_empty() {
                     self.debug_event_counters.group_events += 1;
                     for group_event in group_result.events {
                         self.apply_group_decrypted_event(group_event);
@@ -208,10 +208,7 @@ impl AppCore {
                         .as_ref()
                         .map(|logged_in| logged_in.ndr_runtime.persist_runtime_state(&key, value));
                     if let Some(Err(error)) = result {
-                        self.push_debug_log(
-                            "runtime.persist",
-                            format!("key={key} error={error}"),
-                        );
+                        self.push_debug_log("runtime.persist", format!("key={key} error={error}"));
                     }
                 }
                 RuntimeEffect::PublishUnsigned(unsigned) => {
@@ -298,24 +295,55 @@ impl AppCore {
                     // so the cached mobile-push snapshot needs a refresh.
                     self.mark_mobile_push_dirty();
                     if let Some(event_id) = ack_event_id {
-                        let ack_result = self.logged_in.as_ref().map(|logged_in| {
-                            logged_in.ndr_runtime.ack_decrypted_delivery(&event_id)
-                        });
-                        match ack_result {
-                            Some(Ok(effects)) if !effects.is_empty() => {
-                                self.process_runtime_effects(effects);
-                            }
-                            Some(Err(error)) => self.push_debug_log(
-                                "runtime.decrypt.ack",
-                                format!("event_id={event_id} error={error}"),
-                            ),
-                            _ => {}
-                        }
+                        self.pending_decrypted_delivery_acks.insert(event_id);
                     }
                 }
             }
         }
         decrypted_event_ids
+    }
+
+    pub(super) fn ack_pending_decrypted_deliveries_after_app_persist(&mut self) {
+        if self.pending_decrypted_delivery_acks.is_empty() {
+            return;
+        }
+        let pending = std::mem::take(&mut self.pending_decrypted_delivery_acks);
+        for event_id in pending {
+            let ack_result = self
+                .logged_in
+                .as_ref()
+                .map(|logged_in| logged_in.ndr_runtime.ack_decrypted_delivery(&event_id));
+            match ack_result {
+                Some(Ok(effects)) => {
+                    self.persist_runtime_state_effects_only(effects);
+                }
+                Some(Err(error)) => {
+                    self.pending_decrypted_delivery_acks
+                        .insert(event_id.clone());
+                    self.push_debug_log(
+                        "runtime.decrypt.ack",
+                        format!("event_id={event_id} error={error}"),
+                    );
+                }
+                None => {
+                    self.pending_decrypted_delivery_acks.insert(event_id);
+                }
+            }
+        }
+    }
+
+    fn persist_runtime_state_effects_only(&mut self, effects: Vec<RuntimeEffect>) {
+        for effect in effects {
+            if let RuntimeEffect::PersistRuntimeState { key, value } = effect {
+                let result = self
+                    .logged_in
+                    .as_ref()
+                    .map(|logged_in| logged_in.ndr_runtime.persist_runtime_state(&key, value));
+                if let Some(Err(error)) = result {
+                    self.push_debug_log("runtime.persist", format!("key={key} error={error}"));
+                }
+            }
+        }
     }
 
     fn ack_runtime_prepared_publish(&mut self, event_id: &str) {

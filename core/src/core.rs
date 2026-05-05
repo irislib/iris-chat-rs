@@ -153,6 +153,7 @@ pub struct AppCore {
     all_relays_offline_since_secs: Option<u64>,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
+    pending_decrypted_delivery_acks: HashSet<String>,
     event_transport_channels: BTreeMap<String, String>,
     pending_mobile_push_events: VecDeque<Event>,
     debug_log: VecDeque<DebugLogEntry>,
