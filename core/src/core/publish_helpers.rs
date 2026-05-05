@@ -82,33 +82,16 @@ async fn publish_event_to_any_relay(
     let mut successes = Vec::new();
     let mut failures = Vec::new();
 
-    for relay_url in relay_urls {
-        let relay_label = relay_url.to_string();
-        let result = tokio::time::timeout(
-            RELAY_PUBLISH_TIMEOUT,
-            client.send_event_to(vec![relay_url.clone()], event),
-        )
-        .await;
+    let attempts = relay_urls.iter().cloned().map(|relay_url| {
+        let client = client.clone();
+        let event = event.clone();
+        async move { publish_event_to_relay(client, relay_url, event).await }
+    });
 
-        match result {
-            Ok(Ok(output)) if !output.success.is_empty() => {
-                successes.extend(output.success.into_iter().map(|relay| relay.to_string()));
-            }
-            Ok(Ok(output)) => {
-                let reason = output
-                    .failed
-                    .values()
-                    .next()
-                    .cloned()
-                    .unwrap_or_else(|| "no relay accepted event".to_string());
-                if relay_publish_failure_is_terminal_success(&reason) {
-                    successes.push(relay_label);
-                } else {
-                    failures.push(format!("{relay_label}: {reason}"));
-                }
-            }
-            Ok(Err(error)) => failures.push(format!("{relay_label}: {error}")),
-            Err(_) => failures.push(format!("{relay_label}: publish timed out")),
+    for outcome in futures_util::future::join_all(attempts).await {
+        match outcome {
+            RelayPublishOutcome::Success(relays) => successes.extend(relays),
+            RelayPublishOutcome::Failure(failure) => failures.push(failure),
         }
     }
 
@@ -125,6 +108,49 @@ async fn publish_event_to_any_relay(
         ));
     }
     Ok(successes)
+}
+
+enum RelayPublishOutcome {
+    Success(Vec<String>),
+    Failure(String),
+}
+
+async fn publish_event_to_relay(
+    client: Client,
+    relay_url: RelayUrl,
+    event: Event,
+) -> RelayPublishOutcome {
+    let relay_label = relay_url.to_string();
+    let result = tokio::time::timeout(
+        RELAY_PUBLISH_TIMEOUT,
+        client.send_event_to(vec![relay_url], &event),
+    )
+    .await;
+
+    match result {
+        Ok(Ok(output)) if !output.success.is_empty() => RelayPublishOutcome::Success(
+            output
+                .success
+                .into_iter()
+                .map(|relay| relay.to_string())
+                .collect(),
+        ),
+        Ok(Ok(output)) => {
+            let reason = output
+                .failed
+                .values()
+                .next()
+                .cloned()
+                .unwrap_or_else(|| "no relay accepted event".to_string());
+            if relay_publish_failure_is_terminal_success(&reason) {
+                RelayPublishOutcome::Success(vec![relay_label])
+            } else {
+                RelayPublishOutcome::Failure(format!("{relay_label}: {reason}"))
+            }
+        }
+        Ok(Err(error)) => RelayPublishOutcome::Failure(format!("{relay_label}: {error}")),
+        Err(_) => RelayPublishOutcome::Failure(format!("{relay_label}: publish timed out")),
+    }
 }
 
 pub(super) fn relay_publish_failure_is_terminal_success(reason: &str) -> bool {

@@ -52,6 +52,8 @@ Maintenance:
   update     Update iris
   help       Print help";
 
+const SEND_NETWORK_TIMEOUT: Duration = Duration::from_secs(20);
+
 #[derive(Parser)]
 #[command(name = "iris")]
 #[command(version = env!("IRIS_APP_VERSION"))]
@@ -1031,7 +1033,7 @@ fn send_message(
             text: message.to_string(),
         }
     };
-    cli.dispatch_and_wait_network(action, Duration::from_secs(8))?;
+    cli.dispatch_and_wait_network(action, SEND_NETWORK_TIMEOUT)?;
     let state = cli.app.state();
     fail_on_toast(&state)?;
     let current = state.current_chat.context("No chat is open.")?;

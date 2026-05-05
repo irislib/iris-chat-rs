@@ -254,6 +254,14 @@ fn iris_cli_sends_to_protocol_client() {
 
     let sent = run_iris(iris_dir.path(), &["send", chat_id, "hello from iris cli"]);
     assert_eq!(sent["data"]["body"], "hello from iris cli");
+    assert_eq!(sent["data"]["delivery"], "sent");
+    assert!(
+        sent["data"]["delivery_trace"]["pending_relay_event_ids"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()),
+        "send should wait for relay publish completion; trace={}",
+        sent["data"]["delivery_trace"]
+    );
 
     let response_event = wait_for_relay_event(&relay, INVITE_RESPONSE_KIND as u64);
     let response = process_invite_response_event(&invite, &response_event, alice_secret)
@@ -394,6 +402,13 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
     let sent = run_iris(alice_fresh.path(), &["send", bob_npub, body]);
     assert_eq!(sent["data"]["chat_id"], bob_user_id);
     assert_eq!(sent["data"]["is_outgoing"], true);
+    assert!(
+        sent["data"]["delivery_trace"]["pending_relay_event_ids"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()),
+        "send should wait for relay publish completion; trace={}",
+        sent["data"]["delivery_trace"]
+    );
 
     let bob_message = match read_stream_message(&relay, &bob_receiver, body) {
         Some(message) => message,
