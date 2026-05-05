@@ -213,6 +213,7 @@ class IrisNearbyService(
     fun setLocalNetworkVisible(nextVisible: Boolean) {
         if (localNetworkVisible == nextVisible) {
             if (localNetworkVisible) {
+                lanService.start()
                 announceToConnectedPeers()
             }
             return

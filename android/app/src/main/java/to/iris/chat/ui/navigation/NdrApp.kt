@@ -94,6 +94,8 @@ fun NdrApp(
                 container.nearbyIrisService.hasBluetoothPermission()
         ) {
             container.nearbyIrisService.setVisible(true)
+        } else {
+            container.nearbyIrisService.setVisible(false)
         }
     }
 
@@ -129,7 +131,7 @@ fun NdrApp(
             val nearbySnapshot = nearbySnapshotProvider()
             val bluetoothState = if (nearbyBluetoothEnabled(nearbySnapshot)) "on" else "off"
             val wifiState = if (nearbyWifiEnabled(nearbySnapshot)) "on" else "off"
-            IrisOfflineBannerState("Offline, Bluetooth $bluetoothState, Wi-Fi $wifiState")
+            IrisOfflineBannerState("Offline · Bluetooth $bluetoothState · Wi-Fi $wifiState")
         } else {
             null
         }
@@ -446,11 +448,12 @@ private fun ChatThreadSnapshot.matchesShareQuery(query: String): Boolean =
 
 private fun nearbyWifiEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =
     snapshot.localNetworkVisible &&
-        snapshot.localNetworkStatus !in nearbyWifiBlockingStatuses
+        snapshot.localNetworkStatus in nearbyWifiOnStatuses
 
 private fun nearbyBluetoothEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =
     snapshot.visible &&
-        snapshot.status !in nearbyBluetoothBlockingStatuses
+        snapshot.status !in nearbyBluetoothBlockingStatuses &&
+        snapshot.status !in nearbyTransportOffStatuses
 
 private val nearbyBluetoothBlockingStatuses =
     setOf(
@@ -463,11 +466,16 @@ private val nearbyBluetoothBlockingStatuses =
         "Connect failed",
     )
 
-private val nearbyWifiBlockingStatuses =
+private val nearbyTransportOffStatuses =
     setOf(
-        "No local network access",
-        "Local network unavailable",
-        "Local network failed",
+        "Off",
+        "Starting",
+    )
+
+private val nearbyWifiOnStatuses =
+    setOf(
+        "Visible",
+        "Connected",
     )
 
 private fun Long.saturatingSubtract(other: Long): Long =

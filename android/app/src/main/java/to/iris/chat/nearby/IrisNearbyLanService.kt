@@ -1,8 +1,11 @@
 package to.iris.chat.nearby
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.util.Log
 import java.io.EOFException
@@ -39,6 +42,8 @@ class IrisNearbyLanService(
 
     private val appContext = context.applicationContext
     private val nsdManager = appContext.getSystemService(NsdManager::class.java)
+    private val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
+    private val wifiManager = appContext.getSystemService(WifiManager::class.java)
     private val connections = ConcurrentHashMap<String, Connection>()
     private val endpointKeys = ConcurrentHashMap.newKeySet<String>()
     private val resolveQueue = ArrayDeque<NsdServiceInfo>()
@@ -55,6 +60,7 @@ class IrisNearbyLanService(
     private var acceptJob: Job? = null
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var registrationListener: NsdManager.RegistrationListener? = null
+    private var multicastLock: WifiManager.MulticastLock? = null
     private var resolving = false
     private val directExecutor = Executor { command -> command.run() }
 
@@ -64,7 +70,11 @@ class IrisNearbyLanService(
         }
         enabled = true
         status = "Starting"
-        startServer()
+        if (!startServer()) {
+            enabled = false
+            return
+        }
+        acquireMulticastLock()
         startDiscovery()
     }
 
@@ -81,6 +91,7 @@ class IrisNearbyLanService(
         registrationListener = null
         acceptJob?.cancel()
         acceptJob = null
+        releaseMulticastLock()
         runCatching { serverSocket?.close() }
         serverSocket = null
         connections.values.forEach { connection ->
@@ -130,10 +141,10 @@ class IrisNearbyLanService(
 
     fun peerIds(): Set<String> = connections.values.mapNotNullTo(mutableSetOf()) { it.peerId }
 
-    private fun startServer() {
-        val bindAddress = privateLocalAddress() ?: run {
+    private fun startServer(): Boolean {
+        val bindAddress = privateLocalAddress(connectivityManager) ?: run {
             status = "Local network unavailable"
-            return
+            return false
         }
         val server =
             runCatching {
@@ -144,7 +155,7 @@ class IrisNearbyLanService(
             }.getOrElse { error ->
                 Log.w(TAG, "LAN server failed", error)
                 status = "Local network unavailable"
-                return
+                return false
             }
         serverSocket = server
         registerService(server.localPort)
@@ -168,6 +179,35 @@ class IrisNearbyLanService(
                     add(socket)
                 }
             }
+        return true
+    }
+
+    private fun acquireMulticastLock() {
+        if (multicastLock?.isHeld == true) {
+            return
+        }
+        multicastLock =
+            runCatching {
+                wifiManager
+                    ?.createMulticastLock("iris-nearby-lan")
+                    ?.apply {
+                        setReferenceCounted(false)
+                        acquire()
+                    }
+            }.onFailure { error ->
+                Log.w(TAG, "LAN multicast lock failed", error)
+            }.getOrNull()
+    }
+
+    private fun releaseMulticastLock() {
+        multicastLock?.let { lock ->
+            runCatching {
+                if (lock.isHeld) {
+                    lock.release()
+                }
+            }
+        }
+        multicastLock = null
     }
 
     private fun registerService(port: Int) {
@@ -390,34 +430,78 @@ class IrisNearbyLanService(
             return false
         }
 
-        fun privateLocalAddress(): InetAddress? {
-            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList() ?: return null
+        fun privateLocalAddress(connectivityManager: ConnectivityManager?): InetAddress? {
+            val candidates = networkAddresses(connectivityManager).ifEmpty {
+                interfaceAddresses()
+            }
             var fallback: InetAddress? = null
-            interfaces.forEach { networkInterface ->
-                val usable =
-                    runCatching {
-                        networkInterface.isUp && !networkInterface.isLoopback
-                    }.getOrDefault(false)
-                if (!usable) {
+            candidates.forEach { address ->
+                if (
+                    !isPrivateAddress(address) ||
+                        address.isAnyLocalAddress ||
+                        address.isLoopbackAddress
+                ) {
                     return@forEach
                 }
-                networkInterface.inetAddresses.toList().forEach { address ->
-                    if (
-                        !isPrivateAddress(address) ||
-                            address.isAnyLocalAddress ||
-                            address.isLoopbackAddress
-                    ) {
-                        return@forEach
-                    }
-                    if (address is Inet4Address && !address.isLinkLocalAddress) {
-                        return address
-                    }
-                    if (fallback == null) {
-                        fallback = address
-                    }
+                if (address is Inet4Address && !address.isLinkLocalAddress) {
+                    return address
+                }
+                if (fallback == null) {
+                    fallback = address
                 }
             }
             return fallback
+        }
+
+        @Suppress("DEPRECATION")
+        private fun networkAddresses(connectivityManager: ConnectivityManager?): List<InetAddress> {
+            val manager = connectivityManager ?: return emptyList()
+            return runCatching {
+                manager.allNetworks.flatMap { network ->
+                    val capabilities = manager.getNetworkCapabilities(network) ?: return@flatMap emptyList()
+                    if (!isLocalNearbyTransport(capabilities)) {
+                        return@flatMap emptyList()
+                    }
+                    manager
+                        .getLinkProperties(network)
+                        ?.linkAddresses
+                        ?.map { it.address }
+                        .orEmpty()
+                }
+            }.getOrDefault(emptyList())
+        }
+
+        private fun interfaceAddresses(): List<InetAddress> {
+            val interfaces = NetworkInterface.getNetworkInterfaces()?.toList() ?: return emptyList()
+            return buildList {
+                interfaces.forEach { networkInterface ->
+                    val usable =
+                        runCatching {
+                            networkInterface.isUp &&
+                                !networkInterface.isLoopback &&
+                                isLocalNearbyInterface(networkInterface)
+                        }.getOrDefault(false)
+                    if (!usable) {
+                        return@forEach
+                    }
+                    addAll(networkInterface.inetAddresses.toList())
+                }
+            }
+        }
+
+        private fun isLocalNearbyTransport(capabilities: NetworkCapabilities): Boolean =
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+
+        private fun isLocalNearbyInterface(networkInterface: NetworkInterface): Boolean {
+            val name = networkInterface.name.lowercase()
+            if (name.startsWith("wlan") || name.startsWith("wifi") || name.startsWith("eth")) {
+                return true
+            }
+            val displayName = networkInterface.displayName.lowercase()
+            return displayName.contains("wifi") ||
+                displayName.contains("wi-fi") ||
+                displayName.contains("ethernet")
         }
     }
 
