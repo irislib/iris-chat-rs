@@ -196,10 +196,6 @@ impl AppCore {
         true
     }
 
-    pub(super) fn process_runtime_events(&mut self) -> HashSet<String> {
-        HashSet::new()
-    }
-
     pub(super) fn process_runtime_effects(
         &mut self,
         effects: Vec<RuntimeEffect>,

@@ -758,7 +758,6 @@ impl AppCore {
         self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
         self.republish_local_identity_artifacts();
         self.drain_pending_mobile_push_events();
-        self.process_runtime_events();
         self.retry_pending_relay_publishes("session_start");
         self.schedule_next_message_expiry();
         self.request_protocol_subscription_refresh();

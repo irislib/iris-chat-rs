@@ -162,7 +162,6 @@ impl AppCore {
             .unread_count = 0;
         self.remember_recent_handshake_peer(chat_id, peer_device_id, unix_now().get());
         self.forget_private_chat_invite_keys(&[invite_key]);
-        self.process_runtime_events();
         self.push_debug_log(
             "invite.private_response",
             format!("event_id={event_id} owner={}", owner_pubkey.to_hex()),

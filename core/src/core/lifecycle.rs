@@ -412,7 +412,6 @@ impl AppCore {
             }
             InternalEvent::FetchTrackedPeerCatchUp => {
                 let now = unix_now();
-                self.process_runtime_events();
                 self.push_debug_log("protocol.catch_up.schedule", "fetch tracked peers");
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers(now);

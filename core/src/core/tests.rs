@@ -2282,7 +2282,6 @@ fn create_invite_generates_private_link_without_public_republish() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("private-invite-create", &owner, &device);
-    core.process_runtime_events();
     core.pending_relay_publishes.clear();
 
     let local_invite_response_pubkey = core
@@ -2353,7 +2352,6 @@ fn private_invite_first_message_installs_creator_session() {
         &alice_owner,
         &alice_device,
     );
-    alice.process_runtime_events();
     alice.pending_relay_publishes.clear();
     alice.handle_action(AppAction::CreatePublicInvite);
     let invite_url = alice
@@ -2365,7 +2363,6 @@ fn private_invite_first_message_installs_creator_session() {
         .clone();
 
     let mut bob = logged_in_test_core("private-invite-roundtrip-bob", &bob_owner, &bob_device);
-    bob.process_runtime_events();
     bob.pending_relay_publishes.clear();
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
