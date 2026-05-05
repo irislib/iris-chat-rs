@@ -1,11 +1,102 @@
 use super::*;
 
 const GROUP_OUTER_SUBSCRIPTION_ID: &str = "ndr-group-outer";
+const APPCORE_PROTOCOL_SUBSCRIPTION_ID: &str = "appcore-protocol";
 const PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID: &str = "ndr-private-invite-responses";
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 
 impl AppCore {
+    pub(super) fn send_protocol_engine_unsigned_event(
+        &mut self,
+        peer: PublicKey,
+        chat_id: &str,
+        unsigned: UnsignedEvent,
+        reason: &'static str,
+    ) -> bool {
+        let Some(protocol_engine) = self.protocol_engine.as_mut() else {
+            return false;
+        };
+        match protocol_engine.send_direct_unsigned_event(peer, chat_id, unsigned, unix_now()) {
+            Ok(result) => {
+                self.push_debug_log(
+                    "appcore.protocol.send",
+                    format!(
+                        "reason={reason} chat_id={chat_id} event_ids={} queued_targets={}",
+                        result.event_ids.len(),
+                        result.queued_targets.len()
+                    ),
+                );
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
+                );
+                if !result.queued_targets.is_empty() {
+                    self.request_protocol_subscription_refresh();
+                    if self.fetch_recent_protocol_state() {
+                        self.state.busy.syncing_network = true;
+                    }
+                }
+                true
+            }
+            Err(error) => {
+                self.push_debug_log(
+                    "appcore.protocol.send.error",
+                    format!("reason={reason} chat_id={chat_id} error={error}"),
+                );
+                false
+            }
+        }
+    }
+
+    pub(super) fn process_protocol_engine_retry_results(
+        &mut self,
+        reason: &'static str,
+        results: Vec<ProtocolRetryResult>,
+    ) {
+        if results.is_empty() {
+            return;
+        }
+        let mut published = 0usize;
+        let mut queued = 0usize;
+        for result in results {
+            published = published.saturating_add(result.event_ids.len());
+            queued = queued.saturating_add(result.queued_targets.len());
+            let completions = result
+                .event_ids
+                .iter()
+                .map(|event_id| {
+                    (
+                        event_id.clone(),
+                        (result.message_id.clone(), result.chat_id.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            self.process_protocol_engine_effects_with_completions(result.effects, &completions);
+            self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
+        }
+        self.push_debug_log(
+            "appcore.protocol.retry",
+            format!("reason={reason} published={published} queued_targets={queued}"),
+        );
+        self.request_protocol_subscription_refresh();
+    }
+
+    pub(super) fn retry_protocol_engine_pending_outbound(&mut self, reason: &'static str) {
+        let Some(protocol_engine) = self.protocol_engine.as_mut() else {
+            return;
+        };
+        let results = match protocol_engine.retry_pending_outbound(NdrUnixSeconds(unix_now().get()))
+        {
+            Ok(results) => results,
+            Err(error) => {
+                self.push_debug_log("appcore.protocol.retry.error", error.to_string());
+                return;
+            }
+        };
+        self.process_protocol_engine_retry_results(reason, results);
+    }
+
     pub(super) fn remember_recent_handshake_peer(
         &mut self,
         owner_hex: String,
@@ -212,6 +303,16 @@ impl AppCore {
             options.message_lookback_seconds = CATCH_UP_LOOKBACK_SECS;
             filters.extend(logged_in.ndr_runtime.protocol_backfill_filters(options));
         }
+        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
+            let message_authors = protocol_engine.known_message_author_pubkeys();
+            if !message_authors.is_empty() {
+                filters.push(build_direct_message_backfill_filter(
+                    message_authors,
+                    now.get().saturating_sub(CATCH_UP_LOOKBACK_SECS),
+                    DEVICE_INVITE_DISCOVERY_LIMIT,
+                ));
+            }
+        }
         let private_invite_response_pubkeys = self.private_chat_invite_response_pubkeys();
         if !private_invite_response_pubkeys.is_empty() {
             filters.push(
@@ -286,6 +387,18 @@ impl AppCore {
         tracked_peer_owners
             .iter()
             .any(|owner_hex| !self.app_keys.contains_key(owner_hex))
+            || self.protocol_engine.as_ref().is_some_and(|engine| {
+                tracked_peer_owners.iter().any(|owner_hex| {
+                    PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
+                        let owner_prefix = owner_pubkey.to_hex();
+                        engine
+                            .queued_message_diagnostics(None)
+                            .iter()
+                            .any(|target| target == &owner_prefix)
+                            || engine.known_message_author_pubkeys().is_empty()
+                    })
+                })
+            })
             || self.logged_in.as_ref().is_some_and(|logged_in| {
                 tracked_peer_owners.iter().any(|owner_hex| {
                     PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
@@ -401,48 +514,28 @@ impl AppCore {
         force: bool,
         force_reconnect_if_offline: bool,
     ) {
-        let Some((client, owners, group_authors)) = self.logged_in.as_ref().map(|logged_in| {
-            (
-                logged_in.client.clone(),
-                self.protocol_owner_hexes()
-                    .into_iter()
-                    .filter_map(|hex| PublicKey::parse(&hex).ok())
-                    .collect::<Vec<_>>(),
-                logged_in
-                    .ndr_runtime
-                    .group_outer_subscription_plan()
-                    .authors,
-            )
-        }) else {
+        let Some((client, protocol_owners, group_authors, appcore_message_authors)) =
+            self.logged_in.as_ref().map(|logged_in| {
+                (
+                    logged_in.client.clone(),
+                    self.protocol_owner_hexes()
+                        .into_iter()
+                        .filter_map(|hex| PublicKey::parse(&hex).ok())
+                        .collect::<Vec<_>>(),
+                    logged_in
+                        .ndr_runtime
+                        .group_outer_subscription_plan()
+                        .authors,
+                    self.protocol_engine
+                        .as_ref()
+                        .map(|engine| engine.known_message_author_pubkeys())
+                        .unwrap_or_default(),
+                )
+            })
+        else {
             self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
             return;
         };
-
-        // setup_user is idempotent on the NDR side, but each call still walks
-        // every user record + JSON-serialises every session state to compute
-        // the DM subscription author set. Calling it for N owners on every
-        // chat tap was a 14 × 337 ms = 4.7 s hit on Android debug. Skip
-        // owners we've already initialised — once an owner is set up it
-        // stays set up for the lifetime of the AppCore.
-        let mut any_new_setup = false;
-        for owner in &owners {
-            if !self.setup_user_done.insert(owner.to_hex()) {
-                continue;
-            }
-            any_new_setup = true;
-            let effects = self
-                .logged_in
-                .as_ref()
-                .and_then(|logged_in| logged_in.ndr_runtime.setup_user(*owner).ok())
-                .unwrap_or_default();
-            if !effects.is_empty() {
-                self.process_runtime_effects(effects);
-            }
-        }
-        if any_new_setup {
-            // New tracked owner appears in mobile-push session set.
-            self.mark_mobile_push_dirty();
-        }
         if self
             .logged_in
             .as_ref()
@@ -452,6 +545,74 @@ impl AppCore {
             self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
             return;
         }
+
+        let appcore_protocol_subscription_changed = if !protocol_owners.is_empty() {
+            let filters = [
+                Filter::new()
+                    .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+                    .authors(protocol_owners.clone()),
+                Filter::new()
+                    .kind(Kind::from(INVITE_EVENT_KIND as u16))
+                    .authors(protocol_owners.clone()),
+            ];
+            let mut changed = false;
+            for (index, filter) in filters.into_iter().enumerate() {
+                changed |= self.upsert_protocol_subscription(
+                    format!("{APPCORE_PROTOCOL_SUBSCRIPTION_ID}-{index}"),
+                    filter,
+                );
+            }
+            changed
+        } else {
+            let removed = self.remove_runtime_subscription_family(APPCORE_PROTOCOL_SUBSCRIPTION_ID);
+            if !removed.is_empty() {
+                let client = client.clone();
+                self.runtime.spawn(async move {
+                    for id in removed {
+                        let _ = client.unsubscribe(&SubscriptionId::new(id)).await;
+                    }
+                });
+                true
+            } else {
+                false
+            }
+        };
+
+        let appcore_direct_subscription_changed = if !appcore_message_authors.is_empty() {
+            let filter = Filter::new()
+                .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
+                .authors(appcore_message_authors.clone());
+            let subid = "ndr-runtime-messages-appcore".to_string();
+            let changed = self.upsert_protocol_subscription(subid.clone(), filter.clone());
+            let added_authors = self
+                .direct_message_subscriptions
+                .register_subscription(&subid, serde_json::to_string(&filter).unwrap_or_default());
+            for author in added_authors {
+                self.fetch_recent_messages_for_author(
+                    author,
+                    unix_now(),
+                    NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
+                );
+            }
+            changed
+        } else {
+            let removed = self
+                .protocol_subscription_runtime
+                .active_subscriptions
+                .remove("ndr-runtime-messages-appcore")
+                .is_some();
+            self.direct_message_subscriptions
+                .unregister_subscription("ndr-runtime-messages-appcore");
+            if removed {
+                let client = client.clone();
+                self.runtime.spawn(async move {
+                    let _ = client
+                        .unsubscribe(&SubscriptionId::new("ndr-runtime-messages-appcore"))
+                        .await;
+                });
+            }
+            removed
+        };
 
         let group_subscription_changed = if !group_authors.is_empty() {
             let filter = Filter::new()
@@ -510,8 +671,10 @@ impl AppCore {
             }
             removed
         };
-        let subscription_filters_changed =
-            group_subscription_changed || private_invite_subscription_changed;
+        let subscription_filters_changed = appcore_protocol_subscription_changed
+            || appcore_direct_subscription_changed
+            || group_subscription_changed
+            || private_invite_subscription_changed;
 
         // Only bump the refresh token + emit a debug log entry when the
         // computed plan has actually changed since the last emission.
@@ -580,6 +743,7 @@ impl AppCore {
                 self.reconcile_protocol_subscriptions("relay_connected", false);
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers(unix_now());
+                self.retry_protocol_engine_pending_outbound("relay_connected");
                 self.retry_pending_relay_publishes("relay_connected");
                 self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
                     PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
@@ -615,6 +779,7 @@ impl AppCore {
             ),
         );
         if self.relay_connected_count > 0 {
+            self.retry_protocol_engine_pending_outbound("connection_checked");
             self.retry_pending_relay_publishes("connection_checked");
         }
         self.rebuild_state();
@@ -686,6 +851,7 @@ impl AppCore {
         if should_retry_backfill {
             self.fetch_recent_protocol_state();
             self.fetch_recent_messages_for_tracked_peers(unix_now());
+            self.retry_protocol_engine_pending_outbound("liveness_check");
         }
         self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
             PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,

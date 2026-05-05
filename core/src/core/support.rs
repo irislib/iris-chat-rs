@@ -49,6 +49,10 @@ impl AppCore {
             authorization_state,
             active_chat_id: self.active_chat_id.clone(),
             current_protocol_plan,
+            protocol_engine: self
+                .protocol_engine
+                .as_ref()
+                .map(ProtocolEngine::debug_snapshot),
             tracked_owner_hexes,
             known_users,
             recent_handshake_peers: self
@@ -166,6 +170,7 @@ impl AppCore {
             group_chat_count,
             unread_chat_count,
             protocol: runtime.current_protocol_plan,
+            protocol_engine: runtime.protocol_engine,
             tracked_owner_hexes: runtime.tracked_owner_hexes,
             known_users: runtime.known_users,
             recent_handshake_peers: runtime.recent_handshake_peers,

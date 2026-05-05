@@ -38,16 +38,11 @@ impl AppCore {
         &mut self,
         peer_input: &str,
     ) -> anyhow::Result<String> {
-        let (chat_id, peer_pubkey) = parse_peer_input(peer_input)?;
+        let (chat_id, _) = parse_peer_input(peer_input)?;
         let now = unix_now().get();
         self.prune_expired_messages(now);
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
         self.load_latest_message_page_for_chat(&chat_id);
-
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            let effects = logged_in.ndr_runtime.setup_user(peer_pubkey)?;
-            self.process_runtime_effects(effects);
-        }
 
         self.active_chat_id = Some(chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
@@ -352,16 +347,63 @@ impl AppCore {
             return;
         };
 
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            match logged_in.ndr_runtime.setup_user(peer_pubkey) {
-                Ok(effects) => {
-                    self.process_runtime_effects(effects);
+        if self.protocol_engine.is_some() {
+            let result = self
+                .protocol_engine
+                .as_mut()
+                .expect("checked above")
+                .send_direct_text(peer_pubkey, &normalized_chat_id, text, expires_at_secs, now);
+            match result {
+                Ok(result) => {
+                    let delivery = if result.event_ids.is_empty() {
+                        DeliveryState::Queued
+                    } else {
+                        DeliveryState::Pending
+                    };
+                    self.push_debug_log(
+                        "message.direct.send.appcore",
+                        format!(
+                            "chat_id={normalized_chat_id} message_id={} event_ids={} queued_targets={}",
+                            result.message_id,
+                            result.event_ids.len(),
+                            result.queued_targets.len()
+                        ),
+                    );
+                    self.push_outgoing_message_with_id(
+                        result.message_id.clone(),
+                        &normalized_chat_id,
+                        text.to_string(),
+                        now.get(),
+                        expires_at_secs,
+                        delivery,
+                    );
+                    let completions = result
+                        .event_ids
+                        .iter()
+                        .map(|event_id| {
+                            (
+                                event_id.clone(),
+                                (result.message_id.clone(), normalized_chat_id.clone()),
+                            )
+                        })
+                        .collect::<BTreeMap<_, _>>();
+                    self.process_protocol_engine_effects_with_completions(
+                        result.effects,
+                        &completions,
+                    );
+                    self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
+                    if !result.queued_targets.is_empty() {
+                        self.request_protocol_subscription_refresh();
+                        if self.fetch_recent_protocol_state() {
+                            self.state.busy.syncing_network = true;
+                        }
+                    }
                 }
                 Err(error) => {
                     self.state.toast = Some(error.to_string());
-                    return;
                 }
             }
+            return;
         }
 
         let Some(logged_in) = self.logged_in.as_ref() else {
@@ -601,6 +643,16 @@ impl AppCore {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
+        let mut queued_protocol_targets = queued_protocol_targets;
+        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
+            queued_protocol_targets.extend(
+                protocol_engine
+                    .queued_message_diagnostics(Some(message_id))
+                    .into_iter(),
+            );
+            queued_protocol_targets.sort();
+            queued_protocol_targets.dedup();
+        }
 
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;

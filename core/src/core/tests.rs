@@ -536,6 +536,79 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
 }
 
 #[test]
+fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_missing_device() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_phone = Keys::generate();
+    let peer_laptop = Keys::generate();
+    let storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
+    let local_invite = Invite::create_new(
+        device.public_key(),
+        Some(device.public_key().to_hex()),
+        None,
+    )
+    .expect("local invite");
+    let session_manager =
+        SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
+    let group_manager = NostrGroupManager::new(local_owner).snapshot();
+    let mut engine = ProtocolEngine::load_or_seed(
+        storage,
+        owner.public_key(),
+        &device,
+        local_invite,
+        session_manager,
+        group_manager,
+    )
+    .expect("protocol engine");
+
+    let peer_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(peer_phone.public_key(), 1),
+        DeviceEntry::new(peer_laptop.public_key(), 1),
+    ]);
+    engine
+        .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys, 1)
+        .expect("peer appkeys");
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
+    let phone_invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_phone.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("phone invite");
+    let phone_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&phone_invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_phone)
+        .expect("signed invite");
+    engine
+        .observe_invite_event(&phone_invite_event)
+        .expect("observe phone invite");
+
+    let result = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "hello",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+
+    assert_eq!(result.event_ids.len(), 1);
+    assert_eq!(
+        result.queued_targets,
+        vec![peer_laptop.public_key().to_hex()]
+    );
+}
+
+#[test]
 fn ndr_runtime_invite_session_round_trips_text() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();

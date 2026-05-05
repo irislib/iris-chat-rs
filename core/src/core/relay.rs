@@ -81,9 +81,40 @@ impl AppCore {
             }
             INVITE_EVENT_KIND => {
                 self.debug_event_counters.invite_events += 1;
+                let retry_results = self
+                    .protocol_engine
+                    .as_mut()
+                    .map(|engine| engine.observe_invite_event(&event))
+                    .transpose();
+                match retry_results {
+                    Ok(Some(results)) => {
+                        self.process_protocol_engine_retry_results("invite_event", results);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.push_debug_log("appcore.protocol.invite.error", error.to_string());
+                    }
+                }
             }
             INVITE_RESPONSE_KIND => {
                 self.debug_event_counters.invite_response_events += 1;
+                let retry_results = self
+                    .protocol_engine
+                    .as_mut()
+                    .map(|engine| engine.observe_invite_response_event(&event))
+                    .transpose();
+                match retry_results {
+                    Ok(Some(results)) => {
+                        self.process_protocol_engine_retry_results("invite_response", results);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        self.push_debug_log(
+                            "appcore.protocol.invite_response.error",
+                            error.to_string(),
+                        );
+                    }
+                }
                 if self.handle_private_chat_invite_response(&event) {
                     self.remember_event(event_id);
                     self.persist_best_effort();
@@ -130,6 +161,45 @@ impl AppCore {
             }
         }
 
+        if kind == MESSAGE_EVENT_KIND {
+            if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+                match protocol_engine.process_direct_message_event(&event) {
+                    Ok(Some(decrypted)) => {
+                        let event_id = decrypted.event_id.clone();
+                        self.apply_decrypted_runtime_message_with_metadata(
+                            decrypted.sender,
+                            decrypted.sender_device,
+                            decrypted.conversation_owner,
+                            decrypted.content,
+                            decrypted.event_id,
+                        );
+                        if let Some(event_id) = event_id {
+                            self.remember_event(event_id);
+                        }
+                        self.mark_mobile_push_dirty();
+                        self.request_protocol_subscription_refresh();
+                        self.retry_protocol_engine_pending_outbound("direct_message");
+                        self.persist_best_effort();
+                        self.rebuild_state();
+                        self.emit_state();
+                        return;
+                    }
+                    Ok(None) => {
+                        self.push_debug_log(
+                            "appcore.protocol.message.pending",
+                            "sender/session unresolved",
+                        );
+                        self.request_protocol_subscription_refresh();
+                        if self.fetch_recent_protocol_state() {
+                            self.state.busy.syncing_network = true;
+                        }
+                    }
+                    Err(error) => {
+                        self.push_debug_log("appcore.protocol.message.error", error.to_string());
+                    }
+                }
+            }
+        }
         let runtime_result = self
             .logged_in
             .as_ref()
@@ -342,6 +412,74 @@ impl AppCore {
         decrypted_event_ids
     }
 
+    pub(super) fn process_protocol_engine_effects_with_completions(
+        &mut self,
+        effects: Vec<RuntimeEffect>,
+        completions: &BTreeMap<String, (String, String)>,
+    ) {
+        for effect in effects {
+            match effect {
+                RuntimeEffect::PublishUnsigned(unsigned) => {
+                    if let Some(signed) = self.sign_runtime_unsigned_event(unsigned) {
+                        let event_id = signed.id.to_string();
+                        let completion =
+                            self.runtime_publish_completion(&event_id, None, completions);
+                        self.publish_runtime_event(signed, "appcore-protocol", completion);
+                    }
+                }
+                RuntimeEffect::PublishSigned(event) => {
+                    let event_id = event.id.to_string();
+                    let completion = self.runtime_publish_completion(&event_id, None, completions);
+                    self.publish_runtime_event(event, "appcore-protocol", completion);
+                }
+                RuntimeEffect::PublishSignedForInnerEvent {
+                    event,
+                    inner_event_id,
+                    target_device_id,
+                } => {
+                    let event_id = event.id.to_string();
+                    let completion = self.runtime_publish_completion(
+                        &event_id,
+                        inner_event_id.as_deref(),
+                        completions,
+                    );
+                    self.publish_runtime_event_with_metadata(
+                        event,
+                        "appcore-protocol",
+                        completion,
+                        inner_event_id,
+                        target_device_id,
+                    );
+                }
+                RuntimeEffect::Subscribe { subid, filters } => {
+                    self.apply_runtime_subscription(subid, filters);
+                }
+                RuntimeEffect::Unsubscribe(subid) => {
+                    self.remove_runtime_subscription(subid);
+                }
+                RuntimeEffect::FetchBackfill => {
+                    self.fetch_recent_protocol_state();
+                }
+                RuntimeEffect::EmitDecrypted {
+                    sender,
+                    sender_device,
+                    conversation_owner,
+                    content,
+                    event_id,
+                } => {
+                    self.apply_decrypted_runtime_message_with_metadata(
+                        sender,
+                        sender_device,
+                        conversation_owner,
+                        content,
+                        event_id,
+                    );
+                    self.mark_mobile_push_dirty();
+                }
+            }
+        }
+    }
+
     pub(super) fn ack_pending_decrypted_deliveries_after_app_persist(&mut self) {
         if self.pending_decrypted_delivery_acks.is_empty() {
             return;
@@ -458,7 +596,7 @@ impl AppCore {
         });
     }
 
-    fn remove_runtime_subscription_family(&mut self, subid: &str) -> Vec<String> {
+    pub(super) fn remove_runtime_subscription_family(&mut self, subid: &str) -> Vec<String> {
         let previous_authors = self.direct_message_subscriptions.tracked_authors();
         let prefix = format!("{subid}-");
         let removed = self
@@ -544,6 +682,15 @@ impl AppCore {
             )?;
             self.process_runtime_effects(effects);
         }
+        let protocol_retry_results = if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+            protocol_engine.ingest_app_keys_snapshot(
+                event.pubkey,
+                effective_app_keys.clone(),
+                effective_created_at,
+            )?
+        } else {
+            Vec::new()
+        };
 
         let known =
             known_app_keys_from_ndr(event.pubkey, &effective_app_keys, effective_created_at);
@@ -559,6 +706,20 @@ impl AppCore {
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
+        for result in protocol_retry_results {
+            let completions = result
+                .event_ids
+                .iter()
+                .map(|event_id| {
+                    (
+                        event_id.clone(),
+                        (result.message_id.clone(), result.chat_id.clone()),
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            self.process_protocol_engine_effects_with_completions(result.effects, &completions);
+            self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
+        }
         if should_publish_backfilled_owner_app_keys {
             self.publish_local_app_keys();
         }

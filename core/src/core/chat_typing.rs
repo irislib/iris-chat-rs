@@ -10,12 +10,33 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
-        let Some(logged_in) = self.logged_in.as_ref() else {
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
             return;
         };
         if is_group_chat_id(&normalized_chat_id) {
             self.send_group_event(&normalized_chat_id, TYPING_KIND, "typing", Vec::new(), None);
         } else if let Ok((_, peer)) = parse_peer_input(&normalized_chat_id) {
+            let now = unix_now();
+            if let Ok(unsigned) = pairwise_codec::typing_event(
+                owner_pubkey,
+                pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
+            ) {
+                if self.send_protocol_engine_unsigned_event(
+                    peer,
+                    &normalized_chat_id,
+                    unsigned,
+                    "typing",
+                ) {
+                    return;
+                }
+            }
+            let Some(logged_in) = self.logged_in.as_ref() else {
+                return;
+            };
             if let Ok(result) = logged_in.ndr_runtime.send_typing(peer, None) {
                 self.process_runtime_effects(result.effects);
             }
@@ -29,7 +50,11 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
-        let Some(logged_in) = self.logged_in.as_ref() else {
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
             return;
         };
         if is_group_chat_id(&normalized_chat_id) {
@@ -41,6 +66,24 @@ impl AppCore {
                 None,
             );
         } else if let Ok((_, peer)) = parse_peer_input(&normalized_chat_id) {
+            let now = unix_now();
+            if let Ok(unsigned) = pairwise_codec::typing_event(
+                owner_pubkey,
+                pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000))
+                    .with_expiration(1),
+            ) {
+                if self.send_protocol_engine_unsigned_event(
+                    peer,
+                    &normalized_chat_id,
+                    unsigned,
+                    "stop_typing",
+                ) {
+                    return;
+                }
+            }
+            let Some(logged_in) = self.logged_in.as_ref() else {
+                return;
+            };
             if let Ok(result) = logged_in.ndr_runtime.send_typing(
                 peer,
                 Some(SendOptions {

@@ -43,6 +43,7 @@ impl AppCore {
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
         let fetching_recent_protocol_state = self.fetch_recent_protocol_state();
         self.fetch_recent_messages_for_tracked_peers(now);
+        self.retry_protocol_engine_pending_outbound("app_foreground");
         self.retry_pending_relay_publishes("app_foreground");
         self.state.busy.syncing_network = fetching_recent_protocol_state;
         self.rebuild_state();
@@ -269,6 +270,7 @@ impl AppCore {
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.protocol_engine = None;
         if let Some(logged_in) = self.logged_in.take() {
             let client = logged_in.client.clone();
             self.runtime.spawn(async move {
@@ -464,6 +466,7 @@ impl AppCore {
             ),
         );
         self.stop_pending_linked_device();
+        self.protocol_engine = None;
         if let Some(existing) = self.logged_in.take() {
             let client = existing.client;
             self.runtime.spawn(async move {
@@ -650,6 +653,7 @@ impl AppCore {
             owner_pubkey.to_hex(),
             device_pubkey.to_hex(),
         )) as Arc<dyn StorageAdapter>;
+        let protocol_engine_storage = storage.clone();
         self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
         match import_legacy_ndr_storage(storage.as_ref(), owner_pubkey) {
             Ok(summary) => {
@@ -700,6 +704,14 @@ impl AppCore {
             }
         }
         ndr_runtime.sync_groups(self.groups.values().cloned().collect())?;
+        let protocol_engine = ProtocolEngine::load_or_seed(
+            protocol_engine_storage,
+            owner_pubkey,
+            &device_keys,
+            local_invite.clone(),
+            ndr_runtime.session_manager_snapshot(),
+            ndr_runtime.group_manager_snapshot(),
+        )?;
 
         let authorization_state = self.restored_local_authorization_state(
             owner_keys.as_ref(),
@@ -725,6 +737,7 @@ impl AppCore {
             local_invite,
             authorization_state,
         });
+        self.protocol_engine = Some(protocol_engine);
         self.process_runtime_effects(startup_effects);
         match self
             .app_store
@@ -758,6 +771,7 @@ impl AppCore {
         self.emit_account_bundle_update(owner_keys.as_ref(), &device_keys);
         self.republish_local_identity_artifacts();
         self.drain_pending_mobile_push_events();
+        self.retry_protocol_engine_pending_outbound("session_start");
         self.retry_pending_relay_publishes("session_start");
         self.schedule_next_message_expiry();
         self.request_protocol_subscription_refresh();

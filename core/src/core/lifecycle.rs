@@ -39,6 +39,7 @@ impl AppCore {
             data_dir,
             state: state.clone(),
             logged_in: None,
+            protocol_engine: None,
             pending_linked_device: None,
             private_chat_invites: BTreeMap::new(),
             threads: BTreeMap::new(),
@@ -199,6 +200,7 @@ impl AppCore {
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
         self.relay_status_watch_urls.clear();
+        self.protocol_engine = None;
         if let Some(existing) = self.logged_in.take() {
             self.runtime.block_on(async {
                 existing.client.unsubscribe_all().await;
@@ -415,6 +417,7 @@ impl AppCore {
                 self.push_debug_log("protocol.catch_up.schedule", "fetch tracked peers");
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers(now);
+                self.retry_protocol_engine_pending_outbound("tracked_peer_catch_up");
                 if self.is_device_roster_open() {
                     self.fetch_pending_device_invites_for_local_owner();
                 }

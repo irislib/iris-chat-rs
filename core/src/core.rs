@@ -12,13 +12,23 @@ use crate::state::{
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;
 use nostr::{EventBuilder, UnsignedEvent};
-use nostr_double_ratchet::{GroupIncomingEvent, GroupSnapshot, Invite, SessionState};
+use nostr_double_ratchet::{
+    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupIncomingEvent,
+    GroupManagerSnapshot, GroupSnapshot, Invite, MessageEnvelope, OwnerPubkey as NdrOwnerPubkey,
+    PreparedSend, ProtocolContext, RelayGap, SessionManager, SessionManagerSnapshot, SessionState,
+    UnixSeconds as NdrUnixSeconds,
+};
 use nostr_double_ratchet_nostr::{
     apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,
-    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_SENDER_KEY_MESSAGE_KIND,
-    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
-    TYPING_KIND,
+    NostrGroupManager, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND,
+    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
+use nostr_double_ratchet_nostr::{
+    invite_response_event, message_event, parse_invite_event, parse_invite_response_event,
+    parse_message_event,
+};
+use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_double_ratchet_runtime::{
     build_direct_message_backfill_filter, DirectMessageSubscriptionTracker,
     NdrProtocolBackfillOptions, NdrRuntime, RuntimeEffect, SendOptions, StorageAdapter,
@@ -27,6 +37,7 @@ use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
     RelayStatus, RelayUrl, SubscriptionId, Timestamp, ToBech32,
 };
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
@@ -58,6 +69,7 @@ mod profile;
 mod profile_helpers;
 mod projection;
 mod protocol;
+mod protocol_engine;
 mod protocol_filters;
 mod publish_helpers;
 mod publishing;
@@ -102,6 +114,7 @@ pub(crate) use model::ProtocolSubscriptionPlan;
 use model::*;
 use payloads::*;
 use profile_helpers::*;
+use protocol_engine::*;
 use protocol_filters::*;
 use publish_helpers::*;
 use storage::{
@@ -116,6 +129,7 @@ pub struct AppCore {
     data_dir: PathBuf,
     state: AppState,
     logged_in: Option<LoggedInState>,
+    protocol_engine: Option<ProtocolEngine>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
     private_chat_invites: BTreeMap<String, Invite>,
     threads: BTreeMap<String, ThreadRecord>,
