@@ -74,12 +74,25 @@ impl AppCore {
                 }
             }
             MESSAGE_EVENT_KIND => {
-                let group_result = self
+                let group_result = match self
                     .logged_in
                     .as_ref()
                     .map(|logged_in| logged_in.ndr_runtime.group_handle_outer_event(&event))
-                    .unwrap_or_default();
-                if !group_result.events.is_empty() || !group_result.effects.is_empty() {
+                {
+                    Some(Ok(group_result)) => group_result,
+                    Some(Err(error)) => {
+                        self.push_debug_log("runtime.group.outer.error", error.to_string());
+                        self.persist_best_effort();
+                        self.rebuild_state();
+                        self.emit_state();
+                        return;
+                    }
+                    None => Default::default(),
+                };
+                if group_result.consumed
+                    || !group_result.events.is_empty()
+                    || !group_result.effects.is_empty()
+                {
                     self.debug_event_counters.group_events += 1;
                     for group_event in group_result.events {
                         self.apply_group_decrypted_event(group_event);
@@ -202,15 +215,6 @@ impl AppCore {
         let mut decrypted_event_ids = HashSet::new();
         for effect in effects {
             match effect {
-                RuntimeEffect::PersistRuntimeState { key, value } => {
-                    let result = self
-                        .logged_in
-                        .as_ref()
-                        .map(|logged_in| logged_in.ndr_runtime.persist_runtime_state(&key, value));
-                    if let Some(Err(error)) = result {
-                        self.push_debug_log("runtime.persist", format!("key={key} error={error}"));
-                    }
-                }
                 RuntimeEffect::PublishUnsigned(unsigned) => {
                     if let Some(signed) = self.sign_runtime_unsigned_event(unsigned) {
                         let event_id = signed.id.to_string();
@@ -315,7 +319,9 @@ impl AppCore {
                 .map(|logged_in| logged_in.ndr_runtime.ack_decrypted_delivery(&event_id));
             match ack_result {
                 Some(Ok(effects)) => {
-                    self.persist_runtime_state_effects_only(effects);
+                    if !effects.is_empty() {
+                        self.process_runtime_effects(effects);
+                    }
                 }
                 Some(Err(error)) => {
                     self.pending_decrypted_delivery_acks
@@ -327,20 +333,6 @@ impl AppCore {
                 }
                 None => {
                     self.pending_decrypted_delivery_acks.insert(event_id);
-                }
-            }
-        }
-    }
-
-    fn persist_runtime_state_effects_only(&mut self, effects: Vec<RuntimeEffect>) {
-        for effect in effects {
-            if let RuntimeEffect::PersistRuntimeState { key, value } = effect {
-                let result = self
-                    .logged_in
-                    .as_ref()
-                    .map(|logged_in| logged_in.ndr_runtime.persist_runtime_state(&key, value));
-                if let Some(Err(error)) = result {
-                    self.push_debug_log("runtime.persist", format!("key={key} error={error}"));
                 }
             }
         }

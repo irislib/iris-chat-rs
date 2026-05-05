@@ -4344,14 +4344,9 @@ fn deliver_event_to_runtime(to: &NdrRuntime, event: Event) {
     }
 }
 
-fn apply_runtime_persist_effects(runtime: &NdrRuntime, effects: &[RuntimeEffect]) {
-    for effect in effects {
-        if let RuntimeEffect::PersistRuntimeState { key, value } = effect {
-            runtime
-                .persist_runtime_state(key, value.clone())
-                .expect("persist runtime state");
-        }
-    }
+fn apply_runtime_persist_effects(_runtime: &NdrRuntime, _effects: &[RuntimeEffect]) {
+    // Runtime persistence is internal. This helper keeps existing simulated
+    // relay-delivery tests readable where they previously modeled app steps.
 }
 
 fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {

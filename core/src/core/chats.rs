@@ -939,11 +939,17 @@ impl AppCore {
         outer_event_id: Option<String>,
     ) {
         if let Some(logged_in) = self.logged_in.as_ref() {
-            let group_outcome = logged_in.ndr_runtime.group_handle_incoming_payload_outcome(
+            let group_outcome = match logged_in.ndr_runtime.group_handle_incoming_payload_outcome(
                 content.as_bytes(),
                 sender_owner,
                 sender_device,
-            );
+            ) {
+                Ok(group_outcome) => group_outcome,
+                Err(error) => {
+                    self.push_debug_log("runtime.group.payload.error", error.to_string());
+                    return;
+                }
+            };
             if !group_outcome.events.is_empty() {
                 for group_event in group_outcome.events {
                     self.apply_group_decrypted_event(group_event);
