@@ -39,6 +39,7 @@ private final class MockRustApp: RustAppClient {
     var supportBundleJson = "{\"ok\":true}"
     var dispatchError: Error?
     var onDispatch: ((AppAction) -> Void)?
+    var prepareForSuspendCallCount = 0
     private var reconciler: AppReconciler?
 
     init(state: AppState = AppState(
@@ -135,6 +136,10 @@ private final class MockRustApp: RustAppClient {
 
     func exportSupportBundleJson() -> String {
         supportBundleJson
+    }
+
+    func prepareForSuspend() {
+        prepareForSuspendCallCount += 1
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
@@ -334,6 +339,29 @@ final class IrisChatTests: XCTestCase {
 
         XCTAssertTrue(manager.state.preferences.nearbyLanEnabled)
         XCTAssertFalse(manager.nearbyIris.isLanVisible)
+    }
+
+    @MainActor
+    func testBackgroundPreparationIsIdempotentUntilForeground() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let rust = MockRustApp()
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+
+        manager.appBackgrounded()
+        manager.appBackgrounded()
+        XCTAssertEqual(rust.prepareForSuspendCallCount, 1)
+
+        manager.appForegrounded()
+        manager.appBackgrounded()
+        XCTAssertEqual(rust.prepareForSuspendCallCount, 2)
+        XCTAssertEqual(rust.dispatchedActions.last, .appForegrounded)
     }
 
     @MainActor

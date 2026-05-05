@@ -153,6 +153,18 @@ impl AppStore {
         Ok(())
     }
 
+    pub(crate) fn prepare_for_suspend(&mut self) -> anyhow::Result<()> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        conn.execute_batch(
+            "PRAGMA wal_checkpoint(TRUNCATE);
+             PRAGMA optimize;",
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn delete_message(&mut self, chat_id: &str, message_id: &str) -> anyhow::Result<()> {
         let conn = self
             .conn

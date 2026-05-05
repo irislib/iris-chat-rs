@@ -235,6 +235,7 @@ protocol RustAppClient: AnyObject {
     func nearbyDecodeFrame(frame: Data) -> String
     func nearbyFrameBodyLenFromHeader(header: Data) -> Int
     func exportSupportBundleJson() -> String
+    func prepareForSuspend()
     func listenForUpdates(reconciler: AppReconciler)
 }
 
@@ -293,6 +294,10 @@ final class LiveRustAppClient: RustAppClient {
 
     func exportSupportBundleJson() -> String {
         ffi.exportSupportBundleJsonSafely()
+    }
+
+    func prepareForSuspend() {
+        ffi.prepareForSuspendSafely()
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
@@ -423,6 +428,7 @@ final class AppManager: ObservableObject {
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
+    private var backgroundSuspendPrepared = false
     private var nearbySettingsWasOpened = false
     private lazy var reconciler = UpdateBridge(owner: self)
 
@@ -897,6 +903,7 @@ final class AppManager: ObservableObject {
     }
 
     func appForegrounded() {
+        backgroundSuspendPrepared = false
         dispatchToRust(.appForegrounded)
 #if os(iOS) || os(macOS)
         if nearbySettingsWasOpened {
@@ -912,6 +919,28 @@ final class AppManager: ObservableObject {
             nearbyIris.setLanVisible(true)
         }
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+#endif
+    }
+
+    func appBackgrounded() {
+#if os(iOS)
+        guard !backgroundSuspendPrepared else {
+            return
+        }
+        backgroundSuspendPrepared = true
+
+        if nearbyIris.isVisible {
+            nearbyIris.setVisible(false)
+        }
+        if nearbyIris.isLanVisible {
+            nearbyIris.setLanVisible(false)
+        }
+
+        let taskID = UIApplication.shared.beginBackgroundTask(withName: "IrisSuspend") {}
+        rust.prepareForSuspend()
+        if taskID != .invalid {
+            UIApplication.shared.endBackgroundTask(taskID)
+        }
 #endif
     }
 

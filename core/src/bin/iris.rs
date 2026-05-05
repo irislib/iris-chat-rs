@@ -294,7 +294,11 @@ fn run_iris_update(cmd: &UpdateCommands) -> Result<()> {
                 None => std::env::current_exe()
                     .context("could not determine current_exe() for install destination")?,
             };
-            args.extend(["--to".into(), dest.display().to_string(), "--executable".into()]);
+            args.extend([
+                "--to".into(),
+                dest.display().to_string(),
+                "--executable".into(),
+            ]);
             if let Some(kind) = kind {
                 args.extend(["--kind".into(), kind.clone()]);
             }
@@ -307,7 +311,9 @@ fn run_iris_update(cmd: &UpdateCommands) -> Result<()> {
     let status = std::process::Command::new("htree")
         .args(&args)
         .status()
-        .context("failed to spawn htree (install hashtree-cli with `cargo install hashtree-cli`)")?;
+        .context(
+            "failed to spawn htree (install hashtree-cli with `cargo install hashtree-cli`)",
+        )?;
     if !status.success() {
         anyhow::bail!("htree {} exited with status {status}", args.join(" "));
     }

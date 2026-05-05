@@ -81,14 +81,24 @@ pub(crate) fn open_database(data_dir: &Path) -> anyhow::Result<SharedConnection>
 fn apply_pragmas(conn: &Connection) -> anyhow::Result<()> {
     // foreign_keys is per-connection and must be set every open.
     conn.pragma_update(None, "foreign_keys", "ON")?;
+    #[cfg(target_os = "ios")]
+    {
+        // The iOS app database lives in an App Group so the Notification
+        // Service Extension can read notification previews. WAL keeps shared
+        // memory locks around for the lifetime of the connection, and iOS can
+        // terminate a suspended app with RunningBoard 0xdead10cc when it holds
+        // shared-container file locks. DELETE avoids long-lived WAL locks; the
+        // app has one foreground writer and extension reads are short-lived.
+        conn.pragma_update(None, "journal_mode", "DELETE")?;
+    }
+    #[cfg(not(target_os = "ios"))]
     // WAL is persistent in the file header but is cheap to re-apply.
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "busy_timeout", 5000)?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
     conn.pragma_update(None, "secure_delete", "ON")?;
-    // NORMAL is the usual mobile WAL trade-off. Power-loss durability
-    // is bounded by the most-recent commit; regular WAL checkpoints
-    // still flush to the main file.
+    // NORMAL keeps write latency low. In WAL mode durability is bounded by the
+    // most recent checkpoint; on iOS DELETE mode has no long-lived WAL locks.
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     Ok(())
 }

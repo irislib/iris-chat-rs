@@ -273,6 +273,20 @@ impl FfiApp {
         )
     }
 
+    pub fn prepare_for_suspend(&self) {
+        ffi_or("ffiapp.prepare_for_suspend", (), || {
+            let (reply_tx, reply_rx) = flume::bounded(1);
+            if self
+                .core_tx
+                .send(CoreMsg::PrepareForSuspend(reply_tx))
+                .is_err()
+            {
+                return;
+            }
+            let _ = reply_rx.recv_timeout(Duration::from_secs(2));
+        })
+    }
+
     pub fn shutdown(&self) {
         ffi_or("ffiapp.shutdown", (), || {
             let (reply_tx, reply_rx) = flume::bounded(1);

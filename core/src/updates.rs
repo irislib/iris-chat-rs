@@ -33,6 +33,7 @@ pub(crate) enum CoreMsg {
         reply_tx: Sender<String>,
     },
     ExportSupportBundle(Sender<String>),
+    PrepareForSuspend(Sender<()>),
     Shutdown(Option<Sender<()>>),
 }
 

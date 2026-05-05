@@ -28,6 +28,10 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         MobilePushTokenCenter.shared.setApnsToken(nil)
     }
 
+    func applicationDidEnterBackground(_ application: UIApplication) {
+        manager?.appBackgrounded()
+    }
+
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification

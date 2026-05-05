@@ -118,6 +118,7 @@ impl AppCore {
             },
             CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
+            CoreMsg::PrepareForSuspend(_) => "PrepareForSuspend",
             CoreMsg::Shutdown(_) => "Shutdown",
         };
         match msg {
@@ -139,6 +140,10 @@ impl AppCore {
             }
             CoreMsg::ExportSupportBundle(reply_tx) => {
                 let _ = reply_tx.send(self.export_support_bundle_json());
+            }
+            CoreMsg::PrepareForSuspend(reply_tx) => {
+                self.prepare_for_suspend();
+                let _ = reply_tx.send(());
             }
             CoreMsg::Shutdown(reply_tx) => {
                 self.shutdown();
@@ -192,6 +197,37 @@ impl AppCore {
                 let _ = existing.client.shutdown().await;
             });
         }
+    }
+
+    pub(super) fn prepare_for_suspend(&mut self) {
+        self.push_debug_log("app.suspend", "pausing network and flushing storage");
+        self.stop_pending_linked_device();
+        self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
+        self.message_expiry_token = self.message_expiry_token.saturating_add(1);
+        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.relay_status_watch_urls.clear();
+        self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+        self.relay_connected_count = 0;
+        self.all_relays_offline_since_secs = None;
+        self.state.busy.syncing_network = false;
+        self.persist_best_effort();
+
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            let client = logged_in.client.clone();
+            self.runtime.block_on(async move {
+                let _ = tokio::time::timeout(Duration::from_millis(750), async move {
+                    client.unsubscribe_all().await;
+                    client.disconnect().await;
+                })
+                .await;
+            });
+        }
+
+        if let Err(error) = self.app_store.prepare_for_suspend() {
+            self.push_debug_log("storage.suspend.error", error.to_string());
+        }
+        self.rebuild_state();
+        self.emit_state();
     }
 
     pub(super) fn handle_action(&mut self, action: AppAction) {
@@ -359,7 +395,11 @@ impl AppCore {
                     "nearby.event",
                     format!("kind_raw={kind} id={event_id} transport={transport}"),
                 );
-                let channel: &str = if transport.is_empty() { "nearby" } else { &transport };
+                let channel: &str = if transport.is_empty() {
+                    "nearby"
+                } else {
+                    &transport
+                };
                 self.handle_relay_event_with_channel(event, channel);
             }
             InternalEvent::FetchTrackedPeerCatchUp => {
