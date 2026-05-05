@@ -6,7 +6,6 @@ pub(super) struct LoggedInState {
     pub(super) device_keys: Keys,
     pub(super) client: Client,
     pub(super) relay_urls: Vec<RelayUrl>,
-    pub(super) ndr_runtime: NdrRuntime,
     pub(super) local_invite: Invite,
     pub(super) authorization_state: LocalAuthorizationState,
 }

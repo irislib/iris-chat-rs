@@ -91,11 +91,10 @@ impl AppCore {
             .map(|known| known.devices.len() as u64)
             .unwrap_or(0);
         let known_device_count = self
-            .logged_in
+            .protocol_engine
             .as_ref()
-            .map(|logged_in| {
-                logged_in
-                    .ndr_runtime
+            .map(|engine| {
+                engine
                     .known_device_identity_pubkeys_for_owner(owner_pubkey)
                     .len() as u64
             })
@@ -182,25 +181,19 @@ impl AppCore {
     }
 
     fn peer_debug_session_counts(&self, owner_pubkey: PublicKey) -> PeerDebugSessionCounts {
-        let Some(logged_in) = self.logged_in.as_ref() else {
+        let Some(protocol_engine) = self.protocol_engine.as_ref() else {
             return PeerDebugSessionCounts::default();
         };
 
-        let sessions = logged_in
-            .ndr_runtime
-            .get_message_push_session_states(owner_pubkey);
+        let sessions = protocol_engine.message_session_debug_snapshots(owner_pubkey);
         let tracked_sender_count = sessions
             .iter()
             .flat_map(|session| session.tracked_sender_pubkeys.iter())
             .map(|sender| sender.to_hex())
             .collect::<HashSet<_>>()
             .len() as u64;
-        let active_session_count = logged_in
-            .ndr_runtime
-            .export_active_sessions()
-            .into_iter()
-            .filter(|(owner, _, _)| *owner == owner_pubkey)
-            .count() as u64;
+        let active_session_count =
+            protocol_engine.active_session_count_for_owner(owner_pubkey) as u64;
 
         PeerDebugSessionCounts {
             active_session_count,

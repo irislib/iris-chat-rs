@@ -1,4 +1,5 @@
 use super::*;
+use nostr_double_ratchet_runtime::{NdrRuntime, RuntimeEffect};
 
 #[derive(Clone)]
 struct SwitchableFailStorage {
@@ -482,12 +483,13 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
 
     let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
     {
-        let logged_in = core.logged_in.as_ref().expect("logged in");
-        let effects = logged_in
-            .ndr_runtime
+        let batch = core
+            .protocol_engine
+            .as_mut()
+            .expect("protocol engine")
             .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys.clone(), 1)
             .expect("ingest peer appkeys");
-        core.process_runtime_effects(effects);
+        core.process_protocol_engine_retry_batch("test_app_keys", batch);
     }
     core.app_keys.insert(
         peer_owner.public_key().to_hex(),
@@ -510,11 +512,10 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
         "the regression requires other active message authors"
     );
     assert!(
-        core.logged_in
+        core.protocol_engine
             .as_ref()
-            .expect("logged in")
-            .ndr_runtime
-            .get_message_push_author_pubkeys(peer_owner.public_key())
+            .expect("protocol engine")
+            .message_author_pubkeys_for_owner(peer_owner.public_key())
             .is_empty(),
         "peer roster without invite response must not have message authors yet"
     );
@@ -609,6 +610,50 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
 }
 
 #[test]
+fn appcore_hot_path_has_no_runtime_references() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = vec![manifest.join("src/core.rs")];
+    collect_core_rs_files(&manifest.join("src/core"), &mut files);
+
+    let forbidden = [
+        "NdrRuntime",
+        "ndr_runtime",
+        "setup_user",
+        "process_runtime_effects",
+        "RuntimeEffect",
+    ];
+    let mut hits = Vec::new();
+    for path in files {
+        if path.file_name().and_then(|name| name.to_str()) == Some("tests.rs") {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path).expect("read core source");
+        for needle in forbidden {
+            if content.contains(needle) {
+                hits.push(format!("{} contains {needle}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        hits.is_empty(),
+        "AppCore hot-path runtime references remain:\n{}",
+        hits.join("\n")
+    );
+}
+
+fn collect_core_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read core dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            collect_core_rs_files(&path, files);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+}
+
+#[test]
 fn ndr_runtime_invite_session_round_trips_text() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
@@ -689,7 +734,6 @@ fn local_identity_artifacts_offer_profile_metadata_to_nearby() {
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
@@ -786,7 +830,6 @@ fn nearby_presence_event_binds_owner_to_ble_nonce_pair() {
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
@@ -1137,10 +1180,22 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         device_keys: bob_keys.clone(),
         client: Client::new(bob_keys.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: bob_runtime,
         local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(
+        &mut core,
+        &bob_keys,
+        &bob_keys,
+        storage,
+        Some(bob_runtime.session_manager_snapshot()),
+        Some(bob_runtime.group_manager_snapshot()),
+    );
 
     core.drain_pending_mobile_push_events();
     let thread = core.threads.get(&chat_id).expect("sender thread");
@@ -1296,7 +1351,6 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
@@ -1421,7 +1475,7 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
     complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
     let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
     let user_record_key = "v2/runtime-state";
-    let ratchet_before = bob_storage
+    let legacy_runtime_before = bob_storage
         .get(&user_record_key)
         .expect("read bob ratchet before message")
         .expect("bob ratchet before message");
@@ -1444,10 +1498,16 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         device_keys: bob_keys.clone(),
         client: Client::new(bob_keys.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: bob_runtime,
         local_invite: bob_local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, storage, None, None);
+    let protocol_state_before = runtime_state_json(&core, &bob_keys, &bob_keys).to_string();
     core.owner_profiles.insert(
         alice_keys.public_key().to_hex(),
         OwnerProfileRecord {
@@ -1489,13 +1549,18 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         core.batch_dirty_persist,
         "full state save should still be deferred inside the core batch"
     );
-    let ratchet_after = bob_storage
+    let protocol_state_after = runtime_state_json(&core, &bob_keys, &bob_keys).to_string();
+    assert_ne!(
+        protocol_state_before, protocol_state_after,
+        "foreground AppCore protocol engine should consume the relay event before the push handler runs"
+    );
+    let legacy_runtime_after = bob_storage
         .get(&user_record_key)
         .expect("read bob ratchet after message")
         .expect("bob ratchet after message");
-    assert_ne!(
-        ratchet_before, ratchet_after,
-        "foreground runtime should have consumed the relay event before the push handler runs"
+    assert_eq!(
+        legacy_runtime_before, legacy_runtime_after,
+        "foreground AppCore handling must not mutate legacy runtime storage"
     );
 
     let resolution = decrypt_mobile_push_notification(
@@ -1612,10 +1677,15 @@ fn appcore_defers_decrypted_delivery_ack_until_app_state_is_persisted() {
         device_keys: bob_keys.clone(),
         client: Client::new(bob_keys.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: bob_runtime,
         local_invite: bob_local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, storage, None, None);
 
     let message = "ack after app persist";
     alice
@@ -1898,12 +1968,13 @@ fn peer_profile_debug_reports_known_user_context() {
     let app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 10)]);
 
     core.apply_known_app_keys_snapshot(peer.public_key(), &app_keys, 10);
-    let _ = core
-        .logged_in
-        .as_ref()
-        .expect("logged in")
-        .ndr_runtime
-        .ingest_app_keys_snapshot(peer.public_key(), app_keys, 10);
+    let batch = core
+        .protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .ingest_app_keys_snapshot(peer.public_key(), app_keys, 10)
+        .expect("ingest app keys");
+    core.process_protocol_engine_retry_batch("test_app_keys", batch);
     core.remember_recent_handshake_peer(peer_hex.clone(), peer_device_hex, 123);
     core.handle_action(AppAction::CreateChat {
         peer_input: peer_hex.clone(),
@@ -2169,10 +2240,9 @@ fn app_keys_runtime_storage_failure_does_not_mark_seen_or_mutate_app_cache() {
         "app projection must not commit AppKeys that runtime failed to persist"
     );
     assert!(
-        core.logged_in
+        core.protocol_engine
             .as_ref()
             .unwrap()
-            .ndr_runtime
             .known_device_identity_pubkeys_for_owner(remote_owner.public_key())
             .is_empty(),
         "runtime roster must remain unchanged after failed persistence"
@@ -2190,10 +2260,9 @@ fn app_keys_runtime_storage_failure_does_not_mark_seen_or_mutate_app_cache() {
             .iter()
             .any(|entry| { entry.identity_pubkey_hex == remote_device.public_key().to_hex() })));
     assert_eq!(
-        core.logged_in
+        core.protocol_engine
             .as_ref()
             .unwrap()
-            .ndr_runtime
             .known_device_identity_pubkeys_for_owner(remote_owner.public_key()),
         vec![remote_device.public_key()]
     );
@@ -2596,11 +2665,10 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         LocalAuthorizationState::AwaitingApproval
     );
     assert!(core.pending_linked_device.is_none());
-    assert!(logged_in
-        .ndr_runtime
-        .export_active_sessions()
-        .iter()
-        .any(|(peer, _, _)| *peer == owner.public_key()));
+    assert!(core
+        .protocol_engine
+        .as_ref()
+        .is_some_and(|engine| engine.active_session_count_for_owner(owner.public_key()) > 0));
 }
 
 #[test]
@@ -2753,14 +2821,9 @@ fn private_invite_first_message_installs_creator_session() {
     alice.handle_relay_event(response);
 
     assert!(
-        alice
-            .logged_in
-            .as_ref()
-            .expect("alice logged in")
-            .ndr_runtime
-            .export_active_session_state(bob_owner.public_key())
-            .expect("alice session export")
-            .is_some(),
+        alice.protocol_engine.as_ref().is_some_and(|engine| {
+            engine.active_session_count_for_owner(bob_owner.public_key()) > 0
+        }),
         "Alice should install Bob's session from the private invite response"
     );
     assert!(
@@ -3979,7 +4042,6 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
             device_keys: device.clone(),
             client: Client::new(device.clone()),
             relay_urls: Vec::new(),
-            ndr_runtime: runtime,
             local_invite: invite,
             authorization_state: LocalAuthorizationState::Authorized,
         });
@@ -4172,7 +4234,6 @@ fn appcore_clear_persistence_drops_sqlite_state() {
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
@@ -4546,25 +4607,16 @@ fn logged_in_test_core_with_storage(
     let device_id = device.public_key().to_hex();
     let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
         .expect("local invite");
-    let runtime = NdrRuntime::new(
-        device.public_key(),
-        device.secret_key().to_secret_bytes(),
-        device_id,
-        owner.public_key(),
-        Some(storage),
-        Some(invite.clone()),
-    );
-    runtime.init().expect("runtime init");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
+    install_test_protocol_engine(&mut core, owner, device, storage, None, None);
     core
 }
 
@@ -4578,26 +4630,59 @@ fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String
     let device_id = device.public_key().to_hex();
     let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
         .expect("local invite");
-    let runtime = NdrRuntime::new(
-        device.public_key(),
-        device.secret_key().to_secret_bytes(),
-        device_id,
-        owner.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    runtime.init().expect("runtime init");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        owner.public_key().to_hex(),
+        device.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(&mut core, owner, device, storage, None, None);
     core
+}
+
+fn install_test_protocol_engine(
+    core: &mut AppCore,
+    owner: &Keys,
+    device: &Keys,
+    storage: Arc<dyn StorageAdapter>,
+    seed_session_manager: Option<SessionManagerSnapshot>,
+    seed_group_manager: Option<GroupManagerSnapshot>,
+) {
+    let local_invite = core
+        .logged_in
+        .as_ref()
+        .expect("logged in")
+        .local_invite
+        .clone();
+    let seed_session_manager = seed_session_manager.unwrap_or_else(|| {
+        SessionManager::new(
+            NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()),
+            device.secret_key().to_secret_bytes(),
+        )
+        .snapshot()
+    });
+    let seed_group_manager = seed_group_manager.unwrap_or_else(|| {
+        NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
+    });
+    core.protocol_engine = Some(
+        ProtocolEngine::load_or_seed(
+            storage,
+            owner.public_key(),
+            device,
+            local_invite,
+            seed_session_manager,
+            seed_group_manager,
+        )
+        .expect("protocol engine"),
+    );
 }
 
 fn stored_message_count(core: &AppCore) -> i64 {
@@ -4643,9 +4728,10 @@ fn runtime_state_json(core: &AppCore, owner: &Keys, device: &Keys) -> serde_json
         device.public_key().to_hex(),
     );
     let value = storage
-        .get("v2/runtime-state")
-        .expect("read runtime state")
-        .expect("runtime state exists");
+        .get("appcore/protocol-engine-state-v1")
+        .expect("read appcore protocol state")
+        .or_else(|| storage.get("v2/runtime-state").expect("read runtime state"))
+        .expect("protocol state exists");
     serde_json::from_str(&value).expect("runtime state json")
 }
 

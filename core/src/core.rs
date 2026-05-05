@@ -14,9 +14,10 @@ use flume::Sender;
 use nostr::{EventBuilder, UnsignedEvent};
 use nostr_double_ratchet::{
     AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupIncomingEvent,
-    GroupManagerSnapshot, GroupSnapshot, Invite, MessageEnvelope, OwnerPubkey as NdrOwnerPubkey,
-    PreparedSend, ProtocolContext, RelayGap, SessionManager, SessionManagerSnapshot, SessionState,
-    UnixSeconds as NdrUnixSeconds,
+    GroupManagerSnapshot, GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend,
+    GroupProtocol, GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, Invite,
+    MessageEnvelope, OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap,
+    SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_nostr::{
     apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,
@@ -25,13 +26,13 @@ use nostr_double_ratchet_nostr::{
     REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
 use nostr_double_ratchet_nostr::{
-    invite_response_event, message_event, parse_invite_event, parse_invite_response_event,
+    group_sender_key_message_event, invite_response_event, message_event,
+    parse_group_sender_key_message_event, parse_invite_event, parse_invite_response_event,
     parse_message_event,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
 use nostr_double_ratchet_runtime::{
-    build_direct_message_backfill_filter, DirectMessageSubscriptionTracker,
-    NdrProtocolBackfillOptions, NdrRuntime, RuntimeEffect, SendOptions, StorageAdapter,
+    build_direct_message_backfill_filter, DirectMessageSubscriptionTracker, StorageAdapter,
 };
 use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
@@ -178,12 +179,6 @@ pub struct AppCore {
     batch_depth: u32,
     batch_dirty_state: bool,
     batch_dirty_persist: bool,
-    /// Owners we've already passed through `ndr_runtime.setup_user(...)`.
-    /// `setup_user` is idempotent at the subscription level, but the work
-    /// it triggers in `sync_direct_message_subscriptions` (walking every
-    /// session, JSON-serialising state) is ~300ms per call on Android
-    /// debug. Skipping known owners turns a 5 s per-tap cost into < 50 ms.
-    setup_user_done: HashSet<String>,
     /// Last `AppState` we successfully pushed across the FFI boundary, kept
     /// so `emit_state_inner` can skip pushes that don't change anything
     /// user-visible (a full `AppState` JNI marshal + Compose recomposition

@@ -61,7 +61,6 @@ impl AppCore {
                 match self.apply_app_keys_event(&event) {
                     Ok(_) => {
                         self.remember_event(event_id);
-                        self.setup_user_done.clear();
                         self.request_protocol_subscription_refresh();
                         if self.fetch_recent_protocol_state() {
                             self.state.busy.syncing_network = true;
@@ -72,7 +71,7 @@ impl AppCore {
                         self.emit_state();
                     }
                     Err(error) => {
-                        self.push_debug_log("runtime.app_keys.error", error.to_string());
+                        self.push_debug_log("appcore.protocol.app_keys.error", error.to_string());
                         self.rebuild_state();
                         self.emit_state();
                     }
@@ -88,11 +87,14 @@ impl AppCore {
                     .transpose();
                 match retry_results {
                     Ok(Some(results)) => {
-                        self.process_protocol_engine_retry_results("invite_event", results);
+                        self.process_protocol_engine_retry_batch("invite_event", results);
                     }
                     Ok(None) => {}
                     Err(error) => {
                         self.push_debug_log("appcore.protocol.invite.error", error.to_string());
+                        self.rebuild_state();
+                        self.emit_state();
+                        return;
                     }
                 }
             }
@@ -105,7 +107,7 @@ impl AppCore {
                     .transpose();
                 match retry_results {
                     Ok(Some(results)) => {
-                        self.process_protocol_engine_retry_results("invite_response", results);
+                        self.process_protocol_engine_retry_batch("invite_response", results);
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -113,6 +115,9 @@ impl AppCore {
                             "appcore.protocol.invite_response.error",
                             error.to_string(),
                         );
+                        self.rebuild_state();
+                        self.emit_state();
+                        return;
                     }
                 }
                 if self.handle_private_chat_invite_response(&event) {
@@ -125,13 +130,16 @@ impl AppCore {
             }
             MESSAGE_EVENT_KIND => {
                 let group_result = match self
-                    .logged_in
-                    .as_ref()
-                    .map(|logged_in| logged_in.ndr_runtime.group_handle_outer_event(&event))
+                    .protocol_engine
+                    .as_mut()
+                    .map(|engine| engine.process_group_outer_event(&event))
                 {
                     Some(Ok(group_result)) => group_result,
                     Some(Err(error)) => {
-                        self.push_debug_log("runtime.group.outer.error", error.to_string());
+                        self.push_debug_log(
+                            "appcore.protocol.group.outer.error",
+                            error.to_string(),
+                        );
                         self.persist_best_effort();
                         self.rebuild_state();
                         self.emit_state();
@@ -144,11 +152,21 @@ impl AppCore {
                     || !group_result.effects.is_empty()
                 {
                     self.debug_event_counters.group_events += 1;
+                    let should_remember_group_event = group_result.consumed
+                        || !group_result.events.is_empty()
+                        || !group_result.effects.is_empty();
                     for group_event in group_result.events {
                         self.apply_group_decrypted_event(group_event);
                     }
-                    self.remember_event(event_id);
-                    self.process_runtime_effects(group_result.effects);
+                    if !group_result.effects.is_empty() {
+                        self.process_protocol_engine_effects_with_completions(
+                            group_result.effects,
+                            &BTreeMap::new(),
+                        );
+                    }
+                    if should_remember_group_event {
+                        self.remember_event(event_id);
+                    }
                     self.persist_best_effort();
                     self.rebuild_state();
                     self.emit_state();
@@ -199,34 +217,13 @@ impl AppCore {
                     }
                 }
             }
+            self.persist_best_effort();
+            self.rebuild_state();
+            self.emit_state();
+            return;
         }
-        let runtime_result = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.ndr_runtime.process_received_event(event));
-        let effects = match runtime_result {
-            Some(Ok(effects)) => effects,
-            Some(Err(error)) => {
-                self.push_debug_log("runtime.event.error", error.to_string());
-                self.persist_best_effort();
-                self.rebuild_state();
-                self.emit_state();
-                return;
-            }
-            None => Vec::new(),
-        };
-        let runtime_effects_empty = effects.is_empty();
-        let decrypted_event_ids = self.process_runtime_effects(effects);
-        let should_remember_event = match kind {
-            MESSAGE_EVENT_KIND => decrypted_event_ids.contains(&event_id),
-            INVITE_RESPONSE_KIND => !runtime_effects_empty,
-            _ => true,
-        };
-        if should_remember_event {
-            self.remember_event(event_id);
-        }
+        self.remember_event(event_id);
         if protocol_inputs_changed {
-            self.setup_user_done.clear();
             self.request_protocol_subscription_refresh();
             if self.fetch_recent_protocol_state() {
                 self.state.busy.syncing_network = true;
@@ -294,132 +291,14 @@ impl AppCore {
         true
     }
 
-    pub(super) fn process_runtime_effects(
-        &mut self,
-        effects: Vec<RuntimeEffect>,
-    ) -> HashSet<String> {
-        self.process_runtime_effects_with_completions(effects, &BTreeMap::new())
-    }
-
-    pub(super) fn process_runtime_effects_with_completions(
-        &mut self,
-        effects: Vec<RuntimeEffect>,
-        completions: &BTreeMap<String, (String, String)>,
-    ) -> HashSet<String> {
-        let mut decrypted_event_ids = HashSet::new();
-        let mut fetch_backfill_requested = false;
-        for effect in effects {
-            match effect {
-                RuntimeEffect::PublishUnsigned(unsigned) => {
-                    if let Some(signed) = self.sign_runtime_unsigned_event(unsigned) {
-                        let event_id = signed.id.to_string();
-                        let completion =
-                            self.runtime_publish_completion(&event_id, None, completions);
-                        if !completions.is_empty() {
-                            self.push_debug_log(
-                                "publish.runtime.completion",
-                                format!("event_id={event_id} matched={}", completion.is_some()),
-                            );
-                        }
-                        if self.publish_runtime_event(signed, "runtime", completion) {
-                            self.ack_runtime_prepared_publish(&event_id);
-                        }
-                    }
-                }
-                RuntimeEffect::PublishSigned(event) => {
-                    let event_id = event.id.to_string();
-                    let completion = self.runtime_publish_completion(&event_id, None, completions);
-                    if !completions.is_empty() {
-                        self.push_debug_log(
-                            "publish.runtime.completion",
-                            format!("event_id={event_id} matched={}", completion.is_some()),
-                        );
-                    }
-                    if self.publish_runtime_event(event, "runtime", completion) {
-                        self.ack_runtime_prepared_publish(&event_id);
-                    }
-                }
-                RuntimeEffect::PublishSignedForInnerEvent {
-                    event,
-                    inner_event_id,
-                    target_device_id,
-                } => {
-                    let event_id = event.id.to_string();
-                    let completion = self.runtime_publish_completion(
-                        &event_id,
-                        inner_event_id.as_deref(),
-                        completions,
-                    );
-                    if !completions.is_empty() || inner_event_id.is_some() {
-                        self.push_debug_log(
-                            "publish.runtime.completion",
-                            format!("event_id={event_id} matched={}", completion.is_some()),
-                        );
-                    }
-                    if self.publish_runtime_event_with_metadata(
-                        event,
-                        "runtime",
-                        completion,
-                        inner_event_id,
-                        target_device_id,
-                    ) {
-                        self.ack_runtime_prepared_publish(&event_id);
-                    }
-                }
-                RuntimeEffect::Subscribe { subid, filters } => {
-                    self.apply_runtime_subscription(subid, filters);
-                }
-                RuntimeEffect::Unsubscribe(subid) => {
-                    self.remove_runtime_subscription(subid);
-                }
-                RuntimeEffect::FetchBackfill => {
-                    self.push_debug_log("runtime.backfill", "requested");
-                    fetch_backfill_requested = true;
-                }
-                RuntimeEffect::EmitDecrypted {
-                    sender,
-                    sender_device,
-                    conversation_owner,
-                    content,
-                    event_id,
-                } => {
-                    let ack_event_id = event_id.clone();
-                    if let Some(event_id) = event_id.as_ref() {
-                        decrypted_event_ids.insert(event_id.clone());
-                    }
-                    self.apply_decrypted_runtime_message_with_metadata(
-                        sender,
-                        sender_device,
-                        conversation_owner,
-                        content,
-                        event_id,
-                    );
-                    // Decrypting a DM advances the double-ratchet state,
-                    // so the cached mobile-push snapshot needs a refresh.
-                    self.mark_mobile_push_dirty();
-                    if let Some(event_id) = ack_event_id {
-                        self.pending_decrypted_delivery_acks.insert(event_id);
-                    }
-                }
-            }
-        }
-        if fetch_backfill_requested {
-            if self.fetch_recent_protocol_state() {
-                self.state.busy.syncing_network = true;
-            }
-            self.fetch_recent_messages_for_tracked_peers(unix_now());
-        }
-        decrypted_event_ids
-    }
-
     pub(super) fn process_protocol_engine_effects_with_completions(
         &mut self,
-        effects: Vec<RuntimeEffect>,
+        effects: Vec<ProtocolEffect>,
         completions: &BTreeMap<String, (String, String)>,
     ) {
         for effect in effects {
             match effect {
-                RuntimeEffect::PublishUnsigned(unsigned) => {
+                ProtocolEffect::PublishUnsigned(unsigned) => {
                     if let Some(signed) = self.sign_runtime_unsigned_event(unsigned) {
                         let event_id = signed.id.to_string();
                         let completion =
@@ -427,12 +306,12 @@ impl AppCore {
                         self.publish_runtime_event(signed, "appcore-protocol", completion);
                     }
                 }
-                RuntimeEffect::PublishSigned(event) => {
+                ProtocolEffect::PublishSigned(event) => {
                     let event_id = event.id.to_string();
                     let completion = self.runtime_publish_completion(&event_id, None, completions);
                     self.publish_runtime_event(event, "appcore-protocol", completion);
                 }
-                RuntimeEffect::PublishSignedForInnerEvent {
+                ProtocolEffect::PublishSignedForInnerEvent {
                     event,
                     inner_event_id,
                     target_device_id,
@@ -451,16 +330,16 @@ impl AppCore {
                         target_device_id,
                     );
                 }
-                RuntimeEffect::Subscribe { subid, filters } => {
+                ProtocolEffect::Subscribe { subid, filters } => {
                     self.apply_runtime_subscription(subid, filters);
                 }
-                RuntimeEffect::Unsubscribe(subid) => {
+                ProtocolEffect::Unsubscribe(subid) => {
                     self.remove_runtime_subscription(subid);
                 }
-                RuntimeEffect::FetchBackfill => {
+                ProtocolEffect::FetchBackfill => {
                     self.fetch_recent_protocol_state();
                 }
-                RuntimeEffect::EmitDecrypted {
+                ProtocolEffect::EmitDecrypted {
                     sender,
                     sender_device,
                     conversation_owner,
@@ -481,52 +360,12 @@ impl AppCore {
     }
 
     pub(super) fn ack_pending_decrypted_deliveries_after_app_persist(&mut self) {
-        if self.pending_decrypted_delivery_acks.is_empty() {
-            return;
-        }
-        let pending = std::mem::take(&mut self.pending_decrypted_delivery_acks);
-        for event_id in pending {
-            let ack_result = self
-                .logged_in
-                .as_ref()
-                .map(|logged_in| logged_in.ndr_runtime.ack_decrypted_delivery(&event_id));
-            match ack_result {
-                Some(Ok(effects)) => {
-                    if !effects.is_empty() {
-                        self.process_runtime_effects(effects);
-                    }
-                }
-                Some(Err(error)) => {
-                    self.pending_decrypted_delivery_acks
-                        .insert(event_id.clone());
-                    self.push_debug_log(
-                        "runtime.decrypt.ack",
-                        format!("event_id={event_id} error={error}"),
-                    );
-                }
-                None => {
-                    self.pending_decrypted_delivery_acks.insert(event_id);
-                }
+        if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+            if let Err(error) = protocol_engine.ack_pending_decrypted_deliveries() {
+                self.push_debug_log("appcore.protocol.decrypted_ack.error", error.to_string());
             }
         }
-    }
-
-    fn ack_runtime_prepared_publish(&mut self, event_id: &str) {
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            match logged_in.ndr_runtime.ack_prepared_publish(event_id) {
-                Ok(effects) => {
-                    if !effects.is_empty() {
-                        self.process_runtime_effects(effects);
-                    }
-                }
-                Err(error) => {
-                    self.push_debug_log(
-                        "publish.runtime.ack",
-                        format!("event_id={event_id} error={error}"),
-                    );
-                }
-            }
-        }
+        self.pending_decrypted_delivery_acks.clear();
     }
 
     fn apply_runtime_subscription(&mut self, subid: String, filters: Vec<Filter>) {
@@ -674,22 +513,14 @@ impl AppCore {
         let effective_app_keys = applied.app_keys;
         let effective_created_at = applied.created_at;
 
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            let effects = logged_in.ndr_runtime.ingest_app_keys_snapshot(
-                event.pubkey,
-                effective_app_keys.clone(),
-                effective_created_at,
-            )?;
-            self.process_runtime_effects(effects);
-        }
-        let protocol_retry_results = if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+        let protocol_retry_batch = if let Some(protocol_engine) = self.protocol_engine.as_mut() {
             protocol_engine.ingest_app_keys_snapshot(
                 event.pubkey,
                 effective_app_keys.clone(),
                 effective_created_at,
             )?
         } else {
-            Vec::new()
+            ProtocolRetryBatch::default()
         };
 
         let known =
@@ -706,20 +537,7 @@ impl AppCore {
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
-        for result in protocol_retry_results {
-            let completions = result
-                .event_ids
-                .iter()
-                .map(|event_id| {
-                    (
-                        event_id.clone(),
-                        (result.message_id.clone(), result.chat_id.clone()),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            self.process_protocol_engine_effects_with_completions(result.effects, &completions);
-            self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
-        }
+        self.process_protocol_engine_retry_batch("app_keys", protocol_retry_batch);
         if should_publish_backfilled_owner_app_keys {
             self.publish_local_app_keys();
         }

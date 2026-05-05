@@ -60,26 +60,24 @@ impl AppCore {
 
         let now = unix_now();
         let result = self
-            .logged_in
-            .as_ref()
-            .expect("checked above")
-            .ndr_runtime
-            .create_group(trimmed_name.to_string(), member_owners.clone());
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.create_group(trimmed_name.to_string(), member_owners, now));
 
         match result {
-            Ok(result) => {
-                self.process_runtime_effects(result.effects);
-                for owner in member_owners {
-                    let effects = self
-                        .logged_in
-                        .as_ref()
-                        .and_then(|logged_in| logged_in.ndr_runtime.setup_user(owner).ok())
-                        .unwrap_or_default();
-                    if !effects.is_empty() {
-                        self.process_runtime_effects(effects);
-                    }
-                }
-                let group = result.outcome.group;
+            Some(Ok(result)) => {
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
+                );
+                let Some(group) = result.snapshot else {
+                    self.state.toast = Some("Group could not be created.".to_string());
+                    self.state.busy.creating_group = false;
+                    self.rebuild_state();
+                    self.persist_best_effort();
+                    self.emit_state();
+                    return;
+                };
                 let chat_id = group_chat_id(&group.group_id);
                 self.apply_group_snapshot_to_threads(&group, now.get());
                 self.groups.insert(group.group_id.clone(), group.clone());
@@ -91,7 +89,8 @@ impl AppCore {
                     RESUBSCRIBE_CATCH_UP_DELAY_SECS,
                 ));
             }
-            Err(error) => self.state.toast = Some(error.to_string()),
+            Some(Err(error)) => self.state.toast = Some(error.to_string()),
+            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
 
         self.state.busy.creating_group = false;
@@ -111,16 +110,20 @@ impl AppCore {
         self.state.busy.updating_group = true;
         self.emit_state();
         let previous = self.groups.get(group_id).cloned();
-        let result = self.logged_in.as_ref().map(|logged_in| {
-            logged_in
-                .ndr_runtime
-                .update_group_name(group_id, trimmed.to_string())
-        });
+        let result = self
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.update_group_name(group_id, trimmed.to_string()));
 
         match result {
             Some(Ok(result)) => {
-                self.process_runtime_effects(result.effects);
-                self.apply_local_group_snapshot(previous.as_ref(), result.snapshot, "group.rename")
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
+                );
+                if let Some(snapshot) = result.snapshot {
+                    self.apply_local_group_snapshot(previous.as_ref(), snapshot, "group.rename")
+                }
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => {}
@@ -165,31 +168,25 @@ impl AppCore {
         self.emit_state();
         let previous = self.groups.get(group_id).cloned();
         let result = self
-            .logged_in
-            .as_ref()
-            .expect("checked above")
-            .ndr_runtime
-            .add_group_members(group_id, member_owners.clone());
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.add_group_members(group_id, member_owners));
         match result {
-            Ok(result) => {
-                self.process_runtime_effects(result.effects);
-                for owner in member_owners {
-                    let effects = self
-                        .logged_in
-                        .as_ref()
-                        .and_then(|logged_in| logged_in.ndr_runtime.setup_user(owner).ok())
-                        .unwrap_or_default();
-                    if !effects.is_empty() {
-                        self.process_runtime_effects(effects);
-                    }
-                }
-                self.apply_local_group_snapshot(
-                    previous.as_ref(),
-                    result.snapshot,
-                    "group.add_members",
+            Some(Ok(result)) => {
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
                 );
+                if let Some(snapshot) = result.snapshot {
+                    self.apply_local_group_snapshot(
+                        previous.as_ref(),
+                        snapshot,
+                        "group.add_members",
+                    );
+                }
             }
-            Err(error) => self.state.toast = Some(error.to_string()),
+            Some(Err(error)) => self.state.toast = Some(error.to_string()),
+            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
         self.state.busy.updating_group = false;
         self.rebuild_state();
@@ -210,25 +207,29 @@ impl AppCore {
         };
         let previous = self.groups.get(group_id).cloned();
         let result = self
-            .logged_in
-            .as_ref()
-            .expect("checked above")
-            .ndr_runtime
-            .set_group_admin(group_id, owner, is_admin);
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.set_group_admin(group_id, owner, is_admin));
         match result {
-            Ok(result) => {
-                self.process_runtime_effects(result.effects);
-                self.apply_local_group_snapshot(
-                    previous.as_ref(),
-                    result.snapshot,
-                    if is_admin {
-                        "group.add_admin"
-                    } else {
-                        "group.remove_admin"
-                    },
+            Some(Ok(result)) => {
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
                 );
+                if let Some(snapshot) = result.snapshot {
+                    self.apply_local_group_snapshot(
+                        previous.as_ref(),
+                        snapshot,
+                        if is_admin {
+                            "group.add_admin"
+                        } else {
+                            "group.remove_admin"
+                        },
+                    );
+                }
             }
-            Err(error) => self.state.toast = Some(error.to_string()),
+            Some(Err(error)) => self.state.toast = Some(error.to_string()),
+            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
         self.rebuild_state();
         self.persist_best_effort();
@@ -243,21 +244,25 @@ impl AppCore {
         };
         let previous = self.groups.get(group_id).cloned();
         let result = self
-            .logged_in
-            .as_ref()
-            .expect("checked above")
-            .ndr_runtime
-            .remove_group_member(group_id, owner);
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.remove_group_member(group_id, owner));
         match result {
-            Ok(result) => {
-                self.process_runtime_effects(result.effects);
-                self.apply_local_group_snapshot(
-                    previous.as_ref(),
-                    result.snapshot,
-                    "group.remove_member",
-                )
+            Some(Ok(result)) => {
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
+                );
+                if let Some(snapshot) = result.snapshot {
+                    self.apply_local_group_snapshot(
+                        previous.as_ref(),
+                        snapshot,
+                        "group.remove_member",
+                    )
+                }
             }
-            Err(error) => self.state.toast = Some(error.to_string()),
+            Some(Err(error)) => self.state.toast = Some(error.to_string()),
+            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
         self.rebuild_state();
         self.persist_best_effort();
@@ -305,6 +310,10 @@ impl AppCore {
                     .unwrap_or_else(|| String::from_utf8_lossy(&message.body).to_string());
                 let sender_owner = PublicKey::from_slice(&message.sender_owner.to_bytes())
                     .expect("owner pubkey bytes must be valid");
+                if let Some(runtime_rumor) = parse_runtime_rumor(&body) {
+                    self.apply_group_runtime_rumor(&chat_id, sender_owner, runtime_rumor);
+                    return;
+                }
                 let is_outgoing = self
                     .logged_in
                     .as_ref()
@@ -323,6 +332,79 @@ impl AppCore {
                     self.request_protocol_subscription_refresh();
                 }
             }
+        }
+    }
+
+    fn apply_group_runtime_rumor(
+        &mut self,
+        chat_id: &str,
+        sender_owner: PublicKey,
+        runtime_rumor: RuntimeRumor,
+    ) {
+        let local_owner = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey);
+        let is_outgoing = local_owner.is_some_and(|local_owner| sender_owner == local_owner);
+        let created_at_secs = runtime_rumor.created_at_secs;
+        let expires_at_secs = message_expiration_from_tags(runtime_rumor.tags.iter());
+        let message_id = runtime_rumor.id.clone();
+        match runtime_rumor.kind {
+            CHAT_MESSAGE_KIND => {
+                self.apply_runtime_text_message(
+                    sender_owner,
+                    Some(chat_id.to_string()),
+                    runtime_rumor.content,
+                    created_at_secs,
+                    expires_at_secs,
+                    message_id.clone(),
+                    message_id,
+                );
+            }
+            REACTION_KIND => {
+                let sender_hex = sender_owner.to_hex();
+                for message_id in message_ids_from_tags(runtime_rumor.tags.iter()) {
+                    self.apply_incoming_reaction_to_chat(
+                        chat_id,
+                        &message_id,
+                        &sender_hex,
+                        &runtime_rumor.content,
+                    );
+                }
+            }
+            RECEIPT_KIND => {
+                let delivery = match runtime_rumor.content.as_str() {
+                    "seen" => DeliveryState::Seen,
+                    _ => DeliveryState::Received,
+                };
+                self.apply_receipt_to_messages(
+                    chat_id,
+                    &message_ids_from_tags(runtime_rumor.tags.iter()),
+                    delivery,
+                    is_outgoing,
+                    Some(&sender_owner.to_hex()),
+                );
+            }
+            TYPING_KIND => {
+                if !is_outgoing {
+                    self.apply_typing_event(
+                        chat_id.to_string(),
+                        sender_owner.to_hex(),
+                        created_at_secs,
+                        expires_at_secs,
+                    );
+                }
+            }
+            CHAT_SETTINGS_KIND => {
+                let actor = self.owner_display_label(&sender_owner.to_hex());
+                self.apply_chat_settings_control(
+                    chat_id,
+                    &actor,
+                    chat_settings_ttl_seconds(&runtime_rumor.content),
+                    created_at_secs,
+                );
+            }
+            _ => {}
         }
     }
 

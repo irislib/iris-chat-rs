@@ -25,20 +25,12 @@ impl AppCore {
                 owner_pubkey,
                 pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
             ) {
-                if self.send_protocol_engine_unsigned_event(
+                self.send_protocol_engine_unsigned_event(
                     peer,
                     &normalized_chat_id,
                     unsigned,
                     "typing",
-                ) {
-                    return;
-                }
-            }
-            let Some(logged_in) = self.logged_in.as_ref() else {
-                return;
-            };
-            if let Ok(result) = logged_in.ndr_runtime.send_typing(peer, None) {
-                self.process_runtime_effects(result.effects);
+                );
             }
         }
     }
@@ -72,26 +64,12 @@ impl AppCore {
                 pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000))
                     .with_expiration(1),
             ) {
-                if self.send_protocol_engine_unsigned_event(
+                self.send_protocol_engine_unsigned_event(
                     peer,
                     &normalized_chat_id,
                     unsigned,
                     "stop_typing",
-                ) {
-                    return;
-                }
-            }
-            let Some(logged_in) = self.logged_in.as_ref() else {
-                return;
-            };
-            if let Ok(result) = logged_in.ndr_runtime.send_typing(
-                peer,
-                Some(SendOptions {
-                    expires_at: Some(1),
-                    ttl_seconds: None,
-                }),
-            ) {
-                self.process_runtime_effects(result.effects);
+                );
             }
         }
     }

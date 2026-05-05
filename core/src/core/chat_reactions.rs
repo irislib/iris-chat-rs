@@ -57,36 +57,17 @@ impl AppCore {
                 emoji.to_string(),
                 pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
             ) {
-                if self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction") {
-                    return;
-                }
-            }
-            let Some(logged_in) = self.logged_in.as_ref() else {
-                return;
-            };
-            if emoji.is_empty() {
-                // The shared NDR helper rejects empty content, so build the
-                // raw kind-7 rumor ourselves to broadcast an unreact.
+                self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction");
+            } else if emoji.is_empty() {
                 if let Ok(e_tag) = nostr::Tag::parse(["e", message_id]) {
                     let unsigned = UnsignedEvent::new(
-                        peer,
+                        owner_pubkey,
                         Timestamp::from_secs(unix_now().get()),
                         Kind::Custom(REACTION_KIND as u16),
                         vec![e_tag],
                         String::new(),
                     );
-                    if let Ok(result) = logged_in.ndr_runtime.send_event(peer, unsigned) {
-                        self.process_runtime_effects(result.effects);
-                    }
-                }
-            } else {
-                if let Ok(result) = logged_in.ndr_runtime.send_reaction(
-                    peer,
-                    message_id.to_string(),
-                    emoji.to_string(),
-                    None,
-                ) {
-                    self.process_runtime_effects(result.effects);
+                    self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction");
                 }
             }
         }

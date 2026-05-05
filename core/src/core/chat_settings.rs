@@ -80,23 +80,12 @@ impl AppCore {
                 now.get(),
                 now.get().saturating_mul(1000),
             ) {
-                if self.send_protocol_engine_unsigned_event(
+                self.send_protocol_engine_unsigned_event(
                     peer,
                     &normalized_chat_id,
                     unsigned,
                     "chat_settings",
-                ) {
-                    self.rebuild_state();
-                    self.persist_best_effort();
-                    self.emit_state();
-                    return;
-                }
-            }
-            let Some(logged_in) = self.logged_in.as_ref() else {
-                return;
-            };
-            if let Ok(result) = logged_in.ndr_runtime.send_chat_settings(peer, ttl) {
-                self.process_runtime_effects(result.effects);
+                );
             }
         }
         self.rebuild_state();

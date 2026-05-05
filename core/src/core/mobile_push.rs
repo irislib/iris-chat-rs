@@ -140,7 +140,7 @@ fn mobile_push_event_from_payload(raw_payload_json: &str) -> Option<Event> {
 /// Extension where there's no live `AppCore`. We open a fresh
 /// connection to `data_dir/core.sqlite3`, wrap a `SqliteStorageAdapter`
 /// in a read-through `NotificationPreviewStorage` overlay, run a
-/// one-shot `NdrRuntime` against it, then drop everything. Writes stay
+/// one-shot `ProtocolEngine` against it, then drop everything. Writes stay
 /// in the overlay so a notification preview cannot advance or
 /// otherwise mutate the chat runtime's persisted ratchet state before
 /// the foreground app processes the same relay event. Once we've
@@ -235,38 +235,40 @@ pub(crate) fn decrypt_mobile_push_notification(
     let storage =
         Arc::new(NotificationPreviewStorage::new(base_storage)) as Arc<dyn StorageAdapter>;
 
-    let runtime = NdrRuntime::new(
+    let mut local_invite = match Invite::create_new(
         device_keys.public_key(),
+        Some(device_keys.public_key().to_hex()),
+        Some(1),
+    ) {
+        Ok(invite) => invite,
+        Err(_) => return cached_fallback(),
+    };
+    local_invite.owner_public_key = Some(owner_pubkey);
+    let seed_session_manager = SessionManager::new(
+        NdrOwnerPubkey::from_bytes(owner_pubkey.to_bytes()),
         device_keys.secret_key().to_secret_bytes(),
-        device_keys.public_key().to_hex(),
+    )
+    .snapshot();
+    let seed_group_manager =
+        NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner_pubkey.to_bytes())).snapshot();
+    let mut engine = match ProtocolEngine::load_or_seed(
+        storage,
         owner_pubkey,
-        Some(storage),
-        None,
-    );
-    if runtime.init().is_err() {
-        return cached_fallback();
-    }
-    let effects = match runtime.process_received_event(outer_event) {
-        Ok(effects) => effects,
+        &device_keys,
+        local_invite,
+        seed_session_manager,
+        seed_group_manager,
+    ) {
+        Ok(engine) => engine,
         Err(_) => return cached_fallback(),
     };
 
-    let mut decrypted_inner_json: Option<String> = None;
-    let mut decrypted_sender: Option<nostr::PublicKey> = None;
-    for event in effects {
-        if let RuntimeEffect::EmitDecrypted {
-            sender, content, ..
-        } = event
-        {
-            decrypted_inner_json = Some(content);
-            decrypted_sender = Some(sender);
-            break;
-        }
-    }
-
-    let (Some(inner_json), Some(sender_owner)) = (decrypted_inner_json, decrypted_sender) else {
-        return cached_fallback();
+    let decrypted = match engine.process_direct_message_event(&outer_event) {
+        Ok(Some(decrypted)) => decrypted,
+        Ok(None) | Err(_) => return cached_fallback(),
     };
+    let inner_json = decrypted.content;
+    let sender_owner = decrypted.sender;
     let inner_value: serde_json::Value = match serde_json::from_str(&inner_json) {
         Ok(value) => value,
         Err(_) => return cached_fallback(),

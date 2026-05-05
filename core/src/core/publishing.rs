@@ -460,12 +460,11 @@ impl AppCore {
                     )
                 })
         }) {
-            if let Some(logged_in) = self.logged_in.as_ref() {
-                if let Ok(effects) = logged_in
-                    .ndr_runtime
-                    .ingest_app_keys_snapshot(owner, app_keys, created_at)
+            if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+                if let Ok(batch) =
+                    protocol_engine.ingest_app_keys_snapshot(owner, app_keys, created_at)
                 {
-                    self.process_runtime_effects(effects);
+                    self.process_protocol_engine_retry_batch("publish_local_app_keys", batch);
                 }
             }
         }

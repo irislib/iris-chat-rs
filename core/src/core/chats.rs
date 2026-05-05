@@ -347,95 +347,35 @@ impl AppCore {
             return;
         };
 
-        if self.protocol_engine.is_some() {
-            let result = self
-                .protocol_engine
-                .as_mut()
-                .expect("checked above")
-                .send_direct_text(peer_pubkey, &normalized_chat_id, text, expires_at_secs, now);
-            match result {
-                Ok(result) => {
-                    let delivery = if result.event_ids.is_empty() {
-                        DeliveryState::Queued
-                    } else {
-                        DeliveryState::Pending
-                    };
-                    self.push_debug_log(
-                        "message.direct.send.appcore",
-                        format!(
-                            "chat_id={normalized_chat_id} message_id={} event_ids={} queued_targets={}",
-                            result.message_id,
-                            result.event_ids.len(),
-                            result.queued_targets.len()
-                        ),
-                    );
-                    self.push_outgoing_message_with_id(
-                        result.message_id.clone(),
-                        &normalized_chat_id,
-                        text.to_string(),
-                        now.get(),
-                        expires_at_secs,
-                        delivery,
-                    );
-                    let completions = result
-                        .event_ids
-                        .iter()
-                        .map(|event_id| {
-                            (
-                                event_id.clone(),
-                                (result.message_id.clone(), normalized_chat_id.clone()),
-                            )
-                        })
-                        .collect::<BTreeMap<_, _>>();
-                    self.process_protocol_engine_effects_with_completions(
-                        result.effects,
-                        &completions,
-                    );
-                    self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
-                    if !result.queued_targets.is_empty() {
-                        self.request_protocol_subscription_refresh();
-                        if self.fetch_recent_protocol_state() {
-                            self.state.busy.syncing_network = true;
-                        }
-                    }
-                }
-                Err(error) => {
-                    self.state.toast = Some(error.to_string());
-                }
-            }
-            return;
-        }
-
-        let Some(logged_in) = self.logged_in.as_ref() else {
+        let Some(protocol_engine) = self.protocol_engine.as_mut() else {
+            self.state.toast = Some("Protocol engine is not ready.".to_string());
             return;
         };
-        let result = logged_in.ndr_runtime.send_text_with_inner_id(
+        let result = protocol_engine.send_direct_text(
             peer_pubkey,
-            text.to_string(),
-            send_options_for_expiration(expires_at_secs),
+            &normalized_chat_id,
+            text,
+            expires_at_secs,
+            now,
         );
-
         match result {
             Ok(result) => {
-                let message_id = if result.inner_event_id.is_empty() {
-                    self.allocate_message_id()
-                } else {
-                    result.inner_event_id
-                };
                 let delivery = if result.event_ids.is_empty() {
                     DeliveryState::Queued
                 } else {
                     DeliveryState::Pending
                 };
                 self.push_debug_log(
-                    "message.direct.send",
+                    "message.direct.send.appcore",
                     format!(
-                        "chat_id={normalized_chat_id} message_id={message_id} event_ids={}",
-                        result.event_ids.len()
+                        "chat_id={normalized_chat_id} message_id={} event_ids={} queued_targets={}",
+                        result.message_id,
+                        result.event_ids.len(),
+                        result.queued_targets.len()
                     ),
                 );
                 self.push_outgoing_message_with_id(
-                    message_id.clone(),
+                    result.message_id.clone(),
                     &normalized_chat_id,
                     text.to_string(),
                     now.get(),
@@ -448,13 +388,13 @@ impl AppCore {
                     .map(|event_id| {
                         (
                             event_id.clone(),
-                            (message_id.clone(), normalized_chat_id.clone()),
+                            (result.message_id.clone(), normalized_chat_id.clone()),
                         )
                     })
                     .collect::<BTreeMap<_, _>>();
-                self.process_runtime_effects_with_completions(result.effects, &completions);
-                self.sync_message_delivery_trace(&normalized_chat_id, &message_id);
-                if completions.is_empty() {
+                self.process_protocol_engine_effects_with_completions(result.effects, &completions);
+                self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
+                if !result.queued_targets.is_empty() {
                     self.request_protocol_subscription_refresh();
                     if self.fetch_recent_protocol_state() {
                         self.state.busy.syncing_network = true;
@@ -486,31 +426,41 @@ impl AppCore {
             }
         };
         let message_id = self.allocate_message_id();
-        let result = self.logged_in.as_ref().map(|logged_in| {
-            logged_in
-                .ndr_runtime
-                .send_group_message(&group_id, payload, Some(message_id.clone()))
-        });
+        let result = self
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.send_group_payload(&group_id, payload, Some(message_id.clone())));
         match result {
             Some(Ok(result)) => {
+                let delivery = if result.event_ids.is_empty() {
+                    DeliveryState::Queued
+                } else {
+                    DeliveryState::Pending
+                };
                 self.push_outgoing_message_with_id(
                     message_id.clone(),
                     chat_id,
                     text.to_string(),
                     now.get(),
                     expires_at_secs,
-                    DeliveryState::Pending,
+                    delivery,
                 );
                 let completions = result
                     .event_ids
                     .iter()
                     .map(|event_id| (event_id.clone(), (message_id.clone(), chat_id.to_string())))
                     .collect::<BTreeMap<_, _>>();
-                self.process_runtime_effects_with_completions(result.effects, &completions);
+                self.process_protocol_engine_effects_with_completions(result.effects, &completions);
                 self.sync_message_delivery_trace(chat_id, &message_id);
+                if !result.queued_targets.is_empty() {
+                    self.request_protocol_subscription_refresh();
+                    if self.fetch_recent_protocol_state() {
+                        self.state.busy.syncing_network = true;
+                    }
+                }
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
-            None => {}
+            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
     }
 
@@ -627,23 +577,7 @@ impl AppCore {
             })
             .filter_map(|pending| pending.last_error.clone())
             .last();
-        let queued_protocol_targets = self
-            .logged_in
-            .as_ref()
-            .and_then(|logged_in| {
-                logged_in
-                    .ndr_runtime
-                    .queued_message_diagnostics(Some(message_id))
-                    .ok()
-            })
-            .map(|entries| {
-                entries
-                    .into_iter()
-                    .map(|entry| entry.target_key)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        let mut queued_protocol_targets = queued_protocol_targets;
+        let mut queued_protocol_targets = Vec::new();
         if let Some(protocol_engine) = self.protocol_engine.as_ref() {
             queued_protocol_targets.extend(
                 protocol_engine
@@ -957,12 +891,70 @@ impl AppCore {
         chat_id: &str,
         kind: u32,
         content: &str,
-        _tags: Vec<Vec<String>>,
-        _now_ms: Option<u64>,
+        tags: Vec<Vec<String>>,
+        now_ms: Option<u64>,
     ) {
         if kind == CHAT_MESSAGE_KIND {
             self.send_group_message(chat_id, content, unix_now(), None);
+            return;
         }
+        let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
+            return;
+        };
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return;
+        };
+        let created_at = unix_now();
+        let mut nostr_tags = Vec::new();
+        for tag in tags {
+            if let Ok(tag) = nostr::Tag::parse(tag) {
+                nostr_tags.push(tag);
+            }
+        }
+        if let Ok(group_tag) = nostr::Tag::parse(["l", group_id.as_str()]) {
+            nostr_tags.push(group_tag);
+        }
+        let mut unsigned = UnsignedEvent::new(
+            owner_pubkey,
+            Timestamp::from_secs(created_at.get()),
+            Kind::Custom(kind as u16),
+            nostr_tags,
+            content.to_string(),
+        );
+        unsigned.ensure_id();
+        let payload = match serde_json::to_vec(&unsigned) {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.push_debug_log("group.control.encode", error.to_string());
+                return;
+            }
+        };
+        let inner_event_id = unsigned.id.as_ref().map(ToString::to_string);
+        let result = self
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.send_group_payload(&group_id, payload, inner_event_id.clone()));
+        match result {
+            Some(Ok(result)) => {
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
+                );
+                if !result.queued_targets.is_empty() {
+                    self.request_protocol_subscription_refresh();
+                    if self.fetch_recent_protocol_state() {
+                        self.state.busy.syncing_network = true;
+                    }
+                }
+            }
+            Some(Err(error)) => self.push_debug_log("group.control.send", error.to_string()),
+            None => {}
+        }
+        let _ = now_ms;
     }
 
     #[cfg(test)]
@@ -990,15 +982,15 @@ impl AppCore {
         content: String,
         outer_event_id: Option<String>,
     ) {
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            let group_outcome = match logged_in.ndr_runtime.group_handle_incoming_payload_outcome(
+        if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+            let group_outcome = match protocol_engine.process_group_pairwise_payload(
                 content.as_bytes(),
                 sender_owner,
                 sender_device,
             ) {
                 Ok(group_outcome) => group_outcome,
                 Err(error) => {
-                    self.push_debug_log("runtime.group.payload.error", error.to_string());
+                    self.push_debug_log("appcore.protocol.group.payload.error", error.to_string());
                     return;
                 }
             };
@@ -1006,12 +998,18 @@ impl AppCore {
                 for group_event in group_outcome.events {
                     self.apply_group_decrypted_event(group_event);
                 }
-                self.process_runtime_effects(group_outcome.effects);
+                self.process_protocol_engine_effects_with_completions(
+                    group_outcome.effects,
+                    &BTreeMap::new(),
+                );
                 self.request_protocol_subscription_refresh();
                 return;
             }
             if group_outcome.consumed {
-                self.process_runtime_effects(group_outcome.effects);
+                self.process_protocol_engine_effects_with_completions(
+                    group_outcome.effects,
+                    &BTreeMap::new(),
+                );
                 self.request_protocol_subscription_refresh();
                 return;
             }

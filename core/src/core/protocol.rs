@@ -49,17 +49,21 @@ impl AppCore {
         }
     }
 
-    pub(super) fn process_protocol_engine_retry_results(
+    pub(super) fn process_protocol_engine_retry_batch(
         &mut self,
         reason: &'static str,
-        results: Vec<ProtocolRetryResult>,
+        batch: ProtocolRetryBatch,
     ) {
-        if results.is_empty() {
+        if batch.direct_results.is_empty()
+            && batch.group_result.events.is_empty()
+            && batch.group_result.effects.is_empty()
+            && batch.direct_messages.is_empty()
+        {
             return;
         }
         let mut published = 0usize;
         let mut queued = 0usize;
-        for result in results {
+        for result in batch.direct_results {
             published = published.saturating_add(result.event_ids.len());
             queued = queued.saturating_add(result.queued_targets.len());
             let completions = result
@@ -75,6 +79,22 @@ impl AppCore {
             self.process_protocol_engine_effects_with_completions(result.effects, &completions);
             self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
         }
+        for group_event in batch.group_result.events {
+            self.apply_group_decrypted_event(group_event);
+        }
+        self.process_protocol_engine_effects_with_completions(
+            batch.group_result.effects,
+            &BTreeMap::new(),
+        );
+        for decrypted in batch.direct_messages {
+            self.apply_decrypted_runtime_message_with_metadata(
+                decrypted.sender,
+                decrypted.sender_device,
+                decrypted.conversation_owner,
+                decrypted.content,
+                decrypted.event_id,
+            );
+        }
         self.push_debug_log(
             "appcore.protocol.retry",
             format!("reason={reason} published={published} queued_targets={queued}"),
@@ -86,7 +106,7 @@ impl AppCore {
         let Some(protocol_engine) = self.protocol_engine.as_mut() else {
             return;
         };
-        let results = match protocol_engine.retry_pending_outbound(NdrUnixSeconds(unix_now().get()))
+        let results = match protocol_engine.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
         {
             Ok(results) => results,
             Err(error) => {
@@ -94,7 +114,7 @@ impl AppCore {
                 return;
             }
         };
-        self.process_protocol_engine_retry_results(reason, results);
+        self.process_protocol_engine_retry_batch(reason, results);
     }
 
     pub(super) fn remember_recent_handshake_peer(
@@ -269,9 +289,9 @@ impl AppCore {
     pub(super) fn fetch_recent_messages_for_tracked_peers(&self, now: UnixSeconds) {
         let direct_authors = self.direct_message_subscriptions.tracked_authors();
         let group_authors = self
-            .logged_in
+            .protocol_engine
             .as_ref()
-            .map(|logged_in| logged_in.ndr_runtime.group_known_sender_event_pubkeys())
+            .map(ProtocolEngine::known_group_sender_event_pubkeys)
             .unwrap_or_default();
         for author in direct_authors {
             self.fetch_recent_messages_for_author(author, now, CATCH_UP_LOOKBACK_SECS);
@@ -296,12 +316,30 @@ impl AppCore {
         } else {
             vec![Filter::new().kind(Kind::Metadata).authors(owners.clone())]
         };
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            let mut options = NdrProtocolBackfillOptions::new(now.get());
-            options.owner_pubkeys = owners;
-            options.invite_lookback_seconds = DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS;
-            options.message_lookback_seconds = CATCH_UP_LOOKBACK_SECS;
-            filters.extend(logged_in.ndr_runtime.protocol_backfill_filters(options));
+        if !owners.is_empty() {
+            filters.push(
+                Filter::new()
+                    .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+                    .authors(owners.clone())
+                    .since(Timestamp::from(
+                        now.get()
+                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
+                    ))
+                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
+            );
+        }
+        let invite_authors = self.protocol_invite_author_pubkeys(&owners);
+        if !invite_authors.is_empty() {
+            filters.push(
+                Filter::new()
+                    .kind(Kind::from(INVITE_EVENT_KIND as u16))
+                    .authors(invite_authors)
+                    .since(Timestamp::from(
+                        now.get()
+                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
+                    ))
+                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
+            );
         }
         if let Some(protocol_engine) = self.protocol_engine.as_ref() {
             let message_authors = protocol_engine.known_message_author_pubkeys();
@@ -313,7 +351,7 @@ impl AppCore {
                 ));
             }
         }
-        let private_invite_response_pubkeys = self.private_chat_invite_response_pubkeys();
+        let private_invite_response_pubkeys = self.protocol_invite_response_pubkeys();
         if !private_invite_response_pubkeys.is_empty() {
             filters.push(
                 Filter::new()
@@ -326,6 +364,41 @@ impl AppCore {
             );
         }
         filters
+    }
+
+    fn protocol_invite_author_pubkeys(&self, owners: &[PublicKey]) -> Vec<PublicKey> {
+        let mut authors = Vec::new();
+        for owner in owners {
+            if let Some(known) = self.app_keys.get(&owner.to_hex()) {
+                for device in &known.devices {
+                    if let Ok(pubkey) = PublicKey::parse(&device.identity_pubkey_hex) {
+                        authors.push(pubkey);
+                    }
+                }
+            }
+            if let Some(protocol_engine) = self.protocol_engine.as_ref() {
+                authors.extend(protocol_engine.known_device_identity_pubkeys_for_owner(*owner));
+            }
+        }
+        authors.sort_by_key(|pubkey| pubkey.to_hex());
+        authors.dedup();
+        authors
+    }
+
+    fn protocol_invite_response_pubkeys(&self) -> Vec<PublicKey> {
+        let mut pubkeys = self.private_chat_invite_response_pubkeys();
+        if let Some(local_invite_pubkey) = self.logged_in.as_ref().and_then(|logged_in| {
+            logged_in
+                .local_invite
+                .inviter_ephemeral_public_key
+                .to_nostr()
+                .ok()
+        }) {
+            pubkeys.push(local_invite_pubkey);
+        }
+        pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
+        pubkeys.dedup();
+        pubkeys
     }
 
     pub(super) fn fetch_recent_protocol_state(&mut self) -> bool {
@@ -399,12 +472,11 @@ impl AppCore {
                     })
                 })
             })
-            || self.logged_in.as_ref().is_some_and(|logged_in| {
+            || self.protocol_engine.as_ref().is_some_and(|engine| {
                 tracked_peer_owners.iter().any(|owner_hex| {
                     PublicKey::parse(owner_hex).is_ok_and(|owner_pubkey| {
-                        logged_in
-                            .ndr_runtime
-                            .get_message_push_author_pubkeys(owner_pubkey)
+                        engine
+                            .message_author_pubkeys_for_owner(owner_pubkey)
                             .is_empty()
                     })
                 })
@@ -522,10 +594,10 @@ impl AppCore {
                         .into_iter()
                         .filter_map(|hex| PublicKey::parse(&hex).ok())
                         .collect::<Vec<_>>(),
-                    logged_in
-                        .ndr_runtime
-                        .group_outer_subscription_plan()
-                        .authors,
+                    self.protocol_engine
+                        .as_ref()
+                        .map(ProtocolEngine::known_group_sender_event_pubkeys)
+                        .unwrap_or_default(),
                     self.protocol_engine
                         .as_ref()
                         .map(|engine| engine.known_message_author_pubkeys())
@@ -644,7 +716,7 @@ impl AppCore {
             }
             removed
         };
-        let private_invite_response_pubkeys = self.private_chat_invite_response_pubkeys();
+        let private_invite_response_pubkeys = self.protocol_invite_response_pubkeys();
         let private_invite_subscription_changed = if !private_invite_response_pubkeys.is_empty() {
             let filter = Filter::new()
                 .kind(Kind::from(INVITE_RESPONSE_KIND as u16))

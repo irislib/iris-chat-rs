@@ -244,16 +244,18 @@ impl AppCore {
     ) -> anyhow::Result<()> {
         self.stop_pending_linked_device();
         self.start_session(owner_pubkey, None, device_keys, false, false)?;
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            return Err(anyhow::anyhow!("Link failed."));
-        };
-        let effects = logged_in.ndr_runtime.import_session_state(
-            owner_pubkey,
-            Some(peer_device_id),
-            session_state,
-        )?;
+        let retry_batch = self
+            .protocol_engine
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Link failed."))?
+            .import_session_state(
+                owner_pubkey,
+                Some(peer_device_id),
+                session_state,
+                unix_now(),
+            )?;
         self.mark_mobile_push_dirty();
-        self.process_runtime_effects(effects);
+        self.process_protocol_engine_retry_batch("linked_device_import", retry_batch);
         self.request_protocol_subscription_refresh_forced();
         self.fetch_recent_protocol_state();
         self.persist_best_effort();
@@ -293,7 +295,6 @@ impl AppCore {
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
         self.relay_status_watch_urls.clear();
-        self.setup_user_done.clear();
         self.cached_mobile_push = MobilePushSyncSnapshot::default();
         self.mobile_push_dirty = true;
         self.last_emitted_state = None;
@@ -364,17 +365,22 @@ impl AppCore {
             Some(device_pubkey.to_hex()),
             Some(owner_pubkey),
         )?;
-        let effects = logged_in.ndr_runtime.import_session_state(
-            owner_pubkey,
-            Some(invite.inviter_device_pubkey.to_hex()),
-            session.state,
-        )?;
+        let retry_batch = self
+            .protocol_engine
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Protocol engine is not ready."))?
+            .import_session_state(
+                owner_pubkey,
+                Some(invite.inviter_device_pubkey.to_hex()),
+                session.state,
+                unix_now(),
+            )?;
         let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)?;
         self.upsert_local_app_key_device(owner_pubkey, invite.inviter_device_pubkey.to_nostr()?);
         self.publish_local_app_keys();
-        self.publish_runtime_event(response_event, "runtime", None);
+        self.publish_runtime_event(response_event, "appcore-protocol", None);
         self.mark_mobile_push_dirty();
-        self.process_runtime_effects(effects);
+        self.process_protocol_engine_retry_batch("link_invite_import", retry_batch);
         Ok(())
     }
 
@@ -675,42 +681,22 @@ impl AppCore {
             }
         }
         let device_id = device_pubkey.to_hex();
-        let mut local_invite =
+        let local_invite =
             load_or_create_local_invite(storage.as_ref(), device_pubkey, &device_id, owner_pubkey)?;
-        let ndr_runtime = NdrRuntime::new(
-            device_pubkey,
+        let seed_session_manager = SessionManager::new(
+            NdrOwnerPubkey::from_bytes(owner_pubkey.to_bytes()),
             device_keys.secret_key().to_secret_bytes(),
-            device_id,
-            owner_pubkey,
-            Some(storage),
-            Some(local_invite.clone()),
-        );
-        let mut startup_effects = ndr_runtime.init()?;
-        if let Some(runtime_invite) = ndr_runtime.local_invite() {
-            local_invite = runtime_invite;
-        }
-        ndr_runtime.set_auto_adopt_chat_settings(true);
-
-        for app_keys in self.app_keys.values() {
-            if let (Ok(owner), Some(keys)) = (
-                PublicKey::parse(&app_keys.owner_pubkey_hex),
-                known_app_keys_to_ndr(app_keys),
-            ) {
-                if let Ok(effects) =
-                    ndr_runtime.ingest_app_keys_snapshot(owner, keys, app_keys.created_at_secs)
-                {
-                    startup_effects.extend(effects);
-                }
-            }
-        }
-        ndr_runtime.sync_groups(self.groups.values().cloned().collect())?;
+        )
+        .snapshot();
+        let seed_group_manager =
+            NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner_pubkey.to_bytes())).snapshot();
         let protocol_engine = ProtocolEngine::load_or_seed(
             protocol_engine_storage,
             owner_pubkey,
             &device_keys,
             local_invite.clone(),
-            ndr_runtime.session_manager_snapshot(),
-            ndr_runtime.group_manager_snapshot(),
+            seed_session_manager,
+            seed_group_manager,
         )?;
 
         let authorization_state = self.restored_local_authorization_state(
@@ -733,12 +719,27 @@ impl AppCore {
             device_keys: device_keys.clone(),
             client,
             relay_urls,
-            ndr_runtime,
             local_invite,
             authorization_state,
         });
         self.protocol_engine = Some(protocol_engine);
-        self.process_runtime_effects(startup_effects);
+        let existing_app_keys = self.app_keys.values().cloned().collect::<Vec<_>>();
+        for app_keys in existing_app_keys {
+            if let (Ok(owner), Some(keys)) = (
+                PublicKey::parse(&app_keys.owner_pubkey_hex),
+                known_app_keys_to_ndr(&app_keys),
+            ) {
+                if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+                    if let Ok(batch) = protocol_engine.ingest_app_keys_snapshot(
+                        owner,
+                        keys,
+                        app_keys.created_at_secs,
+                    ) {
+                        self.process_protocol_engine_retry_batch("session_start_app_keys", batch);
+                    }
+                }
+            }
+        }
         match self
             .app_store
             .load_pending_relay_publishes(&owner_pubkey.to_hex())

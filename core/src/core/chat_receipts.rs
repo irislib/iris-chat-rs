@@ -74,19 +74,7 @@ impl AppCore {
                 message_ids.clone(),
                 pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
             ) {
-                if self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "receipt") {
-                    return;
-                }
-            }
-            let Some(logged_in) = self.logged_in.as_ref() else {
-                return;
-            };
-            if let Ok(result) =
-                logged_in
-                    .ndr_runtime
-                    .send_receipt(peer, receipt_type, message_ids, None)
-            {
-                self.process_runtime_effects(result.effects);
+                self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "receipt");
             }
         }
     }
