@@ -158,6 +158,9 @@ impl AppStore {
             .conn
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        #[cfg(target_os = "ios")]
+        conn.execute_batch("PRAGMA optimize;")?;
+        #[cfg(not(target_os = "ios"))]
         conn.execute_batch(
             "PRAGMA wal_checkpoint(TRUNCATE);
              PRAGMA optimize;",

@@ -248,7 +248,7 @@ final class LiveRustAppClient: RustAppClient {
     }
 
     func state() -> AppState {
-        ffi.state()
+        ffi.stateSafely()
     }
 
     func dispatch(action: AppAction) throws {
@@ -307,6 +307,18 @@ final class LiveRustAppClient: RustAppClient {
 
     func listenForUpdates(reconciler: AppReconciler) {
         ffi.listenForUpdatesSafely(reconciler: reconciler)
+    }
+}
+
+private final class SuspendPreparationRunner: @unchecked Sendable {
+    private let rust: RustAppClient
+
+    init(rust: RustAppClient) {
+        self.rust = rust
+    }
+
+    func prepareForSuspend() {
+        rust.prepareForSuspend()
     }
 }
 
@@ -402,6 +414,94 @@ enum AppPaths {
     }
 }
 
+struct AppLaunchRecovery {
+    static let pendingKey = "launchRecovery.pending"
+    static let launchIDKey = "launchRecovery.launchID"
+    static let versionKey = "launchRecovery.version"
+    static let startedAtKey = "launchRecovery.startedAt"
+    static let disabledVersionKey = "launchRecovery.disabledVersion"
+
+    let isRecoveryLaunch: Bool
+    private let appVersion: String
+    private let launchID: String
+    private let userDefaults: UserDefaults?
+
+    static func disabled() -> AppLaunchRecovery {
+        AppLaunchRecovery(
+            isRecoveryLaunch: false,
+            appVersion: "",
+            launchID: "",
+            userDefaults: nil
+        )
+    }
+
+    static func begin(
+        appVersion: String,
+        environment: [String: String],
+        enabled: Bool,
+        userDefaults: UserDefaults = .standard,
+        now: Date = Date()
+    ) -> AppLaunchRecovery {
+        guard enabled else {
+            return disabled()
+        }
+        if environment["IRIS_UI_TEST_RESET"] == "1" {
+            clear(userDefaults: userDefaults)
+        }
+
+        let previousVersion = userDefaults.string(forKey: versionKey)
+        let previousStartedAt = userDefaults.double(forKey: startedAtKey)
+        let previousLaunchWasPending =
+            userDefaults.bool(forKey: pendingKey) &&
+            previousVersion == appVersion &&
+            previousStartedAt > 0 &&
+            now.timeIntervalSince1970 - previousStartedAt < 24 * 60 * 60
+        let disabledForVersion = userDefaults.string(forKey: disabledVersionKey) == appVersion
+        let isRecoveryLaunch = previousLaunchWasPending || disabledForVersion
+        if isRecoveryLaunch {
+            userDefaults.set(appVersion, forKey: disabledVersionKey)
+        }
+
+        let launchID = UUID().uuidString
+        userDefaults.set(true, forKey: pendingKey)
+        userDefaults.set(launchID, forKey: launchIDKey)
+        userDefaults.set(appVersion, forKey: versionKey)
+        userDefaults.set(now.timeIntervalSince1970, forKey: startedAtKey)
+
+        return AppLaunchRecovery(
+            isRecoveryLaunch: isRecoveryLaunch,
+            appVersion: appVersion,
+            launchID: launchID,
+            userDefaults: userDefaults
+        )
+    }
+
+    func markHealthy() {
+        guard let userDefaults else {
+            return
+        }
+        guard userDefaults.string(forKey: Self.launchIDKey) == launchID else {
+            return
+        }
+        userDefaults.removeObject(forKey: Self.pendingKey)
+        userDefaults.removeObject(forKey: Self.launchIDKey)
+        userDefaults.removeObject(forKey: Self.versionKey)
+        userDefaults.removeObject(forKey: Self.startedAtKey)
+        if !isRecoveryLaunch,
+           userDefaults.string(forKey: Self.disabledVersionKey) == appVersion {
+            userDefaults.removeObject(forKey: Self.disabledVersionKey)
+        }
+    }
+
+    static func clear(userDefaults: UserDefaults) {
+        userDefaults.removeObject(forKey: pendingKey)
+        userDefaults.removeObject(forKey: launchIDKey)
+        userDefaults.removeObject(forKey: versionKey)
+        userDefaults.removeObject(forKey: startedAtKey)
+        userDefaults.removeObject(forKey: disabledVersionKey)
+    }
+}
+
 @MainActor
 final class AppManager: ObservableObject {
     private static let downloadedAttachmentCacheLimitBytes = 128 * 1024 * 1024
@@ -422,6 +522,7 @@ final class AppManager: ObservableObject {
     private let desktopNotifications: DesktopNotificationPosting
     private let dataDir: URL
     private let fileManager: FileManager
+    private let launchRecovery: AppLaunchRecovery
 #if os(macOS)
     let nearbyBitchat = MacBitchatNearbyService()
 #endif
@@ -462,6 +563,11 @@ final class AppManager: ObservableObject {
         }
         try? fileManager.createDirectory(at: resolvedDataDir, withIntermediateDirectories: true)
 
+        let resolvedLaunchRecovery = AppLaunchRecovery.begin(
+            appVersion: appVersion,
+            environment: environment,
+            enabled: rust == nil && AppPaths.testRunId(environment: environment) == nil
+        )
         let resolvedRust = rust ?? LiveRustAppClient(dataDir: resolvedDataDir.path, appVersion: appVersion)
         let initialState = resolvedRust.state()
 
@@ -475,6 +581,7 @@ final class AppManager: ObservableObject {
         self.dataDir = resolvedDataDir
         self.state = initialState
         self.lastRevApplied = initialState.rev
+        self.launchRecovery = resolvedLaunchRecovery
 
         resolvedRust.listenForUpdates(reconciler: reconciler)
         if AppPaths.testRunId(environment: environment) == nil {
@@ -532,8 +639,24 @@ final class AppManager: ObservableObject {
         }
 #endif
 
+        if launchRecovery.isRecoveryLaunch {
+            storedAccountBundle = resolvedSecretStore.load()
+            bootstrapInFlight = false
+            appendClientDebugLog(
+                category: "launch.recovery",
+                detail: "previous launch did not become healthy; skipped automatic restore"
+            )
+            Task { @MainActor in
+                showToast("Iris opened safely. Restore your profile if needed.")
+            }
+        } else {
+            Task {
+                restorePersistedSession()
+            }
+        }
         Task {
-            restorePersistedSession()
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            launchRecovery.markHealthy()
         }
         Task {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
@@ -952,10 +1075,10 @@ final class AppManager: ObservableObject {
             nearbyIris.setLanVisible(false)
         }
 
-        let rust = rust
+        let runner = SuspendPreparationRunner(rust: rust)
         let taskID = UIApplication.shared.beginBackgroundTask(withName: "IrisSuspend") {}
         DispatchQueue.global(qos: .utility).async {
-            rust.prepareForSuspend()
+            runner.prepareForSuspend()
             guard taskID != .invalid else {
                 return
             }

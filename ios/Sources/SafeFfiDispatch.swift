@@ -30,6 +30,22 @@ enum SafeFfiDispatchError: LocalizedError {
 }
 
 extension FfiApp {
+    func stateSafely() -> AppState {
+        do {
+            uniffiEnsureIrisChatCoreInitialized()
+            var callStatus = makeRustCallStatus()
+            let buffer = uniffi_iris_chat_core_fn_method_ffiapp_state(
+                self.uniffiClonePointer(),
+                &callStatus
+            )
+            try checkRustCallStatus(callStatus)
+            return try FfiConverterTypeAppState_lift(buffer)
+        } catch {
+            logSafeFfiFailure("ffiapp.state", error)
+            return fallbackAppState(toast: "Iris needs restart. Copy support bundle in Settings.")
+        }
+    }
+
     func dispatchSafely(action: AppAction) throws {
         uniffiEnsureIrisChatCoreInitialized()
 
@@ -268,6 +284,64 @@ private func ffiInt32(
         logSafeFfiFailure(label, error)
         return fallback
     }
+}
+
+private func fallbackAppState(toast: String?) -> AppState {
+    AppState(
+        rev: 0,
+        router: Router(defaultScreen: .welcome, screenStack: []),
+        account: nil,
+        deviceRoster: nil,
+        busy: BusyState(
+            creatingAccount: false,
+            restoringSession: false,
+            linkingDevice: false,
+            creatingChat: false,
+            creatingGroup: false,
+            sendingMessage: false,
+            updatingRoster: false,
+            updatingGroup: false,
+            creatingInvite: false,
+            acceptingInvite: false,
+            syncingNetwork: false,
+            uploadingAttachment: false
+        ),
+        chatList: [],
+        currentChat: nil,
+        groupDetails: nil,
+        publicInvite: nil,
+        linkDevice: nil,
+        networkStatus: nil,
+        mobilePush: MobilePushSyncSnapshot(
+            ownerPubkeyHex: nil,
+            messageAuthorPubkeys: [],
+            inviteResponsePubkeys: [],
+            sessions: []
+        ),
+        preferences: PreferencesSnapshot(
+            sendTypingIndicators: true,
+            sendReadReceipts: true,
+            desktopNotificationsEnabled: true,
+            inviteAcceptanceNotificationsEnabled: true,
+            startupAtLoginEnabled: false,
+            nearbyBluetoothEnabled: false,
+            nearbyLanEnabled: false,
+            nostrRelayUrls: [
+                "wss://relay.damus.io",
+                "wss://nos.lol",
+                "wss://relay.primal.net",
+                "wss://relay.snort.social",
+                "wss://temp.iris.to"
+            ],
+            imageProxyEnabled: true,
+            imageProxyUrl: "https://imgproxy.iris.to",
+            imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
+            imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
+            mutedChatIds: [],
+            mobilePushServerUrl: ""
+        ),
+        toast: toast
+    )
 }
 
 @discardableResult

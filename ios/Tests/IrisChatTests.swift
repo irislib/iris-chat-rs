@@ -291,7 +291,88 @@ private func restoreUserDefault(_ previousValue: Any?, forKey key: String) {
     }
 }
 
+private func makeIsolatedUserDefaults() -> (defaults: UserDefaults, suiteName: String) {
+    let suiteName = "IrisChatTests.\(UUID().uuidString)"
+    let defaults = UserDefaults(suiteName: suiteName)!
+    defaults.removePersistentDomain(forName: suiteName)
+    return (defaults, suiteName)
+}
+
 final class IrisChatTests: XCTestCase {
+    func testAppLaunchRecoveryMarksFirstLaunchHealthy() {
+        let (defaults, suiteName) = makeIsolatedUserDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let recovery = AppLaunchRecovery.begin(
+            appVersion: "3.0.18",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+
+        XCTAssertFalse(recovery.isRecoveryLaunch)
+        XCTAssertTrue(defaults.bool(forKey: AppLaunchRecovery.pendingKey))
+
+        recovery.markHealthy()
+
+        XCTAssertFalse(defaults.bool(forKey: AppLaunchRecovery.pendingKey))
+        XCTAssertNil(defaults.string(forKey: AppLaunchRecovery.launchIDKey))
+        XCTAssertNil(defaults.string(forKey: AppLaunchRecovery.disabledVersionKey))
+    }
+
+    func testAppLaunchRecoverySkipsAutoRestoreAfterFailedLaunch() {
+        let (defaults, suiteName) = makeIsolatedUserDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        _ = AppLaunchRecovery.begin(
+            appVersion: "3.0.18",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        let recovery = AppLaunchRecovery.begin(
+            appVersion: "3.0.18",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_005)
+        )
+
+        XCTAssertTrue(recovery.isRecoveryLaunch)
+        XCTAssertEqual(defaults.string(forKey: AppLaunchRecovery.disabledVersionKey), "3.0.18")
+    }
+
+    func testAppLaunchRecoveryDoesNotCarryDisabledVersionAcrossUpdates() {
+        let (defaults, suiteName) = makeIsolatedUserDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        _ = AppLaunchRecovery.begin(
+            appVersion: "3.0.18",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_000)
+        )
+        _ = AppLaunchRecovery.begin(
+            appVersion: "3.0.18",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_005)
+        )
+        let nextVersion = AppLaunchRecovery.begin(
+            appVersion: "3.0.19",
+            environment: [:],
+            enabled: true,
+            userDefaults: defaults,
+            now: Date(timeIntervalSince1970: 1_010)
+        )
+
+        XCTAssertFalse(nextVersion.isRecoveryLaunch)
+    }
+
 #if os(iOS)
     @MainActor
     func testNearbyLanDoesNotAutoStartBeforeLocalNetworkGrant() async throws {

@@ -70,78 +70,13 @@ pub struct FfiDesktopNearby {
 impl FfiApp {
     #[uniffi::constructor]
     pub fn new(data_dir: String, _keychain_group: String, _app_version: String) -> Arc<Self> {
-        let (update_tx, update_rx) = flume::unbounded();
-        let (core_tx, core_rx) = flume::unbounded();
-        let shared_state = Arc::new(RwLock::new(AppState::empty()));
-
-        let core_tx_for_thread = core_tx.clone();
-        let shared_for_thread = shared_state.clone();
-        let update_tx_for_error = update_tx.clone();
-        match AppCore::try_new(update_tx, core_tx_for_thread, data_dir, shared_for_thread) {
-            Ok(mut core) => {
-                let spawn_result =
-                    thread::Builder::new()
-                        .name("iris-core".to_string())
-                        .spawn(move || {
-                            // Drain whatever is already queued and process it as one batch so
-                            // a flurry of relay events + user actions produces a single UI
-                            // update instead of N. Without this, tapping a chat while a
-                            // relay backlog drains can take seconds because OpenChat sits
-                            // behind every queued event and the UI recomposes between each.
-                            while let Ok(first) = core_rx.recv() {
-                                let mut batch = Vec::with_capacity(8);
-                                batch.push(first);
-                                while let Ok(next) = core_rx.try_recv() {
-                                    batch.push(next);
-                                }
-                                let batch_size = batch.len();
-                                let t0 = crate::perflog::now_ms();
-                                crate::perflog!("core.batch.start size={batch_size}");
-                                match catch_core_batch(|| {
-                                    handle_core_batch_responsive(&mut core, batch)
-                                }) {
-                                    Ok(true) => {}
-                                    Ok(false) => break,
-                                    Err(error) => {
-                                        core.mark_core_panic(error);
-                                        break;
-                                    }
-                                }
-                                crate::perflog!(
-                                    "core.batch.end size={batch_size} elapsed_ms={}",
-                                    crate::perflog::now_ms().saturating_sub(t0)
-                                );
-                            }
-                        });
-                if let Err(error) = spawn_result {
-                    let mut state = AppState::empty();
-                    state.toast = Some(format!("Iris could not start: {error}"));
-                    state.rev = 1;
-                    match shared_state.write() {
-                        Ok(mut slot) => *slot = state.clone(),
-                        Err(poison) => *poison.into_inner() = state.clone(),
-                    }
-                    let _ = update_tx_for_error.send(AppUpdate::FullState(state));
-                }
-            }
-            Err(error) => {
-                let mut state = AppState::empty();
-                state.toast = Some(error.to_string());
-                state.rev = 1;
-                match shared_state.write() {
-                    Ok(mut slot) => *slot = state.clone(),
-                    Err(poison) => *poison.into_inner() = state.clone(),
-                }
-                let _ = update_tx_for_error.send(AppUpdate::FullState(state));
-            }
+        match panic::catch_unwind(AssertUnwindSafe(|| new_ffi_app_inner(data_dir))) {
+            Ok(app) => app,
+            Err(payload) => ffi_app_failure(format!(
+                "Iris could not start: {}",
+                panic_payload_to_string(payload)
+            )),
         }
-
-        Arc::new(Self {
-            core_tx,
-            update_rx,
-            listening: AtomicBool::new(false),
-            shared_state,
-        })
     }
 
     pub fn state(&self) -> AppState {
@@ -409,6 +344,96 @@ impl FfiDesktopNearby {
         self.service
             .publish(event_id, kind, created_at_secs, event_json);
     }
+}
+
+fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
+    let (update_tx, update_rx) = flume::unbounded();
+    let (core_tx, core_rx) = flume::unbounded();
+    let shared_state = Arc::new(RwLock::new(AppState::empty()));
+
+    let core_tx_for_thread = core_tx.clone();
+    let shared_for_thread = shared_state.clone();
+    let update_tx_for_error = update_tx.clone();
+    match AppCore::try_new(update_tx, core_tx_for_thread, data_dir, shared_for_thread) {
+        Ok(mut core) => {
+            let spawn_result =
+                thread::Builder::new()
+                    .name("iris-core".to_string())
+                    .spawn(move || {
+                        // Drain whatever is already queued and process it as one batch so
+                        // a flurry of relay events + user actions produces a single UI
+                        // update instead of N. Without this, tapping a chat while a
+                        // relay backlog drains can take seconds because OpenChat sits
+                        // behind every queued event and the UI recomposes between each.
+                        while let Ok(first) = core_rx.recv() {
+                            let mut batch = Vec::with_capacity(8);
+                            batch.push(first);
+                            while let Ok(next) = core_rx.try_recv() {
+                                batch.push(next);
+                            }
+                            let batch_size = batch.len();
+                            let t0 = crate::perflog::now_ms();
+                            crate::perflog!("core.batch.start size={batch_size}");
+                            match catch_core_batch(|| {
+                                handle_core_batch_responsive(&mut core, batch)
+                            }) {
+                                Ok(true) => {}
+                                Ok(false) => break,
+                                Err(error) => {
+                                    core.mark_core_panic(error);
+                                    break;
+                                }
+                            }
+                            crate::perflog!(
+                                "core.batch.end size={batch_size} elapsed_ms={}",
+                                crate::perflog::now_ms().saturating_sub(t0)
+                            );
+                        }
+                    });
+            if let Err(error) = spawn_result {
+                let mut state = AppState::empty();
+                state.toast = Some(format!("Iris could not start: {error}"));
+                state.rev = 1;
+                match shared_state.write() {
+                    Ok(mut slot) => *slot = state.clone(),
+                    Err(poison) => *poison.into_inner() = state.clone(),
+                }
+                let _ = update_tx_for_error.send(AppUpdate::FullState(state));
+            }
+        }
+        Err(error) => {
+            let mut state = AppState::empty();
+            state.toast = Some(error.to_string());
+            state.rev = 1;
+            match shared_state.write() {
+                Ok(mut slot) => *slot = state.clone(),
+                Err(poison) => *poison.into_inner() = state.clone(),
+            }
+            let _ = update_tx_for_error.send(AppUpdate::FullState(state));
+        }
+    }
+
+    Arc::new(FfiApp {
+        core_tx,
+        update_rx,
+        listening: AtomicBool::new(false),
+        shared_state,
+    })
+}
+
+fn ffi_app_failure(message: String) -> Arc<FfiApp> {
+    let (_update_tx, update_rx) = flume::unbounded();
+    let (core_tx, _core_rx) = flume::unbounded();
+    let mut state = AppState::empty();
+    state.toast = Some(message);
+    state.rev = 1;
+    let shared_state = Arc::new(RwLock::new(state));
+    Arc::new(FfiApp {
+        core_tx,
+        update_rx,
+        listening: AtomicBool::new(false),
+        shared_state,
+    })
 }
 
 fn handle_core_batch_responsive(core: &mut AppCore, messages: Vec<CoreMsg>) -> bool {

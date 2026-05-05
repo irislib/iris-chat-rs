@@ -71,6 +71,17 @@ impl AppCore {
         let snapshot = self.build_runtime_debug_snapshot();
         let path = self.debug_snapshot_path();
         let data_dir = self.data_dir.clone();
+
+        #[cfg(target_os = "ios")]
+        {
+            if let Ok(bytes) = serde_json::to_vec_pretty(&snapshot) {
+                let _ = fs::create_dir_all(&data_dir);
+                let _ = fs::write(path, bytes);
+            }
+            return;
+        }
+
+        #[cfg(not(target_os = "ios"))]
         self.runtime.spawn_blocking(move || {
             if let Ok(bytes) = serde_json::to_vec_pretty(&snapshot) {
                 let _ = fs::create_dir_all(&data_dir);
