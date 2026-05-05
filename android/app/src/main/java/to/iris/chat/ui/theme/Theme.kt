@@ -17,11 +17,11 @@ private val ColorError = androidx.compose.ui.graphics.Color(0xFFF4212E)
 
 private val LightColors =
     lightColorScheme(
-        primary = IrisBlack,
+        primary = IrisPurple,
         onPrimary = IrisWhite,
         secondary = IrisMutedLight,
         onSecondary = IrisWhite,
-        tertiary = Sky500,
+        tertiary = IrisAccent,
         surface = IrisLightSurface,
         onSurface = IrisBlack,
         surfaceVariant = IrisLightSurfaceAlt,

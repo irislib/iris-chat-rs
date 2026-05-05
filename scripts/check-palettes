@@ -1,0 +1,208 @@
+#!/usr/bin/env python3
+
+import json
+import sys
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+PALETTE = json.loads((ROOT / "docs/iris-palette.json").read_text())
+
+
+def rgb(token):
+    value = token["rgb"]
+    if not isinstance(value, str) or len(value) != 7 or not value.startswith("#"):
+        raise ValueError(f"invalid rgb token: {value!r}")
+    return value.upper()
+
+
+def alpha(token):
+    value = float(token["alpha"])
+    if value < 0 or value > 1:
+        raise ValueError(f"invalid alpha token: {value!r}")
+    return value
+
+
+def argb(token):
+    a = int(alpha(token) * 255 + 0.5)
+    return f"{a:02X}{rgb(token)[1:]}"
+
+
+def swift_rgb(token):
+    return f"0x{rgb(token)[1:]}"
+
+
+def alpha_text(token):
+    return f"{alpha(token):g}"
+
+
+def css_color(token):
+    value = rgb(token)
+    if alpha(token) >= 1:
+        return value
+    r = int(value[1:3], 16)
+    g = int(value[3:5], 16)
+    b = int(value[5:7], 16)
+    return f"rgba({r}, {g}, {b}, {alpha_text(token)})"
+
+
+def read(path):
+    return (ROOT / path).read_text()
+
+
+def assert_contains(path, expectations):
+    text = read(path)
+    missing = [(name, snippet) for name, snippet in expectations if snippet not in text]
+    return [(path, name, snippet) for name, snippet in missing]
+
+
+light = PALETTE["light"]
+dark = PALETTE["dark"]
+
+checks = []
+
+checks += assert_contains(
+    "ios/Sources/IrisChrome.swift",
+    [
+        ("light.background", f"background: Color(hex: {swift_rgb(light['background'])})"),
+        ("light.panel", f"panel: Color(hex: {swift_rgb(light['panel'])})"),
+        ("light.panelAlt", f"panelAlt: Color(hex: {swift_rgb(light['panelAlt'])})"),
+        ("light.border", f"border: Color.black.opacity({alpha_text(light['border'])})"),
+        ("light.toolbar", f"toolbar: Color(hex: {swift_rgb(light['toolbar'])}).opacity({alpha_text(light['toolbar'])})"),
+        ("light.bubbleMine", f"bubbleMine: Color(hex: {swift_rgb(light['bubbleMine'])})"),
+        ("light.bubbleTheirs", f"bubbleTheirs: Color(hex: {swift_rgb(light['bubbleTheirs'])})"),
+        ("light.accent", f"accent: Color(hex: {swift_rgb(light['accent'])})"),
+        ("light.accentAlt", f"accentAlt: Color(hex: {swift_rgb(light['accentAlt'])})"),
+        ("light.textPrimary", f"textPrimary: Color(hex: {swift_rgb(light['textPrimary'])})"),
+        ("light.muted", f"muted: Color(hex: {swift_rgb(light['muted'])})"),
+        ("light.onBubbleTheirs", f"onBubbleTheirs: Color(hex: {swift_rgb(light['onBubbleTheirs'])})"),
+        ("dark.background", f"background: Color(hex: {swift_rgb(dark['background'])})"),
+        ("dark.panel", f"panel: Color(hex: {swift_rgb(dark['panel'])})"),
+        ("dark.panelAlt", f"panelAlt: Color(hex: {swift_rgb(dark['panelAlt'])})"),
+        ("dark.border", f"border: Color.white.opacity({alpha_text(dark['border'])})"),
+        ("dark.toolbar", f"toolbar: Color(hex: {swift_rgb(dark['toolbar'])}).opacity({alpha_text(dark['toolbar'])})"),
+        ("dark.bubbleMine", f"bubbleMine: Color(hex: {swift_rgb(dark['bubbleMine'])})"),
+        ("dark.bubbleTheirs", f"bubbleTheirs: Color(hex: {swift_rgb(dark['bubbleTheirs'])})"),
+        ("dark.accent", f"accent: Color(hex: {swift_rgb(dark['accent'])})"),
+        ("dark.accentAlt", f"accentAlt: Color(hex: {swift_rgb(dark['accentAlt'])})"),
+        ("dark.muted", f"muted: Color(hex: {swift_rgb(dark['muted'])})"),
+        ("dark.textPrimary", "textPrimary: .white"),
+        ("onAccent", "onAccent: .white"),
+        ("onBubbleMine", "onBubbleMine: .white"),
+    ],
+)
+
+checks += assert_contains(
+    "android/app/src/main/java/to/iris/chat/ui/theme/Color.kt",
+    [
+        ("accent", f"val IrisPurple = Color(0x{argb(light['accent'])})"),
+        ("dark.background", f"val IrisNightBackground = Color(0x{argb(dark['background'])})"),
+        ("dark.panel", f"val IrisNightSurface = Color(0x{argb(dark['panel'])})"),
+        ("dark.panelAlt", f"val IrisNightSurfaceAlt = Color(0x{argb(dark['panelAlt'])})"),
+        ("dark.border", f"val IrisNightBorder = Color(0x{argb(dark['border'])})"),
+        ("dark.toolbar", f"val IrisNightToolbar = Color(0x{argb(dark['toolbar'])})"),
+        ("dark.bubbleMine", f"val IrisNightBubbleMine = Color(0x{argb(dark['bubbleMine'])})"),
+        ("dark.bubbleTheirs", f"val IrisNightBubbleTheirs = Color(0x{argb(dark['bubbleTheirs'])})"),
+        ("light.background", f"val IrisLightBackground = Color(0x{argb(light['background'])})"),
+        ("light.panel", f"val IrisLightSurface = Color(0x{argb(light['panel'])})"),
+        ("light.panelAlt", f"val IrisLightSurfaceAlt = Color(0x{argb(light['panelAlt'])})"),
+        ("light.border", f"val IrisLightBorder = Color(0x{argb(light['border'])})"),
+        ("light.toolbar", f"val IrisLightToolbar = Color(0x{argb(light['toolbar'])})"),
+        ("light.bubbleMine", "val IrisLightBubbleMine = IrisPurple"),
+        ("light.bubbleTheirs", f"val IrisLightBubbleTheirs = Color(0x{argb(light['bubbleTheirs'])})"),
+        ("accentAlt", f"val IrisAccent = Color(0x{argb(light['accentAlt'])})"),
+        ("textPrimaryLight", f"val IrisBlack = Color(0x{argb(light['textPrimary'])})"),
+        ("white", f"val IrisWhite = Color(0x{argb(light['onAccent'])})"),
+        ("mutedLight", f"val IrisMutedLight = Color(0x{argb(light['muted'])})"),
+        ("mutedDark", f"val IrisMutedDark = Color(0x{argb(dark['muted'])})"),
+    ],
+)
+
+checks += assert_contains(
+    "windows/IrisChat/App.xaml",
+    [
+        ("dark.background", f'x:Key="Background" Color="#{argb(dark["background"])}"'),
+        ("dark.panel", f'x:Key="Panel" Color="#{argb(dark["panel"])}"'),
+        ("dark.panelAlt", f'x:Key="PanelAlt" Color="#{argb(dark["panelAlt"])}"'),
+        ("dark.border", f'x:Key="Border" Color="#{argb(dark["border"])}"'),
+        ("dark.toolbar", f'x:Key="Toolbar" Color="#{argb(dark["toolbar"])}"'),
+        ("dark.bubbleMine", f'x:Key="BubbleMine" Color="#{argb(dark["bubbleMine"])}"'),
+        ("dark.bubbleTheirs", f'x:Key="BubbleTheirs" Color="#{argb(dark["bubbleTheirs"])}"'),
+        ("dark.accent", f'x:Key="Accent" Color="#{argb(dark["accent"])}"'),
+        ("dark.accentAlt", f'x:Key="AccentAlt" Color="#{argb(dark["accentAlt"])}"'),
+        ("dark.textPrimary", f'x:Key="TextPrimary" Color="#{argb(dark["textPrimary"])}"'),
+        ("dark.muted", f'x:Key="TextMuted" Color="#{argb(dark["muted"])}"'),
+        ("dark.onAccent", f'x:Key="OnAccent" Color="#{argb(dark["onAccent"])}"'),
+    ],
+)
+
+checks += assert_contains(
+    "windows/IrisChat/App.xaml.cs",
+    [
+        ("light.background", f'"#{argb(light["background"])}"'),
+        ("light.panel", f'"#{argb(light["panel"])}"'),
+        ("light.panelAlt", f'"#{argb(light["panelAlt"])}"'),
+        ("light.border", f'"#{argb(light["border"])}"'),
+        ("light.toolbar", f'"#{argb(light["toolbar"])}"'),
+        ("light.bubbleMine", f'"#{argb(light["bubbleMine"])}"'),
+        ("light.bubbleTheirs", f'"#{argb(light["bubbleTheirs"])}"'),
+        ("light.accent", f'"#{argb(light["accent"])}"'),
+        ("light.accentAlt", f'"#{argb(light["accentAlt"])}"'),
+        ("light.textPrimary", f'"#{argb(light["textPrimary"])}"'),
+        ("light.muted", f'"#{argb(light["muted"])}"'),
+        ("light.onAccent", f'"#{argb(light["onAccent"])}"'),
+        ("dark.background", f'"#{argb(dark["background"])}"'),
+        ("dark.panel", f'"#{argb(dark["panel"])}"'),
+        ("dark.panelAlt", f'"#{argb(dark["panelAlt"])}"'),
+        ("dark.border", f'"#{argb(dark["border"])}"'),
+        ("dark.toolbar", f'"#{argb(dark["toolbar"])}"'),
+        ("dark.bubbleMine", f'"#{argb(dark["bubbleMine"])}"'),
+        ("dark.bubbleTheirs", f'"#{argb(dark["bubbleTheirs"])}"'),
+        ("dark.accent", f'"#{argb(dark["accent"])}"'),
+        ("dark.accentAlt", f'"#{argb(dark["accentAlt"])}"'),
+        ("dark.textPrimary", f'"#{argb(dark["textPrimary"])}"'),
+        ("dark.muted", f'"#{argb(dark["muted"])}"'),
+        ("dark.onAccent", f'"#{argb(dark["onAccent"])}"'),
+    ],
+)
+
+checks += assert_contains(
+    "linux/src/main.rs",
+    [
+        ("light.background", f'background: "{css_color(light["background"])}"'),
+        ("light.panel", f'panel: "{css_color(light["panel"])}"'),
+        ("light.panelAlt", f'panel_alt: "{css_color(light["panelAlt"])}"'),
+        ("light.border", f'border: "{css_color(light["border"])}"'),
+        ("light.toolbar", f'toolbar: "{css_color(light["toolbar"])}"'),
+        ("light.bubbleMine", f'bubble_mine: "{css_color(light["bubbleMine"])}"'),
+        ("light.bubbleTheirs", f'bubble_theirs: "{css_color(light["bubbleTheirs"])}"'),
+        ("light.accent", f'accent: "{css_color(light["accent"])}"'),
+        ("light.accentAlt", f'accent_alt: "{css_color(light["accentAlt"])}"'),
+        ("light.textPrimary", f'text_primary: "{css_color(light["textPrimary"])}"'),
+        ("light.muted", f'muted: "{css_color(light["muted"])}"'),
+        ("light.onAccent", f'on_accent: "{css_color(light["onAccent"])}"'),
+        ("light.onBubbleMine", f'on_bubble_mine: "{css_color(light["onBubbleMine"])}"'),
+        ("light.onBubbleTheirs", f'on_bubble_theirs: "{css_color(light["onBubbleTheirs"])}"'),
+        ("dark.background", f'background: "{css_color(dark["background"])}"'),
+        ("dark.panel", f'panel: "{css_color(dark["panel"])}"'),
+        ("dark.panelAlt", f'panel_alt: "{css_color(dark["panelAlt"])}"'),
+        ("dark.border", f'border: "{css_color(dark["border"])}"'),
+        ("dark.toolbar", f'toolbar: "{css_color(dark["toolbar"])}"'),
+        ("dark.bubbleMine", f'bubble_mine: "{css_color(dark["bubbleMine"])}"'),
+        ("dark.bubbleTheirs", f'bubble_theirs: "{css_color(dark["bubbleTheirs"])}"'),
+        ("dark.accent", f'accent: "{css_color(dark["accent"])}"'),
+        ("dark.accentAlt", f'accent_alt: "{css_color(dark["accentAlt"])}"'),
+        ("dark.textPrimary", f'text_primary: "{css_color(dark["textPrimary"])}"'),
+        ("dark.muted", f'muted: "{css_color(dark["muted"])}"'),
+        ("dark.onAccent", f'on_accent: "{css_color(dark["onAccent"])}"'),
+        ("dark.onBubbleMine", f'on_bubble_mine: "{css_color(dark["onBubbleMine"])}"'),
+        ("dark.onBubbleTheirs", f'on_bubble_theirs: "{css_color(dark["onBubbleTheirs"])}"'),
+    ],
+)
+
+if checks:
+    for path, name, snippet in checks:
+        print(f"{path}: missing {name}: {snippet}", file=sys.stderr)
+    sys.exit(1)
+
+print("Palette parity passed.")

@@ -9,19 +9,20 @@ val Sky200 = Color(0xFFBAE6FD)
 val Sand50 = Color(0xFFF8FAFC)
 val IrisPurple = Color(0xFF702ACE)
 
-val IrisNightBackground = Color(0xFF030918)
-val IrisNightSurface = Color(0xFF1B1C48)
-val IrisNightSurfaceAlt = Color(0xFF121212)
-val IrisNightBorder = Color(0x33FFFFFF)
-val IrisNightToolbar = Color(0xD9030918)
+// Keep platform palette tokens in sync with ios/Sources/IrisChrome.swift.
+val IrisNightBackground = Color(0xFF101010)
+val IrisNightSurface = Color(0xFF242424)
+val IrisNightSurfaceAlt = Color(0xFF343434)
+val IrisNightBorder = Color(0x1FFFFFFF)
+val IrisNightToolbar = Color(0xF5181818)
 val IrisNightBubbleMine = Color(0xFF702ACE)
-val IrisNightBubbleTheirs = Color(0xFF2A3C5E)
+val IrisNightBubbleTheirs = Color(0xFF3A3A3A)
 
 val IrisLightBackground = Color(0xFFFFFFFF)
 val IrisLightSurface = Color(0xFFF7F9FA)
 val IrisLightSurfaceAlt = Color(0xFFE1E8ED)
 val IrisLightBorder = Color(0x14000000)
-val IrisLightToolbar = Color(0xF2F7F9FA)
+val IrisLightToolbar = Color(0xF5F7F9FA)
 val IrisLightBubbleMine = IrisPurple
 val IrisLightBubbleTheirs = Color(0xFFF7F9FA)
 

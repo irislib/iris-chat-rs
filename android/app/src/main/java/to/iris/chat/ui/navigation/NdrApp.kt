@@ -2,11 +2,13 @@ package to.iris.chat.ui.navigation
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
@@ -144,7 +146,12 @@ fun NdrApp(
     }
 
     CompositionLocalProvider(LocalIrisOfflineBannerState provides offlineBannerState) {
-        Box {
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(MaterialTheme.colorScheme.background),
+        ) {
             when (bootstrapState) {
                 AccountBootstrapState.Loading -> {
                     SplashScreen(

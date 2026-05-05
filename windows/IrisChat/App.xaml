@@ -4,7 +4,7 @@
              xmlns:local="clr-namespace:IrisChat">
     <Application.Resources>
         <ResourceDictionary>
-            <!-- iOS dark palette (IrisPalette.dark in IrisChrome.swift) -->
+            <!-- Default iOS dark palette; App.xaml.cs applies light values on light Windows themes. -->
             <SolidColorBrush x:Key="Background" Color="#FF101010" />
             <SolidColorBrush x:Key="Panel" Color="#FF242424" />
             <SolidColorBrush x:Key="PanelAlt" Color="#FF343434" />

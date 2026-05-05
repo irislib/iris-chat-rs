@@ -10,6 +10,58 @@ use gtk::glib;
 
 const APP_ID: &str = "to.iris.chat";
 
+#[derive(Clone, Copy)]
+struct GtkPalette {
+    background: &'static str,
+    panel: &'static str,
+    panel_alt: &'static str,
+    border: &'static str,
+    toolbar: &'static str,
+    bubble_mine: &'static str,
+    bubble_theirs: &'static str,
+    accent: &'static str,
+    accent_alt: &'static str,
+    text_primary: &'static str,
+    muted: &'static str,
+    on_accent: &'static str,
+    on_bubble_mine: &'static str,
+    on_bubble_theirs: &'static str,
+}
+
+const IRIS_LIGHT: GtkPalette = GtkPalette {
+    background: "#FFFFFF",
+    panel: "#F7F9FA",
+    panel_alt: "#E1E8ED",
+    border: "rgba(0, 0, 0, 0.08)",
+    toolbar: "rgba(247, 249, 250, 0.96)",
+    bubble_mine: "#702ACE",
+    bubble_theirs: "#F7F9FA",
+    accent: "#702ACE",
+    accent_alt: "#DB8216",
+    text_primary: "#0F1419",
+    muted: "#536471",
+    on_accent: "#FFFFFF",
+    on_bubble_mine: "#FFFFFF",
+    on_bubble_theirs: "#0F1419",
+};
+
+const IRIS_DARK: GtkPalette = GtkPalette {
+    background: "#101010",
+    panel: "#242424",
+    panel_alt: "#343434",
+    border: "rgba(255, 255, 255, 0.12)",
+    toolbar: "rgba(24, 24, 24, 0.96)",
+    bubble_mine: "#702ACE",
+    bubble_theirs: "#3A3A3A",
+    accent: "#702ACE",
+    accent_alt: "#DB8216",
+    text_primary: "#FFFFFF",
+    muted: "#D1D5DB",
+    on_accent: "#FFFFFF",
+    on_bubble_mine: "#FFFFFF",
+    on_bubble_theirs: "#FFFFFF",
+};
+
 const CUSTOM_CSS: &str = r#"
 .bubble-in,
 .bubble-out {
@@ -18,12 +70,12 @@ const CUSTOM_CSS: &str = r#"
     min-height: 0;
 }
 .bubble-in {
-    background-color: alpha(@view_fg_color, 0.08);
-    color: @view_fg_color;
+    background-color: @iris_bubble_theirs;
+    color: @iris_on_bubble_theirs;
 }
 .bubble-out {
-    background-color: @accent_bg_color;
-    color: @accent_fg_color;
+    background-color: @iris_bubble_mine;
+    color: @iris_on_bubble_mine;
 }
 .bubble-out .dim-label,
 .bubble-in .dim-label {
@@ -79,7 +131,14 @@ fn bootstrap_session_bus() {
 
 fn install_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(CUSTOM_CSS);
+    let style_manager = adw::StyleManager::default();
+    load_iris_css(&provider, style_manager.is_dark());
+    {
+        let provider = provider.clone();
+        style_manager.connect_dark_notify(move |manager| {
+            load_iris_css(&provider, manager.is_dark());
+        });
+    }
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -87,4 +146,119 @@ fn install_css() {
             gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
         );
     }
+}
+
+fn load_iris_css(provider: &gtk::CssProvider, dark: bool) {
+    let palette = if dark { IRIS_DARK } else { IRIS_LIGHT };
+    let css = format!("{}\n{}", palette_css(palette), CUSTOM_CSS);
+    provider.load_from_string(&css);
+}
+
+fn palette_css(palette: GtkPalette) -> String {
+    format!(
+        r#"
+@define-color iris_background {background};
+@define-color iris_panel {panel};
+@define-color iris_panel_alt {panel_alt};
+@define-color iris_border {border};
+@define-color iris_toolbar {toolbar};
+@define-color iris_bubble_mine {bubble_mine};
+@define-color iris_bubble_theirs {bubble_theirs};
+@define-color iris_accent {accent};
+@define-color iris_accent_alt {accent_alt};
+@define-color iris_text_primary {text_primary};
+@define-color iris_muted {muted};
+@define-color iris_on_accent {on_accent};
+@define-color iris_on_bubble_mine {on_bubble_mine};
+@define-color iris_on_bubble_theirs {on_bubble_theirs};
+
+@define-color window_bg_color {background};
+@define-color window_fg_color {text_primary};
+@define-color view_bg_color {background};
+@define-color view_fg_color {text_primary};
+@define-color headerbar_bg_color {toolbar};
+@define-color headerbar_fg_color {text_primary};
+@define-color card_bg_color {panel};
+@define-color card_fg_color {text_primary};
+@define-color accent_bg_color {accent};
+@define-color accent_fg_color {on_accent};
+@define-color accent_color {accent};
+
+.iris-root,
+.iris-root viewport,
+.iris-root scrolledwindow,
+window {{
+    background-color: @iris_background;
+    color: @iris_text_primary;
+}}
+
+headerbar {{
+    background-color: @iris_toolbar;
+    color: @iris_text_primary;
+    box-shadow: inset 0 -1px @iris_border;
+}}
+
+entry {{
+    background-color: @iris_panel_alt;
+    color: @iris_text_primary;
+    border-color: @iris_border;
+}}
+
+entry:focus {{
+    border-color: @iris_accent;
+}}
+
+button.flat {{
+    background-color: transparent;
+    color: @iris_text_primary;
+    border-color: transparent;
+}}
+
+button.pill {{
+    background-color: @iris_panel;
+    color: @iris_text_primary;
+    border-color: @iris_border;
+}}
+
+button.suggested-action {{
+    background-color: @iris_accent;
+    color: @iris_on_accent;
+    border-color: @iris_accent;
+}}
+
+.card,
+.boxed-list {{
+    background-color: @iris_panel;
+    color: @iris_text_primary;
+    border-color: @iris_border;
+}}
+
+.dim-label {{
+    color: @iris_muted;
+}}
+
+.accent {{
+    color: @iris_accent;
+}}
+
+.warning {{
+    background-color: @iris_accent_alt;
+    color: @iris_on_accent;
+}}
+"#,
+        background = palette.background,
+        panel = palette.panel,
+        panel_alt = palette.panel_alt,
+        border = palette.border,
+        toolbar = palette.toolbar,
+        bubble_mine = palette.bubble_mine,
+        bubble_theirs = palette.bubble_theirs,
+        accent = palette.accent,
+        accent_alt = palette.accent_alt,
+        text_primary = palette.text_primary,
+        muted = palette.muted,
+        on_accent = palette.on_accent,
+        on_bubble_mine = palette.on_bubble_mine,
+        on_bubble_theirs = palette.on_bubble_theirs,
+    )
 }

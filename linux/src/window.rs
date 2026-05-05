@@ -33,6 +33,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         .default_height(740)
         .title("Iris Chat")
         .build();
+    window.add_css_class("iris-root");
 
     let header = adw::HeaderBar::new();
     let title_label = gtk::Label::new(None);
@@ -141,9 +142,11 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     header.pack_end(&chat_info_button);
 
     let toolbar = adw::ToolbarView::new();
+    toolbar.add_css_class("iris-root");
     toolbar.add_top_bar(&header);
 
     let content_slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content_slot.add_css_class("iris-root");
     content_slot.set_vexpand(true);
 
     let toast_overlay = adw::ToastOverlay::new();
