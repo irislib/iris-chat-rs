@@ -449,17 +449,6 @@ impl AppCore {
                     DEVICE_INVITE_DISCOVERY_LIMIT,
                 ));
             }
-            if self.needs_direct_message_discovery_bootstrap() {
-                filters.push(
-                    Filter::new()
-                        .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
-                        .since(Timestamp::from(
-                            now.get()
-                                .saturating_sub(NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS),
-                        ))
-                        .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-                );
-            }
         }
         let private_invite_response_pubkeys = self.protocol_invite_response_pubkeys();
         if !private_invite_response_pubkeys.is_empty() {
@@ -625,14 +614,6 @@ impl AppCore {
         self.fetch_recent_protocol_state();
     }
 
-    fn needs_direct_message_discovery_bootstrap(&self) -> bool {
-        !self.tracked_peer_owner_hexes().is_empty()
-            && self.protocol_engine.as_ref().is_some_and(|engine| {
-                engine.has_pending_inbound_direct_events()
-                    || self.tracked_peer_protocol_backfill_needed()
-            })
-    }
-
     fn tracked_peer_protocol_backfill_needed(&self) -> bool {
         let tracked_peer_owners = self.tracked_peer_owner_hexes();
         if tracked_peer_owners.is_empty() {
@@ -650,7 +631,6 @@ impl AppCore {
                             .queued_message_diagnostics(None)
                             .iter()
                             .any(|target| target == &owner_prefix)
-                            || engine.known_message_author_pubkeys().is_empty()
                     })
                 })
             })

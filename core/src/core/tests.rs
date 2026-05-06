@@ -4622,7 +4622,7 @@ fn protocol_filters_track_invite_responses_by_known_device_authors() {
 }
 
 #[test]
-fn recent_protocol_filters_include_bootstrap_message_backfill_for_cold_tracked_peer() {
+fn recent_protocol_filters_do_not_include_unscoped_message_backfill_for_cold_tracked_peer() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -4630,32 +4630,14 @@ fn recent_protocol_filters_include_bootstrap_message_backfill_for_cold_tracked_p
     core.active_chat_id = Some(peer.public_key().to_hex());
 
     let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
-    let bootstrap_filter = filters
-        .iter()
-        .map(|filter| serde_json::to_value(filter).expect("filter json"))
-        .find(|filter| {
-            let has_message_kind = filter
-                .get("kinds")
-                .and_then(|kinds| kinds.as_array())
-                .is_some_and(|kinds| {
-                    kinds
-                        .iter()
-                        .any(|kind| kind.as_u64() == Some(MESSAGE_EVENT_KIND as u64))
-                });
-            has_message_kind && filter.get("authors").is_none()
-        })
-        .expect("bootstrap message backfill filter");
-
-    assert_eq!(
-        bootstrap_filter
-            .get("since")
-            .and_then(|since| since.as_u64()),
-        Some(1_777_159_500 - NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS)
+    assert!(
+        !has_bootstrap_message_filter(&filters),
+        "cold peer discovery must fetch protocol state, not unscoped public message events"
     );
 }
 
 #[test]
-fn pending_inbound_direct_events_keep_bootstrap_message_backfill_active() {
+fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_backfill() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
     let mallory_keys = Keys::generate();
@@ -4753,6 +4735,7 @@ fn pending_inbound_direct_events_keep_bootstrap_message_backfill_active() {
                 && carol_message_authors.contains(&event.pubkey)
         })
         .expect("message event for Carol");
+    let message_event_id = message_event.id.to_string();
 
     let mut core = logged_in_test_core("pending-inbound-keeps-bootstrap", &bob_keys, &bob_keys);
     core.active_chat_id = Some(alice_keys.public_key().to_hex());
@@ -4793,21 +4776,25 @@ fn pending_inbound_direct_events_keep_bootstrap_message_backfill_active() {
     );
     core.handle_relay_event(message_event);
     assert!(
-        core.protocol_engine
+        !core
+            .protocol_engine
             .as_ref()
             .expect("protocol engine")
             .has_pending_inbound_direct_events(),
-        "the unresolved relay event must be durable pending inbound work"
+        "unknown public message authors must not become durable pending inbound work"
     );
-
     assert!(
-        has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
-        "pending inbound work must keep broad message discovery active until it can be applied"
+        core.has_seen_event(&message_event_id),
+        "ignored public message events should be remembered so relay replays do not reprocess them"
+    );
+    assert!(
+        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
+        "ignored unknown messages must not enable unscoped public backfill"
     );
 }
 
 #[test]
-fn direct_message_discovery_bootstrap_backfill_remains_for_partial_tracked_peer_state() {
+fn direct_message_discovery_backfill_stays_scoped_for_partial_tracked_peer_state() {
     let owner = Keys::generate();
     let linked_device = Keys::generate();
     let primary_device = Keys::generate();
@@ -4839,8 +4826,8 @@ fn direct_message_discovery_bootstrap_backfill_remains_for_partial_tracked_peer_
     core.active_chat_id = Some(peer.public_key().to_hex());
 
     assert!(
-        has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
-        "message backfill must stay bootstrapped while any tracked peer has incomplete author state"
+        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
+        "partial peer state must not trigger unscoped public message backfill"
     );
 
     let relay = crate::local_relay::TestRelay::start();
@@ -4870,8 +4857,8 @@ fn direct_message_discovery_does_not_install_cold_peer_live_bootstrap_subscripti
     core.active_chat_id = Some(peer.public_key().to_hex());
 
     assert!(
-        has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
-        "cold tracked peer still needs bounded message backfill"
+        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
+        "cold tracked peer discovery should stay on protocol-state filters"
     );
 
     let relay = crate::local_relay::TestRelay::start();
@@ -5085,9 +5072,8 @@ fn private_invite_first_message_installs_creator_session() {
     assert!(
         bob.protocol_engine
             .as_ref()
-            .is_some_and(|engine| !engine.known_message_author_pubkeys().is_empty())
-            || has_bootstrap_message_filter(&bob.recent_protocol_filters(UnixSeconds(1_777_159_500))),
-        "sending through a private invite must bootstrap message discovery until the creator author is known"
+            .is_some_and(|engine| !engine.known_message_author_pubkeys().is_empty()),
+        "sending through a private invite must install scoped message authors"
     );
     let response = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
         .into_iter()
@@ -5109,11 +5095,8 @@ fn private_invite_first_message_installs_creator_session() {
         alice
             .protocol_engine
             .as_ref()
-            .is_some_and(|engine| !engine.known_message_author_pubkeys().is_empty())
-            || has_bootstrap_message_filter(
-                &alice.recent_protocol_filters(UnixSeconds(1_777_159_500))
-            ),
-        "private invite response import must immediately enable peer message discovery"
+            .is_some_and(|engine| !engine.known_message_author_pubkeys().is_empty()),
+        "private invite response import must immediately enable scoped peer message discovery"
     );
 }
 

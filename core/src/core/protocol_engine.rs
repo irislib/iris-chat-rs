@@ -467,6 +467,7 @@ impl ProtocolEngine {
         }
         engine.ensure_local_roster(local_invite.created_at);
         engine.hydrate_pending_inbound_metadata();
+        engine.prune_untracked_pending_inbound();
         engine.persist()?;
         Ok(engine)
     }
@@ -615,6 +616,14 @@ impl ProtocolEngine {
         for (pending, metadata) in self.pending_inbound.iter_mut().zip(metadata) {
             apply_pending_inbound_metadata(pending, metadata);
         }
+    }
+
+    fn prune_untracked_pending_inbound(&mut self) {
+        let known_authors = self.known_message_author_hexes();
+        self.pending_inbound.retain(|pending| {
+            pending_inbound_sender_pubkey_hex(pending)
+                .is_some_and(|sender| known_authors.contains(&sender))
+        });
     }
 
     pub(super) fn debug_snapshot(&self) -> ProtocolEngineDebugSnapshot {
@@ -766,6 +775,17 @@ impl ProtocolEngine {
         let mut authors = authors.into_iter().collect::<Vec<_>>();
         authors.sort_by_key(|pubkey| pubkey.to_hex());
         authors
+    }
+
+    pub(super) fn is_known_message_author(&self, author: PublicKey) -> bool {
+        self.known_message_author_pubkeys().contains(&author)
+    }
+
+    fn known_message_author_hexes(&self) -> HashSet<String> {
+        self.known_message_author_pubkeys()
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect()
     }
 
     pub(super) fn known_group_sender_event_pubkeys(&self) -> Vec<PublicKey> {
@@ -3025,6 +3045,13 @@ fn pending_inbound_sender_pubkey(pending: &ProtocolPendingInbound) -> Option<Ndr
         .as_deref()
         .and_then(|pubkey_hex| PublicKey::parse(pubkey_hex).ok())
         .map(ndr_device)
+}
+
+fn pending_inbound_sender_pubkey_hex(pending: &ProtocolPendingInbound) -> Option<String> {
+    pending_inbound_sender_pubkey(pending)
+        .and_then(|sender| public_device(sender).ok())
+        .map(|sender| sender.to_hex())
+        .or_else(|| Some(pending.event.pubkey.to_hex()))
 }
 
 fn apply_pending_inbound_metadata(

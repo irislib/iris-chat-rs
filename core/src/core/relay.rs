@@ -178,6 +178,21 @@ impl AppCore {
                     self.emit_state();
                     return;
                 }
+                if self
+                    .protocol_engine
+                    .as_ref()
+                    .is_some_and(|engine| !engine.is_known_message_author(event.pubkey))
+                {
+                    self.push_debug_log(
+                        "appcore.protocol.message.ignored",
+                        "unknown message author",
+                    );
+                    self.remember_event(event_id);
+                    self.persist_best_effort();
+                    self.rebuild_state();
+                    self.emit_state();
+                    return;
+                }
                 self.debug_event_counters.message_events += 1;
             }
             _ => {
