@@ -893,11 +893,36 @@ fn liveness_retries_pending_inbound_direct_events() {
 }
 
 #[test]
+fn appcore_sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol_engine.rs"),
+    )
+    .expect("read protocol engine source");
+    let start = protocol_source
+        .find("fn resolve_message_sender_owner")
+        .expect("sender resolver");
+    let body = &protocol_source[start
+        ..protocol_source[start..]
+            .find("\n    fn ensure_local_roster")
+            .map(|offset| start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        body.contains("PendingOwnerClaim"),
+        "claimed owners must be represented as pending, not collapsed into a device owner"
+    );
+    assert!(
+        !body.contains("NdrOwnerPubkey::from_bytes(envelope.sender.to_bytes())"),
+        "message envelope sender is a ratchet sender key and must not become the canonical owner"
+    );
+}
+
+#[test]
 fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer_owner = Keys::generate();
     let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
 
     let result = engine
         .send_direct_text(
@@ -925,10 +950,15 @@ fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
         "peer owner must not be considered published before peer protocol state exists"
     );
     let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
-    assert_eq!(result.queued_targets, vec![owner_marker.clone()]);
+    let local_owner_marker = format!("owner:{}", owner.public_key().to_hex());
+    assert!(result.queued_targets.contains(&owner_marker));
+    assert!(result.queued_targets.contains(&local_owner_marker));
     let snapshot = engine.debug_snapshot();
     assert_eq!(snapshot.pending_outbound_count, 1);
-    assert_eq!(snapshot.pending_outbound_targets, vec![owner_marker]);
+    assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
+    assert!(snapshot
+        .pending_outbound_targets
+        .contains(&local_owner_marker));
 }
 
 #[test]
@@ -937,6 +967,7 @@ fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pend
     let device = Keys::generate();
     let peer_owner = Keys::generate();
     let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
 
     let result = engine
         .send_direct_text(
@@ -948,7 +979,9 @@ fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pend
         )
         .expect("direct send");
     let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
-    assert_eq!(result.queued_targets, vec![owner_marker.clone()]);
+    let local_owner_marker = format!("owner:{}", owner.public_key().to_hex());
+    assert!(result.queued_targets.contains(&owner_marker));
+    assert!(result.queued_targets.contains(&local_owner_marker));
 
     let retries = engine
         .retry_pending_outbound(NdrUnixSeconds(10_000))
@@ -956,11 +989,247 @@ fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pend
     assert_eq!(retries.len(), 1);
     assert_eq!(retries[0].message_id, result.message_id);
     assert!(retries[0].event_ids.is_empty());
-    assert!(retries[0].effects.is_empty());
-    assert_eq!(retries[0].queued_targets, vec![owner_marker.clone()]);
+    assert!(
+        retries[0]
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, ProtocolEffect::FetchProtocolState { .. })),
+        "retrying missing roster work should re-emit protocol backfill from the engine"
+    );
+    assert!(retries[0].queued_targets.contains(&owner_marker));
     let snapshot = engine.debug_snapshot();
     assert_eq!(snapshot.pending_outbound_count, 1);
-    assert_eq!(snapshot.pending_outbound_targets, vec![owner_marker]);
+    assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
+}
+
+#[test]
+fn appcore_invite_event_wakes_device_queued_direct_send_before_retry_delay() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let send = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "queued until invite",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
+        "missing peer roster should be queued"
+    );
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", owner.public_key().to_hex())),
+        "local sibling discovery should remain queued until the owner roster is known to have no siblings"
+    );
+
+    let app_keys_batch = engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 4)]),
+            4,
+        )
+        .expect("peer appkeys");
+    assert_eq!(app_keys_batch.direct_results.len(), 1);
+    assert!(
+        app_keys_batch.direct_results[0]
+            .queued_targets
+            .contains(&peer_device.public_key().to_hex()),
+        "after peer roster discovery, the peer device invite should remain missing"
+    );
+    assert!(
+        !app_keys_batch.direct_results[0]
+            .queued_targets
+            .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
+        "peer owner discovery should be drained after AppKeys arrive"
+    );
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(5), &mut rng);
+    let invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("peer invite");
+    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_device)
+        .expect("signed invite");
+
+    let invite_batch = engine
+        .observe_invite_event(&invite_event)
+        .expect("observe invite");
+
+    assert_eq!(invite_batch.direct_results.len(), 1);
+    assert_eq!(invite_batch.direct_results[0].message_id, send.message_id);
+    assert_eq!(invite_batch.direct_results[0].event_ids.len(), 1);
+    assert!(
+        !engine
+            .debug_snapshot()
+            .pending_outbound_targets
+            .contains(&peer_device.public_key().to_hex()),
+        "remote peer fanout should be fully drained"
+    );
+}
+
+#[test]
+fn appcore_direct_send_keeps_local_sibling_probe_until_local_appkeys_and_invite_arrive() {
+    let owner = Keys::generate();
+    let fresh_device = Keys::generate();
+    let old_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &fresh_device);
+
+    let send = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "self sync should not be dropped",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
+        "remote owner discovery should remain queued"
+    );
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", owner.public_key().to_hex())),
+        "local sibling roster discovery must be queued until local AppKeys have been observed"
+    );
+
+    let local_app_keys_created_at = unix_now().get();
+    let local_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(old_device.public_key(), 1),
+        DeviceEntry::new(fresh_device.public_key(), local_app_keys_created_at),
+    ]);
+    let app_keys_batch = engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            local_app_keys,
+            local_app_keys_created_at,
+        )
+        .expect("local appkeys");
+    assert_eq!(app_keys_batch.direct_results.len(), 1);
+    assert!(
+        app_keys_batch.direct_results[0]
+            .queued_targets
+            .contains(&old_device.public_key().to_hex()),
+        "local AppKeys should turn the local owner probe into the old device invite target"
+    );
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(5), &mut rng);
+    let old_invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(old_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())),
+        None,
+    )
+    .expect("old device invite");
+    let old_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&old_invite)
+        .expect("invite event")
+        .sign_with_keys(&old_device)
+        .expect("signed invite");
+
+    let invite_batch = engine
+        .observe_invite_event(&old_invite_event)
+        .expect("observe old device invite");
+    assert_eq!(invite_batch.direct_results.len(), 1);
+    let retry = &invite_batch.direct_results[0];
+    assert_eq!(retry.message_id, send.message_id);
+    assert!(
+        retry.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::PublishStagedFirstContact { payload, .. }
+                if payload.iter().any(|publish| publish.target_owner_pubkey_hex.as_deref()
+                    == Some(owner.public_key().to_hex().as_str())
+                    && publish.target_device_id.as_deref()
+                        == Some(old_device.public_key().to_hex().as_str()))
+        )) || retry.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::PublishSignedForInnerEvent {
+                target_owner_pubkey_hex,
+                target_device_id,
+                ..
+            } if target_owner_pubkey_hex.as_deref() == Some(owner.public_key().to_hex().as_str())
+                && target_device_id.as_deref() == Some(old_device.public_key().to_hex().as_str())
+        )),
+        "old local device should receive a sender-copy publish after its invite arrives"
+    );
+}
+
+#[test]
+fn appcore_local_appkeys_backfill_replaces_seeded_single_device_roster() {
+    let owner = Keys::generate();
+    let fresh_device = Keys::generate();
+    let old_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &fresh_device);
+
+    let send = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "older local appkeys should still discover old sibling",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", owner.public_key().to_hex())),
+        "freshly seeded local device should start with owner-level sibling discovery"
+    );
+
+    let batch = engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            AppKeys::new(vec![
+                DeviceEntry::new(old_device.public_key(), 1),
+                DeviceEntry::new(fresh_device.public_key(), 1),
+            ]),
+            1,
+        )
+        .expect("stale local appkeys");
+    assert_eq!(batch.direct_results.len(), 1);
+    assert!(
+        batch.direct_results[0]
+            .queued_targets
+            .contains(&old_device.public_key().to_hex()),
+        "AppCore's merged local roster is authoritative even when its event timestamp predates the seeded local invite"
+    );
+
+    let snapshot = engine.debug_snapshot();
+    let pending = snapshot
+        .pending_outbound_details
+        .iter()
+        .find(|pending| pending.message_id == send.message_id)
+        .expect("pending send detail");
+    assert_eq!(
+        pending.remaining_local_sibling_targets,
+        vec![old_device.public_key().to_hex()]
+    );
+    assert!(
+        !pending
+            .queued_targets
+            .contains(&format!("owner:{}", owner.public_key().to_hex())),
+        "once the merged local roster is installed, retries should target the concrete old device"
+    );
 }
 
 #[test]
@@ -1014,6 +1283,155 @@ fn invite_response_observation_emits_targeted_owner_message_backfill() {
 }
 
 #[test]
+fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (mut peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+    engine
+        .observe_invite_response_event(&response_event)
+        .expect("observe invite response");
+
+    let plan = peer_session
+        .plan_send(b"hello-before-appkeys", NdrUnixSeconds(11))
+        .expect("peer plans message");
+    let sent = peer_session.apply_send(plan);
+    let message_event =
+        nostr_double_ratchet_nostr::message_event(&sent.envelope).expect("message event");
+
+    let decrypted = engine
+        .process_direct_message_event(&message_event)
+        .expect("process direct message");
+    assert!(
+        decrypted.is_none(),
+        "claimed-owner messages must wait until the owner claim is verified"
+    );
+    assert_eq!(engine.debug_snapshot().pending_inbound_count, 1);
+    assert_eq!(
+        engine.queued_owner_claim_targets(),
+        vec![format!("owner:{}", peer_owner.public_key().to_hex())]
+    );
+
+    let batch = engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 12)]),
+            12,
+        )
+        .expect("peer appkeys");
+    assert_eq!(batch.direct_messages.len(), 1);
+    assert_eq!(batch.direct_messages[0].sender, peer_owner.public_key());
+    assert_eq!(
+        batch.direct_messages[0].sender_device,
+        Some(peer_device.public_key())
+    );
+    assert_eq!(batch.direct_messages[0].content, "hello-before-appkeys");
+    assert_eq!(engine.debug_snapshot().pending_inbound_count, 0);
+}
+
+#[test]
+fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (_peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+    engine
+        .observe_invite_response_event(&response_event)
+        .expect("observe invite response");
+
+    let group_id = "claimed-owner-group".to_string();
+    let snapshot = test_group_snapshot(
+        &group_id,
+        "Claimed Owner Group",
+        peer_owner.public_key(),
+        vec![peer_owner.public_key(), owner.public_key()],
+        vec![peer_owner.public_key()],
+        1,
+    );
+    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+        &codec,
+        nostr_double_ratchet::GroupPayloadEncodeContext {
+            local_device_pubkey: ndr_device_pubkey(peer_device.public_key()),
+            created_at: NdrUnixSeconds(11),
+        },
+        &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot { snapshot },
+    )
+    .expect("group metadata payload");
+
+    let outcome = engine
+        .process_group_pairwise_payload(
+            &payload,
+            peer_device.public_key(),
+            Some(peer_device.public_key()),
+        )
+        .expect("process group payload");
+    assert!(outcome.consumed);
+    assert!(outcome.events.is_empty());
+    assert_eq!(
+        outcome.queued_targets,
+        vec![format!("owner:{}", peer_owner.public_key().to_hex())]
+    );
+    assert_eq!(
+        engine.debug_snapshot().pending_group_pairwise_payload_count,
+        1
+    );
+
+    let batch = engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 12)]),
+            12,
+        )
+        .expect("peer appkeys");
+    let created = batch
+        .group_result
+        .events
+        .iter()
+        .find_map(|event| match event {
+            GroupIncomingEvent::MetadataUpdated(snapshot) if snapshot.group_id == group_id => {
+                Some(snapshot)
+            }
+            _ => None,
+        })
+        .expect("group metadata applied after owner claim verification");
+    assert_eq!(
+        created.created_by,
+        ndr_owner_pubkey(peer_owner.public_key())
+    );
+    assert_eq!(
+        engine.debug_snapshot().pending_group_pairwise_payload_count,
+        0
+    );
+}
+
+#[test]
 fn queued_direct_send_schedules_fast_protocol_retry_tick() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1049,6 +1467,11 @@ fn queued_direct_send_starts_targeted_owner_protocol_fetch() {
     let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
     core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
     core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+    observe_current_device_appkeys_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &owner,
+        &device,
+    );
 
     core.send_direct_message(
         &peer.public_key().to_hex(),
@@ -1060,9 +1483,9 @@ fn queued_direct_send_starts_targeted_owner_protocol_fetch() {
     let target = format!("owner:{}", peer.public_key().to_hex());
     assert!(
         core.debug_log.iter().any(|entry| {
-            entry.category == "protocol.queued_fetch.fetch"
-                && entry.detail.contains(&target)
-                && entry.detail.contains("filters=1")
+            entry.category == "appcore.protocol.queued" && entry.detail.contains(&target)
+        }) && core.debug_log.iter().any(|entry| {
+            entry.category == "protocol.engine_fetch.fetch" && entry.detail.contains("filters=1")
         }),
         "queued direct owner work should start a narrow AppKeys fetch for {target}"
     );
@@ -1073,11 +1496,26 @@ fn queued_protocol_filters_are_narrow_for_missing_owner_roster() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
-    let core = logged_in_test_core("queued-protocol-filter-owner", &owner, &device);
-    let filters = core.queued_protocol_filters(
-        &[format!("owner:{}", peer.public_key().to_hex())],
-        UnixSeconds(1_777_159_500),
-    );
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    let result = engine
+        .send_direct_text(
+            peer.public_key(),
+            &peer.public_key().to_hex(),
+            "queued until appkeys",
+            None,
+            UnixSeconds(1_777_159_500),
+        )
+        .expect("direct send");
+    let filters = result
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::FetchProtocolState { filters, .. } => Some(filters.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
 
     assert_eq!(filters.len(), 1);
     assert!(has_filter_with_kind_author(
@@ -1143,7 +1581,13 @@ fn queued_group_retry_without_protocol_progress_reschedules_fast_tick() {
         .retry_pending_protocol(NdrUnixSeconds(retry_at))
         .expect("retry pending protocol");
     assert!(
-        batch.group_result.effects.is_empty(),
+        !batch.group_result.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::PublishSigned(_)
+                | ProtocolEffect::PublishUnsigned(_)
+                | ProtocolEffect::PublishSignedForInnerEvent { .. }
+                | ProtocolEffect::PublishStagedFirstContact { .. }
+        )),
         "missing member protocol state should not produce group publishes yet"
     );
     assert!(
@@ -1171,6 +1615,7 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
     let peer_phone = Keys::generate();
     let peer_laptop = Keys::generate();
     let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
 
     let peer_app_keys = AppKeys::new(vec![
         DeviceEntry::new(peer_phone.public_key(), 1),
@@ -1210,9 +1655,11 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
         .expect("direct send");
 
     assert_eq!(result.event_ids.len(), 1);
-    assert_eq!(
-        result.queued_targets,
-        vec![peer_laptop.public_key().to_hex()]
+    assert!(
+        result
+            .queued_targets
+            .contains(&peer_laptop.public_key().to_hex()),
+        "missing peer laptop should remain queued"
     );
     let staged = result
         .effects
@@ -1273,10 +1720,18 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
     assert_eq!(retry.message_id, result.message_id);
     assert_eq!(retry.event_ids.len(), 1);
     assert!(
-        retry.queued_targets.is_empty(),
+        !retry
+            .queued_targets
+            .contains(&peer_laptop.public_key().to_hex()),
         "all remote devices should be prepared after the missing invite arrives"
     );
-    assert_eq!(engine.debug_snapshot().pending_outbound_count, 0);
+    assert!(
+        !engine
+            .debug_snapshot()
+            .pending_outbound_targets
+            .contains(&peer_laptop.public_key().to_hex()),
+        "remote peer fanout should be fully drained"
+    );
 }
 
 #[test]
@@ -6442,6 +6897,21 @@ fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
         group_manager,
     )
     .expect("protocol engine")
+}
+
+fn observe_current_device_appkeys_for_test(
+    engine: &mut ProtocolEngine,
+    owner: &Keys,
+    device: &Keys,
+) {
+    let created_at = unix_now().get();
+    engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(device.public_key(), created_at)]),
+            created_at,
+        )
+        .expect("local appkeys");
 }
 
 fn install_test_protocol_engine(

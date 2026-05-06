@@ -6,6 +6,8 @@ const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const TARGETED_OWNER_BACKFILL_LOOKBACK_SECS: u64 = 300;
+const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
+const INVITES_L_TAG: &str = "double-ratchet/invites";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProtocolEnginePersistedState {
@@ -108,6 +110,10 @@ pub(super) enum ProtocolEffect {
         lookback_secs: u64,
         reason: &'static str,
     },
+    FetchProtocolState {
+        filters: Vec<Filter>,
+        reason: &'static str,
+    },
     EmitDecrypted {
         sender: PublicKey,
         sender_device: Option<PublicKey>,
@@ -129,6 +135,8 @@ pub(super) struct ProtocolPendingOutbound {
     delivered_remote_device_hexes: Vec<String>,
     #[serde(default)]
     delivered_local_device_hexes: Vec<String>,
+    #[serde(default)]
+    probe_local_sibling_roster: bool,
     created_at_secs: u64,
     next_retry_at_secs: u64,
     reason: ProtocolPendingReason,
@@ -251,6 +259,28 @@ pub(super) struct ProtocolDeviceOwnerHint {
     pub(super) verified: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ProtocolSenderOwnerResolution {
+    Verified {
+        owner: NdrOwnerPubkey,
+    },
+    PendingOwnerClaim {
+        storage_owner: NdrOwnerPubkey,
+        claimed_owner: NdrOwnerPubkey,
+        sender_device: NdrDevicePubkey,
+    },
+    ProvisionalDeviceOwner {
+        owner: NdrOwnerPubkey,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ProtocolSenderDeviceRecord {
+    storage_owner: NdrOwnerPubkey,
+    device_pubkey: NdrDevicePubkey,
+    claimed_owner_pubkey: Option<NdrOwnerPubkey>,
+}
+
 impl From<ProtocolPendingDecryptedDelivery> for ProtocolDecryptedMessage {
     fn from(pending: ProtocolPendingDecryptedDelivery) -> Self {
         Self {
@@ -273,10 +303,27 @@ pub(super) struct ProtocolEngineDebugSnapshot {
     pub(super) pending_group_sender_key_message_count: usize,
     pub(super) pending_outbound_targets: Vec<String>,
     #[serde(default)]
+    pub(super) pending_outbound_details: Vec<ProtocolPendingOutboundDebug>,
+    #[serde(default)]
     pub(super) pending_group_fanout_targets: Vec<String>,
     pub(super) subscription_generation: u64,
     pub(super) last_backfill_attempt_secs: u64,
     pub(super) latest_app_keys_owner_count: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub(super) struct ProtocolPendingOutboundDebug {
+    pub(super) message_id: String,
+    pub(super) chat_id: String,
+    pub(super) recipient_owner_hex: String,
+    pub(super) reason: String,
+    pub(super) probe_local_sibling_roster: bool,
+    pub(super) delivered_remote_device_hexes: Vec<String>,
+    pub(super) delivered_local_device_hexes: Vec<String>,
+    pub(super) remaining_remote_targets: Vec<String>,
+    pub(super) remaining_local_sibling_targets: Vec<String>,
+    pub(super) queued_targets: Vec<String>,
+    pub(super) next_retry_at_secs: u64,
 }
 
 #[allow(dead_code)]
@@ -506,6 +553,7 @@ impl ProtocolEngine {
             pending_group_pairwise_payload_count: self.pending_group_pairwise_payloads.len(),
             pending_group_sender_key_message_count: self.pending_group_sender_key_messages.len(),
             pending_outbound_targets: self.queued_message_diagnostics(None),
+            pending_outbound_details: self.pending_outbound_debug_details(),
             pending_group_fanout_targets: self.queued_group_targets(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
@@ -562,6 +610,28 @@ impl ProtocolEngine {
 
     pub(super) fn has_pending_inbound_direct_events(&self) -> bool {
         !self.pending_inbound.is_empty()
+    }
+
+    pub(super) fn queued_owner_claim_targets(&self) -> Vec<String> {
+        let mut targets = self.pending_inbound_owner_claim_targets();
+        targets.extend(self.pending_group_pairwise_owner_claim_targets());
+        targets.sort();
+        targets.dedup();
+        targets
+    }
+
+    pub(super) fn queued_protocol_backfill_effects(
+        &self,
+        now: NdrUnixSeconds,
+        reason: &'static str,
+    ) -> (Vec<String>, Vec<ProtocolEffect>) {
+        let mut targets = self.queued_message_diagnostics(None);
+        targets.extend(self.queued_owner_claim_targets());
+        targets.extend(self.queued_group_targets());
+        targets.sort();
+        targets.dedup();
+        let effects = self.protocol_backfill_effects_for_targets(&targets, now, reason);
+        (targets, effects)
     }
 
     #[cfg(test)]
@@ -706,6 +776,44 @@ impl ProtocolEngine {
         targets
     }
 
+    fn pending_outbound_debug_details(&self) -> Vec<ProtocolPendingOutboundDebug> {
+        self.pending_outbound
+            .iter()
+            .map(|pending| {
+                let remaining_remote_targets = PublicKey::parse(&pending.recipient_owner_hex)
+                    .ok()
+                    .map(|owner| {
+                        self.remaining_remote_targets(
+                            ndr_owner(owner),
+                            &pending.delivered_remote_device_hexes,
+                        )
+                    })
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|target| target.to_hex())
+                    .collect::<Vec<_>>();
+                let remaining_local_sibling_targets = self
+                    .remaining_local_sibling_targets(&pending.delivered_local_device_hexes)
+                    .into_iter()
+                    .map(|target| target.to_hex())
+                    .collect::<Vec<_>>();
+                ProtocolPendingOutboundDebug {
+                    message_id: pending.message_id.clone(),
+                    chat_id: pending.chat_id.clone(),
+                    recipient_owner_hex: pending.recipient_owner_hex.clone(),
+                    reason: format!("{:?}", pending.reason),
+                    probe_local_sibling_roster: pending.probe_local_sibling_roster,
+                    delivered_remote_device_hexes: pending.delivered_remote_device_hexes.clone(),
+                    delivered_local_device_hexes: pending.delivered_local_device_hexes.clone(),
+                    remaining_remote_targets,
+                    remaining_local_sibling_targets,
+                    queued_targets: self.pending_target_hexes(pending),
+                    next_retry_at_secs: pending.next_retry_at_secs,
+                }
+            })
+            .collect()
+    }
+
     pub(super) fn has_queued_remote_message_work(&self, message_id: &str) -> bool {
         self.pending_outbound.iter().any(|pending| {
             pending.message_id == message_id
@@ -721,6 +829,10 @@ impl ProtocolEngine {
     ) -> anyhow::Result<ProtocolRetryBatch> {
         let session_checkpoint = self.session_manager.clone();
         let latest_checkpoint = self.latest_app_keys_created_at.clone();
+        let pending_outbound_checkpoint = self.pending_outbound.clone();
+        let pending_inbound_checkpoint = self.pending_inbound.clone();
+        let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
+        let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
         let owner_hex = owner_pubkey.to_hex();
         let latest = self
             .latest_app_keys_created_at
@@ -746,14 +858,19 @@ impl ProtocolEngine {
                 .collect(),
         );
         if owner_pubkey == self.owner_pubkey {
-            self.session_manager.apply_local_roster(roster);
+            self.session_manager.replace_local_roster(roster);
         } else {
             self.session_manager
                 .observe_peer_roster(ndr_owner(owner_pubkey), roster);
         }
+        self.wake_pending_protocol_for_owner(ndr_owner(owner_pubkey));
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
             self.latest_app_keys_created_at = latest_checkpoint;
+            self.pending_outbound = pending_outbound_checkpoint;
+            self.pending_inbound = pending_inbound_checkpoint;
+            self.pending_group_fanouts = pending_group_fanouts_checkpoint;
+            self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
             return Err(error);
         }
         let mut batch = self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))?;
@@ -766,6 +883,10 @@ impl ProtocolEngine {
         event: &Event,
     ) -> anyhow::Result<ProtocolRetryBatch> {
         let session_checkpoint = self.session_manager.clone();
+        let pending_outbound_checkpoint = self.pending_outbound.clone();
+        let pending_inbound_checkpoint = self.pending_inbound.clone();
+        let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
+        let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
         let invite = parse_invite_event(event)?;
         let invite_owner = invite
             .inviter_owner_pubkey
@@ -773,9 +894,14 @@ impl ProtocolEngine {
         if invite.inviter_device_pubkey != self.local_device {
             self.session_manager
                 .observe_device_invite(invite_owner, invite)?;
+            self.wake_pending_protocol_for_owner(invite_owner);
         }
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
+            self.pending_outbound = pending_outbound_checkpoint;
+            self.pending_inbound = pending_inbound_checkpoint;
+            self.pending_group_fanouts = pending_group_fanouts_checkpoint;
+            self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
             return Err(error);
         }
         self.retry_pending_protocol(NdrUnixSeconds(event.created_at.as_secs()))
@@ -799,20 +925,38 @@ impl ProtocolEngine {
             return Ok(ProtocolRetryBatch::default());
         }
         let session_checkpoint = self.session_manager.clone();
+        let pending_outbound_checkpoint = self.pending_outbound.clone();
+        let pending_inbound_checkpoint = self.pending_inbound.clone();
+        let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
+        let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
         let processed = self
             .session_manager
             .observe_invite_response(&mut ctx, &envelope)?;
+        if let Some(processed) = processed.as_ref() {
+            self.wake_pending_protocol_for_owner(
+                processed
+                    .claimed_owner_pubkey
+                    .unwrap_or(processed.owner_pubkey),
+            );
+        }
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
+            self.pending_outbound = pending_outbound_checkpoint;
+            self.pending_inbound = pending_inbound_checkpoint;
+            self.pending_group_fanouts = pending_group_fanouts_checkpoint;
+            self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
             return Err(error);
         }
         let mut batch = self.retry_pending_protocol(ctx.now)?;
         if let Some(processed) = processed {
+            let owner = processed
+                .claimed_owner_pubkey
+                .unwrap_or(processed.owner_pubkey);
             self.enqueue_owner_message_backfill_effect(
                 &mut batch.effects,
-                public_owner(processed.owner_pubkey)?,
+                public_owner(owner)?,
                 "invite_response",
             );
         }
@@ -1074,13 +1218,17 @@ impl ProtocolEngine {
 
         let remote_delivered = delivered_device_hexes(&remote);
         let local_delivered = delivered_device_hexes(&local);
+        let probe_local_sibling_roster = self.needs_local_sibling_roster_probe(&local);
+        let has_undelivered_local_siblings = !self
+            .remaining_local_sibling_targets(&local_delivered)
+            .is_empty();
         let gaps = remote
             .relay_gaps
             .iter()
             .chain(local.relay_gaps.iter())
             .cloned()
             .collect::<Vec<_>>();
-        if !gaps.is_empty() {
+        if !gaps.is_empty() || probe_local_sibling_roster || has_undelivered_local_siblings {
             self.upsert_pending_outbound(ProtocolPendingOutbound {
                 message_id: message_id.clone(),
                 chat_id: chat_id.to_string(),
@@ -1090,6 +1238,7 @@ impl ProtocolEngine {
                 inner_event_id: Some(message_id.clone()),
                 delivered_remote_device_hexes: remote_delivered,
                 delivered_local_device_hexes: local_delivered,
+                probe_local_sibling_roster,
                 created_at_secs: now.get(),
                 next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
                 reason: pending_reason_from_gaps(&gaps),
@@ -1097,6 +1246,12 @@ impl ProtocolEngine {
         }
         self.persist()?;
         let queued_targets = self.queued_message_diagnostics(Some(&message_id));
+        self.append_queued_protocol_backfill(
+            &mut effects,
+            &queued_targets,
+            NdrUnixSeconds(now.get()),
+            "direct_send",
+        );
         Ok(ProtocolDirectSendResult {
             message_id,
             event_ids,
@@ -1170,13 +1325,17 @@ impl ProtocolEngine {
 
         let remote_delivered = delivered_device_hexes(&remote);
         let local_delivered = delivered_device_hexes(&local);
+        let probe_local_sibling_roster = self.needs_local_sibling_roster_probe(&local);
+        let has_undelivered_local_siblings = !self
+            .remaining_local_sibling_targets(&local_delivered)
+            .is_empty();
         let gaps = remote
             .relay_gaps
             .iter()
             .chain(local.relay_gaps.iter())
             .cloned()
             .collect::<Vec<_>>();
-        if !gaps.is_empty() {
+        if !gaps.is_empty() || probe_local_sibling_roster || has_undelivered_local_siblings {
             self.upsert_pending_outbound(ProtocolPendingOutbound {
                 message_id: message_id.clone(),
                 chat_id: chat_id.to_string(),
@@ -1186,6 +1345,7 @@ impl ProtocolEngine {
                 inner_event_id,
                 delivered_remote_device_hexes: remote_delivered,
                 delivered_local_device_hexes: local_delivered,
+                probe_local_sibling_roster,
                 created_at_secs: now.get(),
                 next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
                 reason: pending_reason_from_gaps(&gaps),
@@ -1193,6 +1353,12 @@ impl ProtocolEngine {
         }
         self.persist()?;
         let queued_targets = self.queued_message_diagnostics(Some(&message_id));
+        self.append_queued_protocol_backfill(
+            &mut effects,
+            &queued_targets,
+            NdrUnixSeconds(now.get()),
+            "direct_send",
+        );
         Ok(ProtocolDirectSendResult {
             message_id,
             event_ids,
@@ -1206,10 +1372,13 @@ impl ProtocolEngine {
         event: &Event,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
         let envelope = parse_message_event(event)?;
-        let Some(sender_owner) =
-            self.resolve_message_sender_owner(&envelope, event.created_at.as_secs())
-        else {
-            return Ok(None);
+        let sender_owner = match self.resolve_message_sender_owner(&envelope) {
+            ProtocolSenderOwnerResolution::Verified { owner }
+            | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
+            ProtocolSenderOwnerResolution::PendingOwnerClaim { .. } => {
+                self.queue_pending_inbound_direct_event(event.clone(), event.created_at.as_secs())?;
+                return Ok(None);
+            }
         };
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
@@ -1267,8 +1436,40 @@ impl ProtocolEngine {
         from_sender_device_pubkey: Option<PublicKey>,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         let is_group_payload = self.group_manager.is_pairwise_payload(payload);
-        let sender_owner = ndr_owner(from_owner_pubkey);
         let sender_device = from_sender_device_pubkey.map(ndr_device);
+        let sender_owner = ndr_owner(from_owner_pubkey);
+        let sender_owner =
+            match self.resolve_group_pairwise_sender_owner(sender_owner, sender_device) {
+                ProtocolSenderOwnerResolution::Verified { owner }
+                | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
+                ProtocolSenderOwnerResolution::PendingOwnerClaim {
+                    storage_owner,
+                    claimed_owner,
+                    sender_device,
+                } => {
+                    if is_group_payload {
+                        let queued_targets = vec![format!("owner:{}", claimed_owner.to_hex())];
+                        let effects = self.protocol_backfill_effects_for_targets(
+                            &queued_targets,
+                            NdrUnixSeconds(unix_now().get()),
+                            "group_pairwise_owner_claim",
+                        );
+                        self.queue_pending_group_pairwise_payload(
+                            storage_owner,
+                            Some(sender_device),
+                            payload.to_vec(),
+                            unix_now().get(),
+                        )?;
+                        return Ok(ProtocolGroupIncomingResult {
+                            effects,
+                            queued_targets,
+                            consumed: true,
+                            ..Default::default()
+                        });
+                    }
+                    storage_owner
+                }
+            };
         let result = match sender_device {
             Some(device_pubkey) => {
                 self.group_manager
@@ -1304,7 +1505,15 @@ impl ProtocolEngine {
                         payload.to_vec(),
                         unix_now().get(),
                     )?;
+                    let queued_targets = self.queued_group_targets();
+                    let effects = self.protocol_backfill_effects_for_targets(
+                        &queued_targets,
+                        NdrUnixSeconds(unix_now().get()),
+                        "group_pairwise_retry",
+                    );
                     Ok(ProtocolGroupIncomingResult {
+                        effects,
+                        queued_targets,
                         consumed: true,
                         ..Default::default()
                     })
@@ -1336,6 +1545,15 @@ impl ProtocolEngine {
                 Ok(pubkey) => ndr_owner(pubkey),
                 Err(_) => continue,
             };
+            if pending.probe_local_sibling_roster
+                && now.get().saturating_sub(pending.created_at_secs)
+                    > LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS
+                && self
+                    .remaining_local_sibling_targets(&pending.delivered_local_device_hexes)
+                    .is_empty()
+            {
+                pending.probe_local_sibling_roster = false;
+            }
             let remote_targets = self
                 .remaining_remote_targets(recipient_owner, &pending.delivered_remote_device_hexes);
             let local_targets =
@@ -1343,14 +1561,18 @@ impl ProtocolEngine {
 
             if remote_targets.is_empty() && local_targets.is_empty() {
                 let queued_targets = self.pending_target_hexes(&pending);
-                if pending.waits_for_remote_protocol_state() && !queued_targets.is_empty() {
+                if (pending.waits_for_remote_protocol_state() || pending.probe_local_sibling_roster)
+                    && !queued_targets.is_empty()
+                {
                     pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
                     still_pending.push(pending.clone());
+                    let effects =
+                        self.protocol_backfill_effects_for_targets(&queued_targets, now, "retry");
                     results.push(ProtocolRetryResult {
                         message_id: pending.message_id.clone(),
                         chat_id: pending.chat_id.clone(),
                         event_ids: Vec::new(),
-                        effects: Vec::new(),
+                        effects,
                         queued_targets,
                     });
                 }
@@ -1413,7 +1635,8 @@ impl ProtocolEngine {
                 pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
                 still_pending.push(pending.clone());
             }
-            if !event_ids.is_empty() || !effects.is_empty() {
+            if !event_ids.is_empty() || !effects.is_empty() || !queued_targets.is_empty() {
+                self.append_queued_protocol_backfill(&mut effects, &queued_targets, now, "retry");
                 results.push(ProtocolRetryResult {
                     message_id: pending.message_id.clone(),
                     chat_id: pending.chat_id.clone(),
@@ -1440,6 +1663,12 @@ impl ProtocolEngine {
         let mut group_result = group_result;
         group_result.effects.extend(group_effects);
         group_result.queued_targets = self.queued_group_targets();
+        self.append_queued_protocol_backfill(
+            &mut group_result.effects,
+            &group_result.queued_targets,
+            now,
+            "group_retry",
+        );
         let mut direct_messages = self
             .pending_decrypted_deliveries
             .iter()
@@ -1497,10 +1726,12 @@ impl ProtocolEngine {
         event: &Event,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
         let envelope = parse_message_event(event)?;
-        let Some(sender_owner) =
-            self.resolve_message_sender_owner(&envelope, event.created_at.as_secs())
-        else {
-            return Ok(None);
+        let sender_owner = match self.resolve_message_sender_owner(&envelope) {
+            ProtocolSenderOwnerResolution::Verified { owner }
+            | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
+            ProtocolSenderOwnerResolution::PendingOwnerClaim { .. } => {
+                return Ok(None);
+            }
         };
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
@@ -1533,31 +1764,55 @@ impl ProtocolEngine {
 
         let pairwise = std::mem::take(&mut self.pending_group_pairwise_payloads);
         let mut still_pairwise = Vec::new();
+        let mut pairwise_changed = false;
         for mut pending in pairwise {
             if pending.next_retry_at_secs > now.get() {
                 still_pairwise.push(pending);
                 continue;
             }
+            let sender_resolution = self
+                .resolve_group_pairwise_sender_owner(pending.sender_owner, pending.sender_device);
+            let sender_owner = match sender_resolution {
+                ProtocolSenderOwnerResolution::Verified { owner }
+                | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
+                ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } => {
+                    pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                    result
+                        .queued_targets
+                        .push(format!("owner:{}", claimed_owner.to_hex()));
+                    still_pairwise.push(pending);
+                    pairwise_changed = true;
+                    continue;
+                }
+            };
             let outcome = match pending.sender_device {
                 Some(device_pubkey) => self.group_manager.handle_pairwise_payload(
-                    pending.sender_owner,
+                    sender_owner,
                     device_pubkey,
                     &pending.payload,
                 ),
                 None => self
                     .group_manager
-                    .handle_incoming(pending.sender_owner, &pending.payload),
+                    .handle_incoming(sender_owner, &pending.payload),
             };
             match outcome {
-                Ok(Some(event)) => result.events.push(event),
-                Ok(None) => {}
+                Ok(Some(event)) => {
+                    result.events.push(event);
+                    pairwise_changed = true;
+                }
+                Ok(None) => {
+                    pairwise_changed = true;
+                }
                 Err(_) => {
                     pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
                     still_pairwise.push(pending);
+                    pairwise_changed = true;
                 }
             }
         }
         self.pending_group_pairwise_payloads = still_pairwise;
+        result.queued_targets.sort();
+        result.queued_targets.dedup();
 
         let sender_keys = std::mem::take(&mut self.pending_group_sender_key_messages);
         let mut still_sender_keys = Vec::new();
@@ -1574,7 +1829,7 @@ impl ProtocolEngine {
             result.effects.extend(outcome.effects);
         }
         self.pending_group_sender_key_messages = still_sender_keys;
-        if !result.events.is_empty() || !result.effects.is_empty() {
+        if pairwise_changed || !result.events.is_empty() || !result.effects.is_empty() {
             self.persist()?;
         }
         Ok(result)
@@ -1642,25 +1897,179 @@ impl ProtocolEngine {
     fn resolve_message_sender_owner(
         &self,
         envelope: &MessageEnvelope,
-        created_at_secs: u64,
-    ) -> Option<NdrOwnerPubkey> {
-        let owners = self
-            .session_manager
+    ) -> ProtocolSenderOwnerResolution {
+        self.session_record_matching_message_sender(envelope.sender)
+            .map(|record| self.owner_resolution_for_sender_record(record))
+            .unwrap_or_else(|| ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
+                owner: provisional_owner_from_sender_pubkey(envelope.sender),
+            })
+    }
+
+    fn resolve_group_pairwise_sender_owner(
+        &self,
+        sender_owner: NdrOwnerPubkey,
+        sender_device: Option<NdrDevicePubkey>,
+    ) -> ProtocolSenderOwnerResolution {
+        if let Some(sender_device) = sender_device {
+            if let Some(record) = self.session_record_for_device_identity(sender_device) {
+                return self.owner_resolution_for_sender_record(record);
+            }
+            if sender_owner == provisional_owner_from_sender_pubkey(sender_device) {
+                return ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
+                    owner: sender_owner,
+                };
+            }
+        }
+        ProtocolSenderOwnerResolution::Verified {
+            owner: sender_owner,
+        }
+    }
+
+    fn owner_resolution_for_sender_record(
+        &self,
+        record: ProtocolSenderDeviceRecord,
+    ) -> ProtocolSenderOwnerResolution {
+        if let Some(claimed_owner) = record
+            .claimed_owner_pubkey
+            .filter(|claimed_owner| *claimed_owner != record.storage_owner)
+        {
+            if self.has_verified_device_owner_claim(claimed_owner, record.device_pubkey) {
+                return ProtocolSenderOwnerResolution::Verified {
+                    owner: claimed_owner,
+                };
+            }
+            return ProtocolSenderOwnerResolution::PendingOwnerClaim {
+                storage_owner: record.storage_owner,
+                claimed_owner,
+                sender_device: record.device_pubkey,
+            };
+        }
+        if record.storage_owner == provisional_owner_from_sender_pubkey(record.device_pubkey) {
+            ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
+                owner: record.storage_owner,
+            }
+        } else {
+            ProtocolSenderOwnerResolution::Verified {
+                owner: record.storage_owner,
+            }
+        }
+    }
+
+    fn session_record_matching_message_sender(
+        &self,
+        sender: NdrDevicePubkey,
+    ) -> Option<ProtocolSenderDeviceRecord> {
+        for user in self.session_manager.snapshot().users {
+            for record in user.devices {
+                let matches_active = record
+                    .active_session
+                    .as_ref()
+                    .is_some_and(|state| session_state_matches_sender(state, sender));
+                let matches_inactive = record
+                    .inactive_sessions
+                    .iter()
+                    .any(|state| session_state_matches_sender(state, sender));
+                if matches_active || matches_inactive {
+                    return Some(ProtocolSenderDeviceRecord {
+                        storage_owner: user.owner_pubkey,
+                        device_pubkey: record.device_pubkey,
+                        claimed_owner_pubkey: record.claimed_owner_pubkey,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    fn session_record_for_device_identity(
+        &self,
+        sender_device: NdrDevicePubkey,
+    ) -> Option<ProtocolSenderDeviceRecord> {
+        for user in self.session_manager.snapshot().users {
+            for record in user.devices {
+                if record.device_pubkey == sender_device {
+                    return Some(ProtocolSenderDeviceRecord {
+                        storage_owner: user.owner_pubkey,
+                        device_pubkey: record.device_pubkey,
+                        claimed_owner_pubkey: record.claimed_owner_pubkey,
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    fn has_verified_device_owner_claim(
+        &self,
+        owner: NdrOwnerPubkey,
+        device: NdrDevicePubkey,
+    ) -> bool {
+        self.session_manager
             .snapshot()
             .users
             .into_iter()
-            .map(|user| user.owner_pubkey)
-            .collect::<Vec<_>>();
-        for owner in owners {
-            let mut candidate = self.session_manager.clone();
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(NdrUnixSeconds(created_at_secs), &mut rng);
-            match candidate.receive(&mut ctx, owner, envelope) {
-                Ok(Some(_)) => return Some(owner),
-                Ok(None) | Err(_) => {}
+            .find(|user| user.owner_pubkey == owner)
+            .and_then(|user| user.roster)
+            .is_some_and(|roster| roster.get_device(&device).is_some())
+    }
+
+    fn wake_pending_protocol_for_owner(&mut self, owner: NdrOwnerPubkey) {
+        let owner_hex = owner.to_hex();
+        for pending in &mut self.pending_outbound {
+            if pending.recipient_owner_hex == owner_hex
+                || (pending.probe_local_sibling_roster && owner == self.local_owner)
+                || (owner == self.local_owner && pending.local_sibling_payload.is_some())
+            {
+                pending.next_retry_at_secs = 0;
             }
         }
-        Some(NdrOwnerPubkey::from_bytes(envelope.sender.to_bytes()))
+        for pending in &mut self.pending_group_fanouts {
+            if matches!(
+                &pending.fanout,
+                GroupPendingFanout::Remote {
+                    recipient_owner,
+                    ..
+                } if *recipient_owner == owner
+            ) {
+                pending.next_retry_at_secs = 0;
+            }
+        }
+
+        let pending_inbound_ids = self
+            .pending_inbound
+            .iter()
+            .filter_map(|pending| {
+                let envelope = parse_message_event(&pending.event).ok()?;
+                sender_resolution_owner_matches(self.resolve_message_sender_owner(&envelope), owner)
+                    .then(|| pending.event.id)
+            })
+            .collect::<HashSet<_>>();
+        for pending in &mut self.pending_inbound {
+            if pending_inbound_ids.contains(&pending.event.id) {
+                pending.next_retry_at_secs = 0;
+            }
+        }
+
+        let pending_pairwise_keys = self
+            .pending_group_pairwise_payloads
+            .iter()
+            .enumerate()
+            .filter_map(|(index, pending)| {
+                sender_resolution_owner_matches(
+                    self.resolve_group_pairwise_sender_owner(
+                        pending.sender_owner,
+                        pending.sender_device,
+                    ),
+                    owner,
+                )
+                .then_some(index)
+            })
+            .collect::<HashSet<_>>();
+        for (index, pending) in self.pending_group_pairwise_payloads.iter_mut().enumerate() {
+            if pending_pairwise_keys.contains(&index) {
+                pending.next_retry_at_secs = 0;
+            }
+        }
     }
 
     fn ensure_local_roster(&mut self, created_at: NdrUnixSeconds) {
@@ -1708,6 +2117,12 @@ impl ProtocolEngine {
         let mut queued_targets = self.queued_group_targets();
         queued_targets.sort();
         queued_targets.dedup();
+        self.append_queued_protocol_backfill(
+            &mut effects,
+            &queued_targets,
+            NdrUnixSeconds(unix_now().get()),
+            "group_send",
+        );
         Ok(ProtocolGroupSendResult {
             event_ids,
             effects,
@@ -1750,6 +2165,38 @@ impl ProtocolEngine {
                 GroupPendingFanout::LocalSiblings { .. } => self.local_owner.to_hex(),
             })
             .collect::<Vec<_>>();
+        targets.extend(self.pending_group_pairwise_owner_claim_targets());
+        targets.sort();
+        targets.dedup();
+        targets
+    }
+
+    fn pending_inbound_owner_claim_targets(&self) -> Vec<String> {
+        let mut targets = Vec::new();
+        for pending in &self.pending_inbound {
+            let Ok(envelope) = parse_message_event(&pending.event) else {
+                continue;
+            };
+            if let ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } =
+                self.resolve_message_sender_owner(&envelope)
+            {
+                targets.push(format!("owner:{}", claimed_owner.to_hex()));
+            }
+        }
+        targets.sort();
+        targets.dedup();
+        targets
+    }
+
+    fn pending_group_pairwise_owner_claim_targets(&self) -> Vec<String> {
+        let mut targets = Vec::new();
+        for pending in &self.pending_group_pairwise_payloads {
+            if let ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } = self
+                .resolve_group_pairwise_sender_owner(pending.sender_owner, pending.sender_device)
+            {
+                targets.push(format!("owner:{}", claimed_owner.to_hex()));
+            }
+        }
         targets.sort();
         targets.dedup();
         targets
@@ -1812,7 +2259,11 @@ impl ProtocolEngine {
             created_at_secs: now_secs,
             next_retry_at_secs: now_secs.saturating_add(PENDING_RETRY_DELAY_SECS),
         };
-        if !self.pending_group_pairwise_payloads.contains(&pending) {
+        if !self.pending_group_pairwise_payloads.iter().any(|existing| {
+            existing.sender_owner == pending.sender_owner
+                && existing.sender_device == pending.sender_device
+                && existing.payload == pending.payload
+        }) {
             self.pending_group_pairwise_payloads.push(pending);
             self.persist()?;
         }
@@ -1890,6 +2341,7 @@ impl ProtocolEngine {
                 .extend(pending.delivered_local_device_hexes);
             existing.delivered_local_device_hexes.sort();
             existing.delivered_local_device_hexes.dedup();
+            existing.probe_local_sibling_roster |= pending.probe_local_sibling_roster;
             existing.reason = pending.reason;
             existing.next_retry_at_secs = pending.next_retry_at_secs;
         } else {
@@ -1944,6 +2396,10 @@ impl ProtocolEngine {
             .is_some_and(|roster| !roster.devices().is_empty())
     }
 
+    fn needs_local_sibling_roster_probe(&self, prepared: &PreparedSend) -> bool {
+        prepared.deliveries.is_empty() && prepared.relay_gaps.is_empty()
+    }
+
     fn enqueue_owner_message_backfill_effect(
         &self,
         effects: &mut Vec<ProtocolEffect>,
@@ -1963,10 +2419,92 @@ impl ProtocolEngine {
         });
     }
 
+    fn append_queued_protocol_backfill(
+        &self,
+        effects: &mut Vec<ProtocolEffect>,
+        queued_targets: &[String],
+        now: NdrUnixSeconds,
+        reason: &'static str,
+    ) {
+        effects.extend(self.protocol_backfill_effects_for_targets(queued_targets, now, reason));
+    }
+
+    fn protocol_backfill_effects_for_targets(
+        &self,
+        queued_targets: &[String],
+        now: NdrUnixSeconds,
+        reason: &'static str,
+    ) -> Vec<ProtocolEffect> {
+        let filters = self.queued_protocol_filters(queued_targets, now);
+        if filters.is_empty() {
+            Vec::new()
+        } else {
+            vec![ProtocolEffect::FetchProtocolState { filters, reason }]
+        }
+    }
+
+    fn queued_protocol_filters(
+        &self,
+        queued_targets: &[String],
+        now: NdrUnixSeconds,
+    ) -> Vec<Filter> {
+        let mut owner_authors = Vec::new();
+        let mut invite_authors = Vec::new();
+        for target in queued_targets {
+            if let Some(owner_hex) = target.strip_prefix("owner:") {
+                if let Ok(owner) = PublicKey::parse(owner_hex) {
+                    owner_authors.push(owner);
+                }
+                continue;
+            }
+            if let Ok(pubkey) = PublicKey::parse(target) {
+                owner_authors.push(pubkey);
+                invite_authors.push(pubkey);
+            }
+        }
+        sort_dedup_protocol_pubkeys(&mut owner_authors);
+        sort_dedup_protocol_pubkeys(&mut invite_authors);
+
+        let mut filters = Vec::new();
+        if !owner_authors.is_empty() {
+            filters.push(
+                Filter::new()
+                    .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+                    .authors(owner_authors)
+                    .since(Timestamp::from(
+                        now.get()
+                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
+                    ))
+                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
+            );
+        }
+        if !invite_authors.is_empty() {
+            filters.push(
+                Filter::new()
+                    .kind(Kind::from(INVITE_EVENT_KIND as u16))
+                    .authors(invite_authors)
+                    .custom_tag(SingleLetterTag::lowercase(Alphabet::L), INVITES_L_TAG)
+                    .since(Timestamp::from(
+                        now.get()
+                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
+                    ))
+                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
+            );
+        }
+        filters
+    }
+
     fn pending_target_hexes(&self, pending: &ProtocolPendingOutbound) -> Vec<String> {
         let mut targets = self.pending_remote_target_hexes(pending);
         for target in self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes) {
             targets.push(target.to_hex());
+        }
+        if pending.probe_local_sibling_roster
+            && self
+                .remaining_local_sibling_targets(&pending.delivered_local_device_hexes)
+                .is_empty()
+        {
+            targets.push(format!("owner:{}", self.local_owner.to_hex()));
         }
         targets.sort();
         targets.dedup();
@@ -2115,6 +2653,11 @@ fn protocol_publish_effect(publish: ProtocolPublishEvent) -> ProtocolEffect {
     }
 }
 
+fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {
+    pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
+    pubkeys.dedup();
+}
+
 fn group_publish_from_prepared_send(
     prepared: PreparedSend,
     fanout: GroupPendingFanout,
@@ -2173,6 +2716,33 @@ fn collect_expected_sender_pubkeys(session: &SessionState, out: &mut HashSet<Pub
             out.insert(pubkey);
         }
     }
+}
+
+fn session_state_matches_sender(session: &SessionState, sender: NdrDevicePubkey) -> bool {
+    session.their_current_nostr_public_key == Some(sender)
+        || session.their_next_nostr_public_key == Some(sender)
+        || session.skipped_keys.contains_key(&sender)
+}
+
+fn sender_resolution_owner_matches(
+    resolution: ProtocolSenderOwnerResolution,
+    owner: NdrOwnerPubkey,
+) -> bool {
+    match resolution {
+        ProtocolSenderOwnerResolution::Verified {
+            owner: resolved_owner,
+        }
+        | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
+            owner: resolved_owner,
+        } => resolved_owner == owner,
+        ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } => {
+            claimed_owner == owner
+        }
+    }
+}
+
+fn provisional_owner_from_sender_pubkey(sender: NdrDevicePubkey) -> NdrOwnerPubkey {
+    NdrOwnerPubkey::from_bytes(sender.to_bytes())
 }
 
 fn local_sibling_payload(conversation_owner: PublicKey, payload: &[u8]) -> anyhow::Result<Vec<u8>> {

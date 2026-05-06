@@ -217,11 +217,32 @@ impl AppCore {
                             "appcore.protocol.message.pending",
                             "sender/session unresolved",
                         );
-                        self.request_protocol_subscription_refresh();
-                        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
-                            PROTOCOL_RECONNECT_CHECK_SECS,
-                        ));
-                        if self.fetch_recent_protocol_state() {
+                        let (queued_targets, effects) = self
+                            .protocol_engine
+                            .as_ref()
+                            .map(|engine| {
+                                engine.queued_protocol_backfill_effects(
+                                    NdrUnixSeconds(unix_now().get()),
+                                    "direct_message.pending",
+                                )
+                            })
+                            .unwrap_or_default();
+                        self.process_protocol_engine_effects_with_completions(
+                            effects,
+                            &BTreeMap::new(),
+                        );
+                        if queued_targets.is_empty() {
+                            self.request_protocol_subscription_refresh();
+                            self.schedule_protocol_subscription_liveness_check(
+                                Duration::from_secs(PROTOCOL_RECONNECT_CHECK_SECS),
+                            );
+                        } else {
+                            self.handle_queued_protocol_targets(
+                                "direct_message.pending",
+                                &queued_targets,
+                            );
+                        }
+                        if queued_targets.is_empty() && self.fetch_recent_protocol_state() {
                             self.state.busy.syncing_network = true;
                         }
                     }
@@ -384,6 +405,9 @@ impl AppCore {
                 }
                 ProtocolEffect::FetchBackfill => {
                     self.fetch_recent_protocol_state();
+                }
+                ProtocolEffect::FetchProtocolState { filters, reason } => {
+                    self.fetch_protocol_state_for_filters(filters, reason);
                 }
                 ProtocolEffect::EmitDecrypted {
                     sender,

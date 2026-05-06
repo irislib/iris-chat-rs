@@ -452,10 +452,11 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
             let _ = bob_child.wait();
             let bob_sync = run_iris(bob.path(), &["sync", "--wait-ms", "2000"]);
             let bob_read = run_iris(bob.path(), &["read", alice_user_id]);
+            let fresh_debug = debug_snapshot(alice_fresh.path());
             let bob_debug = debug_snapshot(bob.path());
             let relay_events = relay_event_summary(&relay);
             panic!(
-                "bob did not receive fresh restored send; trace={}; bob_sync={bob_sync}; bob_read={bob_read}; bob_debug={bob_debug}; relay_events={relay_events}; relay_kinds={relay_kinds:?}",
+                "bob did not receive fresh restored send; trace={}; fresh_debug={fresh_debug}; bob_sync={bob_sync}; bob_read={bob_read}; bob_debug={bob_debug}; relay_events={relay_events}; relay_kinds={relay_kinds:?}",
                 sent["data"]["delivery_trace"],
             );
         }
@@ -478,9 +479,10 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
             let alice_sync = run_iris(alice_old.path(), &["sync", "--wait-ms", "2000"]);
             let alice_read = run_iris(alice_old.path(), &["read", bob_user_id]);
             let fresh_read = run_iris(alice_fresh.path(), &["read", bob_user_id]);
+            let fresh_debug = debug_snapshot(alice_fresh.path());
             let alice_debug = debug_snapshot(alice_old.path());
             panic!(
-                "old alice did not receive sender copy; trace={}; alice_sync={alice_sync}; alice_read={alice_read}; fresh_read={fresh_read}; alice_debug={alice_debug}; relay_kinds={relay_kinds:?}",
+                "old alice did not receive sender copy; trace={}; alice_sync={alice_sync}; alice_read={alice_read}; fresh_read={fresh_read}; fresh_debug={fresh_debug}; alice_debug={alice_debug}; relay_kinds={relay_kinds:?}",
                 sent["data"]["delivery_trace"],
             );
         }

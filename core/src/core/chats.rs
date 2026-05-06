@@ -1096,6 +1096,12 @@ impl AppCore {
                 }
             };
             if !group_outcome.events.is_empty() {
+                if !group_outcome.queued_targets.is_empty() {
+                    self.handle_queued_protocol_targets(
+                        "group.pairwise",
+                        &group_outcome.queued_targets,
+                    );
+                }
                 for group_event in group_outcome.events {
                     self.apply_group_decrypted_event(group_event);
                 }
@@ -1107,6 +1113,12 @@ impl AppCore {
                 return;
             }
             if group_outcome.consumed {
+                if !group_outcome.queued_targets.is_empty() {
+                    self.handle_queued_protocol_targets(
+                        "group.pairwise",
+                        &group_outcome.queued_targets,
+                    );
+                }
                 self.process_protocol_engine_effects_with_completions(
                     group_outcome.effects,
                     &BTreeMap::new(),

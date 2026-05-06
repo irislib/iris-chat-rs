@@ -5,7 +5,6 @@ const APPCORE_PROTOCOL_SUBSCRIPTION_ID: &str = "appcore-protocol";
 const PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID: &str = "ndr-private-invite-responses";
 const PRIVATE_INVITE_RESPONSE_AUTHOR_SUBSCRIPTION_ID: &str = "ndr-private-invite-responses-authors";
 const BOOTSTRAP_DIRECT_MESSAGE_SUBSCRIPTION_ID: &str = "ndr-runtime-messages-bootstrap";
-const INVITES_L_TAG: &str = "double-ratchet/invites";
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 pub(super) const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 
@@ -130,11 +129,7 @@ impl AppCore {
         self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
             PROTOCOL_RECONNECT_CHECK_SECS,
         ));
-        if self.fetch_protocol_state_for_queued_targets(queued_targets)
-            || self.fetch_recent_protocol_state()
-        {
-            self.state.busy.syncing_network = true;
-        }
+        self.state.busy.syncing_network = true;
     }
 
     pub(super) fn retry_protocol_engine_pending_outbound(&mut self, reason: &'static str) {
@@ -490,57 +485,6 @@ impl AppCore {
         filters
     }
 
-    pub(super) fn queued_protocol_filters(
-        &self,
-        queued_targets: &[String],
-        now: UnixSeconds,
-    ) -> Vec<Filter> {
-        let mut owner_authors = Vec::new();
-        let mut invite_authors = Vec::new();
-        for target in queued_targets {
-            if let Some(owner_hex) = target.strip_prefix("owner:") {
-                if let Ok(owner) = PublicKey::parse(owner_hex) {
-                    owner_authors.push(owner);
-                }
-                continue;
-            }
-            if let Ok(pubkey) = PublicKey::parse(target) {
-                owner_authors.push(pubkey);
-                invite_authors.push(pubkey);
-            }
-        }
-        sort_dedup_pubkeys(&mut owner_authors);
-        sort_dedup_pubkeys(&mut invite_authors);
-
-        let mut filters = Vec::new();
-        if !owner_authors.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
-                    .authors(owner_authors)
-                    .since(Timestamp::from(
-                        now.get()
-                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-                    ))
-                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-            );
-        }
-        if !invite_authors.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(INVITE_EVENT_KIND as u16))
-                    .authors(invite_authors)
-                    .custom_tag(SingleLetterTag::lowercase(Alphabet::L), INVITES_L_TAG)
-                    .since(Timestamp::from(
-                        now.get()
-                            .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
-                    ))
-                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-            );
-        }
-        filters
-    }
-
     fn protocol_invite_author_pubkeys(&self, owners: &[PublicKey]) -> Vec<PublicKey> {
         let mut authors = Vec::new();
         for owner in owners {
@@ -594,6 +538,7 @@ impl AppCore {
             "protocol.catch_up.fetch",
             format!("filters={}", filters.len()),
         );
+        self.state.busy.syncing_network = true;
 
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
@@ -623,9 +568,10 @@ impl AppCore {
         true
     }
 
-    pub(super) fn fetch_protocol_state_for_queued_targets(
+    pub(super) fn fetch_protocol_state_for_filters(
         &mut self,
-        queued_targets: &[String],
+        filters: Vec<Filter>,
+        reason: &'static str,
     ) -> bool {
         let Some((client, relay_urls)) = self
             .logged_in
@@ -635,21 +581,14 @@ impl AppCore {
         else {
             return false;
         };
-        let mut normalized_targets = queued_targets.to_vec();
-        normalized_targets.sort();
-        normalized_targets.dedup();
-        let filters = self.queued_protocol_filters(&normalized_targets, unix_now());
         if filters.is_empty() {
             return false;
         }
         self.push_debug_log(
-            "protocol.queued_fetch.fetch",
-            format!(
-                "targets={} filters={}",
-                normalized_targets.join(","),
-                filters.len()
-            ),
+            "protocol.engine_fetch.fetch",
+            format!("reason={reason} filters={}", filters.len()),
         );
+        self.state.busy.syncing_network = true;
 
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
@@ -658,7 +597,7 @@ impl AppCore {
             match fetch_events_for_filters(&client, filters, Duration::from_secs(5)).await {
                 Ok(collected) => {
                     let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "protocol.queued_fetch.result".to_string(),
+                        category: "protocol.engine_fetch.result".to_string(),
                         detail: format!("events={}", collected.len()),
                     })));
                     if !collected.is_empty() {
@@ -669,7 +608,7 @@ impl AppCore {
                 }
                 Err(error) => {
                     let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                        category: "protocol.queued_fetch.error".to_string(),
+                        category: "protocol.engine_fetch.error".to_string(),
                         detail: error.to_string(),
                     })));
                 }
@@ -723,10 +662,11 @@ impl AppCore {
             })
     }
 
-    fn current_queued_protocol_targets(&self) -> Vec<String> {
+    pub(super) fn current_queued_protocol_targets(&self) -> Vec<String> {
         let mut targets = Vec::new();
         if let Some(protocol_engine) = self.protocol_engine.as_ref() {
             targets.extend(protocol_engine.queued_message_diagnostics(None));
+            targets.extend(protocol_engine.queued_owner_claim_targets());
             targets.extend(
                 protocol_engine
                     .debug_snapshot()
@@ -1293,9 +1233,7 @@ impl AppCore {
         }
         if should_retry_backfill {
             let queued_targets = self.current_queued_protocol_targets();
-            if queued_targets.is_empty()
-                || !self.fetch_protocol_state_for_queued_targets(&queued_targets)
-            {
+            if queued_targets.is_empty() {
                 self.fetch_recent_protocol_state();
             }
             self.fetch_recent_messages_for_tracked_peers(unix_now());
@@ -1434,11 +1372,6 @@ impl AppCore {
 
 fn protocol_subscription_filter_summary(filter: &Filter) -> String {
     serde_json::to_string(filter).unwrap_or_else(|_| "<filter>".to_string())
-}
-
-fn sort_dedup_pubkeys(pubkeys: &mut Vec<PublicKey>) {
-    pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
-    pubkeys.dedup();
 }
 
 async fn fetch_events_for_filters(
