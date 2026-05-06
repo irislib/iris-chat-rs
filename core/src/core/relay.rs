@@ -65,10 +65,6 @@ impl AppCore {
                     Ok(_) => {
                         self.remember_event(event_id);
                         self.request_protocol_subscription_refresh();
-                        if self.fetch_recent_protocol_state() {
-                            self.state.busy.syncing_network = true;
-                        }
-                        self.fetch_recent_messages_for_tracked_peers(unix_now());
                         self.persist_best_effort();
                         self.rebuild_state();
                         self.emit_state();
@@ -527,8 +523,10 @@ impl AppCore {
                 NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
             );
         }
-        self.reconcile_protocol_subscriptions("runtime_subscribe", false);
-        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
+        if changed {
+            self.reconcile_protocol_subscriptions("runtime_subscribe", false);
+            self.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
+        }
         self.push_debug_log(
             "runtime.subscribe",
             format!(

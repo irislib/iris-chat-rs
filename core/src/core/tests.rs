@@ -829,6 +829,35 @@ fn runtime_publish_uses_durable_relay_connect_helper() {
 }
 
 #[test]
+fn direct_send_hot_path_does_not_force_global_catch_up_for_established_messages() {
+    let chats_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/chats.rs"),
+    )
+    .expect("read chats source");
+    let start = chats_source
+        .find("pub(super) fn send_direct_message")
+        .expect("send_direct_message");
+    let body = &chats_source[start
+        ..chats_source[start..]
+            .find("\n    pub(super) fn send_group_message")
+            .map(|offset| start + offset)
+            .unwrap_or(chats_source.len())];
+
+    assert!(
+        !body.contains("request_protocol_subscription_refresh_forced_reconnect_if_offline"),
+        "normal direct sends must not force relay/subscription reconnect on every message"
+    );
+    assert!(
+        !body.contains("fetch_recent_messages_for_tracked_peers"),
+        "normal direct sends must not launch global tracked-peer catch-up on every message"
+    );
+    assert!(
+        !body.contains("schedule_tracked_peer_catch_up"),
+        "normal direct sends must not schedule delayed global catch-up on every message"
+    );
+}
+
+#[test]
 fn zero_connected_session_check_schedules_fast_reconnect() {
     let protocol_source = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol.rs"),

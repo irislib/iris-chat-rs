@@ -394,9 +394,6 @@ impl AppCore {
                     .collect::<BTreeMap<_, _>>();
                 self.process_protocol_engine_effects_with_completions(result.effects, &completions);
                 self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
-                self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
-                self.fetch_recent_messages_for_tracked_peers(now);
-                self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
                 if !result.queued_targets.is_empty() {
                     self.handle_queued_protocol_targets("message.direct", &result.queued_targets);
                 }

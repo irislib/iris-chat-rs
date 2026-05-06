@@ -75,7 +75,10 @@ fun NdrApp(
     val appManager = container.appManager
     val splashViewModel = remember { SplashViewModel(appManager) }
     val bootstrapState by splashViewModel.bootstrapState.collectAsStateWithLifecycle()
-    val appState by appManager.state.collectAsStateWithLifecycle()
+    val router by appManager.router.collectAsStateWithLifecycle()
+    val preferences by appManager.preferences.collectAsStateWithLifecycle()
+    val networkStatus by appManager.networkStatus.collectAsStateWithLifecycle()
+    val toast by appManager.toast.collectAsStateWithLifecycle()
     val foregroundedAtSecs by appManager.foregroundedAtSecs.collectAsStateWithLifecycle()
     val pendingShare by appManager.pendingShare.collectAsStateWithLifecycle()
     val context = LocalContext.current
@@ -90,9 +93,9 @@ fun NdrApp(
         showingNearbyIris = true
     }
 
-    LaunchedEffect(appState.preferences.nearbyBluetoothEnabled) {
+    LaunchedEffect(preferences.nearbyBluetoothEnabled) {
         if (
-            appState.preferences.nearbyBluetoothEnabled &&
+            preferences.nearbyBluetoothEnabled &&
                 container.nearbyIrisService.hasBluetoothPermission()
         ) {
             container.nearbyIrisService.setVisible(true)
@@ -101,18 +104,18 @@ fun NdrApp(
         }
     }
 
-    LaunchedEffect(appState.preferences.nearbyLanEnabled) {
-        container.nearbyIrisService.setLocalNetworkVisible(appState.preferences.nearbyLanEnabled)
+    LaunchedEffect(preferences.nearbyLanEnabled) {
+        container.nearbyIrisService.setLocalNetworkVisible(preferences.nearbyLanEnabled)
     }
 
-    LaunchedEffect(appState.toast) {
-        val message = appState.toast ?: return@LaunchedEffect
+    LaunchedEffect(toast) {
+        val message = toast ?: return@LaunchedEffect
         Toast.makeText(context, message, Toast.LENGTH_LONG).show()
     }
 
-    val offlineSinceSecs = appState.networkStatus?.allRelaysOfflineSinceSecs?.toLong()
+    val offlineSinceSecs = networkStatus?.allRelaysOfflineSinceSecs?.toLong()
     val allRelaysOffline =
-        appState.networkStatus?.let { status ->
+        networkStatus?.let { status ->
             status.relayUrls.isNotEmpty() &&
                 status.connectedRelayCount == 0uL &&
                 offlineSinceSecs != null
@@ -138,7 +141,6 @@ fun NdrApp(
             null
         }
 
-    val router = appState.router
     val activeScreen = router.screenStack.lastOrNull() ?: router.defaultScreen
 
     BackHandler(enabled = bootstrapState != AccountBootstrapState.Loading && router.screenStack.isNotEmpty()) {
@@ -164,9 +166,18 @@ fun NdrApp(
                 AccountBootstrapState.NeedsLogin -> {
                     when (activeScreen) {
                         Screen.Welcome -> WelcomeScreen(appManager = appManager)
-                        Screen.CreateAccount -> CreateAccountScreen(appManager = appManager, appState = appState)
-                        Screen.RestoreAccount -> RestoreAccountScreen(appManager = appManager, appState = appState)
-                        Screen.AddDevice -> AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
+                        Screen.CreateAccount -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
+                            CreateAccountScreen(appManager = appManager, appState = appState)
+                        }
+                        Screen.RestoreAccount -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
+                            RestoreAccountScreen(appManager = appManager, appState = appState)
+                        }
+                        Screen.AddDevice -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
+                            AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
+                        }
                         else -> WelcomeScreen(appManager = appManager)
                     }
                 }
@@ -178,18 +189,22 @@ fun NdrApp(
                         }
 
                         Screen.CreateAccount -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             CreateAccountScreen(appManager = appManager, appState = appState)
                         }
 
                         Screen.RestoreAccount -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             RestoreAccountScreen(appManager = appManager, appState = appState)
                         }
 
                         Screen.AddDevice -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
                         }
 
                         Screen.ChatList -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             ChatListScreen(
                                 appManager = appManager,
                                 appState = appState,
@@ -199,22 +214,27 @@ fun NdrApp(
                         }
 
                         Screen.NewChat -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             NewChatScreen(appManager = appManager, appState = appState)
                         }
 
                         Screen.NewGroup -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             NewGroupScreen(appManager = appManager, appState = appState)
                         }
 
                         Screen.CreateInvite -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             CreateInviteScreen(appManager = appManager, appState = appState)
                         }
 
                         Screen.JoinInvite -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             JoinInviteScreen(appManager = appManager, appState = appState)
                         }
 
                         Screen.Settings -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             val account = appState.account
                             if (account == null) {
                                 ChatListScreen(
@@ -254,14 +274,17 @@ fun NdrApp(
                         }
 
                         Screen.DeviceRoster -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             DeviceRosterScreen(appManager = appManager, appState = appState)
                         }
 
                         Screen.AwaitingDeviceApproval -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             AwaitingDeviceApprovalScreen(appManager = appManager, appState = appState)
                         }
 
                         Screen.DeviceRevoked -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             DeviceRevokedScreen(appManager = appManager, appState = appState)
                         }
 
@@ -277,6 +300,7 @@ fun NdrApp(
                         }
 
                         is Screen.GroupDetails -> {
+                            val appState by appManager.state.collectAsStateWithLifecycle()
                             GroupDetailsScreen(
                                 appManager = appManager,
                                 appState = appState,
@@ -288,6 +312,7 @@ fun NdrApp(
             }
 
             if (showingNearbyIris) {
+                val appState by appManager.state.collectAsStateWithLifecycle()
                 NearbyIrisSheet(
                     appManager = appManager,
                     appState = appState,
@@ -299,8 +324,9 @@ fun NdrApp(
             }
 
             if (pendingShare != null && bootstrapState is AccountBootstrapState.LoggedIn) {
+                val chatList by appManager.chatList.collectAsStateWithLifecycle()
                 ShareTargetDialog(
-                    chats = appState.chatList,
+                    chats = chatList,
                     onSend = { chatIds -> appManager.sendPendingShareToChats(chatIds) },
                     onNewChat = {
                         appManager.clearPendingShare()

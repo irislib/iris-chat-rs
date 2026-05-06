@@ -129,7 +129,6 @@ impl AppCore {
         self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
             PROTOCOL_RECONNECT_CHECK_SECS,
         ));
-        self.state.busy.syncing_network = true;
     }
 
     pub(super) fn retry_protocol_engine_pending_outbound(&mut self, reason: &'static str) {
