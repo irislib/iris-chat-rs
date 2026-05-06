@@ -45,6 +45,7 @@ https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsd
 cd /path/to/iris-chat-rs
 just info
 just run
+just build
 just run-android
 just run-ios
 just run-linux
@@ -53,6 +54,7 @@ just run-windows
 ```
 
 `just run` dispatches to the native app for the local desktop platform.
+`just build` builds the native app for the local desktop platform.
 
 ## Check
 
@@ -72,6 +74,7 @@ Use `just test` for the normal release gate. Add `--full` or `--on-device` to
 ## Build
 
 ```bash
+just build
 just android-assemble
 just ios-xcodeproj
 just macos-build
@@ -82,15 +85,16 @@ just linux-release
 Release helpers:
 
 ```bash
-./scripts/release --publish
+just release
+just release-publish
 ./scripts/android-release
 ./scripts/ios-release
-./scripts/macos-build macos-dmg
-./scripts/windows-build windows-installer
-./scripts/linux-release
+just macos-dmg
+just windows-installer
+just linux-release
 ```
 
-`./scripts/release --publish` stages release artifacts under `dist/release/`
+`just release-publish` stages release artifacts under `dist/release/`
 and publishes the release tree to hashtree. It runs the release gate first,
 publishes a new `iris-chat` crate version when needed, and sends iOS builds to
 internal and public TestFlight unless skipped.

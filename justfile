@@ -14,6 +14,11 @@ info:
     @echo "  just run-macos"
     @echo "  just run-windows"
     @echo
+    @echo "Build"
+    @echo "  just build"
+    @echo "  just release"
+    @echo "  just release-publish"
+    @echo
     @echo "Bindings and native builds"
     @echo "  just gen-kotlin"
     @echo "  just android-rust"
@@ -81,6 +86,14 @@ run-android:
 
 run-windows:
     ./tools/run-windows
+
+build:
+    @case "$(uname -s)" in \
+        Darwin) just macos-build ;; \
+        Linux) ./tools/run-linux cargo build ;; \
+        MINGW*|MSYS*|CYGWIN*) just windows-build ;; \
+        *) echo "No local build target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
+    esac
 
 ios-gen-swift:
     ./scripts/ios-build ios-gen-swift
