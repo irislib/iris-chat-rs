@@ -82,6 +82,34 @@ impl AppCore {
         true
     }
 
+    pub(super) fn queue_runtime_event_for_delayed_publish(
+        &mut self,
+        event: Event,
+        label: &'static str,
+        completion: Option<(String, String)>,
+        inner_event_id: Option<String>,
+        target_owner_pubkey_hex: Option<String>,
+        target_device_id: Option<String>,
+    ) -> bool {
+        if self.defer_owner_app_keys_publish && is_app_keys_event(&event) {
+            self.push_debug_log(
+                "publish.runtime",
+                "label=runtime skipped=defer_owner_app_keys".to_string(),
+            );
+            return false;
+        }
+        self.remember_event(event.id.to_string());
+        self.emit_nearby_published_event(&event);
+        self.remember_pending_relay_publish(
+            &event,
+            label,
+            completion,
+            inner_event_id,
+            target_owner_pubkey_hex,
+            target_device_id,
+        )
+    }
+
     fn spawn_relay_publish_attempt(
         &mut self,
         event: Event,
@@ -199,7 +227,7 @@ impl AppCore {
         true
     }
 
-    pub(super) fn retry_pending_relay_publishes(&mut self, reason: &'static str) {
+    pub(super) fn retry_pending_relay_publishes(&mut self, reason: &str) {
         if self.pending_relay_publishes.is_empty() {
             return;
         }

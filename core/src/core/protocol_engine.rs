@@ -5,6 +5,7 @@ const LEGACY_RUNTIME_STATE_KEY: &str = "v2/runtime-state";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
+const TARGETED_OWNER_BACKFILL_LOOKBACK_SECS: u64 = 300;
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProtocolEnginePersistedState {
@@ -74,6 +75,15 @@ struct LegacyPendingGroupFanout {
 
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
+pub(super) struct ProtocolPublishEvent {
+    pub(super) event: Event,
+    pub(super) inner_event_id: Option<String>,
+    pub(super) target_owner_pubkey_hex: Option<String>,
+    pub(super) target_device_id: Option<String>,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
 pub(super) enum ProtocolEffect {
     Subscribe {
         subid: String,
@@ -88,6 +98,15 @@ pub(super) enum ProtocolEffect {
         inner_event_id: Option<String>,
         target_owner_pubkey_hex: Option<String>,
         target_device_id: Option<String>,
+    },
+    PublishStagedFirstContact {
+        bootstrap: Vec<ProtocolPublishEvent>,
+        payload: Vec<ProtocolPublishEvent>,
+    },
+    FetchRecentMessagesForOwner {
+        owner_pubkey: PublicKey,
+        lookback_secs: u64,
+        reason: &'static str,
     },
     EmitDecrypted {
         sender: PublicKey,
@@ -205,6 +224,7 @@ pub(super) struct ProtocolRetryBatch {
     pub(super) direct_results: Vec<ProtocolRetryResult>,
     pub(super) group_result: ProtocolGroupIncomingResult,
     pub(super) direct_messages: Vec<ProtocolDecryptedMessage>,
+    pub(super) effects: Vec<ProtocolEffect>,
 }
 
 #[allow(dead_code)]
@@ -520,12 +540,12 @@ impl ProtocolEngine {
                     continue;
                 }
                 if user.owner_pubkey != provisional_owner {
-                    return public_owner(user.owner_pubkey)
-                        .ok()
-                        .map(|owner| ProtocolDeviceOwnerHint {
+                    return public_owner(user.owner_pubkey).ok().map(|owner| {
+                        ProtocolDeviceOwnerHint {
                             owner,
                             verified: true,
-                        });
+                        }
+                    });
                 }
                 if claimed_owner.is_none() {
                     claimed_owner = record.claimed_owner_pubkey;
@@ -736,7 +756,9 @@ impl ProtocolEngine {
             self.latest_app_keys_created_at = latest_checkpoint;
             return Err(error);
         }
-        self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
+        let mut batch = self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))?;
+        self.enqueue_owner_message_backfill_effect(&mut batch.effects, owner_pubkey, "app_keys");
+        Ok(batch)
     }
 
     pub(super) fn observe_invite_event(
@@ -779,14 +801,22 @@ impl ProtocolEngine {
         let session_checkpoint = self.session_manager.clone();
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
-        let _ = self
+        let processed = self
             .session_manager
             .observe_invite_response(&mut ctx, &envelope)?;
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
             return Err(error);
         }
-        self.retry_pending_protocol(ctx.now)
+        let mut batch = self.retry_pending_protocol(ctx.now)?;
+        if let Some(processed) = processed {
+            self.enqueue_owner_message_backfill_effect(
+                &mut batch.effects,
+                public_owner(processed.owner_pubkey)?,
+                "invite_response",
+            );
+        }
+        Ok(batch)
     }
 
     pub(super) fn accept_invite(
@@ -830,6 +860,7 @@ impl ProtocolEngine {
         } else {
             self.persist()?;
         }
+        self.enqueue_owner_message_backfill_effect(&mut effects, invite_owner, "accept_invite");
         Ok(ProtocolAcceptInviteResult {
             owner_pubkey: invite_owner,
             inviter_device_pubkey: public_device(invite.inviter_device_pubkey)?,
@@ -857,7 +888,13 @@ impl ProtocolEngine {
             NdrUnixSeconds(now.get()),
         );
         self.persist()?;
-        self.retry_pending_protocol(NdrUnixSeconds(now.get()))
+        let mut batch = self.retry_pending_protocol(NdrUnixSeconds(now.get()))?;
+        self.enqueue_owner_message_backfill_effect(
+            &mut batch.effects,
+            peer_pubkey,
+            "import_session_state",
+        );
+        Ok(batch)
     }
 
     pub(super) fn create_group(
@@ -1416,6 +1453,7 @@ impl ProtocolEngine {
             direct_results,
             group_result,
             direct_messages,
+            effects: Vec::new(),
         })
     }
 
@@ -1906,6 +1944,25 @@ impl ProtocolEngine {
             .is_some_and(|roster| !roster.devices().is_empty())
     }
 
+    fn enqueue_owner_message_backfill_effect(
+        &self,
+        effects: &mut Vec<ProtocolEffect>,
+        owner_pubkey: PublicKey,
+        reason: &'static str,
+    ) {
+        if self
+            .message_author_pubkeys_for_owner(owner_pubkey)
+            .is_empty()
+        {
+            return;
+        }
+        effects.push(ProtocolEffect::FetchRecentMessagesForOwner {
+            owner_pubkey,
+            lookback_secs: TARGETED_OWNER_BACKFILL_LOOKBACK_SECS,
+            reason,
+        });
+    }
+
     fn pending_target_hexes(&self, pending: &ProtocolPendingOutbound) -> Vec<String> {
         let mut targets = self.pending_remote_target_hexes(pending);
         for target in self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes) {
@@ -1963,22 +2020,28 @@ fn protocol_effects_from_prepared(
     inner_event_id: Option<String>,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
-    let mut effects = Vec::new();
+    let mut bootstrap = Vec::new();
+    let mut payload = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        effects.push(ProtocolEffect::PublishSigned(event));
+        bootstrap.push(ProtocolPublishEvent {
+            event,
+            inner_event_id: None,
+            target_owner_pubkey_hex: None,
+            target_device_id: None,
+        });
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        effects.push(ProtocolEffect::PublishSignedForInnerEvent {
+        payload.push(ProtocolPublishEvent {
             event,
             inner_event_id: inner_event_id.clone(),
             target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
             target_device_id: Some(public_device(delivery.device_pubkey)?.to_hex()),
         });
     }
-    Ok(effects)
+    Ok(protocol_publish_effects(bootstrap, payload))
 }
 
 fn protocol_effects_from_group_prepared_publish(
@@ -1986,15 +2049,21 @@ fn protocol_effects_from_group_prepared_publish(
     inner_event_id: Option<String>,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
-    let mut effects = Vec::new();
+    let mut bootstrap = Vec::new();
+    let mut payload = Vec::new();
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
-        effects.push(ProtocolEffect::PublishSigned(event));
+        bootstrap.push(ProtocolPublishEvent {
+            event,
+            inner_event_id: None,
+            target_owner_pubkey_hex: None,
+            target_device_id: None,
+        });
     }
     for delivery in &prepared.deliveries {
         let event = message_event(&delivery.envelope)?;
         event_ids.push(event.id.to_string());
-        effects.push(ProtocolEffect::PublishSignedForInnerEvent {
+        payload.push(ProtocolPublishEvent {
             event,
             inner_event_id: inner_event_id.clone(),
             target_owner_pubkey_hex: Some(public_owner(delivery.owner_pubkey)?.to_hex()),
@@ -2004,9 +2073,45 @@ fn protocol_effects_from_group_prepared_publish(
     for sender_key_message in &prepared.sender_key_messages {
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
-        effects.push(ProtocolEffect::PublishSigned(event));
+        payload.push(ProtocolPublishEvent {
+            event,
+            inner_event_id: None,
+            target_owner_pubkey_hex: None,
+            target_device_id: None,
+        });
     }
-    Ok(effects)
+    Ok(protocol_publish_effects(bootstrap, payload))
+}
+
+fn protocol_publish_effects(
+    bootstrap: Vec<ProtocolPublishEvent>,
+    payload: Vec<ProtocolPublishEvent>,
+) -> Vec<ProtocolEffect> {
+    if bootstrap.is_empty() {
+        return payload.into_iter().map(protocol_publish_effect).collect();
+    }
+    if payload.is_empty() {
+        return bootstrap.into_iter().map(protocol_publish_effect).collect();
+    }
+    vec![ProtocolEffect::PublishStagedFirstContact { bootstrap, payload }]
+}
+
+fn protocol_publish_effect(publish: ProtocolPublishEvent) -> ProtocolEffect {
+    match (
+        publish.inner_event_id,
+        publish.target_owner_pubkey_hex,
+        publish.target_device_id,
+    ) {
+        (None, None, None) => ProtocolEffect::PublishSigned(publish.event),
+        (inner_event_id, target_owner_pubkey_hex, target_device_id) => {
+            ProtocolEffect::PublishSignedForInnerEvent {
+                event: publish.event,
+                inner_event_id,
+                target_owner_pubkey_hex,
+                target_device_id,
+            }
+        }
+    }
 }
 
 fn group_publish_from_prepared_send(

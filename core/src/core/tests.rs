@@ -221,6 +221,62 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
 }
 
 #[test]
+fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("staged-first-contact-queue", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "first-contact-message".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "staged".to_string(),
+        unix_now().get(),
+        None,
+        DeliveryState::Pending,
+    );
+    let bootstrap = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "bootstrap")
+        .sign_with_keys(&device)
+        .expect("bootstrap event");
+    let payload = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
+        .sign_with_keys(&device)
+        .expect("payload event");
+    let payload_id = payload.id.to_string();
+    let completions = BTreeMap::from([(payload_id.clone(), (message_id.clone(), chat_id.clone()))]);
+
+    core.process_protocol_engine_effects_with_completions(
+        vec![ProtocolEffect::PublishStagedFirstContact {
+            bootstrap: vec![ProtocolPublishEvent {
+                event: bootstrap,
+                inner_event_id: None,
+                target_owner_pubkey_hex: None,
+                target_device_id: None,
+            }],
+            payload: vec![ProtocolPublishEvent {
+                event: payload,
+                inner_event_id: Some(message_id.clone()),
+                target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+                target_device_id: Some(peer.public_key().to_hex()),
+            }],
+        }],
+        &completions,
+    );
+
+    let pending = core
+        .pending_relay_publishes
+        .get(&payload_id)
+        .expect("payload should be queued before delayed publish");
+    assert_eq!(pending.label, "appcore-protocol-first-contact");
+    assert_eq!(pending.message_id.as_deref(), Some(message_id.as_str()));
+    assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
+    assert!(
+        !core.pending_relay_publish_inflight.contains(&payload_id),
+        "payload should be durable but not in flight until the first-contact delay fires"
+    );
+}
+
+#[test]
 fn liveness_retries_pending_relay_publish_without_active_protocol_subscription() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -908,6 +964,56 @@ fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pend
 }
 
 #[test]
+fn invite_response_observation_emits_targeted_owner_message_backfill() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys");
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (_peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+
+    let batch = engine
+        .observe_invite_response_event(&response_event)
+        .expect("observe invite response");
+
+    assert!(
+        !engine
+            .message_author_pubkeys_for_owner(peer_owner.public_key())
+            .is_empty(),
+        "observing the invite response should install receiver state for the peer"
+    );
+    assert!(
+        batch.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::FetchRecentMessagesForOwner {
+                owner_pubkey,
+                reason,
+                ..
+            } if *owner_pubkey == peer_owner.public_key() && *reason == "invite_response"
+        )),
+        "learning a peer from an invite response must trigger owner-targeted message backfill"
+    );
+}
+
+#[test]
 fn queued_direct_send_schedules_fast_protocol_retry_tick() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1107,6 +1213,32 @@ fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_miss
     assert_eq!(
         result.queued_targets,
         vec![peer_laptop.public_key().to_hex()]
+    );
+    let staged = result
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
+                Some((bootstrap, payload))
+            }
+            _ => None,
+        })
+        .expect("first contact should stage bootstrap before payload");
+    assert!(
+        staged
+            .0
+            .iter()
+            .any(|publish| publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
+        "bootstrap phase should contain the invite response"
+    );
+    assert_eq!(
+        staged.1.len(),
+        1,
+        "payload phase should contain the ready phone delivery"
+    );
+    assert_eq!(
+        staged.1[0].target_owner_pubkey_hex.as_deref(),
+        Some(peer_owner.public_key().to_hex().as_str())
     );
 
     let mut ctx = ProtocolContext::new(NdrUnixSeconds(120), &mut rng);

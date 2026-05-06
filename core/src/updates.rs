@@ -82,6 +82,9 @@ pub(crate) enum InternalEvent {
         relay_urls: Vec<String>,
         detail: String,
     },
+    RetryPendingRelayPublishes {
+        reason: String,
+    },
     AttachmentUploadFinished {
         chat_id: String,
         result: Result<String, String>,

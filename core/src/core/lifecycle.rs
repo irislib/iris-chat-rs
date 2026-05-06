@@ -111,6 +111,7 @@ impl AppCore {
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
                 InternalEvent::RelayPublishFinished { .. } => "RelayPublishFinished",
+                InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
                     "ProfilePictureUploadFinished"
@@ -485,6 +486,9 @@ impl AppCore {
                 self.handle_relay_publish_finished(
                     event_id, message_id, chat_id, success, relay_urls, detail,
                 );
+            }
+            InternalEvent::RetryPendingRelayPublishes { reason } => {
+                self.retry_pending_relay_publishes(&reason);
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);

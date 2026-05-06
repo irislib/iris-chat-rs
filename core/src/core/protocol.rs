@@ -59,6 +59,7 @@ impl AppCore {
             && batch.group_result.effects.is_empty()
             && batch.group_result.queued_targets.is_empty()
             && batch.direct_messages.is_empty()
+            && batch.effects.is_empty()
         {
             return;
         }
@@ -92,6 +93,7 @@ impl AppCore {
             batch.group_result.effects,
             &BTreeMap::new(),
         );
+        self.process_protocol_engine_effects_with_completions(batch.effects, &BTreeMap::new());
         for decrypted in batch.direct_messages {
             self.apply_decrypted_runtime_message_with_metadata(
                 decrypted.sender,
@@ -283,6 +285,59 @@ impl AppCore {
             [author_pubkey],
             now.get().saturating_sub(lookback_secs),
             DEVICE_INVITE_DISCOVERY_LIMIT,
+        );
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
+            if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
+                let collected = events.iter().cloned().collect::<Vec<_>>();
+                if !collected.is_empty() {
+                    let _ = tx.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::FetchCatchUpEvents(collected),
+                    )));
+                }
+            }
+        });
+    }
+
+    pub(super) fn fetch_recent_messages_for_owner(
+        &mut self,
+        owner_pubkey: PublicKey,
+        now: UnixSeconds,
+        lookback_secs: u64,
+        reason: &'static str,
+    ) {
+        let Some((client, relay_urls, authors)) = self.logged_in.as_ref().map(|logged_in| {
+            (
+                logged_in.client.clone(),
+                logged_in.relay_urls.clone(),
+                self.protocol_engine
+                    .as_ref()
+                    .map(|engine| engine.message_author_pubkeys_for_owner(owner_pubkey))
+                    .unwrap_or_default(),
+            )
+        }) else {
+            return;
+        };
+        if authors.is_empty() {
+            self.push_debug_log(
+                "protocol.owner_message_fetch.skip",
+                format!("reason={reason} owner={} authors=0", owner_pubkey.to_hex()),
+            );
+            return;
+        }
+        let filter = build_direct_message_backfill_filter(
+            authors,
+            now.get().saturating_sub(lookback_secs),
+            DEVICE_INVITE_DISCOVERY_LIMIT,
+        );
+        self.push_debug_log(
+            "protocol.owner_message_fetch.fetch",
+            format!(
+                "reason={reason} owner={} lookback_secs={lookback_secs}",
+                owner_pubkey.to_hex()
+            ),
         );
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {

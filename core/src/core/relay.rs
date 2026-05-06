@@ -1,6 +1,8 @@
 use super::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 use super::*;
 
+const FIRST_CONTACT_STAGE_DELAY_MS: u64 = 1_500;
+
 impl AppCore {
     pub(super) fn runtime_publish_completion(
         &self,
@@ -343,6 +345,37 @@ impl AppCore {
                         target_device_id,
                     );
                 }
+                ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
+                    for publish in bootstrap {
+                        self.publish_protocol_event(publish, completions);
+                    }
+                    let mut queued_payloads = 0usize;
+                    for publish in payload {
+                        if self.queue_protocol_event_for_delayed_publish(publish, completions) {
+                            queued_payloads = queued_payloads.saturating_add(1);
+                        }
+                    }
+                    if queued_payloads > 0 {
+                        self.push_debug_log(
+                            "appcore.protocol.first_contact_staged",
+                            format!("queued_payloads={queued_payloads}"),
+                        );
+                        self.schedule_first_contact_payload_publish();
+                    }
+                }
+                ProtocolEffect::FetchRecentMessagesForOwner {
+                    owner_pubkey,
+                    lookback_secs,
+                    reason,
+                } => {
+                    self.fetch_recent_messages_for_owner(
+                        owner_pubkey,
+                        unix_now(),
+                        lookback_secs,
+                        reason,
+                    );
+                    self.request_protocol_subscription_refresh();
+                }
                 ProtocolEffect::Subscribe { subid, filters } => {
                     self.apply_runtime_subscription(subid, filters);
                 }
@@ -370,6 +403,60 @@ impl AppCore {
                 }
             }
         }
+    }
+
+    fn publish_protocol_event(
+        &mut self,
+        publish: ProtocolPublishEvent,
+        completions: &BTreeMap<String, (String, String)>,
+    ) {
+        let event_id = publish.event.id.to_string();
+        let completion = self.runtime_publish_completion(
+            &event_id,
+            publish.inner_event_id.as_deref(),
+            completions,
+        );
+        self.publish_runtime_event_with_metadata(
+            publish.event,
+            "appcore-protocol",
+            completion,
+            publish.inner_event_id,
+            publish.target_owner_pubkey_hex,
+            publish.target_device_id,
+        );
+    }
+
+    fn queue_protocol_event_for_delayed_publish(
+        &mut self,
+        publish: ProtocolPublishEvent,
+        completions: &BTreeMap<String, (String, String)>,
+    ) -> bool {
+        let event_id = publish.event.id.to_string();
+        let completion = self.runtime_publish_completion(
+            &event_id,
+            publish.inner_event_id.as_deref(),
+            completions,
+        );
+        self.queue_runtime_event_for_delayed_publish(
+            publish.event,
+            "appcore-protocol-first-contact",
+            completion,
+            publish.inner_event_id,
+            publish.target_owner_pubkey_hex,
+            publish.target_device_id,
+        )
+    }
+
+    fn schedule_first_contact_payload_publish(&self) {
+        let tx = self.core_sender.clone();
+        self.runtime.spawn(async move {
+            sleep(Duration::from_millis(FIRST_CONTACT_STAGE_DELAY_MS)).await;
+            let _ = tx.send(CoreMsg::Internal(Box::new(
+                InternalEvent::RetryPendingRelayPublishes {
+                    reason: "first_contact_stage".to_string(),
+                },
+            )));
+        });
     }
 
     pub(super) fn ack_pending_decrypted_deliveries_after_app_persist(&mut self) {
