@@ -7,8 +7,10 @@ info:
     @echo "Iris Chat commands"
     @echo
     @echo "Run"
+    @echo "  just run"
     @echo "  just run-android"
     @echo "  just run-ios"
+    @echo "  just run-linux"
     @echo "  just run-macos"
     @echo "  just run-windows"
     @echo
@@ -57,11 +59,22 @@ info:
     @echo "  just qa-interop"
     @echo "  just qa-lan"
 
+run:
+    @case "$(uname -s)" in \
+        Darwin) just run-macos ;; \
+        Linux) just run-linux ;; \
+        MINGW*|MSYS*|CYGWIN*) just run-windows ;; \
+        *) echo "No local run target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
+    esac
+
 run-ios:
     ./tools/run-ios
 
 run-macos:
     ./tools/run-macos
+
+run-linux:
+    ./tools/run-linux
 
 run-android:
     ./tools/run-android

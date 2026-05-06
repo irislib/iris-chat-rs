@@ -44,14 +44,15 @@ https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsd
 ```bash
 cd /path/to/iris-chat-rs
 just info
+just run
 just run-android
 just run-ios
+just run-linux
 just run-macos
 just run-windows
 ```
 
-Linux is covered by `just test-linux` and `just linux-release`; it does not
-currently have a `just run-linux` shortcut.
+`just run` dispatches to the native app for the local desktop platform.
 
 ## Check
 
