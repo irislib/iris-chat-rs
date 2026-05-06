@@ -715,7 +715,9 @@ final class InteropHarnessTests: XCTestCase {
             return account
         }
 
-        throw HarnessError.unexpected("missing logged-in account; run create_account_and_report_identity first")
+        return try await waitFor(label: "restored logged in account", timeout: 30) {
+            manager.state.account
+        }
     }
 
     private func createOrLoadAccount(manager: AppManager, env: [String: String]) async throws -> AccountSnapshot {
@@ -1349,6 +1351,139 @@ final class InteropHarnessTests: XCTestCase {
         return try? JSONSerialization.jsonObject(with: data, options: [])
     }
 
+    private struct SqliteCoreSnapshot {
+        var filePresent: Bool
+        var appMeta: String = ""
+        var appKeys: String = ""
+        var groups: String = ""
+        var threads: String = ""
+        var messages: String = ""
+        var pendingRelayPublishes: String = ""
+    }
+
+    private func readSqliteCoreSnapshot(dataDir: URL) -> SqliteCoreSnapshot {
+        let dbPath = dataDir.appendingPathComponent("core.sqlite3").path
+        guard FileManager.default.fileExists(atPath: dbPath) else {
+            return SqliteCoreSnapshot(filePresent: false)
+        }
+        var db: OpaquePointer?
+        guard sqlite3_open_v2(dbPath, &db, SQLITE_OPEN_READONLY, nil) == SQLITE_OK else {
+            sqlite3_close(db)
+            return SqliteCoreSnapshot(filePresent: true, appMeta: "open_error")
+        }
+        defer { sqlite3_close(db) }
+
+        return SqliteCoreSnapshot(
+            filePresent: true,
+            appMeta: sqliteRows(db: db, sql: "SELECT key, value FROM app_meta ORDER BY key") { stmt in
+                "\(sqliteColumnString(stmt, 0))=\(sqliteColumnString(stmt, 1))"
+            },
+            appKeys: sqliteRows(
+                db: db,
+                sql: """
+                    SELECT owner_pubkey_hex, created_at_secs, devices_json
+                    FROM app_keys
+                    ORDER BY owner_pubkey_hex
+                """
+            ) { stmt in
+                [
+                    sqliteColumnString(stmt, 0),
+                    String(sqlite3_column_int64(stmt, 1)),
+                    String(sqliteColumnString(stmt, 2).prefix(160)),
+                ].joined(separator: ",")
+            },
+            groups: sqliteRows(
+                db: db,
+                sql: """
+                    SELECT group_id, name, updated_at_secs
+                    FROM groups
+                    ORDER BY updated_at_secs DESC, group_id
+                """
+            ) { stmt in
+                [
+                    sqliteColumnString(stmt, 0),
+                    sqliteColumnString(stmt, 1),
+                    String(sqlite3_column_int64(stmt, 2)),
+                ].joined(separator: ",")
+            },
+            threads: sqliteRows(
+                db: db,
+                sql: """
+                    SELECT chat_id, unread_count, updated_at_secs
+                    FROM threads
+                    ORDER BY updated_at_secs DESC, chat_id
+                """
+            ) { stmt in
+                [
+                    sqliteColumnString(stmt, 0),
+                    String(sqlite3_column_int64(stmt, 1)),
+                    String(sqlite3_column_int64(stmt, 2)),
+                ].joined(separator: ",")
+            },
+            messages: sqliteRows(
+                db: db,
+                sql: """
+                    SELECT chat_id, id, delivery, is_outgoing, body
+                    FROM messages
+                    ORDER BY created_at_secs DESC, id DESC
+                    LIMIT 20
+                """
+            ) { stmt in
+                [
+                    sqliteColumnString(stmt, 0),
+                    sqliteColumnString(stmt, 1),
+                    sqliteColumnString(stmt, 2),
+                    String(sqlite3_column_int64(stmt, 3)),
+                    String(sqliteColumnString(stmt, 4).replacingOccurrences(of: "|", with: "/").prefix(120)),
+                ].joined(separator: ",")
+            },
+            pendingRelayPublishes: sqliteRows(
+                db: db,
+                sql: """
+                    SELECT label, target_owner_pubkey_hex, target_device_id, chat_id, message_id, attempt_count
+                    FROM pending_relay_publishes
+                    ORDER BY created_at_secs DESC
+                    LIMIT 30
+                """
+            ) { stmt in
+                [
+                    sqliteColumnString(stmt, 0),
+                    sqliteColumnString(stmt, 1),
+                    sqliteColumnString(stmt, 2),
+                    sqliteColumnString(stmt, 3),
+                    sqliteColumnString(stmt, 4),
+                    String(sqlite3_column_int64(stmt, 5)),
+                ].joined(separator: ",")
+            }
+        )
+    }
+
+    private func sqliteRows(
+        db: OpaquePointer?,
+        sql: String,
+        row: (OpaquePointer?) -> String
+    ) -> String {
+        var stmt: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK else {
+            let message = db.flatMap { sqlite3_errmsg($0) }.map { String(cString: $0) } ?? "prepare_error"
+            return "read_error=\(message)"
+        }
+        defer { sqlite3_finalize(stmt) }
+        var rows: [String] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            rows.append(row(stmt))
+        }
+        return rows.joined(separator: "|")
+    }
+
+    private func sqliteColumnString(_ stmt: OpaquePointer?, _ index: Int32) -> String {
+        guard sqlite3_column_type(stmt, index) != SQLITE_NULL,
+              let cString = sqlite3_column_text(stmt, index) else {
+            return ""
+        }
+        return String(cString: cString)
+    }
+
     private func reportIdentity(_ snapshot: AccountSnapshot) {
         status("npub", snapshot.npub)
         status("public_key_hex", snapshot.publicKeyHex)
@@ -1416,6 +1551,7 @@ final class InteropHarnessTests: XCTestCase {
     }
 
     private func reportPersistedProtocolSnapshot(dataDir: URL) {
+        let sqlite = readSqliteCoreSnapshot(dataDir: dataDir)
         let meta = readJsonObject(at: dataDir.appendingPathComponent("core/meta.json"))
         let appKeys = readJsonArray(at: dataDir.appendingPathComponent("core/app_keys.json"))
         let groups = readJsonArray(at: dataDir.appendingPathComponent("core/groups.json"))
@@ -1423,6 +1559,13 @@ final class InteropHarnessTests: XCTestCase {
         let threads = splitPersistenceThreadFiles(dataDir: dataDir).compactMap { readJsonObject(at: $0) }
 
         status("data_dir", dataDir.path)
+        status("sqlite_file_present", String(sqlite.filePresent))
+        status("sqlite_app_meta", sqlite.appMeta)
+        status("sqlite_app_keys", sqlite.appKeys)
+        status("sqlite_groups", sqlite.groups)
+        status("sqlite_threads", sqlite.threads)
+        status("sqlite_messages", sqlite.messages)
+        status("sqlite_pending_relay_publishes", sqlite.pendingRelayPublishes)
         status("persisted_file_present", meta == nil ? "false" : "true")
         status("version", stringValue(meta?["version"]))
         status("active_chat_id", stringValue(meta?["active_chat_id"]))

@@ -1,3 +1,4 @@
+use super::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 use super::*;
 
 impl AppCore {
@@ -215,6 +216,9 @@ impl AppCore {
                             "sender/session unresolved",
                         );
                         self.request_protocol_subscription_refresh();
+                        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                            PROTOCOL_RECONNECT_CHECK_SECS,
+                        ));
                         if self.fetch_recent_protocol_state() {
                             self.state.busy.syncing_network = true;
                         }

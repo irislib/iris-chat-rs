@@ -1116,12 +1116,22 @@ impl AppCore {
             }
         }
 
+        let effective_sender_owner = self.direct_message_display_sender_owner(
+            sender_owner,
+            sender_device,
+            conversation_owner,
+        );
+
         let Some(runtime_rumor) = parse_runtime_rumor(&content) else {
             let chat_id = self.logged_in.as_ref().and_then(|logged_in| {
-                direct_self_sync_chat_id(sender_owner, logged_in.owner_pubkey, conversation_owner)
+                direct_self_sync_chat_id(
+                    effective_sender_owner,
+                    logged_in.owner_pubkey,
+                    conversation_owner,
+                )
             });
             self.apply_runtime_text_message(
-                sender_owner,
+                effective_sender_owner,
                 chat_id,
                 content,
                 unix_now().get(),
@@ -1143,18 +1153,18 @@ impl AppCore {
             return;
         };
         let chat_id = chat_id_for_runtime_message(
-            sender_owner,
+            effective_sender_owner,
             local_owner,
             conversation_owner,
             runtime_rumor.tags.iter(),
         );
-        let is_outgoing = sender_owner == local_owner;
+        let is_outgoing = effective_sender_owner == local_owner;
         let message_id = runtime_rumor.id.or_else(|| outer_event_id.clone());
 
         match kind {
             CHAT_MESSAGE_KIND => {
                 self.apply_runtime_text_message(
-                    sender_owner,
+                    effective_sender_owner,
                     Some(chat_id.clone()),
                     runtime_rumor.content,
                     created_at_secs,
@@ -1169,7 +1179,7 @@ impl AppCore {
                 }
             }
             REACTION_KIND => {
-                let sender_hex = sender_owner.to_hex();
+                let sender_hex = effective_sender_owner.to_hex();
                 for message_id in message_ids_from_tags(runtime_rumor.tags.iter()) {
                     self.apply_incoming_reaction_to_chat(
                         &chat_id,
@@ -1196,14 +1206,14 @@ impl AppCore {
                 if !is_outgoing {
                     self.apply_typing_event(
                         chat_id,
-                        sender_owner.to_hex(),
+                        effective_sender_owner.to_hex(),
                         created_at_secs,
                         expires_at_secs,
                     );
                 }
             }
             CHAT_SETTINGS_KIND => {
-                let actor = self.owner_display_label(&sender_owner.to_hex());
+                let actor = self.owner_display_label(&effective_sender_owner.to_hex());
                 self.apply_chat_settings_control(
                     &chat_id,
                     &actor,
@@ -1213,6 +1223,86 @@ impl AppCore {
             }
             _ => {}
         }
+    }
+
+    fn direct_message_display_sender_owner(
+        &self,
+        sender_owner: PublicKey,
+        sender_device: Option<PublicKey>,
+        conversation_owner: Option<PublicKey>,
+    ) -> PublicKey {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return sender_owner;
+        };
+        if let Some(owner) = sender_device
+            .and_then(|device| self.direct_owner_for_known_device_pubkey(device))
+            .or_else(|| self.direct_owner_for_known_device_pubkey(sender_owner))
+        {
+            return owner;
+        }
+        if let Some(conversation_owner) = conversation_owner {
+            if conversation_owner != logged_in.owner_pubkey
+                && (sender_owner == logged_in.owner_pubkey
+                    || self.is_known_local_owner_device_pubkey(sender_owner)
+                    || sender_device
+                        .is_some_and(|device| self.is_known_local_owner_device_pubkey(device)))
+            {
+                return logged_in.owner_pubkey;
+            }
+        }
+        sender_owner
+    }
+
+    fn direct_owner_for_known_device_pubkey(&self, device_pubkey: PublicKey) -> Option<PublicKey> {
+        let device_hex = device_pubkey.to_hex();
+        for known in self.app_keys.values() {
+            if known
+                .devices
+                .iter()
+                .any(|device| device.identity_pubkey_hex == device_hex)
+            {
+                return PublicKey::parse(&known.owner_pubkey_hex).ok();
+            }
+        }
+
+        let hint = self
+            .protocol_engine
+            .as_ref()
+            .and_then(|protocol_engine| protocol_engine.owner_hint_for_device(device_pubkey))?;
+        if hint.verified || self.should_trust_claimed_direct_owner(hint.owner) {
+            Some(hint.owner)
+        } else {
+            None
+        }
+    }
+
+    fn should_trust_claimed_direct_owner(&self, owner: PublicKey) -> bool {
+        let owner_hex = owner.to_hex();
+        self.tracked_peer_owner_hexes().contains(&owner_hex)
+            || self.owner_profiles.contains_key(&owner_hex)
+    }
+
+    fn is_known_local_owner_device_pubkey(&self, device_pubkey: PublicKey) -> bool {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return false;
+        };
+        if device_pubkey == logged_in.device_keys.public_key() {
+            return true;
+        }
+        let owner_hex = logged_in.owner_pubkey.to_hex();
+        if self.app_keys.get(&owner_hex).is_some_and(|app_keys| {
+            app_keys
+                .devices
+                .iter()
+                .any(|device| device.identity_pubkey_hex == device_pubkey.to_hex())
+        }) {
+            return true;
+        }
+        self.protocol_engine
+            .as_ref()
+            .is_some_and(|protocol_engine| {
+                protocol_engine.is_known_local_owner_device(device_pubkey)
+            })
     }
 
     #[allow(clippy::too_many_arguments)]

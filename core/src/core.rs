@@ -11,7 +11,7 @@ use crate::state::{
 };
 use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
 use flume::Sender;
-use nostr::{EventBuilder, UnsignedEvent};
+use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
 use nostr_double_ratchet::{
     AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupIncomingEvent,
     GroupManagerSnapshot, GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend,

@@ -404,6 +404,28 @@ fn app_keys_publish_prunes_superseded_pending_publish() {
 }
 
 #[test]
+fn upserting_existing_local_app_key_device_is_protocol_noop() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("appkeys-existing-device-noop", &owner, &device);
+    let owner_hex = owner.public_key().to_hex();
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+    let initial = core
+        .app_keys
+        .get(&owner_hex)
+        .expect("local AppKeys")
+        .clone();
+
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+
+    assert_eq!(
+        core.app_keys.get(&owner_hex),
+        Some(&initial),
+        "restoring the same owner/device must not create a newer local AppKeys protocol state"
+    );
+}
+
+#[test]
 fn relay_duplicate_or_newer_replaceable_rejection_is_terminal_success() {
     assert!(relay_publish_failure_is_terminal_success(
         "duplicate: already have this event"
@@ -773,6 +795,48 @@ fn zero_connected_session_check_schedules_fast_reconnect() {
 }
 
 #[test]
+fn pending_inbound_direct_message_schedules_fast_liveness_retry() {
+    let relay_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/relay.rs"),
+    )
+    .expect("read relay source");
+    let start = relay_source
+        .find("\"appcore.protocol.message.pending\"")
+        .expect("pending direct message branch");
+    let body = &relay_source[start
+        ..relay_source[start..]
+            .find("Err(error)")
+            .map(|offset| start + offset)
+            .unwrap_or(relay_source.len())];
+    assert!(
+        body.contains("schedule_protocol_subscription_liveness_check")
+            && body.contains("PROTOCOL_RECONNECT_CHECK_SECS"),
+        "pending inbound direct events must schedule a fast protocol retry instead of waiting for restart/foreground"
+    );
+}
+
+#[test]
+fn liveness_retries_pending_inbound_direct_events() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol.rs"),
+    )
+    .expect("read protocol source");
+    let start = protocol_source
+        .find("pub(super) fn handle_protocol_subscription_liveness_check")
+        .expect("liveness handler");
+    let body = &protocol_source[start
+        ..protocol_source[start..]
+            .find("\n    pub(super) fn upsert_protocol_subscription")
+            .map(|offset| start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        body.contains("has_pending_inbound_direct_events")
+            && body.contains("should_retry_backfill"),
+        "protocol liveness must retry durable pending inbound direct events even when tracked-peer backfill appears complete"
+    );
+}
+
+#[test]
 fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -867,6 +931,57 @@ fn queued_direct_send_schedules_fast_protocol_retry_tick() {
     assert!(
         due_at <= Instant::now() + Duration::from_secs(5),
         "queued direct work should schedule a fast retry tick, not wait for the normal liveness interval"
+    );
+}
+
+#[test]
+fn queued_direct_send_starts_targeted_owner_protocol_fetch() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-direct-targeted-fetch", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.send_direct_message(
+        &peer.public_key().to_hex(),
+        "queued until targeted app keys arrive",
+        UnixSeconds(1_777_000_000),
+        None,
+    );
+
+    let target = format!("owner:{}", peer.public_key().to_hex());
+    assert!(
+        core.debug_log.iter().any(|entry| {
+            entry.category == "protocol.queued_fetch.fetch"
+                && entry.detail.contains(&target)
+                && entry.detail.contains("filters=1")
+        }),
+        "queued direct owner work should start a narrow AppKeys fetch for {target}"
+    );
+}
+
+#[test]
+fn queued_protocol_filters_are_narrow_for_missing_owner_roster() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let core = logged_in_test_core("queued-protocol-filter-owner", &owner, &device);
+    let filters = core.queued_protocol_filters(
+        &[format!("owner:{}", peer.public_key().to_hex())],
+        UnixSeconds(1_777_159_500),
+    );
+
+    assert_eq!(filters.len(), 1);
+    assert!(has_filter_with_kind_author(
+        &filters,
+        APP_KEYS_EVENT_KIND,
+        peer.public_key()
+    ));
+    assert!(
+        !has_bootstrap_message_filter(&filters),
+        "queued owner discovery must not depend on an unscoped message bootstrap filter"
     );
 }
 
@@ -3953,6 +4068,183 @@ fn self_sync_runtime_metadata_overrides_malicious_inner_p_tag() {
     assert!(
         !core.threads.contains_key(&forged_chat_id),
         "self-sync plaintext p tag must not override authenticated runtime conversation metadata"
+    );
+}
+
+#[test]
+fn self_synced_direct_message_from_device_claim_routes_to_peer_owner() {
+    let owner = Keys::generate();
+    let linked_device = Keys::generate();
+    let primary_device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("self-sync-device-claim-route", &owner, &linked_device);
+    let local_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(linked_device.public_key(), 1),
+        DeviceEntry::new(primary_device.public_key(), 1),
+    ]);
+    core.app_keys.insert(
+        owner.public_key().to_hex(),
+        known_app_keys_from_ndr(owner.public_key(), &local_app_keys, 1),
+    );
+    let peer_chat_id = peer.public_key().to_hex();
+    let primary_device_chat_id = primary_device.public_key().to_hex();
+    let inner_id = "8".repeat(64);
+    let content = serde_json::json!({
+        "content": "sent from primary device",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_501u64,
+        "tags": [["p", peer_chat_id]],
+        "pubkey": owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        primary_device.public_key(),
+        Some(primary_device.public_key()),
+        Some(peer.public_key()),
+        content,
+        Some("9".repeat(64)),
+    );
+
+    let thread = core.threads.get(&peer_chat_id).expect("peer thread");
+    assert_eq!(thread.messages.len(), 1);
+    let message = &thread.messages[0];
+    assert_eq!(message.id, inner_id);
+    assert_eq!(message.body, "sent from primary device");
+    assert!(message.is_outgoing);
+    assert_eq!(message.delivery, DeliveryState::Sent);
+    assert!(
+        !core.threads.contains_key(&primary_device_chat_id),
+        "known local device metadata must not create a direct chat with the device identity"
+    );
+}
+
+#[test]
+fn incoming_direct_message_from_known_peer_device_routes_to_owner_thread() {
+    let owner = Keys::generate();
+    let local_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("remote-known-device-route", &owner, &local_device);
+    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
+    core.app_keys.insert(
+        peer_owner.public_key().to_hex(),
+        known_app_keys_from_ndr(peer_owner.public_key(), &peer_app_keys, 1),
+    );
+    let peer_owner_chat_id = peer_owner.public_key().to_hex();
+    let peer_device_chat_id = peer_device.public_key().to_hex();
+    core.ensure_thread_record(&peer_owner_chat_id, 1);
+    let inner_id = "a".repeat(64);
+    let content = serde_json::json!({
+        "content": "sent from peer device",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_502u64,
+        "tags": [],
+        "pubkey": peer_owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        peer_device.public_key(),
+        Some(peer_device.public_key()),
+        None,
+        content,
+        Some("b".repeat(64)),
+    );
+
+    let thread = core
+        .threads
+        .get(&peer_owner_chat_id)
+        .expect("peer owner thread");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].id, inner_id);
+    assert_eq!(thread.messages[0].body, "sent from peer device");
+    assert!(!thread.messages[0].is_outgoing);
+    assert!(
+        !core.threads.contains_key(&peer_device_chat_id),
+        "known peer device metadata must not create a direct chat with the device identity"
+    );
+}
+
+#[test]
+fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thread() {
+    let owner = Keys::generate();
+    let local_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("remote-claimed-device-route", &owner, &local_device);
+    let peer_owner_chat_id = peer_owner.public_key().to_hex();
+    let peer_device_chat_id = peer_device.public_key().to_hex();
+    core.ensure_thread_record(&peer_owner_chat_id, 1);
+
+    let mut session_snapshot = SessionManager::new(
+        NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()),
+        local_device.secret_key().to_secret_bytes(),
+    )
+    .snapshot();
+    session_snapshot
+        .users
+        .push(nostr_double_ratchet::UserRecordSnapshot {
+            owner_pubkey: NdrOwnerPubkey::from_bytes(peer_device.public_key().to_bytes()),
+            roster: None,
+            devices: vec![nostr_double_ratchet::DeviceRecordSnapshot {
+                device_pubkey: NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+                authorized: true,
+                is_stale: false,
+                stale_since: None,
+                claimed_owner_pubkey: Some(NdrOwnerPubkey::from_bytes(
+                    peer_owner.public_key().to_bytes(),
+                )),
+                public_invite: None,
+                invite_response_generated: false,
+                active_session: None,
+                inactive_sessions: Vec::new(),
+                last_activity: Some(NdrUnixSeconds(1)),
+                created_at: NdrUnixSeconds(1),
+            }],
+        });
+    let storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(
+        &mut core,
+        &owner,
+        &local_device,
+        storage,
+        Some(session_snapshot),
+        None,
+    );
+
+    let inner_id = "c".repeat(64);
+    let content = serde_json::json!({
+        "content": "sent before app keys backfill",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_503u64,
+        "tags": [],
+        "pubkey": peer_owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        peer_device.public_key(),
+        Some(peer_device.public_key()),
+        None,
+        content,
+        Some("d".repeat(64)),
+    );
+
+    let thread = core
+        .threads
+        .get(&peer_owner_chat_id)
+        .expect("peer owner thread");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].id, inner_id);
+    assert_eq!(thread.messages[0].body, "sent before app keys backfill");
+    assert!(
+        !core.threads.contains_key(&peer_device_chat_id),
+        "tracked claimed peer device must route to the owner chat while AppKeys are still catching up"
     );
 }
 

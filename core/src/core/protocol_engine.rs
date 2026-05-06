@@ -225,6 +225,12 @@ pub(super) struct ProtocolDecryptedMessage {
     pub(super) event_id: Option<String>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct ProtocolDeviceOwnerHint {
+    pub(super) owner: PublicKey,
+    pub(super) verified: bool,
+}
+
 impl From<ProtocolPendingDecryptedDelivery> for ProtocolDecryptedMessage {
     fn from(pending: ProtocolPendingDecryptedDelivery) -> Self {
         Self {
@@ -485,6 +491,57 @@ impl ProtocolEngine {
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
             latest_app_keys_owner_count: self.latest_app_keys_created_at.len(),
         }
+    }
+
+    pub(super) fn is_known_local_owner_device(&self, device_pubkey: PublicKey) -> bool {
+        let device_pubkey = ndr_device(device_pubkey);
+        self.session_manager
+            .snapshot()
+            .users
+            .into_iter()
+            .find(|user| user.owner_pubkey == self.local_owner)
+            .is_some_and(|user| {
+                user.devices
+                    .iter()
+                    .any(|device| device.device_pubkey == device_pubkey)
+            })
+    }
+
+    pub(super) fn owner_hint_for_device(
+        &self,
+        device_pubkey: PublicKey,
+    ) -> Option<ProtocolDeviceOwnerHint> {
+        let device = ndr_device(device_pubkey);
+        let provisional_owner = ndr_owner(device_pubkey);
+        let mut claimed_owner = None;
+        for user in self.session_manager.snapshot().users {
+            for record in user.devices {
+                if record.device_pubkey != device {
+                    continue;
+                }
+                if user.owner_pubkey != provisional_owner {
+                    return public_owner(user.owner_pubkey)
+                        .ok()
+                        .map(|owner| ProtocolDeviceOwnerHint {
+                            owner,
+                            verified: true,
+                        });
+                }
+                if claimed_owner.is_none() {
+                    claimed_owner = record.claimed_owner_pubkey;
+                }
+            }
+        }
+        claimed_owner
+            .and_then(|owner| public_owner(owner).ok())
+            .map(|owner| ProtocolDeviceOwnerHint {
+                owner,
+                verified: false,
+            })
+    }
+
+    pub(super) fn has_pending_inbound_direct_events(&self) -> bool {
+        !self.pending_inbound.is_empty()
     }
 
     #[cfg(test)]

@@ -805,21 +805,23 @@ impl AppCore {
                 created_at_secs: now,
                 devices: Vec::new(),
             });
+        let device_hex = device.to_hex();
+        if entry
+            .devices
+            .iter()
+            .any(|existing| existing.identity_pubkey_hex == device_hex)
+        {
+            return;
+        }
         let next_created_at = if now <= entry.created_at_secs {
             entry.created_at_secs.saturating_add(1)
         } else {
             now
         };
-        if !entry
-            .devices
-            .iter()
-            .any(|existing| existing.identity_pubkey_hex == device.to_hex())
-        {
-            entry.devices.push(KnownAppKeyDevice {
-                identity_pubkey_hex: device.to_hex(),
-                created_at_secs: next_created_at,
-            });
-        }
+        entry.devices.push(KnownAppKeyDevice {
+            identity_pubkey_hex: device_hex,
+            created_at_secs: next_created_at,
+        });
         entry.created_at_secs = next_created_at;
         entry
             .devices
