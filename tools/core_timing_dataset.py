@@ -104,7 +104,7 @@ def main() -> int:
         (
             "current",
             current,
-            "timing_current_publish_waits_for_slow_first_relay",
+            "timing_current_publish",
         ),
         (
             "experimental",
