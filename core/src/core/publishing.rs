@@ -262,6 +262,9 @@ impl AppCore {
             {
                 continue;
             }
+            if self.should_delay_first_contact_payload_publish(&pending) {
+                continue;
+            }
             let event = match serde_json::from_str::<Event>(&pending.event_json) {
                 Ok(event) => event,
                 Err(error) => {
@@ -307,17 +310,26 @@ impl AppCore {
     ) {
         self.pending_relay_publish_inflight.remove(&event_id);
         self.push_debug_log("publish.runtime", detail.clone());
+        let pending = self.pending_relay_publishes.get(&event_id).cloned();
+        let completed_first_contact_bootstrap = success
+            && pending
+                .as_ref()
+                .is_some_and(|pending| pending.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL);
         if success {
-            let pending = self.pending_relay_publishes.get(&event_id).cloned();
             self.forget_pending_relay_publish(&event_id);
             if let (Some(message_id), Some(chat_id)) = (message_id.as_deref(), chat_id.as_deref()) {
-                self.mark_message_publish_succeeded(
-                    chat_id,
-                    message_id,
-                    pending
-                        .as_ref()
-                        .and_then(|pending| pending.target_owner_pubkey_hex.as_deref()),
-                );
+                let should_mark_message_sent = pending
+                    .as_ref()
+                    .is_none_or(|pending| pending.label != APPCORE_PROTOCOL_BOOTSTRAP_LABEL);
+                if should_mark_message_sent {
+                    self.mark_message_publish_succeeded(
+                        chat_id,
+                        message_id,
+                        pending
+                            .as_ref()
+                            .and_then(|pending| pending.target_owner_pubkey_hex.as_deref()),
+                    );
+                }
             }
         } else if let Some(pending) = self.pending_relay_publishes.get_mut(&event_id) {
             pending.attempt_count = pending.attempt_count.saturating_add(1);
@@ -349,9 +361,34 @@ impl AppCore {
             self.sync_message_delivery_trace(&chat_id, &message_id);
             self.reconcile_outgoing_message_delivery(&chat_id, &message_id);
         }
+        if completed_first_contact_bootstrap {
+            self.schedule_first_contact_payload_publish();
+        }
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
+    }
+
+    pub(super) fn should_delay_first_contact_payload_publish(
+        &self,
+        pending: &PendingRelayPublish,
+    ) -> bool {
+        if pending.label != APPCORE_PROTOCOL_FIRST_CONTACT_LABEL {
+            return false;
+        }
+        let Some(message_id) = pending.message_id.as_deref() else {
+            return false;
+        };
+        let Some(chat_id) = pending.chat_id.as_deref() else {
+            return false;
+        };
+        self.pending_relay_publishes.values().any(|candidate| {
+            candidate.event_id != pending.event_id
+                && candidate.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL
+                && candidate.message_id.as_deref() == Some(message_id)
+                && candidate.chat_id.as_deref() == Some(chat_id)
+                && candidate.target_owner_pubkey_hex == pending.target_owner_pubkey_hex
+        })
     }
 
     fn forget_pending_relay_publish(&mut self, event_id: &str) {

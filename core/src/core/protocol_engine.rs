@@ -2022,12 +2022,13 @@ fn protocol_effects_from_prepared(
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
     let mut bootstrap = Vec::new();
     let mut payload = Vec::new();
+    let target_owner_pubkey_hex = Some(public_owner(prepared.recipient_owner)?.to_hex());
     for response in &prepared.invite_responses {
         let event = invite_response_event(response)?;
         bootstrap.push(ProtocolPublishEvent {
             event,
-            inner_event_id: None,
-            target_owner_pubkey_hex: None,
+            inner_event_id: inner_event_id.clone(),
+            target_owner_pubkey_hex: target_owner_pubkey_hex.clone(),
             target_device_id: None,
         });
     }
@@ -2055,7 +2056,7 @@ fn protocol_effects_from_group_prepared_publish(
         let event = invite_response_event(response)?;
         bootstrap.push(ProtocolPublishEvent {
             event,
-            inner_event_id: None,
+            inner_event_id: inner_event_id.clone(),
             target_owner_pubkey_hex: None,
             target_device_id: None,
         });

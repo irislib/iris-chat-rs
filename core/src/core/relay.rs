@@ -322,7 +322,7 @@ impl AppCore {
                 ProtocolEffect::PublishSigned(event) => {
                     let event_id = event.id.to_string();
                     let completion = self.runtime_publish_completion(&event_id, None, completions);
-                    self.publish_runtime_event(event, "appcore-protocol", completion);
+                    self.publish_runtime_event(event, APPCORE_PROTOCOL_LABEL, completion);
                 }
                 ProtocolEffect::PublishSignedForInnerEvent {
                     event,
@@ -338,7 +338,7 @@ impl AppCore {
                     );
                     self.publish_runtime_event_with_metadata(
                         event,
-                        "appcore-protocol",
+                        APPCORE_PROTOCOL_LABEL,
                         completion,
                         inner_event_id,
                         target_owner_pubkey_hex,
@@ -418,7 +418,7 @@ impl AppCore {
         );
         self.publish_runtime_event_with_metadata(
             publish.event,
-            "appcore-protocol",
+            APPCORE_PROTOCOL_BOOTSTRAP_LABEL,
             completion,
             publish.inner_event_id,
             publish.target_owner_pubkey_hex,
@@ -439,7 +439,7 @@ impl AppCore {
         );
         self.queue_runtime_event_for_delayed_publish(
             publish.event,
-            "appcore-protocol-first-contact",
+            APPCORE_PROTOCOL_FIRST_CONTACT_LABEL,
             completion,
             publish.inner_event_id,
             publish.target_owner_pubkey_hex,
@@ -447,7 +447,7 @@ impl AppCore {
         )
     }
 
-    fn schedule_first_contact_payload_publish(&self) {
+    pub(super) fn schedule_first_contact_payload_publish(&self) {
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
             sleep(Duration::from_millis(FIRST_CONTACT_STAGE_DELAY_MS)).await;

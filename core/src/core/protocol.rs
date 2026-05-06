@@ -685,10 +685,10 @@ impl AppCore {
 
     fn needs_direct_message_discovery_bootstrap(&self) -> bool {
         !self.tracked_peer_owner_hexes().is_empty()
-            && self
-                .protocol_engine
-                .as_ref()
-                .is_some_and(|_| self.tracked_peer_protocol_backfill_needed())
+            && self.protocol_engine.as_ref().is_some_and(|engine| {
+                engine.has_pending_inbound_direct_events()
+                    || self.tracked_peer_protocol_backfill_needed()
+            })
     }
 
     fn tracked_peer_protocol_backfill_needed(&self) -> bool {
