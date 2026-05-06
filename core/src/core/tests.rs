@@ -1,5 +1,5 @@
 use super::*;
-use nostr_double_ratchet_runtime::{NdrRuntime, RuntimeEffect};
+use nostr_double_ratchet_runtime::{NdrRuntime, SessionManagerEvent};
 
 #[derive(Clone)]
 struct SwitchableFailStorage {
@@ -2954,6 +2954,8 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
 fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
+    let bob_storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
 
     let mut invite = Invite::create_new(
         alice_keys.public_key(),
@@ -2978,7 +2980,7 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         bob_keys.secret_key().to_secret_bytes(),
         bob_keys.public_key().to_hex(),
         bob_keys.public_key(),
-        None,
+        Some(Arc::clone(&bob_storage)),
         None,
     );
     bob_runtime.init().expect("bob init");
@@ -3041,18 +3043,13 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
-    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
-        core.app_store.shared(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key().to_hex(),
-    )) as Arc<dyn StorageAdapter>;
     install_test_protocol_engine(
         &mut core,
         &bob_keys,
         &bob_keys,
-        storage,
-        Some(bob_runtime.session_manager_snapshot()),
-        Some(bob_runtime.group_manager_snapshot()),
+        bob_storage,
+        None,
+        None,
     );
 
     core.drain_pending_mobile_push_events();
@@ -7280,7 +7277,7 @@ fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
 fn deliver_runtime_effects(
     from: &NdrRuntime,
     signer: &Keys,
-    effects: Vec<RuntimeEffect>,
+    effects: Vec<SessionManagerEvent>,
     to: &NdrRuntime,
 ) {
     apply_runtime_persist_effects(from, &effects);
@@ -7289,9 +7286,9 @@ fn deliver_runtime_effects(
         deliver_event_to_runtime(to, event.clone());
     }
     for event in events {
-        if let Ok(effects) = from.ack_prepared_publish(&event.id.to_string()) {
-            apply_runtime_persist_effects(from, &effects);
-        }
+        from.ack_prepared_publish(&event.id.to_string())
+            .expect("ack prepared publish");
+        apply_runtime_persist_effects(from, &from.drain_events());
     }
 }
 
@@ -7302,20 +7299,19 @@ fn accept_invite_and_deliver(
     inviter_pubkey: PublicKey,
     inviter: &NdrRuntime,
 ) {
-    let result = acceptor
+    acceptor
         .accept_invite(invite, Some(inviter_pubkey))
         .expect("accept invite");
-    deliver_runtime_effects(acceptor, acceptor_keys, result.effects, inviter);
+    deliver_runtime_effects(acceptor, acceptor_keys, acceptor.drain_events(), inviter);
 }
 
 fn deliver_event_to_runtime(to: &NdrRuntime, event: Event) {
-    let Ok(effects) = to.process_received_event(event) else {
-        return;
-    };
+    to.process_received_event(event);
+    let effects = to.drain_events();
     apply_runtime_persist_effects(to, &effects);
     let mut messages = Vec::new();
     for effect in effects {
-        if let RuntimeEffect::EmitDecrypted { content, .. } = effect {
+        if let SessionManagerEvent::DecryptedMessage { content, .. } = effect {
             messages.push(
                 serde_json::from_str::<UnsignedEvent>(&content)
                     .ok()
@@ -7334,7 +7330,7 @@ fn deliver_event_to_runtime(to: &NdrRuntime, event: Event) {
     }
 }
 
-fn apply_runtime_persist_effects(_runtime: &NdrRuntime, _effects: &[RuntimeEffect]) {
+fn apply_runtime_persist_effects(_runtime: &NdrRuntime, _effects: &[SessionManagerEvent]) {
     // Runtime persistence is internal. This helper keeps existing simulated
     // relay-delivery tests readable where they previously modeled app steps.
 }
@@ -7353,35 +7349,35 @@ fn complete_first_contact(
     inviter_pubkey: PublicKey,
     inviter: &NdrRuntime,
 ) {
-    let result = acceptor
+    acceptor
         .send_text(
             inviter_pubkey,
             "__ndr_first_contact_bootstrap__".to_string(),
             None,
         )
         .expect("first-contact bootstrap send");
-    deliver_runtime_effects(acceptor, acceptor_keys, result.effects, inviter);
+    deliver_runtime_effects(acceptor, acceptor_keys, acceptor.drain_events(), inviter);
 }
 
-fn signed_events_from_effects(effects: Vec<RuntimeEffect>, signer: &Keys) -> Vec<Event> {
+fn signed_events_from_effects(effects: Vec<SessionManagerEvent>, signer: &Keys) -> Vec<Event> {
     effects
         .into_iter()
         .filter_map(|event| match event {
-            RuntimeEffect::PublishUnsigned(unsigned) if unsigned.pubkey == signer.public_key() => {
+            SessionManagerEvent::Publish(unsigned) if unsigned.pubkey == signer.public_key() => {
                 unsigned.sign_with_keys(signer).ok()
             }
-            RuntimeEffect::PublishSigned(event) => Some(event),
-            RuntimeEffect::PublishSignedForInnerEvent { event, .. } => Some(event),
+            SessionManagerEvent::PublishSigned(event) => Some(event),
+            SessionManagerEvent::PublishSignedForInnerEvent { event, .. } => Some(event),
             _ => None,
         })
         .collect()
 }
 
 fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
-    let mut effects = runtime.prepared_publish_effects();
+    let mut effects = runtime.drain_events();
     if effects.is_empty() {
-        effects = runtime.reload_from_storage().unwrap_or_default();
-        effects.extend(runtime.prepared_publish_effects());
+        runtime.reload_from_storage().expect("reload runtime");
+        effects.extend(runtime.drain_events());
     }
     let mut seen = HashSet::new();
     let events = signed_events_from_effects(effects, signer)
@@ -7389,9 +7385,10 @@ fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
         .filter(|event| seen.insert(event.id))
         .collect::<Vec<_>>();
     for event in &events {
-        if let Ok(effects) = runtime.ack_prepared_publish(&event.id.to_string()) {
-            apply_runtime_persist_effects(runtime, &effects);
-        }
+        runtime
+            .ack_prepared_publish(&event.id.to_string())
+            .expect("ack prepared publish");
+        apply_runtime_persist_effects(runtime, &runtime.drain_events());
     }
     events
 }
