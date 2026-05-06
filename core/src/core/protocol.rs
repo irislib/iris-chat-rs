@@ -94,6 +94,7 @@ impl AppCore {
         );
         self.process_protocol_engine_effects_with_completions(batch.effects, &BTreeMap::new());
         for decrypted in batch.direct_messages {
+            let event_id = decrypted.event_id.clone();
             self.apply_decrypted_runtime_message_with_metadata(
                 decrypted.sender,
                 decrypted.sender_device,
@@ -101,6 +102,9 @@ impl AppCore {
                 decrypted.content,
                 decrypted.event_id,
             );
+            if let Some(event_id) = event_id {
+                self.remember_event(event_id);
+            }
         }
         self.push_debug_log(
             "appcore.protocol.retry",

@@ -946,6 +946,51 @@ fn appcore_sender_owner_resolution_keeps_claimed_device_pending_until_owner_veri
 }
 
 #[test]
+fn pending_inbound_owner_targets_use_cached_metadata_not_event_reparse() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol_engine.rs"),
+    )
+    .expect("read protocol engine source");
+    let start = protocol_source
+        .find("fn pending_inbound_owner_claim_targets")
+        .expect("pending inbound target collector");
+    let body = &protocol_source[start
+        ..protocol_source[start..]
+            .find("\n    fn pending_group_pairwise_owner_claim_targets")
+            .map(|offset| start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        body.contains("claimed_owner_pubkey_hex"),
+        "pending inbound owner target collection must use cached owner metadata"
+    );
+    assert!(
+        !body.contains("parse_message_event"),
+        "pending inbound owner target collection runs on the relay hot path and must not verify every pending event"
+    );
+}
+
+#[test]
+fn relay_pending_inbound_replays_are_short_circuited() {
+    let relay_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/relay.rs"),
+    )
+    .expect("read relay source");
+    let start = relay_source
+        .find("if kind == MESSAGE_EVENT_KIND")
+        .expect("message event branch");
+    let body = &relay_source[start
+        ..relay_source[start..]
+            .find("\n        self.remember_event(event_id);")
+            .map(|offset| start + offset)
+            .unwrap_or(relay_source.len())];
+    assert!(
+        body.contains("has_pending_inbound_direct_event_id")
+            && body.contains("appcore.protocol.message.pending_replay"),
+        "relay replays of already-durable pending inbound events must avoid reparsing and refetching immediately"
+    );
+}
+
+#[test]
 fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1349,6 +1394,27 @@ fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() 
         "claimed-owner messages must wait until the owner claim is verified"
     );
     assert_eq!(engine.debug_snapshot().pending_inbound_count, 1);
+    let sender_message_pubkey_hex = sent.envelope.sender.to_hex();
+    let peer_owner_hex = peer_owner.public_key().to_hex();
+    let pending_inbound = engine.pending_inbound_for_test();
+    let pending = pending_inbound.first().expect("pending inbound");
+    assert_eq!(pending.event_id, message_event.id.to_string());
+    assert!(
+        pending.has_envelope,
+        "pending inbound must store the parsed envelope so retries do not verify the outer event again"
+    );
+    assert_eq!(
+        pending.sender_message_pubkey_hex.as_deref(),
+        Some(sender_message_pubkey_hex.as_str())
+    );
+    assert_eq!(
+        pending.claimed_owner_pubkey_hex.as_deref(),
+        Some(peer_owner_hex.as_str())
+    );
+    assert!(
+        pending.metadata_verified,
+        "queued pending inbound metadata should be produced by the already verified parse"
+    );
     assert_eq!(
         engine.queued_owner_claim_targets(),
         vec![format!("owner:{}", peer_owner.public_key().to_hex())]

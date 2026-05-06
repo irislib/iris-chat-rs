@@ -186,6 +186,24 @@ impl AppCore {
         }
 
         if kind == MESSAGE_EVENT_KIND {
+            if self
+                .protocol_engine
+                .as_ref()
+                .is_some_and(|engine| engine.has_pending_inbound_direct_event_id(&event_id))
+            {
+                self.push_debug_log(
+                    "appcore.protocol.message.pending_replay",
+                    "already stored as pending inbound",
+                );
+                self.request_protocol_subscription_refresh();
+                self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                    PROTOCOL_RECONNECT_CHECK_SECS,
+                ));
+                self.persist_best_effort();
+                self.rebuild_state();
+                self.emit_state();
+                return;
+            }
             if let Some(protocol_engine) = self.protocol_engine.as_mut() {
                 match protocol_engine.process_direct_message_event(&event) {
                     Ok(Some(decrypted)) => {

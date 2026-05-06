@@ -163,6 +163,28 @@ struct ProtocolPendingInbound {
     event: Event,
     created_at_secs: u64,
     next_retry_at_secs: u64,
+    #[serde(default)]
+    event_id: String,
+    #[serde(default)]
+    envelope: Option<MessageEnvelope>,
+    #[serde(default)]
+    sender_message_pubkey_hex: Option<String>,
+    #[serde(default)]
+    resolved_owner_pubkey_hex: Option<String>,
+    #[serde(default)]
+    claimed_owner_pubkey_hex: Option<String>,
+    #[serde(default)]
+    metadata_verified: bool,
+}
+
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct ProtocolPendingInboundTestDebug {
+    pub(super) event_id: String,
+    pub(super) sender_message_pubkey_hex: Option<String>,
+    pub(super) claimed_owner_pubkey_hex: Option<String>,
+    pub(super) has_envelope: bool,
+    pub(super) metadata_verified: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -279,6 +301,16 @@ struct ProtocolSenderDeviceRecord {
     storage_owner: NdrOwnerPubkey,
     device_pubkey: NdrDevicePubkey,
     claimed_owner_pubkey: Option<NdrOwnerPubkey>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ProtocolPendingInboundMetadata {
+    event_id: String,
+    envelope: Option<MessageEnvelope>,
+    sender_message_pubkey_hex: Option<String>,
+    resolved_owner_pubkey_hex: Option<String>,
+    claimed_owner_pubkey_hex: Option<String>,
+    metadata_verified: bool,
 }
 
 impl From<ProtocolPendingDecryptedDelivery> for ProtocolDecryptedMessage {
@@ -417,6 +449,7 @@ impl ProtocolEngine {
                 .replace_local_invite(local_invite.clone());
         }
         engine.ensure_local_roster(local_invite.created_at);
+        engine.hydrate_pending_inbound_metadata();
         engine.persist()?;
         Ok(engine)
     }
@@ -449,6 +482,12 @@ impl ProtocolEngine {
                                 event: pending.event,
                                 created_at_secs,
                                 next_retry_at_secs: created_at_secs,
+                                event_id: String::new(),
+                                envelope: None,
+                                sender_message_pubkey_hex: None,
+                                resolved_owner_pubkey_hex: None,
+                                claimed_owner_pubkey_hex: None,
+                                metadata_verified: false,
                             }
                         })
                         .collect();
@@ -544,6 +583,23 @@ impl ProtocolEngine {
         })
     }
 
+    fn hydrate_pending_inbound_metadata(&mut self) {
+        let metadata = self
+            .pending_inbound
+            .iter()
+            .map(|pending| {
+                self.pending_inbound_metadata_for_event(
+                    &pending.event,
+                    pending.envelope.as_ref(),
+                    None,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (pending, metadata) in self.pending_inbound.iter_mut().zip(metadata) {
+            apply_pending_inbound_metadata(pending, metadata);
+        }
+    }
+
     pub(super) fn debug_snapshot(&self) -> ProtocolEngineDebugSnapshot {
         ProtocolEngineDebugSnapshot {
             known_message_author_count: self.known_message_author_pubkeys().len(),
@@ -612,6 +668,17 @@ impl ProtocolEngine {
         !self.pending_inbound.is_empty()
     }
 
+    pub(super) fn has_pending_inbound_direct_event_id(&self, event_id: &str) -> bool {
+        self.pending_inbound.iter().any(|pending| {
+            let pending_event_id = if pending.event_id.is_empty() {
+                pending.event.id.to_string()
+            } else {
+                pending.event_id.clone()
+            };
+            pending_event_id == event_id
+        })
+    }
+
     pub(super) fn queued_owner_claim_targets(&self) -> Vec<String> {
         let mut targets = self.pending_inbound_owner_claim_targets();
         targets.extend(self.pending_group_pairwise_owner_claim_targets());
@@ -637,6 +704,24 @@ impl ProtocolEngine {
     #[cfg(test)]
     pub(super) fn local_invite_for_test(&self) -> Option<Invite> {
         self.session_manager.snapshot().local_invite
+    }
+
+    #[cfg(test)]
+    pub(super) fn pending_inbound_for_test(&self) -> Vec<ProtocolPendingInboundTestDebug> {
+        self.pending_inbound
+            .iter()
+            .map(|pending| ProtocolPendingInboundTestDebug {
+                event_id: if pending.event_id.is_empty() {
+                    pending.event.id.to_string()
+                } else {
+                    pending.event_id.clone()
+                },
+                sender_message_pubkey_hex: pending.sender_message_pubkey_hex.clone(),
+                claimed_owner_pubkey_hex: pending.claimed_owner_pubkey_hex.clone(),
+                has_envelope: pending.envelope.is_some(),
+                metadata_verified: pending.metadata_verified,
+            })
+            .collect()
     }
 
     pub(super) fn known_message_author_pubkeys(&self) -> Vec<PublicKey> {
@@ -1372,37 +1457,30 @@ impl ProtocolEngine {
         event: &Event,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
         let envelope = parse_message_event(event)?;
-        let sender_owner = match self.resolve_message_sender_owner(&envelope) {
-            ProtocolSenderOwnerResolution::Verified { owner }
-            | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
+        let resolution = self.resolve_message_sender_owner(&envelope);
+        match resolution {
+            ProtocolSenderOwnerResolution::Verified { .. }
+            | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { .. } => {}
             ProtocolSenderOwnerResolution::PendingOwnerClaim { .. } => {
-                self.queue_pending_inbound_direct_event(event.clone(), event.created_at.as_secs())?;
+                self.queue_pending_inbound_direct_event(
+                    event.clone(),
+                    event.created_at.as_secs(),
+                    Some(&envelope),
+                    Some(resolution),
+                )?;
                 return Ok(None);
             }
         };
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
-        let Some(received) = self
-            .session_manager
-            .receive(&mut ctx, sender_owner, &envelope)?
-        else {
-            self.queue_pending_inbound_direct_event(event.clone(), event.created_at.as_secs())?;
-            return Ok(None);
-        };
-        let (conversation_owner, payload) = decode_local_sibling_payload(&received.payload)
-            .map(|(owner, payload)| (Some(owner), payload))
-            .unwrap_or((None, received.payload));
-        let content = String::from_utf8(payload)?;
-        let decrypted = ProtocolDecryptedMessage {
-            sender: public_owner(received.owner_pubkey)?,
-            sender_device: Some(public_device(received.device_pubkey)?),
-            conversation_owner,
-            content,
-            event_id: Some(event.id.to_string()),
-        };
-        self.record_pending_decrypted_delivery(decrypted.clone(), event.created_at.as_secs());
-        self.persist()?;
-        Ok(Some(decrypted))
+        if let Some(decrypted) = self.decrypt_direct_message_envelope(event, &envelope, true)? {
+            return Ok(Some(decrypted));
+        }
+        self.queue_pending_inbound_direct_event(
+            event.clone(),
+            event.created_at.as_secs(),
+            Some(&envelope),
+            Some(resolution),
+        )?;
+        Ok(None)
     }
 
     pub(super) fn process_group_outer_event(
@@ -1709,7 +1787,7 @@ impl ProtocolEngine {
                 still_pending.push(pending);
                 continue;
             }
-            match self.decrypt_direct_message_event(&pending.event)? {
+            match self.decrypt_pending_direct_message_event(&pending)? {
                 Some(message) => messages.push(message),
                 None => {
                     pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
@@ -1721,11 +1799,30 @@ impl ProtocolEngine {
         Ok(messages)
     }
 
+    fn decrypt_pending_direct_message_event(
+        &mut self,
+        pending: &ProtocolPendingInbound,
+    ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
+        if let Some(envelope) = pending.envelope.as_ref() {
+            return self.decrypt_direct_message_envelope(&pending.event, envelope, false);
+        }
+        self.decrypt_direct_message_event(&pending.event)
+    }
+
     fn decrypt_direct_message_event(
         &mut self,
         event: &Event,
     ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
         let envelope = parse_message_event(event)?;
+        self.decrypt_direct_message_envelope(event, &envelope, false)
+    }
+
+    fn decrypt_direct_message_envelope(
+        &mut self,
+        event: &Event,
+        envelope: &MessageEnvelope,
+        record_delivery: bool,
+    ) -> anyhow::Result<Option<ProtocolDecryptedMessage>> {
         let sender_owner = match self.resolve_message_sender_owner(&envelope) {
             ProtocolSenderOwnerResolution::Verified { owner }
             | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
@@ -1745,14 +1842,18 @@ impl ProtocolEngine {
             .map(|(owner, payload)| (Some(owner), payload))
             .unwrap_or((None, received.payload));
         let content = String::from_utf8(payload)?;
-        self.persist()?;
-        Ok(Some(ProtocolDecryptedMessage {
+        let decrypted = ProtocolDecryptedMessage {
             sender: public_owner(received.owner_pubkey)?,
             sender_device: Some(public_device(received.device_pubkey)?),
             conversation_owner,
             content,
             event_id: Some(event.id.to_string()),
-        }))
+        };
+        if record_delivery {
+            self.record_pending_decrypted_delivery(decrypted.clone(), event.created_at.as_secs());
+        }
+        self.persist()?;
+        Ok(Some(decrypted))
     }
 
     fn retry_pending_group_inputs(
@@ -1898,10 +1999,17 @@ impl ProtocolEngine {
         &self,
         envelope: &MessageEnvelope,
     ) -> ProtocolSenderOwnerResolution {
-        self.session_record_matching_message_sender(envelope.sender)
+        self.resolve_message_sender_owner_for_sender(envelope.sender)
+    }
+
+    fn resolve_message_sender_owner_for_sender(
+        &self,
+        sender: NdrDevicePubkey,
+    ) -> ProtocolSenderOwnerResolution {
+        self.session_record_matching_message_sender(sender)
             .map(|record| self.owner_resolution_for_sender_record(record))
             .unwrap_or_else(|| ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
-                owner: provisional_owner_from_sender_pubkey(envelope.sender),
+                owner: provisional_owner_from_sender_pubkey(sender),
             })
     }
 
@@ -2039,8 +2147,7 @@ impl ProtocolEngine {
             .pending_inbound
             .iter()
             .filter_map(|pending| {
-                let envelope = parse_message_event(&pending.event).ok()?;
-                sender_resolution_owner_matches(self.resolve_message_sender_owner(&envelope), owner)
+                self.pending_inbound_matches_owner(pending, owner)
                     .then(|| pending.event.id)
             })
             .collect::<HashSet<_>>();
@@ -2174,13 +2281,16 @@ impl ProtocolEngine {
     fn pending_inbound_owner_claim_targets(&self) -> Vec<String> {
         let mut targets = Vec::new();
         for pending in &self.pending_inbound {
-            let Ok(envelope) = parse_message_event(&pending.event) else {
+            if let Some(sender) = pending_inbound_sender_pubkey(pending) {
+                if let ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } =
+                    self.resolve_message_sender_owner_for_sender(sender)
+                {
+                    targets.push(format!("owner:{}", claimed_owner.to_hex()));
+                }
                 continue;
-            };
-            if let ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } =
-                self.resolve_message_sender_owner(&envelope)
-            {
-                targets.push(format!("owner:{}", claimed_owner.to_hex()));
+            }
+            if let Some(claimed_owner_hex) = pending.claimed_owner_pubkey_hex.as_ref() {
+                targets.push(format!("owner:{claimed_owner_hex}"));
             }
         }
         targets.sort();
@@ -2206,21 +2316,111 @@ impl ProtocolEngine {
         &mut self,
         event: Event,
         now_secs: u64,
+        envelope: Option<&MessageEnvelope>,
+        resolution: Option<ProtocolSenderOwnerResolution>,
     ) -> anyhow::Result<()> {
         let event_id = event.id.to_string();
-        if !self
-            .pending_inbound
-            .iter()
-            .any(|pending| pending.event.id.to_string() == event_id)
-        {
-            self.pending_inbound.push(ProtocolPendingInbound {
+        let metadata = self.pending_inbound_metadata_for_event(&event, envelope, resolution);
+        if let Some(existing) = self.pending_inbound.iter_mut().find(|pending| {
+            let pending_event_id = if pending.event_id.is_empty() {
+                pending.event.id.to_string()
+            } else {
+                pending.event_id.clone()
+            };
+            pending_event_id == event_id
+        }) {
+            let changed = apply_pending_inbound_metadata(existing, metadata);
+            if changed {
+                self.persist()?;
+            }
+        } else {
+            let mut pending = ProtocolPendingInbound {
                 event,
                 created_at_secs: now_secs,
                 next_retry_at_secs: now_secs.saturating_add(PENDING_RETRY_DELAY_SECS),
-            });
+                event_id: String::new(),
+                envelope: None,
+                sender_message_pubkey_hex: None,
+                resolved_owner_pubkey_hex: None,
+                claimed_owner_pubkey_hex: None,
+                metadata_verified: false,
+            };
+            apply_pending_inbound_metadata(&mut pending, metadata);
+            if pending.event_id.is_empty() {
+                pending.event_id = event_id;
+            }
+            self.pending_inbound.push(pending);
             self.persist()?;
         }
         Ok(())
+    }
+
+    fn pending_inbound_metadata_for_event(
+        &self,
+        event: &Event,
+        envelope: Option<&MessageEnvelope>,
+        resolution: Option<ProtocolSenderOwnerResolution>,
+    ) -> ProtocolPendingInboundMetadata {
+        let parsed = envelope
+            .cloned()
+            .map(|envelope| (envelope, true))
+            .or_else(|| {
+                parse_message_event(event)
+                    .ok()
+                    .map(|envelope| (envelope, true))
+            });
+        let event_id = event.id.to_string();
+        let Some((envelope, metadata_verified)) = parsed else {
+            return ProtocolPendingInboundMetadata {
+                event_id,
+                envelope: None,
+                sender_message_pubkey_hex: Some(event.pubkey.to_hex()),
+                resolved_owner_pubkey_hex: None,
+                claimed_owner_pubkey_hex: None,
+                metadata_verified: false,
+            };
+        };
+        let resolution = resolution.unwrap_or_else(|| self.resolve_message_sender_owner(&envelope));
+        let (resolved_owner_pubkey_hex, claimed_owner_pubkey_hex) =
+            pending_inbound_owner_hexes_from_resolution(resolution);
+        ProtocolPendingInboundMetadata {
+            event_id,
+            sender_message_pubkey_hex: public_device(envelope.sender)
+                .ok()
+                .map(|pubkey| pubkey.to_hex())
+                .or_else(|| Some(event.pubkey.to_hex())),
+            envelope: Some(envelope),
+            resolved_owner_pubkey_hex,
+            claimed_owner_pubkey_hex,
+            metadata_verified,
+        }
+    }
+
+    fn pending_inbound_matches_owner(
+        &self,
+        pending: &ProtocolPendingInbound,
+        owner: NdrOwnerPubkey,
+    ) -> bool {
+        let owner_hex = owner.to_hex();
+        if pending
+            .claimed_owner_pubkey_hex
+            .as_ref()
+            .is_some_and(|claimed_owner| claimed_owner == &owner_hex)
+            || pending
+                .resolved_owner_pubkey_hex
+                .as_ref()
+                .is_some_and(|resolved_owner| resolved_owner == &owner_hex)
+        {
+            return true;
+        }
+        pending_inbound_sender_pubkey(pending)
+            .map(|sender| {
+                sender_resolution_owner_matches(
+                    self.resolve_message_sender_owner_for_sender(sender),
+                    owner,
+                )
+            })
+            .unwrap_or(false)
     }
 
     fn record_pending_decrypted_delivery(
@@ -2739,6 +2939,65 @@ fn sender_resolution_owner_matches(
             claimed_owner == owner
         }
     }
+}
+
+fn pending_inbound_owner_hexes_from_resolution(
+    resolution: ProtocolSenderOwnerResolution,
+) -> (Option<String>, Option<String>) {
+    match resolution {
+        ProtocolSenderOwnerResolution::Verified { owner }
+        | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => {
+            (Some(owner.to_hex()), None)
+        }
+        ProtocolSenderOwnerResolution::PendingOwnerClaim {
+            storage_owner,
+            claimed_owner,
+            ..
+        } => (Some(storage_owner.to_hex()), Some(claimed_owner.to_hex())),
+    }
+}
+
+fn pending_inbound_sender_pubkey(pending: &ProtocolPendingInbound) -> Option<NdrDevicePubkey> {
+    if let Some(envelope) = pending.envelope.as_ref() {
+        return Some(envelope.sender);
+    }
+    pending
+        .sender_message_pubkey_hex
+        .as_deref()
+        .and_then(|pubkey_hex| PublicKey::parse(pubkey_hex).ok())
+        .map(ndr_device)
+}
+
+fn apply_pending_inbound_metadata(
+    pending: &mut ProtocolPendingInbound,
+    metadata: ProtocolPendingInboundMetadata,
+) -> bool {
+    let mut changed = false;
+    if pending.event_id.is_empty() && !metadata.event_id.is_empty() {
+        pending.event_id = metadata.event_id;
+        changed = true;
+    }
+    if pending.envelope.is_none() && metadata.envelope.is_some() {
+        pending.envelope = metadata.envelope;
+        changed = true;
+    }
+    if pending.sender_message_pubkey_hex.is_none() && metadata.sender_message_pubkey_hex.is_some() {
+        pending.sender_message_pubkey_hex = metadata.sender_message_pubkey_hex;
+        changed = true;
+    }
+    if pending.resolved_owner_pubkey_hex.is_none() && metadata.resolved_owner_pubkey_hex.is_some() {
+        pending.resolved_owner_pubkey_hex = metadata.resolved_owner_pubkey_hex;
+        changed = true;
+    }
+    if pending.claimed_owner_pubkey_hex.is_none() && metadata.claimed_owner_pubkey_hex.is_some() {
+        pending.claimed_owner_pubkey_hex = metadata.claimed_owner_pubkey_hex;
+        changed = true;
+    }
+    if metadata.metadata_verified && !pending.metadata_verified {
+        pending.metadata_verified = true;
+        changed = true;
+    }
+    changed
 }
 
 fn provisional_owner_from_sender_pubkey(sender: NdrDevicePubkey) -> NdrOwnerPubkey {
