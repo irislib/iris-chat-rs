@@ -64,38 +64,26 @@ async fn publish_event_to_any_relay(
     event: &Event,
     label: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let started_ms = crate::perflog::now_ms();
-    let event_id = event.id.to_string();
     let (tx, mut rx) =
         tokio::sync::mpsc::channel::<Result<Vec<String>, String>>(relay_urls.len().max(1));
 
     for relay_url in relay_urls.iter().cloned() {
         let client = client.clone();
         let event = event.clone();
-        let event_id = event_id.clone();
-        let label = label.to_string();
         let relay_label = relay_url.to_string();
         let tx = tx.clone();
         tokio::spawn(async move {
-            let relay_started_ms = crate::perflog::now_ms();
             let result = tokio::time::timeout(
                 RELAY_PUBLISH_TIMEOUT,
                 client.send_event_to([relay_url], &event),
             )
             .await;
-            let elapsed_ms = crate::perflog::now_ms().saturating_sub(relay_started_ms);
             let result = match result {
-                Ok(Ok(output)) if !output.success.is_empty() => {
-                    let successes = output
-                        .success
-                        .into_iter()
-                        .map(|relay| relay.to_string())
-                        .collect::<Vec<_>>();
-                    crate::perflog!(
-                        "publish.relay.ok label={label} event_id={event_id} relay={relay_label} elapsed_ms={elapsed_ms}"
-                    );
-                    Ok(successes)
-                }
+                Ok(Ok(output)) if !output.success.is_empty() => Ok(output
+                    .success
+                    .into_iter()
+                    .map(|relay| relay.to_string())
+                    .collect::<Vec<_>>()),
                 Ok(Ok(output)) => {
                     let reason = output
                         .failed
@@ -104,29 +92,13 @@ async fn publish_event_to_any_relay(
                         .cloned()
                         .unwrap_or_else(|| "no relay accepted event".to_string());
                     if relay_publish_failure_is_terminal_success(&reason) {
-                        crate::perflog!(
-                            "publish.relay.terminal_success label={label} event_id={event_id} relay={relay_label} elapsed_ms={elapsed_ms} reason={reason}"
-                        );
                         Ok(vec![relay_label])
                     } else {
-                        crate::perflog!(
-                            "publish.relay.failed label={label} event_id={event_id} relay={relay_label} elapsed_ms={elapsed_ms} reason={reason}"
-                        );
                         Err(format!("{relay_label}: {reason}"))
                     }
                 }
-                Ok(Err(error)) => {
-                    crate::perflog!(
-                        "publish.relay.error label={label} event_id={event_id} relay={relay_label} elapsed_ms={elapsed_ms} error={error}"
-                    );
-                    Err(format!("{relay_label}: {error}"))
-                }
-                Err(_) => {
-                    crate::perflog!(
-                        "publish.relay.timeout label={label} event_id={event_id} relay={relay_label} elapsed_ms={elapsed_ms}"
-                    );
-                    Err(format!("{relay_label}: publish timed out"))
-                }
+                Ok(Err(error)) => Err(format!("{relay_label}: {error}")),
+                Err(_) => Err(format!("{relay_label}: publish timed out")),
             };
             let _ = tx.send(result).await;
         });
@@ -139,22 +111,12 @@ async fn publish_event_to_any_relay(
             Ok(mut successes) => {
                 successes.sort();
                 successes.dedup();
-                crate::perflog!(
-                    "publish.any.ok label={label} event_id={event_id} relays={} elapsed_ms={}",
-                    successes.join(","),
-                    crate::perflog::now_ms().saturating_sub(started_ms)
-                );
                 return Ok(successes);
             }
             Err(error) => failures.push(error),
         }
     }
 
-    crate::perflog!(
-        "publish.any.failed label={label} event_id={event_id} failures={} elapsed_ms={}",
-        failures.len(),
-        crate::perflog::now_ms().saturating_sub(started_ms)
-    );
     Err(anyhow::anyhow!(
         "{label}: {}",
         if failures.is_empty() {
@@ -232,14 +194,13 @@ mod tests {
         delayed_relay(delay, true, "").await
     }
 
-    fn timing_event() -> Event {
-        EventBuilder::new(Kind::from(1), "publish timing")
+    fn publish_test_event() -> Event {
+        EventBuilder::new(Kind::from(1), "publish test")
             .sign_with_keys(&Keys::generate())
-            .expect("sign timing event")
+            .expect("sign test event")
     }
 
-    async fn run_current_publish_timing_case(
-        scenario: &str,
+    async fn run_publish_case(
         first_delay_ms: u64,
         second_delay_ms: u64,
         first_accepts: bool,
@@ -258,7 +219,7 @@ mod tests {
         )
         .await;
         let client = Client::new(Keys::generate());
-        let event = timing_event();
+        let event = publish_test_event();
 
         let started = Instant::now();
         let result = publish_event_fire_and_forget(
@@ -269,24 +230,11 @@ mod tests {
         )
         .await;
         let elapsed = started.elapsed();
-        let outcome = if result.is_ok() { "success" } else { "failure" };
-        let accepted_relays = result.as_ref().map(|relays| relays.len()).unwrap_or(0);
-        eprintln!(
-            "CORE_TIMING_DATASET {{\"repo\":\"iris-chat-rs\",\"scenario\":\"{}\",\"strategy\":\"parallel_first_ack\",\"outcome\":\"{}\",\"elapsed_ms\":{},\"accepted_relays\":{},\"first_delay_ms\":{},\"second_delay_ms\":{},\"first_accepts\":{},\"second_accepts\":{}}}",
-            scenario,
-            outcome,
-            elapsed.as_millis(),
-            accepted_relays,
-            first_delay_ms,
-            second_delay_ms,
-            first_accepts,
-            second_accepts
-        );
         result.map(|relays| (elapsed, relays.len()))
     }
 
     #[tokio::test]
-    async fn timing_current_publish_returns_on_fast_first_ack() {
+    async fn publish_returns_on_fast_first_ack() {
         let cases = [
             ("publish_slow_first_fast_second", 600, 20, true, true),
             ("publish_fast_first_slow_second", 20, 600, true, true),
@@ -294,8 +242,7 @@ mod tests {
             ("publish_fast_fail_slow_success", 20, 180, false, true),
         ];
         for (scenario, first_delay_ms, second_delay_ms, first_accepts, second_accepts) in cases {
-            let (elapsed, accepted_relays) = run_current_publish_timing_case(
-                scenario,
+            let (elapsed, accepted_relays) = run_publish_case(
                 first_delay_ms,
                 second_delay_ms,
                 first_accepts,
@@ -321,10 +268,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timing_current_publish_fails_after_all_relays_reject() {
+    async fn publish_fails_after_all_relays_reject() {
         let started = Instant::now();
-        let result =
-            run_current_publish_timing_case("publish_all_reject", 20, 30, false, false).await;
+        let result = run_publish_case(20, 30, false, false).await;
         let elapsed = started.elapsed();
 
         assert!(result.is_err());
@@ -339,24 +285,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn timing_current_publish_accepts_terminal_duplicate_as_success() {
+    async fn publish_accepts_terminal_duplicate_as_success() {
         let first =
             delayed_relay(Duration::from_millis(20), false, "duplicate: already have").await;
         let second = delayed_ok_relay(Duration::from_millis(600)).await;
         let client = Client::new(Keys::generate());
-        let event = timing_event();
+        let event = publish_test_event();
         let started = Instant::now();
         let accepted =
-            publish_event_fire_and_forget(&client, &[first, second], &event, "timing duplicate")
+            publish_event_fire_and_forget(&client, &[first, second], &event, "duplicate")
                 .await
                 .expect("terminal duplicate should count as success");
         let elapsed = started.elapsed();
 
-        eprintln!(
-            "CORE_TIMING_DATASET {{\"repo\":\"iris-chat-rs\",\"scenario\":\"publish_duplicate_fast_slow_success\",\"strategy\":\"parallel_first_ack\",\"outcome\":\"success\",\"elapsed_ms\":{},\"accepted_relays\":{},\"first_delay_ms\":20,\"second_delay_ms\":600,\"first_accepts\":false,\"second_accepts\":true,\"first_terminal_success\":true}}",
-            elapsed.as_millis(),
-            accepted.len()
-        );
         assert_eq!(accepted.len(), 1);
         assert!(
             elapsed < Duration::from_millis(320),
