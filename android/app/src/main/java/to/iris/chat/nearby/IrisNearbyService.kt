@@ -41,7 +41,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
-import org.json.JSONArray
 import org.json.JSONObject
 import to.iris.chat.core.AppManager
 import to.iris.chat.core.NearbyPublishedEvent
@@ -98,6 +97,7 @@ class IrisNearbyService(
     private val peerInventorySentMillis = linkedMapOf<String, Long>()
     private val centralReconnectSuppressedUntilMillis = linkedMapOf<String, Long>()
     private val peerNonces = linkedMapOf<String, String>()
+    private val connectionNonces = linkedMapOf<String, String>()
     private val peers = linkedMapOf<String, Peer>()
     private val knownProfiles = linkedMapOf<String, NearbyProfileEvent>()
     private val mtuPayloadBytes = linkedMapOf<String, Int>()
@@ -296,6 +296,7 @@ class IrisNearbyService(
                 kind = event.kind.toLong(),
                 createdAtSecs = event.createdAtSecs.toLong(),
                 eventJson = event.eventJson,
+                authorPubkeyHex = eventAuthorHex(event.eventJson),
                 storedAtMillis = System.currentTimeMillis(),
             )
         ownOutbound[event.eventId] = record
@@ -363,6 +364,7 @@ class IrisNearbyService(
         bluetoothPeerLastSeenMillis.clear()
         peerInventorySentMillis.clear()
         centralReconnectSuppressedUntilMillis.clear()
+        connectionNonces.clear()
         if (localNetworkVisible) {
             val lanPeerIds = lanService.peerIds()
             bluetoothPeerIds
@@ -533,9 +535,7 @@ class IrisNearbyService(
 
     private fun announceIdentityToConnectedPeers() {
         sendHello(excludingPeerId = null)
-        peerNonces.forEach { (remotePeerId, remoteNonce) ->
-            sendPresence(remotePeerId, remoteNonce)
-        }
+        peerNonces.values.forEach(::sendPresence)
     }
 
     private fun startMaintenance() {
@@ -565,7 +565,6 @@ class IrisNearbyService(
             JSONObject()
                 .put("v", 1)
                 .put("type", "hello")
-                .put("peer_id", peerId)
                 .put("nonce", localNonce)
                 .put("name", "Iris")
         sendEnvelope(envelope, excludingPeerId)
@@ -576,23 +575,18 @@ class IrisNearbyService(
         if (records.isEmpty()) {
             return
         }
-        val events = JSONArray()
         records.forEach { record ->
-            events.put(
+            val envelope =
                 JSONObject()
+                    .put("v", 1)
+                    .put("type", "inv")
                     .put("id", record.id)
                     .put("kind", record.kind)
                     .put("created_at", record.createdAtSecs)
-                    .put("size", record.eventJson.toByteArray(Charsets.UTF_8).size),
-            )
+                    .put("size", record.eventJson.toByteArray(Charsets.UTF_8).size)
+            record.authorPubkeyHex?.let { envelope.put("author", it) }
+            sendEnvelope(envelope, excludingPeerId)
         }
-        val envelope =
-            JSONObject()
-                .put("v", 1)
-                .put("type", "inv")
-                .put("peer_id", peerId)
-                .put("events", events)
-        sendEnvelope(envelope, excludingPeerId)
     }
 
     private fun sendInventoryAfterHelloIfNeeded(
@@ -612,13 +606,14 @@ class IrisNearbyService(
         if (ids.isEmpty()) {
             return
         }
-        val envelope =
-            JSONObject()
-                .put("v", 1)
-                .put("type", "want")
-                .put("peer_id", peerId)
-                .put("ids", JSONArray(ids))
-        sendEnvelope(envelope, excludingPeerId)
+        ids.take(64).forEach { id ->
+            val envelope =
+                JSONObject()
+                    .put("v", 1)
+                    .put("type", "want")
+                    .put("id", id)
+            sendEnvelope(envelope, excludingPeerId)
+        }
     }
 
     private fun sendEvent(record: StoredNearbyEvent, excludingPeerId: String?) {
@@ -630,7 +625,6 @@ class IrisNearbyService(
             JSONObject()
                 .put("v", 1)
                 .put("type", "event")
-                .put("peer_id", peerId)
                 .put("event_json", eventJson)
         val frame = appManager.encodeNearbyFrame(envelope)
         if (frame != null && frame.size <= SINGLE_FRAME_BYTES) {
@@ -640,7 +634,7 @@ class IrisNearbyService(
         }
     }
 
-    private fun sendPresence(remotePeerId: String, remoteNonce: String) {
+    private fun sendPresence(remoteNonce: String) {
         val eventJson =
             appManager.buildNearbyPresenceEventJson(
                 peerId = peerId,
@@ -669,7 +663,6 @@ class IrisNearbyService(
                 JSONObject()
                     .put("v", 1)
                     .put("type", "event_frag")
-                    .put("peer_id", peerId)
                     .put("frag_id", fragmentId)
                     .put("event_id", record.id)
                     .put("index", index)
@@ -881,18 +874,22 @@ class IrisNearbyService(
     private fun ingestFrame(frame: ByteArray, source: NearbySource) {
         val envelope = appManager.decodeNearbyFrame(frame) ?: return
         val type = envelope.optString("type")
-        val remotePeerId = envelope.optString("peer_id").trim()
-        if (remotePeerId == peerId) {
+        if (envelope.has("peer_id")) {
             return
         }
+        val remotePeerId = peerIdForSource(source)
+        val sourceKey = sourceKey(source)
         if (remotePeerId.isNotEmpty()) {
             touchPeer(remotePeerId)
             markTransportPeer(remotePeerId, source)
         }
         when (type) {
             "hello" -> {
+                val remoteNonce = envelope.optString("nonce").sanitizedNonce()
+                if (remoteNonce != null && sourceKey != null) {
+                    connectionNonces[sourceKey] = remoteNonce
+                }
                 if (remotePeerId.isNotEmpty()) {
-                    val remoteNonce = envelope.optString("nonce").sanitizedNonce()
                     val previousNonce = peerNonces[remotePeerId]
                     val wasNew = rememberPeer(
                         peerId = remotePeerId,
@@ -906,7 +903,7 @@ class IrisNearbyService(
                     if (remoteNonce != null) {
                         peerNonces[remotePeerId] = remoteNonce
                         if (wasNew || nonceChanged) {
-                            sendPresence(remotePeerId, remoteNonce)
+                            sendPresence(remoteNonce)
                         }
                     }
                     if (wasNew) {
@@ -916,50 +913,52 @@ class IrisNearbyService(
                         remotePeerId = remotePeerId,
                         force = wasNew || nonceChanged,
                     )
+                } else if (remoteNonce != null) {
+                    sendPresence(remoteNonce)
+                    sendInventory(excludingPeerId = null)
                 }
                 status = if (peers.size == 1) "1 nearby" else "${peers.size} nearby"
             }
             "inv" -> handleInventory(envelope)
             "want" -> handleWant(envelope)
-            "event" -> handleEventEnvelope(envelope, remotePeerId.takeIf(String::isNotEmpty))
-            "event_frag" -> handleEventFragment(envelope, remotePeerId.takeIf(String::isNotEmpty))
+            "event" -> handleEventEnvelope(envelope, remotePeerId.takeIf(String::isNotEmpty), sourceKey)
+            "event_frag" -> handleEventFragment(envelope, remotePeerId.takeIf(String::isNotEmpty), sourceKey)
         }
     }
 
     private fun handleInventory(envelope: JSONObject) {
-        val events = envelope.optJSONArray("events") ?: return
-        val wanted = mutableListOf<String>()
-        for (index in 0 until minOf(events.length(), 200)) {
-            val item = events.optJSONObject(index) ?: continue
-            val id = item.optString("id")
-            val size = item.optInt("size", 0)
-            if (
-                id.length == 64 &&
-                size in 1..MAX_EVENT_BYTES &&
-                !ownOutbound.containsKey(id) &&
-                !forwarded.containsKey(id)
-            ) {
-                wanted += id
-            }
+        val id = envelope.optString("id")
+        val size = envelope.optInt("size", 0)
+        if (
+            id.length == 64 &&
+            size in 1..MAX_EVENT_BYTES &&
+            !ownOutbound.containsKey(id) &&
+            !forwarded.containsKey(id)
+        ) {
+            sendWant(listOf(id), excludingPeerId = null)
         }
-        sendWant(wanted.take(64), excludingPeerId = null)
     }
 
     private fun handleWant(envelope: JSONObject) {
-        val ids = envelope.optJSONArray("ids") ?: return
-        for (index in 0 until minOf(ids.length(), 64)) {
-            val id = ids.optString(index)
-            val record = ownOutbound[id] ?: forwarded[id] ?: continue
-            sendEvent(record, excludingPeerId = null)
-        }
+        val id = envelope.optString("id")
+        val record = ownOutbound[id] ?: forwarded[id] ?: return
+        sendEvent(record, excludingPeerId = null)
     }
 
-    private fun handleEventEnvelope(envelope: JSONObject, remotePeerId: String?) {
+    private fun handleEventEnvelope(
+        envelope: JSONObject,
+        remotePeerId: String?,
+        sourceKey: String?,
+    ) {
         val eventJson = envelope.optString("event_json")
-        handleEventJson(eventJson, remotePeerId)
+        handleEventJson(eventJson, remotePeerId, sourceKey)
     }
 
-    private fun handleEventFragment(envelope: JSONObject, remotePeerId: String?) {
+    private fun handleEventFragment(
+        envelope: JSONObject,
+        remotePeerId: String?,
+        sourceKey: String?,
+    ) {
         pruneIncomingFragments()
         val fragmentId = envelope.optString("frag_id")
         val index = envelope.optInt("index", -1)
@@ -982,6 +981,7 @@ class IrisNearbyService(
                     parts = linkedMapOf(),
                     storedAtMillis = System.currentTimeMillis(),
                     remotePeerId = remotePeerId,
+                    sourceKey = sourceKey,
                 )
             }
         if (fragment.total != total) {
@@ -1002,17 +1002,21 @@ class IrisNearbyService(
         }
         incomingFragments.remove(fragmentId)
         val eventJson = output.toString(Charsets.UTF_8.name())
-        handleEventJson(eventJson, remotePeerId ?: fragment.remotePeerId)
+        handleEventJson(eventJson, remotePeerId ?: fragment.remotePeerId, sourceKey ?: fragment.sourceKey)
     }
 
-    private fun handleEventJson(eventJson: String, remotePeerId: String?) {
+    private fun handleEventJson(
+        eventJson: String,
+        remotePeerId: String?,
+        sourceKey: String?,
+    ) {
         if (eventJson.toByteArray(Charsets.UTF_8).size > MAX_EVENT_BYTES) {
             return
         }
         val record = StoredNearbyEvent.fromEventJson(eventJson) ?: return
         if (record.kind == NEARBY_PRESENCE_KIND.toLong()) {
-            if (handlePresenceEvent(eventJson, remotePeerId)) {
-                Log.d(TAG, "accepted nearby presence peer=$remotePeerId")
+            if (handlePresenceEvent(eventJson, remotePeerId, sourceKey)) {
+                Log.d(TAG, "accepted nearby presence")
             }
             return
         }
@@ -1032,9 +1036,19 @@ class IrisNearbyService(
         Log.d(TAG, "accepted event kind=${record.kind} id=${record.id}")
     }
 
-    private fun handlePresenceEvent(eventJson: String, remotePeerId: String?): Boolean {
-        val peer = remotePeerId?.takeIf(String::isNotBlank) ?: return false
-        val remoteNonce = peerNonces[peer] ?: return false
+    private fun handlePresenceEvent(
+        eventJson: String,
+        remotePeerId: String?,
+        sourceKey: String?,
+    ): Boolean {
+        val peer =
+            remotePeerId?.takeIf(String::isNotBlank)
+                ?: nearbyPresencePeerId(eventJson)
+                ?: return false
+        val remoteNonce =
+            remotePeerId?.let { peerNonces[it] }
+                ?: sourceKey?.let { connectionNonces[it] }
+                ?: return false
         val result =
             appManager.verifyNearbyPresenceEventJson(
                 eventJson = eventJson,
@@ -1045,6 +1059,8 @@ class IrisNearbyService(
         val json = runCatching { JSONObject(result) }.getOrNull() ?: return false
         val ownerPubkeyHex = json.optString("owner_pubkey_hex").takeIf { it.length == 64 } ?: return false
         val profileEventId = json.optString("profile_event_id").sanitizedEventId()
+        sourceKey?.let { markTransportPeer(peer, it) }
+        sourceKey?.let { connectionNonces.remove(it) }
         rememberPresence(peer, ownerPubkeyHex, profileEventId)
         return true
     }
@@ -1131,6 +1147,39 @@ class IrisNearbyService(
         }
         pruneDuplicateBluetoothRoutes(peerId)
     }
+
+    private fun markTransportPeer(
+        peerId: String,
+        sourceKey: String,
+    ) {
+        when {
+            sourceKey.startsWith(BLUETOOTH_SOURCE_PREFIX) -> {
+                val address = sourceKey.removePrefix(BLUETOOTH_SOURCE_PREFIX)
+                bluetoothPeerLastSeenMillis[peerId] = System.currentTimeMillis()
+                peerIdsByAddress[address] = peerId
+            }
+            sourceKey.startsWith(LAN_SOURCE_PREFIX) -> {
+                lanService.markPeer(sourceKey.removePrefix(LAN_SOURCE_PREFIX), peerId)
+            }
+        }
+        pruneDuplicateBluetoothRoutes(peerId)
+    }
+
+    private fun peerIdForSource(source: NearbySource): String =
+        when (source) {
+            is NearbySource.BluetoothAddress -> source.address?.let(peerIdsByAddress::get).orEmpty()
+            is NearbySource.Lan -> lanService.peerIdForConnection(source.connectionId).orEmpty()
+        }
+
+    private fun sourceKey(source: NearbySource): String? =
+        when (source) {
+            is NearbySource.BluetoothAddress -> source.address?.let(::bluetoothSourceKey)
+            is NearbySource.Lan -> lanSourceKey(source.connectionId)
+        }
+
+    private fun bluetoothSourceKey(address: String): String = "$BLUETOOTH_SOURCE_PREFIX$address"
+
+    private fun lanSourceKey(connectionId: String): String = "$LAN_SOURCE_PREFIX$connectionId"
 
     private fun transportLabel(remotePeerId: String?): String {
         if (remotePeerId.isNullOrBlank()) return "nearby"
@@ -1241,6 +1290,7 @@ class IrisNearbyService(
             !subscribedServerAddresses.contains(address)
         ) {
             peerIdsByAddress.remove(address)
+            connectionNonces.remove(bluetoothSourceKey(address))
         }
     }
 
@@ -1511,6 +1561,22 @@ class IrisNearbyService(
 
     private fun String?.sanitizedNonce(): String? =
         this?.trim()?.takeIf { it.length in 16..128 }
+
+    private fun eventAuthorHex(eventJson: String): String? =
+        runCatching { JSONObject(eventJson) }
+            .getOrNull()
+            ?.optString("pubkey")
+            ?.trim()
+            ?.takeIf { it.length == 64 }
+
+    private fun nearbyPresencePeerId(eventJson: String): String? {
+        val event = runCatching { JSONObject(eventJson) }.getOrNull() ?: return null
+        if (event.optLong("kind", -1L) != NEARBY_PRESENCE_KIND) {
+            return null
+        }
+        val content = runCatching { JSONObject(event.optString("content")) }.getOrNull() ?: return null
+        return content.optString("peer_id").trim().takeIf(String::isNotEmpty)
+    }
 
     private fun hasBluetoothPermissions(): Boolean {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
@@ -1815,6 +1881,7 @@ class IrisNearbyService(
         val kind: Long,
         val createdAtSecs: Long,
         val eventJson: String,
+        val authorPubkeyHex: String?,
         val storedAtMillis: Long,
     ) {
         companion object {
@@ -1829,6 +1896,7 @@ class IrisNearbyService(
                     kind = json.optLong("kind", 0L),
                     createdAtSecs = json.optLong("created_at", 0L),
                     eventJson = eventJson,
+                    authorPubkeyHex = json.optString("pubkey").trim().takeIf { it.length == 64 },
                     storedAtMillis = System.currentTimeMillis(),
                 )
             }
@@ -1871,6 +1939,7 @@ class IrisNearbyService(
         val parts: LinkedHashMap<Int, ByteArray>,
         val storedAtMillis: Long,
         val remotePeerId: String?,
+        val sourceKey: String?,
     )
 
     private class FrameAssembler(
@@ -1932,6 +2001,8 @@ class IrisNearbyService(
         const val NEARBY_PRESENCE_KIND = 22242L
         const val MAX_EVENT_BYTES = 128 * 1024
         const val MAX_MAILBAG_EVENTS = 500
+        const val BLUETOOTH_SOURCE_PREFIX = "bt:"
+        const val LAN_SOURCE_PREFIX = "lan:"
 
         fun newNonce(): String = UUID.randomUUID().toString().lowercase()
     }

@@ -121,6 +121,12 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
         }
     }
 
+    func peerIDForConnection(_ connectionID: String) -> String? {
+        queue.sync {
+            connections[connectionID]?.peerID
+        }
+    }
+
     func peerIDs() -> Set<String> {
         queue.sync {
             Set(connections.values.compactMap(\.peerID))

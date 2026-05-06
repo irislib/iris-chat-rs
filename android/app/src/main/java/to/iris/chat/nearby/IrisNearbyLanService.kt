@@ -139,6 +139,8 @@ class IrisNearbyLanService(
 
     fun hasPeer(peerId: String): Boolean = connections.values.any { it.peerId == peerId }
 
+    fun peerIdForConnection(connectionId: String): String? = connections[connectionId]?.peerId
+
     fun peerIds(): Set<String> = connections.values.mapNotNullTo(mutableSetOf()) { it.peerId }
 
     private fun startServer(): Boolean {

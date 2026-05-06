@@ -6,8 +6,11 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use nostr_double_ratchet_runtime::{
+    decode_nearby_envelope_frame, encode_nearby_envelope_frame, NearbyEnvelope, NearbyInventoryItem,
+};
 use rand::RngCore;
-use serde_json::{json, Value};
+use serde_json::Value;
 use socket2::{Domain, Protocol, Socket, Type};
 
 use crate::{DesktopNearbyObserver, DesktopNearbyPeerSnapshot, DesktopNearbySnapshot, FfiApp};
@@ -43,6 +46,7 @@ struct DesktopNearbyInner {
     known_profiles: HashMap<String, NearbyProfileEvent>,
     peers: HashMap<String, DesktopNearbyPeer>,
     peer_nonces: HashMap<String, String>,
+    connection_nonces: HashMap<String, String>,
     connections: HashMap<String, DesktopNearbyConnection>,
     endpoint_keys: HashSet<String>,
     mdns_instances: HashMap<String, MdnsInstance>,
@@ -70,6 +74,7 @@ struct StoredNearbyEvent {
     kind: u32,
     created_at_secs: u64,
     event_json: String,
+    author_pubkey_hex: Option<String>,
 }
 
 #[derive(Clone)]
@@ -85,6 +90,7 @@ struct MdnsInstance {
     target: Option<String>,
     port: Option<u16>,
     addr: Option<Ipv4Addr>,
+    peer_id: Option<String>,
 }
 
 impl DesktopNearbyService {
@@ -104,6 +110,7 @@ impl DesktopNearbyService {
                 known_profiles: HashMap::new(),
                 peers: HashMap::new(),
                 peer_nonces: HashMap::new(),
+                connection_nonces: HashMap::new(),
                 connections: HashMap::new(),
                 endpoint_keys: HashSet::new(),
                 mdns_instances: HashMap::new(),
@@ -184,6 +191,7 @@ impl DesktopNearbyService {
             inner.visible = false;
             inner.status = "Off".to_string();
             inner.peer_nonces.clear();
+            inner.connection_nonces.clear();
             inner.peers.clear();
             inner.endpoint_keys.clear();
             inner.mdns_instances.clear();
@@ -211,6 +219,7 @@ impl DesktopNearbyService {
             id: event_id.clone(),
             kind,
             created_at_secs,
+            author_pubkey_hex: event_author_hex(&event_json),
             event_json,
         };
         {
@@ -263,10 +272,9 @@ impl DesktopNearbyService {
     }
 
     fn send_hello(&self, excluding_peer_id: Option<&str>) {
-        let (peer_id, nonce, name, visible) = {
+        let (nonce, name, visible) = {
             let inner = self.inner.lock().unwrap();
             (
-                inner.peer_id.clone(),
                 inner.local_nonce.clone(),
                 inner.local_name.clone(),
                 inner.visible,
@@ -276,84 +284,50 @@ impl DesktopNearbyService {
             return;
         }
         self.send_envelope(
-            json!({
-                "v": 1,
-                "type": "hello",
-                "peer_id": peer_id,
-                "nonce": nonce,
-                "name": name,
-            }),
+            &NearbyEnvelope::hello(Some(nonce), Some(name)),
             excluding_peer_id,
         );
     }
 
     fn send_inventory(&self, excluding_peer_id: Option<&str>) {
-        let (peer_id, records) = {
+        let records = {
             let inner = self.inner.lock().unwrap();
-            (inner.peer_id.clone(), mailbag_events(&inner))
+            mailbag_events(&inner)
         };
         if records.is_empty() {
             return;
         }
-        let events = records
-            .into_iter()
-            .take(200)
-            .map(|record| {
-                json!({
-                    "id": record.id,
-                    "kind": record.kind,
-                    "created_at": record.created_at_secs,
-                    "size": record.event_json.len(),
-                })
-            })
-            .collect::<Vec<_>>();
-        self.send_envelope(
-            json!({
-                "v": 1,
-                "type": "inv",
-                "peer_id": peer_id,
-                "events": events,
-            }),
-            excluding_peer_id,
-        );
+        for record in records.into_iter().take(200) {
+            self.send_envelope(
+                &NearbyEnvelope::inv(NearbyInventoryItem {
+                    id: record.id,
+                    author: record.author_pubkey_hex,
+                    kind: u64::from(record.kind),
+                    created_at: record.created_at_secs,
+                    size: record.event_json.len() as u64,
+                }),
+                excluding_peer_id,
+            );
+        }
     }
 
     fn send_want(&self, ids: Vec<String>, excluding_peer_id: Option<&str>) {
         if ids.is_empty() {
             return;
         }
-        let peer_id = {
-            let inner = self.inner.lock().unwrap();
-            inner.peer_id.clone()
-        };
-        self.send_envelope(
-            json!({
-                "v": 1,
-                "type": "want",
-                "peer_id": peer_id,
-                "ids": ids,
-            }),
-            excluding_peer_id,
-        );
+        for id in ids.into_iter().take(64) {
+            self.send_envelope(&NearbyEnvelope::want(id), excluding_peer_id);
+        }
     }
 
     fn send_event(&self, record: &StoredNearbyEvent, excluding_peer_id: Option<&str>) {
-        let peer_id = {
-            let inner = self.inner.lock().unwrap();
-            inner.peer_id.clone()
-        };
         self.send_envelope(
-            json!({
-                "v": 1,
-                "type": "event",
-                "peer_id": peer_id,
-                "event_json": record.event_json,
-            }),
+            &NearbyEnvelope::event(record.event_json.clone()),
             excluding_peer_id,
         );
     }
 
-    fn send_presence(&self, remote_peer_id: &str, remote_nonce: &str) {
+    fn send_presence(&self, remote_nonce: &str) {
         let (peer_id, local_nonce, profile_event_id) = {
             let inner = self.inner.lock().unwrap();
             (
@@ -376,11 +350,12 @@ impl DesktopNearbyService {
             kind: NEARBY_PRESENCE_KIND,
             created_at_secs: now_secs(),
             event_json,
+            author_pubkey_hex: None,
         };
-        self.send_event(&record, Some(remote_peer_id));
+        self.send_event(&record, None);
     }
 
-    fn send_envelope(&self, envelope: Value, excluding_peer_id: Option<&str>) {
+    fn send_envelope(&self, envelope: &NearbyEnvelope, excluding_peer_id: Option<&str>) {
         let visible = {
             let inner = self.inner.lock().unwrap();
             inner.visible
@@ -388,7 +363,9 @@ impl DesktopNearbyService {
         if !visible {
             return;
         }
-        let frame = self.app.nearby_encode_frame(envelope.to_string());
+        let Some(frame) = encode_nearby_envelope_frame(envelope) else {
+            return;
+        };
         if frame.is_empty() || frame.len() > SINGLE_FRAME_BYTES {
             return;
         }
@@ -450,7 +427,7 @@ impl DesktopNearbyRuntime {
             match listener.accept() {
                 Ok((stream, addr)) => {
                     if is_private_socket_addr(&addr) {
-                        self.add_connection(stream, Some(addr.to_string()));
+                        self.add_connection(stream, None, Some(addr.to_string()));
                     } else {
                         let _ = stream.shutdown(Shutdown::Both);
                     }
@@ -529,7 +506,12 @@ impl DesktopNearbyRuntime {
                 if instance_name.contains(&own_peer_id) {
                     continue;
                 }
-                inner.mdns_instances.entry(instance_name).or_default();
+                let peer_id = mdns_peer_id(&instance_name);
+                inner
+                    .mdns_instances
+                    .entry(instance_name)
+                    .or_default()
+                    .peer_id = peer_id;
             }
             for (name, target, port) in packet.srv_records {
                 let instance = inner.mdns_instances.entry(name).or_default();
@@ -546,16 +528,18 @@ impl DesktopNearbyRuntime {
             let discovered = inner
                 .mdns_instances
                 .values()
-                .filter_map(|instance| Some((instance.addr?, instance.port?)))
+                .filter_map(|instance| {
+                    Some((instance.addr?, instance.port?, instance.peer_id.clone()))
+                })
                 .collect::<Vec<_>>();
-            for (addr, port) in discovered {
+            for (addr, port, remote_peer_id) in discovered {
                 let key = format!("{addr}:{port}");
                 if inner.endpoint_keys.insert(key.clone()) {
-                    targets.push((addr, port, key));
+                    targets.push((addr, port, key, remote_peer_id));
                 }
             }
         }
-        for (addr, port, key) in targets {
+        for (addr, port, key, remote_peer_id) in targets {
             if !is_private_ipv4(addr) {
                 continue;
             }
@@ -563,7 +547,7 @@ impl DesktopNearbyRuntime {
                 &SocketAddr::V4(SocketAddrV4::new(addr, port)),
                 Duration::from_secs(3),
             ) {
-                Ok(stream) => self.add_connection(stream, Some(key)),
+                Ok(stream) => self.add_connection(stream, remote_peer_id, Some(key)),
                 Err(_) => {
                     let mut inner = self.inner.lock().unwrap();
                     inner.endpoint_keys.remove(&key);
@@ -572,7 +556,12 @@ impl DesktopNearbyRuntime {
         }
     }
 
-    fn add_connection(&self, stream: TcpStream, endpoint_key: Option<String>) {
+    fn add_connection(
+        &self,
+        stream: TcpStream,
+        remote_peer_id: Option<String>,
+        endpoint_key: Option<String>,
+    ) {
         let _ = stream.set_nodelay(true);
         let writer_stream = match stream.try_clone() {
             Ok(writer) => writer,
@@ -591,7 +580,7 @@ impl DesktopNearbyRuntime {
                 connection_id.clone(),
                 DesktopNearbyConnection {
                     writer: Arc::new(Mutex::new(writer_stream)),
-                    peer_id: None,
+                    peer_id: remote_peer_id,
                 },
             );
             inner.status = "Connected".to_string();
@@ -627,6 +616,7 @@ impl DesktopNearbyRuntime {
         {
             let mut inner = self.inner.lock().unwrap();
             inner.connections.remove(connection_id);
+            inner.connection_nonces.remove(connection_id);
             inner.status = if !inner.visible {
                 "Off".to_string()
             } else if inner.connections.is_empty() {
@@ -639,128 +629,118 @@ impl DesktopNearbyRuntime {
     }
 
     fn ingest_frame(&self, connection_id: &str, frame: Vec<u8>) {
-        let json = self.app.nearby_decode_frame(frame);
-        if json.trim().is_empty() {
-            return;
-        }
-        let Ok(envelope) = serde_json::from_str::<Value>(&json) else {
+        let Some(envelope) = decode_nearby_envelope_frame(&frame) else {
             return;
         };
-        let Some(kind) = envelope.get("type").and_then(Value::as_str) else {
-            return;
-        };
-        let remote_peer_id = envelope
-            .get("peer_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .unwrap_or("")
-            .to_string();
-        let own_peer_id = {
+        let (own_peer_id, remote_peer_id) = {
             let inner = self.inner.lock().unwrap();
-            inner.peer_id.clone()
+            (
+                inner.peer_id.clone(),
+                inner
+                    .connections
+                    .get(connection_id)
+                    .and_then(|connection| connection.peer_id.clone()),
+            )
         };
-        if remote_peer_id == own_peer_id {
+        if remote_peer_id.as_deref() == Some(own_peer_id.as_str()) {
             return;
         }
-        if !remote_peer_id.is_empty() {
-            self.touch_peer(&remote_peer_id);
+        if let Some(remote_peer_id) = remote_peer_id.as_deref() {
+            self.touch_peer(remote_peer_id);
         }
 
-        match kind {
-            "hello" => self.handle_hello(connection_id, &remote_peer_id, &envelope),
-            "inv" => self.handle_inventory(&envelope),
-            "want" => self.handle_want(&envelope),
-            "event" => self.handle_event_envelope(&envelope, nonempty(&remote_peer_id)),
-            _ => {}
+        match envelope {
+            NearbyEnvelope::Hello { nonce, name, .. } => self.handle_hello(
+                connection_id,
+                remote_peer_id.as_deref(),
+                nonce,
+                name.as_deref(),
+            ),
+            NearbyEnvelope::Inv { id, size, .. } => self.handle_inventory(&id, size),
+            NearbyEnvelope::Want { id, .. } => self.handle_want(&id),
+            NearbyEnvelope::Event { event_json, .. } => {
+                self.handle_event_envelope(&event_json, remote_peer_id.as_deref(), connection_id)
+            }
         }
     }
 
-    fn handle_hello(&self, connection_id: &str, remote_peer_id: &str, envelope: &Value) {
-        if remote_peer_id.is_empty() {
-            return;
-        }
-        let remote_nonce = envelope
-            .get("nonce")
-            .and_then(Value::as_str)
-            .and_then(sanitized_nonce);
-        let name = envelope.get("name").and_then(Value::as_str);
+    fn handle_hello(
+        &self,
+        connection_id: &str,
+        remote_peer_id: Option<&str>,
+        remote_nonce: Option<String>,
+        name: Option<&str>,
+    ) {
         let was_new = {
             let mut inner = self.inner.lock().unwrap();
-            if let Some(connection) = inner.connections.get_mut(connection_id) {
-                connection.peer_id = Some(remote_peer_id.to_string());
-            }
-            let previous_nonce = inner.peer_nonces.get(remote_peer_id).cloned();
             if let Some(nonce) = remote_nonce.as_ref() {
                 inner
-                    .peer_nonces
-                    .insert(remote_peer_id.to_string(), nonce.clone());
+                    .connection_nonces
+                    .insert(connection_id.to_string(), nonce.clone());
             }
-            let was_new = remember_peer(&mut inner, remote_peer_id, name, None);
-            if was_new || (remote_nonce.is_some() && remote_nonce != previous_nonce) {
+            if let Some(remote_peer_id) = remote_peer_id {
+                if let Some(connection) = inner.connections.get_mut(connection_id) {
+                    connection.peer_id = Some(remote_peer_id.to_string());
+                }
+                let previous_nonce = inner.peer_nonces.get(remote_peer_id).cloned();
+                if let Some(nonce) = remote_nonce.as_ref() {
+                    inner
+                        .peer_nonces
+                        .insert(remote_peer_id.to_string(), nonce.clone());
+                }
+                let was_new = remember_peer(&mut inner, remote_peer_id, name, None);
+                if was_new || (remote_nonce.is_some() && remote_nonce != previous_nonce) {
+                    inner.status = nearby_status(&inner);
+                }
+                was_new
+            } else {
                 inner.status = nearby_status(&inner);
+                false
             }
-            was_new
         };
         if was_new {
             self.notify();
             self.send_hello(None);
         }
         if let Some(nonce) = remote_nonce {
-            self.send_presence(remote_peer_id, &nonce);
+            self.send_presence(&nonce);
         }
         self.send_inventory(None);
     }
 
-    fn handle_inventory(&self, envelope: &Value) {
-        let Some(events) = envelope.get("events").and_then(Value::as_array) else {
-            return;
-        };
-        let mut wanted = Vec::new();
-        {
+    fn handle_inventory(&self, id: &str, size: u64) {
+        let wanted = {
             let inner = self.inner.lock().unwrap();
-            for item in events.iter().take(200) {
-                let id = item.get("id").and_then(Value::as_str).unwrap_or("");
-                let size = item.get("size").and_then(Value::as_u64).unwrap_or(0);
-                if id.len() == 64
-                    && (1..=MAX_FRAME_BODY_BYTES as u64).contains(&size)
-                    && !inner.own_outbound.contains_key(id)
-                    && !inner.forwarded.contains_key(id)
-                {
-                    wanted.push(id.to_string());
-                }
-            }
+            id.len() == 64
+                && (1..=MAX_FRAME_BODY_BYTES as u64).contains(&size)
+                && !inner.own_outbound.contains_key(id)
+                && !inner.forwarded.contains_key(id)
+        };
+        if wanted {
+            self.send_want(vec![id.to_string()], None);
         }
-        self.send_want(wanted.into_iter().take(64).collect(), None);
     }
 
-    fn handle_want(&self, envelope: &Value) {
-        let Some(ids) = envelope.get("ids").and_then(Value::as_array) else {
-            return;
-        };
-        let records = {
+    fn handle_want(&self, id: &str) {
+        let record = {
             let inner = self.inner.lock().unwrap();
-            ids.iter()
-                .take(64)
-                .filter_map(|id| id.as_str())
-                .filter_map(|id| {
-                    inner
-                        .own_outbound
-                        .get(id)
-                        .or_else(|| inner.forwarded.get(id))
-                        .cloned()
-                })
-                .collect::<Vec<_>>()
+            inner
+                .own_outbound
+                .get(id)
+                .or_else(|| inner.forwarded.get(id))
+                .cloned()
         };
-        for record in records {
+        if let Some(record) = record {
             self.send_event(&record, None);
         }
     }
 
-    fn handle_event_envelope(&self, envelope: &Value, remote_peer_id: Option<&str>) {
-        let event_json = envelope
-            .get("event_json")
-            .and_then(Value::as_str)
-            .unwrap_or("");
+    fn handle_event_envelope(
+        &self,
+        event_json: &str,
+        remote_peer_id: Option<&str>,
+        connection_id: &str,
+    ) {
         if event_json.len() > MAX_FRAME_BODY_BYTES {
             return;
         }
@@ -768,7 +748,7 @@ impl DesktopNearbyRuntime {
             return;
         };
         if record.kind == NEARBY_PRESENCE_KIND {
-            if self.handle_presence_event(event_json, remote_peer_id) {
+            if self.handle_presence_event(event_json, remote_peer_id, connection_id) {
                 self.notify();
             }
             return;
@@ -798,20 +778,31 @@ impl DesktopNearbyRuntime {
         self.send_inventory(remote_peer_id);
     }
 
-    fn handle_presence_event(&self, event_json: &str, remote_peer_id: Option<&str>) -> bool {
-        let Some(peer_id) = remote_peer_id else {
+    fn handle_presence_event(
+        &self,
+        event_json: &str,
+        remote_peer_id: Option<&str>,
+        connection_id: &str,
+    ) -> bool {
+        let peer_id = remote_peer_id
+            .map(str::to_string)
+            .or_else(|| nearby_presence_peer_id(event_json));
+        let Some(peer_id) = peer_id else {
             return false;
         };
         let (local_nonce, remote_nonce) = {
             let inner = self.inner.lock().unwrap();
-            let Some(remote_nonce) = inner.peer_nonces.get(peer_id) else {
+            let remote_nonce = remote_peer_id
+                .and_then(|peer_id| inner.peer_nonces.get(peer_id))
+                .or_else(|| inner.connection_nonces.get(connection_id));
+            let Some(remote_nonce) = remote_nonce else {
                 return false;
             };
             (inner.local_nonce.clone(), remote_nonce.clone())
         };
         let result = self.app.verify_nearby_presence_event_json(
             event_json.to_string(),
-            peer_id.to_string(),
+            peer_id.clone(),
             local_nonce,
             remote_nonce,
         );
@@ -833,7 +824,11 @@ impl DesktopNearbyRuntime {
             .map(str::to_string);
         {
             let mut inner = self.inner.lock().unwrap();
-            remember_presence(&mut inner, peer_id, owner_pubkey_hex, profile_event_id);
+            if let Some(connection) = inner.connections.get_mut(connection_id) {
+                connection.peer_id = Some(peer_id.clone());
+            }
+            inner.connection_nonces.remove(connection_id);
+            remember_presence(&mut inner, &peer_id, owner_pubkey_hex, profile_event_id);
         }
         true
     }
@@ -916,13 +911,13 @@ impl DesktopNearbyRuntime {
         service.send_event(record, excluding_peer_id);
     }
 
-    fn send_presence(&self, remote_peer_id: &str, remote_nonce: &str) {
+    fn send_presence(&self, remote_nonce: &str) {
         let service = DesktopNearbyService {
             app: self.app.clone(),
             observer: self.observer.clone(),
             inner: self.inner.clone(),
         };
-        service.send_presence(remote_peer_id, remote_nonce);
+        service.send_presence(remote_nonce);
     }
 }
 
@@ -1145,6 +1140,7 @@ impl StoredNearbyEvent {
             id,
             kind,
             created_at_secs,
+            author_pubkey_hex: event_author_hex(event_json),
             event_json: event_json.to_string(),
         })
     }
@@ -1295,6 +1291,13 @@ fn write_dns_name(packet: &mut Vec<u8>, name: &str) {
 
 fn mdns_instance_name(peer_id: &str) -> String {
     format!("iris-{peer_id}.{SERVICE_TYPE}")
+}
+
+fn mdns_peer_id(instance_name: &str) -> Option<String> {
+    let normalized = normalize_dns_name(instance_name);
+    let suffix = format!(".{}", normalize_dns_name(SERVICE_TYPE));
+    let peer_id = normalized.strip_prefix("iris-")?.strip_suffix(&suffix)?;
+    (!peer_id.is_empty()).then(|| peer_id.to_string())
 }
 
 fn mdns_host_name(peer_id: &str) -> String {
@@ -1458,6 +1461,37 @@ fn now_secs() -> u64 {
         .as_secs()
 }
 
+fn event_author_hex(event_json: &str) -> Option<String> {
+    serde_json::from_str::<Value>(event_json)
+        .ok()
+        .and_then(|event| {
+            event
+                .get("pubkey")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| value.len() == 64)
+                .map(str::to_string)
+        })
+}
+
+fn nearby_presence_peer_id(event_json: &str) -> Option<String> {
+    let event = serde_json::from_str::<Value>(event_json).ok()?;
+    if event.get("kind")?.as_u64()? as u32 != NEARBY_PRESENCE_KIND {
+        return None;
+    }
+    let content = event.get("content")?.as_str()?;
+    serde_json::from_str::<Value>(content)
+        .ok()
+        .and_then(|content| {
+            content
+                .get("peer_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string)
+        })
+}
+
 fn clean_name(name: &str) -> String {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -1510,11 +1544,6 @@ fn fallback_profile_name_for_identity(identity: &str) -> String {
     let adjective = ADJECTIVES[(hash as usize) % ADJECTIVES.len()];
     let noun = NOUNS[((hash as usize) / ADJECTIVES.len()) % NOUNS.len()];
     format!("{adjective} {noun}")
-}
-
-fn sanitized_nonce(value: &str) -> Option<String> {
-    let value = value.trim();
-    (16..=128).contains(&value.len()).then(|| value.to_string())
 }
 
 fn nonempty(value: &str) -> Option<&str> {
