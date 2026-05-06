@@ -34,10 +34,7 @@ impl AppCore {
                     &BTreeMap::new(),
                 );
                 if !result.queued_targets.is_empty() {
-                    self.request_protocol_subscription_refresh();
-                    if self.fetch_recent_protocol_state() {
-                        self.state.busy.syncing_network = true;
-                    }
+                    self.handle_queued_protocol_targets(reason, &result.queued_targets);
                 }
                 true
             }
@@ -59,6 +56,7 @@ impl AppCore {
         if batch.direct_results.is_empty()
             && batch.group_result.events.is_empty()
             && batch.group_result.effects.is_empty()
+            && batch.group_result.queued_targets.is_empty()
             && batch.direct_messages.is_empty()
         {
             return;
@@ -82,6 +80,7 @@ impl AppCore {
             self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
             self.reconcile_outgoing_message_delivery(&result.chat_id, &result.message_id);
         }
+        queued = queued.saturating_add(batch.group_result.queued_targets.len());
         for group_event in batch.group_result.events {
             self.apply_group_decrypted_event(group_event);
         }
@@ -103,6 +102,32 @@ impl AppCore {
             format!("reason={reason} published={published} queued_targets={queued}"),
         );
         self.request_protocol_subscription_refresh();
+        if queued > 0 {
+            self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                PROTOCOL_RECONNECT_CHECK_SECS,
+            ));
+        }
+    }
+
+    pub(super) fn handle_queued_protocol_targets(
+        &mut self,
+        reason: &'static str,
+        queued_targets: &[String],
+    ) {
+        if queued_targets.is_empty() {
+            return;
+        }
+        self.push_debug_log(
+            "appcore.protocol.queued",
+            format!("reason={reason} targets={}", queued_targets.join(",")),
+        );
+        self.request_protocol_subscription_refresh();
+        self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+            PROTOCOL_RECONNECT_CHECK_SECS,
+        ));
+        if self.fetch_recent_protocol_state() {
+            self.state.busy.syncing_network = true;
+        }
     }
 
     pub(super) fn retry_protocol_engine_pending_outbound(&mut self, reason: &'static str) {

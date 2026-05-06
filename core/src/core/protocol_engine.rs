@@ -196,6 +196,7 @@ pub(super) struct ProtocolGroupSendResult {
 pub(super) struct ProtocolGroupIncomingResult {
     pub(super) events: Vec<GroupIncomingEvent>,
     pub(super) effects: Vec<ProtocolEffect>,
+    pub(super) queued_targets: Vec<String>,
     pub(super) consumed: bool,
 }
 
@@ -245,6 +246,8 @@ pub(super) struct ProtocolEngineDebugSnapshot {
     pub(super) pending_group_pairwise_payload_count: usize,
     pub(super) pending_group_sender_key_message_count: usize,
     pub(super) pending_outbound_targets: Vec<String>,
+    #[serde(default)]
+    pub(super) pending_group_fanout_targets: Vec<String>,
     pub(super) subscription_generation: u64,
     pub(super) last_backfill_attempt_secs: u64,
     pub(super) latest_app_keys_owner_count: usize,
@@ -477,6 +480,7 @@ impl ProtocolEngine {
             pending_group_pairwise_payload_count: self.pending_group_pairwise_payloads.len(),
             pending_group_sender_key_message_count: self.pending_group_sender_key_messages.len(),
             pending_outbound_targets: self.queued_message_diagnostics(None),
+            pending_group_fanout_targets: self.queued_group_targets(),
             subscription_generation: self.subscription_generation,
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
             latest_app_keys_owner_count: self.latest_app_keys_created_at.len(),
@@ -1190,6 +1194,7 @@ impl ProtocolEngine {
                 Ok(ProtocolGroupIncomingResult {
                     events,
                     effects,
+                    queued_targets: self.queued_group_targets(),
                     consumed: true,
                 })
             }
@@ -1340,6 +1345,7 @@ impl ProtocolEngine {
         let group_effects = self.retry_pending_group_fanouts(now)?;
         let mut group_result = group_result;
         group_result.effects.extend(group_effects);
+        group_result.queued_targets = self.queued_group_targets();
         let mut direct_messages = self
             .pending_decrypted_deliveries
             .iter()

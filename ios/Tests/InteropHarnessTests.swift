@@ -1382,6 +1382,7 @@ final class InteropHarnessTests: XCTestCase {
         let plan = dictValue(debug?["current_protocol_plan"])
         let protocolEngine = dictValue(debug?["protocol_engine"])
         let pendingProtocolOutbound = joinValues(arrayValue(protocolEngine?["pending_outbound_targets"]))
+        let pendingGroupFanouts = joinValues(arrayValue(protocolEngine?["pending_group_fanout_targets"]))
         let legacyPendingOutbound = summarizeRuntimePendingOutbound(arrayValue(debug?["pending_outbound"]))
 
         status("data_dir", dataDir.path)
@@ -1404,6 +1405,8 @@ final class InteropHarnessTests: XCTestCase {
         status("known_users", summarizeRuntimeKnownUsers(arrayValue(debug?["known_users"])))
         status("pending_protocol_outbound_count", stringValue(protocolEngine?["pending_outbound_count"]))
         status("pending_protocol_outbound", pendingProtocolOutbound)
+        status("pending_group_fanout_count", stringValue(protocolEngine?["pending_group_fanout_count"]))
+        status("pending_group_fanouts", pendingGroupFanouts)
         status("pending_outbound", legacyPendingOutbound.isEmpty ? pendingProtocolOutbound : legacyPendingOutbound)
         status("pending_relay_publishes", summarizeRuntimePendingRelayPublishes(arrayValue(debug?["pending_relay_publishes"])))
         status("pending_group_controls", summarizeRuntimePendingGroupControls(arrayValue(debug?["pending_group_controls"])))

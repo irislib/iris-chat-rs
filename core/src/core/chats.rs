@@ -398,9 +398,7 @@ impl AppCore {
                 self.fetch_recent_messages_for_tracked_peers(now);
                 self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
                 if !result.queued_targets.is_empty() {
-                    if self.fetch_recent_protocol_state() {
-                        self.state.busy.syncing_network = true;
-                    }
+                    self.handle_queued_protocol_targets("message.direct", &result.queued_targets);
                 }
             }
             Err(error) => {
@@ -455,10 +453,7 @@ impl AppCore {
                 self.process_protocol_engine_effects_with_completions(result.effects, &completions);
                 self.sync_message_delivery_trace(chat_id, &message_id);
                 if !result.queued_targets.is_empty() {
-                    self.request_protocol_subscription_refresh();
-                    if self.fetch_recent_protocol_state() {
-                        self.state.busy.syncing_network = true;
-                    }
+                    self.handle_queued_protocol_targets("message.group", &result.queued_targets);
                 }
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),

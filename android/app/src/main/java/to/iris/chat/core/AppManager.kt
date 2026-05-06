@@ -91,6 +91,8 @@ interface RustAppClient {
 
     fun peerProfileDebug(ownerInput: String): PeerProfileDebugSnapshot?
 
+    fun prepareForSuspend()
+
     fun listenForUpdates(reconciler: AppReconciler)
 
     fun shutdown()
@@ -152,6 +154,10 @@ private class LiveRustAppClient(
 
     override fun peerProfileDebug(ownerInput: String): PeerProfileDebugSnapshot? =
         ffi.peerProfileDebug(ownerInput = ownerInput)
+
+    override fun prepareForSuspend() {
+        ffi.prepareForSuspend()
+    }
 
     override fun listenForUpdates(reconciler: AppReconciler) {
         ffi.listenForUpdates(reconciler)
@@ -466,6 +472,11 @@ class AppManager(
 
     fun appBackgrounded() {
         appInForeground = false
+        runCatching {
+            rust.prepareForSuspend()
+        }.onFailure { error ->
+            Log.w(TAG, "failed to prepare Rust core for suspend", error)
+        }
     }
 
     fun createChat(peerInput: String) {

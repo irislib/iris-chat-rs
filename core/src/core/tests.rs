@@ -844,6 +844,105 @@ fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pend
 }
 
 #[test]
+fn queued_direct_send_schedules_fast_protocol_retry_tick() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-direct-fast-retry", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.send_direct_message(
+        &peer.public_key().to_hex(),
+        "queued until app keys arrive",
+        UnixSeconds(1_777_000_000),
+        None,
+    );
+
+    let due_at = core
+        .protocol_subscription_runtime
+        .liveness_due_at
+        .expect("queued protocol work should schedule liveness");
+    assert!(
+        due_at <= Instant::now() + Duration::from_secs(5),
+        "queued direct work should schedule a fast retry tick, not wait for the normal liveness interval"
+    );
+}
+
+#[test]
+fn queued_group_create_schedules_fast_protocol_retry_tick() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-group-fast-retry", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.create_group("Queued group", &[peer.public_key().to_hex()]);
+
+    let debug = core
+        .protocol_engine
+        .as_ref()
+        .expect("protocol engine")
+        .debug_snapshot();
+    assert!(
+        debug.pending_group_fanout_count > 0,
+        "missing group member protocol state should leave a durable group fanout"
+    );
+    let due_at = core
+        .protocol_subscription_runtime
+        .liveness_due_at
+        .expect("queued group work should schedule liveness");
+    assert!(
+        due_at <= Instant::now() + Duration::from_secs(5),
+        "queued group work should schedule a fast retry tick, not wait for the normal liveness interval"
+    );
+}
+
+#[test]
+fn queued_group_retry_without_protocol_progress_reschedules_fast_tick() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-group-retry-reschedule", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.create_group("Queued group", &[peer.public_key().to_hex()]);
+    core.protocol_subscription_runtime.liveness_due_at = None;
+
+    let retry_at = unix_now().get().saturating_add(10_000);
+    let batch = core
+        .protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .retry_pending_protocol(NdrUnixSeconds(retry_at))
+        .expect("retry pending protocol");
+    assert!(
+        batch.group_result.effects.is_empty(),
+        "missing member protocol state should not produce group publishes yet"
+    );
+    assert!(
+        !batch.group_result.queued_targets.is_empty(),
+        "the retry batch must report the still-queued group target"
+    );
+
+    core.process_protocol_engine_retry_batch("test_group_retry", batch);
+
+    let due_at = core
+        .protocol_subscription_runtime
+        .liveness_due_at
+        .expect("still-queued group work should schedule liveness");
+    assert!(
+        due_at <= Instant::now() + Duration::from_secs(5),
+        "still-queued group work should keep a fast retry tick alive"
+    );
+}
+
+#[test]
 fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_missing_device() {
     let owner = Keys::generate();
     let device = Keys::generate();

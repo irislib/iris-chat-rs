@@ -150,11 +150,18 @@ impl AppCore {
                 if group_result.consumed
                     || !group_result.events.is_empty()
                     || !group_result.effects.is_empty()
+                    || !group_result.queued_targets.is_empty()
                 {
                     self.debug_event_counters.group_events += 1;
                     let should_remember_group_event = group_result.consumed
                         || !group_result.events.is_empty()
                         || !group_result.effects.is_empty();
+                    if !group_result.queued_targets.is_empty() {
+                        self.handle_queued_protocol_targets(
+                            "group.outer",
+                            &group_result.queued_targets,
+                        );
+                    }
                     for group_event in group_result.events {
                         self.apply_group_decrypted_event(group_event);
                     }

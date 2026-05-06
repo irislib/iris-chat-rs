@@ -547,6 +547,7 @@ class RealRelayHarnessTest {
         val plan = debug?.optJSONObject("current_protocol_plan")
         val protocolEngine = debug?.optJSONObject("protocol_engine")
         val pendingProtocolOutbound = protocolEngine.optStringArray("pending_outbound_targets")
+        val pendingGroupFanouts = protocolEngine.optStringArray("pending_group_fanout_targets")
         val legacyPendingOutbound = summarizeRuntimePendingOutbound(debug?.optJSONArray("pending_outbound"))
 
         reportStatus(
@@ -573,6 +574,8 @@ class RealRelayHarnessTest {
             "known_users" to summarizeRuntimeKnownUsers(debug?.optJSONArray("known_users")),
             "pending_protocol_outbound_count" to protocolEngine.optStringOrEmpty("pending_outbound_count"),
             "pending_protocol_outbound" to pendingProtocolOutbound,
+            "pending_group_fanout_count" to protocolEngine.optStringOrEmpty("pending_group_fanout_count"),
+            "pending_group_fanouts" to pendingGroupFanouts,
             "pending_outbound" to (legacyPendingOutbound.ifEmpty { pendingProtocolOutbound }),
             "pending_relay_publishes" to summarizeRuntimePendingRelayPublishes(debug?.optJSONArray("pending_relay_publishes")),
             "pending_group_controls" to summarizeRuntimePendingGroupControls(debug?.optJSONArray("pending_group_controls")),
@@ -588,9 +591,17 @@ class RealRelayHarnessTest {
         val persisted = readJsonObject(PERSISTED_STATE_FILENAME)
         val sessionManager = persisted?.optJSONObject("session_manager")
         val groupManager = persisted?.optJSONObject("group_manager")
+        val sqlite = readSqliteCoreSnapshot()
 
         reportStatus(
             "data_dir" to appFilesDir().absolutePath,
+            "sqlite_file_present" to sqlite.filePresent.toString(),
+            "sqlite_app_meta" to sqlite.appMeta,
+            "sqlite_app_keys" to sqlite.appKeys,
+            "sqlite_groups" to sqlite.groups,
+            "sqlite_threads" to sqlite.threads,
+            "sqlite_messages" to sqlite.messages,
+            "sqlite_pending_relay_publishes" to sqlite.pendingRelayPublishes,
             "persisted_file_present" to (persisted != null).toString(),
             "version" to persisted.optStringOrEmpty("version"),
             "active_chat_id" to persisted.optStringOrEmpty("active_chat_id"),
@@ -1921,8 +1932,145 @@ class RealRelayHarnessTest {
         return runCatching { JSONObject(file.readText()) }.getOrNull()
     }
 
+    private data class SqliteCoreSnapshot(
+        val filePresent: Boolean,
+        val appMeta: String = "",
+        val appKeys: String = "",
+        val groups: String = "",
+        val threads: String = "",
+        val messages: String = "",
+        val pendingRelayPublishes: String = "",
+    )
+
+    private fun readSqliteCoreSnapshot(): SqliteCoreSnapshot {
+        val dbFile = File(appFilesDir(), CORE_DB_FILENAME)
+        if (!dbFile.exists()) {
+            return SqliteCoreSnapshot(filePresent = false)
+        }
+        return runCatching {
+            SQLiteDatabase
+                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+                .use { db ->
+                    SqliteCoreSnapshot(
+                        filePresent = true,
+                        appMeta =
+                            summarizeRows(
+                                db,
+                                "SELECT key, value FROM app_meta ORDER BY key",
+                            ) { cursor ->
+                                "${cursor.getString(0)}=${cursor.getString(1)}"
+                            },
+                        appKeys =
+                            summarizeRows(
+                                db,
+                                """
+                                    SELECT owner_pubkey_hex, created_at_secs, devices_json
+                                    FROM app_keys
+                                    ORDER BY owner_pubkey_hex
+                                """.trimIndent(),
+                            ) { cursor ->
+                                listOf(
+                                    cursor.getString(0),
+                                    cursor.getLong(1).toString(),
+                                    cursor.getString(2).take(160),
+                                ).joinToString(",")
+                            },
+                        groups =
+                            summarizeRows(
+                                db,
+                                """
+                                    SELECT group_id, name, updated_at_secs
+                                    FROM groups
+                                    ORDER BY updated_at_secs DESC, group_id
+                                """.trimIndent(),
+                            ) { cursor ->
+                                listOf(
+                                    cursor.getString(0),
+                                    cursor.getString(1),
+                                    cursor.getLong(2).toString(),
+                                ).joinToString(",")
+                            },
+                        threads =
+                            summarizeRows(
+                                db,
+                                """
+                                    SELECT chat_id, unread_count, updated_at_secs
+                                    FROM threads
+                                    ORDER BY updated_at_secs DESC, chat_id
+                                """.trimIndent(),
+                            ) { cursor ->
+                                listOf(
+                                    cursor.getString(0),
+                                    cursor.getLong(1).toString(),
+                                    cursor.getLong(2).toString(),
+                                ).joinToString(",")
+                            },
+                        messages =
+                            summarizeRows(
+                                db,
+                                """
+                                    SELECT chat_id, id, delivery, is_outgoing, body
+                                    FROM messages
+                                    ORDER BY created_at_secs DESC, id DESC
+                                    LIMIT 20
+                                """.trimIndent(),
+                            ) { cursor ->
+                                listOf(
+                                    cursor.getString(0),
+                                    cursor.getString(1),
+                                    cursor.getString(2),
+                                    cursor.getLong(3).toString(),
+                                    cursor.getString(4).replace('|', '/').take(120),
+                                ).joinToString(",")
+                            },
+                        pendingRelayPublishes =
+                            summarizeRows(
+                                db,
+                                """
+                                    SELECT label, target_owner_pubkey_hex, target_device_id, chat_id, message_id, attempt_count
+                                    FROM pending_relay_publishes
+                                    ORDER BY created_at_secs DESC
+                                    LIMIT 30
+                                """.trimIndent(),
+                            ) { cursor ->
+                                listOf(
+                                    cursor.getString(0),
+                                    cursor.stringOrEmpty(1),
+                                    cursor.stringOrEmpty(2),
+                                    cursor.stringOrEmpty(3),
+                                    cursor.stringOrEmpty(4),
+                                    cursor.getLong(5).toString(),
+                                ).joinToString(",")
+                            },
+                    )
+                }
+        }.getOrElse {
+            SqliteCoreSnapshot(
+                filePresent = true,
+                appMeta = "read_error=${it.message.orEmpty()}",
+            )
+        }
+    }
+
+    private fun summarizeRows(
+        db: SQLiteDatabase,
+        sql: String,
+        args: Array<String> = emptyArray(),
+        row: (android.database.Cursor) -> String,
+    ): String =
+        db.rawQuery(sql, args).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    add(row(cursor))
+                }
+            }.joinToString("|")
+        }
+
+    private fun android.database.Cursor.stringOrEmpty(index: Int): String =
+        if (isNull(index)) "" else getString(index)
+
     private fun pendingRelayPublishCount(label: String? = null): Int {
-        val dbFile = File(appFilesDir(), "core.sqlite3")
+        val dbFile = File(appFilesDir(), CORE_DB_FILENAME)
         if (!dbFile.exists()) {
             return 0
         }
@@ -1945,7 +2093,7 @@ class RealRelayHarnessTest {
     }
 
     private fun readOwnerProfileDisplayName(ownerPubkeyHex: String): String? {
-        val dbFile = File(appFilesDir(), "core.sqlite3")
+        val dbFile = File(appFilesDir(), CORE_DB_FILENAME)
         if (!dbFile.exists()) {
             return null
         }
@@ -2468,6 +2616,7 @@ class RealRelayHarnessTest {
 
     private companion object {
         const val DEBUG_SNAPSHOT_FILENAME = "iris_chat_runtime_debug.json"
+        const val CORE_DB_FILENAME = "core.sqlite3"
         const val PERSISTED_STATE_FILENAME = "iris_chat_core_state.json"
         const val NEARBY_PROFILE_TIMEOUT_MS = 180_000L
     }
