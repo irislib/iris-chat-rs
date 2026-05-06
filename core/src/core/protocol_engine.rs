@@ -247,6 +247,7 @@ pub(super) struct ProtocolGroupIncomingResult {
     pub(super) effects: Vec<ProtocolEffect>,
     pub(super) queued_targets: Vec<String>,
     pub(super) consumed: bool,
+    pub(super) pending: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -371,6 +372,22 @@ pub(super) struct ProtocolEngine {
     local_owner: NdrOwnerPubkey,
     local_device: NdrDevicePubkey,
     storage: Arc<dyn StorageAdapter>,
+    session_manager: SessionManager,
+    group_manager: NostrGroupManager,
+    latest_app_keys_created_at: BTreeMap<String, u64>,
+    pending_outbound: Vec<ProtocolPendingOutbound>,
+    pending_inbound: Vec<ProtocolPendingInbound>,
+    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
+    pending_group_sender_key_messages:
+        Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
+    pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
+    subscription_generation: u64,
+    last_backfill_attempt_secs: u64,
+}
+
+#[derive(Clone)]
+struct ProtocolEngineCheckpoint {
     session_manager: SessionManager,
     group_manager: NostrGroupManager,
     latest_app_keys_created_at: BTreeMap<String, u64>,
@@ -615,6 +632,16 @@ impl ProtocolEngine {
             last_backfill_attempt_secs: self.last_backfill_attempt_secs,
             latest_app_keys_owner_count: self.latest_app_keys_created_at.len(),
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn session_manager_snapshot_for_test(&self) -> SessionManagerSnapshot {
+        self.session_manager.snapshot()
+    }
+
+    #[cfg(test)]
+    pub(super) fn group_manager_snapshot_for_test(&self) -> GroupManagerSnapshot {
+        self.group_manager.snapshot()
     }
 
     pub(super) fn is_known_local_owner_device(&self, device_pubkey: PublicKey) -> bool {
@@ -906,6 +933,50 @@ impl ProtocolEngine {
         })
     }
 
+    fn state_checkpoint(&self) -> ProtocolEngineCheckpoint {
+        ProtocolEngineCheckpoint {
+            session_manager: self.session_manager.clone(),
+            group_manager: self.group_manager.clone(),
+            latest_app_keys_created_at: self.latest_app_keys_created_at.clone(),
+            pending_outbound: self.pending_outbound.clone(),
+            pending_inbound: self.pending_inbound.clone(),
+            pending_group_fanouts: self.pending_group_fanouts.clone(),
+            pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
+            pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
+            pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
+            subscription_generation: self.subscription_generation,
+            last_backfill_attempt_secs: self.last_backfill_attempt_secs,
+        }
+    }
+
+    fn restore_checkpoint(&mut self, checkpoint: ProtocolEngineCheckpoint) {
+        self.session_manager = checkpoint.session_manager;
+        self.group_manager = checkpoint.group_manager;
+        self.latest_app_keys_created_at = checkpoint.latest_app_keys_created_at;
+        self.pending_outbound = checkpoint.pending_outbound;
+        self.pending_inbound = checkpoint.pending_inbound;
+        self.pending_group_fanouts = checkpoint.pending_group_fanouts;
+        self.pending_group_pairwise_payloads = checkpoint.pending_group_pairwise_payloads;
+        self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
+        self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
+        self.subscription_generation = checkpoint.subscription_generation;
+        self.last_backfill_attempt_secs = checkpoint.last_backfill_attempt_secs;
+    }
+
+    fn with_state_checkpoint<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let checkpoint = self.state_checkpoint();
+        match operation(self) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                self.restore_checkpoint(checkpoint);
+                Err(error)
+            }
+        }
+    }
+
     pub(super) fn ingest_app_keys_snapshot(
         &mut self,
         owner_pubkey: PublicKey,
@@ -1132,19 +1203,21 @@ impl ProtocolEngine {
         member_owners: Vec<PublicKey>,
         now: UnixSeconds,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
-        let result = self.group_manager.create_group_with_protocol(
-            &mut self.session_manager,
-            &mut ctx,
-            name,
-            member_owners.into_iter().map(ndr_owner).collect(),
-            GroupProtocol::sender_key_v1(),
-        )?;
-        let mut output = self.protocol_group_send_from_prepared(&result.prepared, None)?;
-        output.snapshot = Some(result.group);
-        self.persist()?;
-        Ok(output)
+        self.with_state_checkpoint(|engine| {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
+            let result = engine.group_manager.create_group_with_protocol(
+                &mut engine.session_manager,
+                &mut ctx,
+                name,
+                member_owners.into_iter().map(ndr_owner).collect(),
+                GroupProtocol::sender_key_v1(),
+            )?;
+            let mut output = engine.protocol_group_send_from_prepared(&result.prepared, None)?;
+            output.snapshot = Some(result.group);
+            engine.persist()?;
+            Ok(output)
+        })
     }
 
     pub(super) fn update_group_name(
@@ -1152,15 +1225,20 @@ impl ProtocolEngine {
         group_id: &str,
         name: String,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
-        let prepared =
-            self.group_manager
-                .update_name(&mut self.session_manager, &mut ctx, group_id, name)?;
-        let mut output = self.protocol_group_send_from_prepared(&prepared, None)?;
-        output.snapshot = self.group_manager.group(group_id);
-        self.persist()?;
-        Ok(output)
+        self.with_state_checkpoint(|engine| {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+            let prepared = engine.group_manager.update_name(
+                &mut engine.session_manager,
+                &mut ctx,
+                group_id,
+                name,
+            )?;
+            let mut output = engine.protocol_group_send_from_prepared(&prepared, None)?;
+            output.snapshot = engine.group_manager.group(group_id);
+            engine.persist()?;
+            Ok(output)
+        })
     }
 
     pub(super) fn add_group_members(
@@ -1168,18 +1246,20 @@ impl ProtocolEngine {
         group_id: &str,
         members: Vec<PublicKey>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
-        let prepared = self.group_manager.add_members(
-            &mut self.session_manager,
-            &mut ctx,
-            group_id,
-            members.into_iter().map(ndr_owner).collect(),
-        )?;
-        let mut output = self.protocol_group_send_from_prepared(&prepared, None)?;
-        output.snapshot = self.group_manager.group(group_id);
-        self.persist()?;
-        Ok(output)
+        self.with_state_checkpoint(|engine| {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+            let prepared = engine.group_manager.add_members(
+                &mut engine.session_manager,
+                &mut ctx,
+                group_id,
+                members.into_iter().map(ndr_owner).collect(),
+            )?;
+            let mut output = engine.protocol_group_send_from_prepared(&prepared, None)?;
+            output.snapshot = engine.group_manager.group(group_id);
+            engine.persist()?;
+            Ok(output)
+        })
     }
 
     pub(super) fn remove_group_member(
@@ -1187,18 +1267,20 @@ impl ProtocolEngine {
         group_id: &str,
         member: PublicKey,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
-        let prepared = self.group_manager.remove_members(
-            &mut self.session_manager,
-            &mut ctx,
-            group_id,
-            vec![ndr_owner(member)],
-        )?;
-        let mut output = self.protocol_group_send_from_prepared(&prepared, None)?;
-        output.snapshot = self.group_manager.group(group_id);
-        self.persist()?;
-        Ok(output)
+        self.with_state_checkpoint(|engine| {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+            let prepared = engine.group_manager.remove_members(
+                &mut engine.session_manager,
+                &mut ctx,
+                group_id,
+                vec![ndr_owner(member)],
+            )?;
+            let mut output = engine.protocol_group_send_from_prepared(&prepared, None)?;
+            output.snapshot = engine.group_manager.group(group_id);
+            engine.persist()?;
+            Ok(output)
+        })
     }
 
     pub(super) fn set_group_admin(
@@ -1207,27 +1289,29 @@ impl ProtocolEngine {
         member: PublicKey,
         is_admin: bool,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
-        let prepared = if is_admin {
-            self.group_manager.add_admins(
-                &mut self.session_manager,
-                &mut ctx,
-                group_id,
-                vec![ndr_owner(member)],
-            )?
-        } else {
-            self.group_manager.remove_admins(
-                &mut self.session_manager,
-                &mut ctx,
-                group_id,
-                vec![ndr_owner(member)],
-            )?
-        };
-        let mut output = self.protocol_group_send_from_prepared(&prepared, None)?;
-        output.snapshot = self.group_manager.group(group_id);
-        self.persist()?;
-        Ok(output)
+        self.with_state_checkpoint(|engine| {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+            let prepared = if is_admin {
+                engine.group_manager.add_admins(
+                    &mut engine.session_manager,
+                    &mut ctx,
+                    group_id,
+                    vec![ndr_owner(member)],
+                )?
+            } else {
+                engine.group_manager.remove_admins(
+                    &mut engine.session_manager,
+                    &mut ctx,
+                    group_id,
+                    vec![ndr_owner(member)],
+                )?
+            };
+            let mut output = engine.protocol_group_send_from_prepared(&prepared, None)?;
+            output.snapshot = engine.group_manager.group(group_id);
+            engine.persist()?;
+            Ok(output)
+        })
     }
 
     pub(super) fn send_group_payload(
@@ -1236,20 +1320,22 @@ impl ProtocolEngine {
         payload: Vec<u8>,
         inner_event_id: Option<String>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
-        let prepared = self.group_manager.send_message(
-            &mut self.session_manager,
-            &mut ctx,
-            group_id,
-            payload,
-        )?;
-        let message_id = inner_event_id.clone();
-        let mut output = self.protocol_group_send_from_prepared(&prepared, inner_event_id)?;
-        output.snapshot = self.group_manager.group(group_id);
-        output.message_id = message_id;
-        self.persist()?;
-        Ok(output)
+        self.with_state_checkpoint(|engine| {
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+            let prepared = engine.group_manager.send_message(
+                &mut engine.session_manager,
+                &mut ctx,
+                group_id,
+                payload,
+            )?;
+            let message_id = inner_event_id.clone();
+            let mut output = engine.protocol_group_send_from_prepared(&prepared, inner_event_id)?;
+            output.snapshot = engine.group_manager.group(group_id);
+            output.message_id = message_id;
+            engine.persist()?;
+            Ok(output)
+        })
     }
 
     pub(super) fn send_direct_text(
@@ -1272,77 +1358,15 @@ impl ProtocolEngine {
             .map(ToString::to_string)
             .unwrap_or_default();
         let remote_payload = serde_json::to_vec(&rumor)?;
-        let local_sibling_payload = local_sibling_payload(peer_pubkey, &remote_payload)?;
-        let recipient_owner = ndr_owner(peer_pubkey);
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
-        let remote = self.session_manager.prepare_remote_send(
-            &mut ctx,
-            recipient_owner,
+        self.send_direct_payloads(
+            peer_pubkey,
+            chat_id,
             remote_payload.clone(),
-        )?;
-        let local = self
-            .session_manager
-            .prepare_local_sibling_send_refreshing_one_way_sessions(
-                &mut ctx,
-                local_sibling_payload.clone(),
-            )?;
-
-        let mut event_ids = Vec::new();
-        let mut effects = Vec::new();
-        effects.extend(protocol_effects_from_prepared(
-            &remote,
+            local_sibling_payload(peer_pubkey, &remote_payload)?,
             Some(message_id.clone()),
-            &mut event_ids,
-        )?);
-        effects.extend(protocol_effects_from_prepared(
-            &local,
-            Some(message_id.clone()),
-            &mut event_ids,
-        )?);
-
-        let remote_delivered = delivered_device_hexes(&remote);
-        let local_delivered = delivered_device_hexes(&local);
-        let probe_local_sibling_roster = self.needs_local_sibling_roster_probe(&local);
-        let has_undelivered_local_siblings = !self
-            .remaining_local_sibling_targets(&local_delivered)
-            .is_empty();
-        let gaps = remote
-            .relay_gaps
-            .iter()
-            .chain(local.relay_gaps.iter())
-            .cloned()
-            .collect::<Vec<_>>();
-        if !gaps.is_empty() || probe_local_sibling_roster || has_undelivered_local_siblings {
-            self.upsert_pending_outbound(ProtocolPendingOutbound {
-                message_id: message_id.clone(),
-                chat_id: chat_id.to_string(),
-                recipient_owner_hex: peer_pubkey.to_hex(),
-                remote_payload,
-                local_sibling_payload: Some(local_sibling_payload),
-                inner_event_id: Some(message_id.clone()),
-                delivered_remote_device_hexes: remote_delivered,
-                delivered_local_device_hexes: local_delivered,
-                probe_local_sibling_roster,
-                created_at_secs: now.get(),
-                next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
-                reason: pending_reason_from_gaps(&gaps),
-            });
-        }
-        self.persist()?;
-        let queued_targets = self.queued_message_diagnostics(Some(&message_id));
-        self.append_queued_protocol_backfill(
-            &mut effects,
-            &queued_targets,
-            NdrUnixSeconds(now.get()),
-            "direct_send",
-        );
-        Ok(ProtocolDirectSendResult {
             message_id,
-            event_ids,
-            effects,
-            queued_targets,
-        })
+            now,
+        )
     }
 
     pub(super) fn send_direct_unsigned_event(
@@ -1371,6 +1395,29 @@ impl ProtocolEngine {
     }
 
     fn send_direct_payloads(
+        &mut self,
+        peer_pubkey: PublicKey,
+        chat_id: &str,
+        remote_payload: Vec<u8>,
+        local_sibling_payload: Vec<u8>,
+        inner_event_id: Option<String>,
+        message_id: String,
+        now: UnixSeconds,
+    ) -> anyhow::Result<ProtocolDirectSendResult> {
+        self.with_state_checkpoint(|engine| {
+            engine.send_direct_payloads_inner(
+                peer_pubkey,
+                chat_id,
+                remote_payload,
+                local_sibling_payload,
+                inner_event_id,
+                message_id,
+                now,
+            )
+        })
+    }
+
+    fn send_direct_payloads_inner(
         &mut self,
         peer_pubkey: PublicKey,
         chat_id: &str,
@@ -1498,7 +1545,7 @@ impl ProtocolEngine {
             });
         };
         let result = self.handle_group_sender_key_message(message)?;
-        if result.events.is_empty() {
+        if result.pending {
             self.queue_pending_group_sender_key_message(parsed)?;
         }
         Ok(ProtocolGroupIncomingResult {
@@ -1569,6 +1616,7 @@ impl ProtocolEngine {
                     effects,
                     queued_targets: self.queued_group_targets(),
                     consumed: true,
+                    ..Default::default()
                 })
             }
             Ok(None) => Ok(ProtocolGroupIncomingResult {
@@ -1917,20 +1965,27 @@ impl ProtocolEngine {
 
         let sender_keys = std::mem::take(&mut self.pending_group_sender_key_messages);
         let mut still_sender_keys = Vec::new();
+        let mut sender_keys_changed = false;
         for parsed in sender_keys {
             let Some(message) = self.group_sender_key_message_from_parsed(&parsed) else {
                 still_sender_keys.push(parsed);
                 continue;
             };
             let outcome = self.handle_group_sender_key_message(message)?;
-            if outcome.events.is_empty() {
+            if outcome.pending {
                 still_sender_keys.push(parsed);
+            } else {
+                sender_keys_changed = true;
             }
             result.events.extend(outcome.events);
             result.effects.extend(outcome.effects);
         }
         self.pending_group_sender_key_messages = still_sender_keys;
-        if pairwise_changed || !result.events.is_empty() || !result.effects.is_empty() {
+        if pairwise_changed
+            || sender_keys_changed
+            || !result.events.is_empty()
+            || !result.effects.is_empty()
+        {
             self.persist()?;
         }
         Ok(result)
@@ -2518,10 +2573,14 @@ impl ProtocolEngine {
             | GroupSenderKeyHandleResult::PendingRevision { .. } => {
                 Ok(ProtocolGroupIncomingResult {
                     consumed: true,
+                    pending: true,
                     ..Default::default()
                 })
             }
-            GroupSenderKeyHandleResult::Ignored => Ok(ProtocolGroupIncomingResult::default()),
+            GroupSenderKeyHandleResult::Ignored => Ok(ProtocolGroupIncomingResult {
+                consumed: true,
+                ..Default::default()
+            }),
         }
     }
 

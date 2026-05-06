@@ -991,6 +991,44 @@ fn relay_pending_inbound_replays_are_short_circuited() {
 }
 
 #[test]
+fn group_sender_key_ignored_results_are_consumed_without_retry_queue() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol_engine.rs"),
+    )
+    .expect("read protocol engine source");
+    let process_start = protocol_source
+        .find("pub(super) fn process_group_outer_event")
+        .expect("process group outer function");
+    let process_body = &protocol_source[process_start
+        ..protocol_source[process_start..]
+            .find("pub(super) fn process_group_pairwise_payload")
+            .map(|offset| process_start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        process_body.contains("if result.pending"),
+        "group outer handling must queue sender-key messages only for explicit pending results"
+    );
+    assert!(
+        !process_body.contains("if result.events.is_empty()"),
+        "ignored sender-key results have no events but must not be queued for retry"
+    );
+
+    let handle_start = protocol_source
+        .find("fn handle_group_sender_key_message")
+        .expect("handle sender key function");
+    let handle_body = &protocol_source[handle_start
+        ..protocol_source[handle_start..]
+            .find("fn upsert_pending_outbound")
+            .map(|offset| handle_start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        handle_body.contains("GroupSenderKeyHandleResult::Ignored")
+            && handle_body.contains("consumed: true"),
+        "ignored parsed sender-key events should be consumed so public-relay replays do not loop"
+    );
+}
+
+#[test]
 fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1074,6 +1112,108 @@ fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pend
     let snapshot = engine.debug_snapshot();
     assert_eq!(snapshot.pending_outbound_count, 1);
     assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
+}
+
+#[test]
+fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut engine = test_protocol_engine_with_storage(
+        &owner,
+        &device,
+        storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys");
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
+    let invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("peer invite");
+    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_device)
+        .expect("signed invite");
+    engine
+        .observe_invite_event(&invite_event)
+        .expect("observe invite");
+    let before = engine.session_manager_snapshot_for_test();
+
+    storage.set_fail_puts(true);
+    let result = engine.send_direct_text(
+        peer_owner.public_key(),
+        &peer_owner.public_key().to_hex(),
+        "rollback",
+        None,
+        UnixSeconds(3),
+    );
+
+    assert!(result.is_err());
+    assert_eq!(
+        engine.session_manager_snapshot_for_test(),
+        before,
+        "failed persistence must roll back in-memory ratchet state"
+    );
+    assert_eq!(
+        engine.debug_snapshot().pending_outbound_count,
+        0,
+        "failed persistence must not leave pending outbound state in memory"
+    );
+}
+
+#[test]
+fn appcore_group_create_storage_failure_rolls_back_protocol_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut engine = test_protocol_engine_with_storage(
+        &owner,
+        &device,
+        storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    let before_sessions = engine.session_manager_snapshot_for_test();
+    let before_groups = engine.group_manager_snapshot_for_test();
+
+    storage.set_fail_puts(true);
+    let result = engine.create_group(
+        "rollback group".to_string(),
+        vec![peer_owner.public_key()],
+        UnixSeconds(3),
+    );
+
+    assert!(result.is_err());
+    assert_eq!(
+        engine.session_manager_snapshot_for_test(),
+        before_sessions,
+        "failed group persistence must roll back session fanout preparation"
+    );
+    assert_eq!(
+        engine.group_manager_snapshot_for_test(),
+        before_groups,
+        "failed group persistence must roll back group manager state"
+    );
+    assert_eq!(
+        engine.debug_snapshot().pending_group_fanout_count,
+        0,
+        "failed group persistence must not leave pending group fanouts in memory"
+    );
 }
 
 #[test]
@@ -6973,6 +7113,14 @@ fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String
 fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
     let storage =
         Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    test_protocol_engine_with_storage(owner, device, storage)
+}
+
+fn test_protocol_engine_with_storage(
+    owner: &Keys,
+    device: &Keys,
+    storage: Arc<dyn StorageAdapter>,
+) -> ProtocolEngine {
     let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
     let local_invite = Invite::create_new(
         device.public_key(),
