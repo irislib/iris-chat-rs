@@ -790,44 +790,70 @@ impl DesktopNearbyRuntime {
         let Some(peer_id) = peer_id else {
             return false;
         };
-        let (local_nonce, remote_nonce) = {
+        let (local_nonce, nonce_candidates) = {
             let inner = self.inner.lock().unwrap();
-            let remote_nonce = remote_peer_id
-                .and_then(|peer_id| inner.peer_nonces.get(peer_id))
-                .or_else(|| inner.connection_nonces.get(connection_id));
-            let Some(remote_nonce) = remote_nonce else {
-                return false;
+            let nonce_candidates = if let Some(remote_nonce) =
+                remote_peer_id.and_then(|peer_id| inner.peer_nonces.get(peer_id))
+            {
+                vec![(None, remote_nonce.clone())]
+            } else {
+                let mut candidates = Vec::new();
+                let mut seen = HashSet::new();
+                if let Some(remote_nonce) = inner.connection_nonces.get(connection_id) {
+                    candidates.push((Some(connection_id.to_string()), remote_nonce.clone()));
+                    seen.insert(connection_id.to_string());
+                }
+                for (key, nonce) in &inner.connection_nonces {
+                    if seen.insert(key.clone()) {
+                        candidates.push((Some(key.clone()), nonce.clone()));
+                    }
+                }
+                candidates
             };
-            (inner.local_nonce.clone(), remote_nonce.clone())
+            if nonce_candidates.is_empty() {
+                return false;
+            }
+            (inner.local_nonce.clone(), nonce_candidates)
         };
-        let result = self.app.verify_nearby_presence_event_json(
-            event_json.to_string(),
-            peer_id.clone(),
-            local_nonce,
-            remote_nonce,
-        );
-        let Ok(value) = serde_json::from_str::<Value>(&result) else {
+        let mut verified = None;
+        for (nonce_key, remote_nonce) in nonce_candidates {
+            let result = self.app.verify_nearby_presence_event_json(
+                event_json.to_string(),
+                peer_id.clone(),
+                local_nonce.clone(),
+                remote_nonce,
+            );
+            let Ok(value) = serde_json::from_str::<Value>(&result) else {
+                continue;
+            };
+            let owner_pubkey_hex = value
+                .get("owner_pubkey_hex")
+                .and_then(Value::as_str)
+                .filter(|v| v.len() == 64)
+                .map(str::to_string);
+            let Some(owner_pubkey_hex) = owner_pubkey_hex else {
+                continue;
+            };
+            let profile_event_id = value
+                .get("profile_event_id")
+                .and_then(Value::as_str)
+                .filter(|v| v.len() == 64)
+                .map(str::to_string);
+            verified = Some((nonce_key, owner_pubkey_hex, profile_event_id));
+            break;
+        }
+        let Some((nonce_key, owner_pubkey_hex, profile_event_id)) = verified else {
             return false;
         };
-        let owner_pubkey_hex = value
-            .get("owner_pubkey_hex")
-            .and_then(Value::as_str)
-            .filter(|v| v.len() == 64)
-            .map(str::to_string);
-        let Some(owner_pubkey_hex) = owner_pubkey_hex else {
-            return false;
-        };
-        let profile_event_id = value
-            .get("profile_event_id")
-            .and_then(Value::as_str)
-            .filter(|v| v.len() == 64)
-            .map(str::to_string);
         {
             let mut inner = self.inner.lock().unwrap();
             if let Some(connection) = inner.connections.get_mut(connection_id) {
                 connection.peer_id = Some(peer_id.clone());
             }
             inner.connection_nonces.remove(connection_id);
+            if let Some(nonce_key) = nonce_key {
+                inner.connection_nonces.remove(&nonce_key);
+            }
             remember_presence(&mut inner, &peer_id, owner_pubkey_hex, profile_event_id);
         }
         true

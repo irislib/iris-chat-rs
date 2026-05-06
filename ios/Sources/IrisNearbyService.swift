@@ -607,6 +607,28 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
+    private func rejectLegacyNearbySource(_ source: IrisNearbySource, type: String) {
+        switch source {
+        case .peripheral(let peripheral):
+            rejectNonIrisPeripheral(
+                peripheral,
+                reason: "legacy nearby \(type) frame from \(debugPeripheralLabel(peripheral))"
+            )
+        case .central(let central):
+            let centralID = central.identifier
+            NSLog("Iris nearby: legacy nearby \(type) frame from central \(centralID.uuidString)")
+            subscribedCentrals.removeValue(forKey: centralID)
+            centralAssemblers.removeValue(forKey: centralID)
+            peerIDByCentral.removeValue(forKey: centralID)
+            connectionNonces.removeValue(forKey: Self.centralSourcePrefix + centralID.uuidString)
+            removePendingNotifications { item in
+                item.channel?.central.identifier == centralID
+            }
+        case .lan:
+            break
+        }
+    }
+
     private func sendHello(excludingPeerID: String?) {
         guard isNearbyActive else { return }
         lastHelloAt = Date()
@@ -752,6 +774,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
         IrisNearbyFrameAssembler { [weak self] header in
             self?.frameBodyLength?(header) ?? -1
         }
+    }
+
+    private func debugPeripheralLabel(_ peripheral: CBPeripheral) -> String {
+        let name = peripheral.name ?? "nil"
+        return "\(peripheral.identifier.uuidString) name=\(name)"
     }
 
     private func sendEncodedFrame(_ frame: Data, excludingPeerID: String?) {
@@ -950,13 +977,14 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func ingestFrame(_ frame: Data, source: IrisNearbySource) {
+        let sourceKey = sourceKey(for: source)
         guard let envelope = decodeFrameJson(frame),
               let type = envelope["type"] as? String else { return }
         if envelope["peer_id"] != nil {
+            rejectLegacyNearbySource(source, type: type)
             return
         }
         let remotePeerID = peerIDForSource(source)
-        let sourceKey = sourceKey(for: source)
         if let remotePeerID, !remotePeerID.isEmpty {
             touchPeer(remotePeerID)
             markTransportPeer(remotePeerID, source: source)
@@ -1096,30 +1124,50 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private func handlePresenceEvent(_ eventJson: String, remotePeerID: String?, sourceKey: String?) -> Bool {
         let peerID = remotePeerID.flatMap { nonempty($0) } ?? Self.nearbyPresencePeerID(eventJson)
         guard let peerID else { return false }
-        let remoteNonce = remotePeerID.flatMap { peerNonces[$0] } ?? sourceKey.flatMap { connectionNonces[$0] }
-        guard let remoteNonce else { return false }
-        let result = verifyPresenceEventJson?(
-            eventJson,
-            peerID,
-            localNonce,
-            remoteNonce
-        ) ?? ""
-        guard let data = result.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let ownerPubkeyHex = object["owner_pubkey_hex"] as? String,
-              ownerPubkeyHex.count == 64 else {
-            return false
+        for candidate in presenceNonceCandidates(remotePeerID: remotePeerID, sourceKey: sourceKey) {
+            let result = verifyPresenceEventJson?(
+                eventJson,
+                peerID,
+                localNonce,
+                candidate.nonce
+            ) ?? ""
+            guard let data = result.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let ownerPubkeyHex = object["owner_pubkey_hex"] as? String,
+                  ownerPubkeyHex.count == 64 else {
+                continue
+            }
+            if let sourceKey {
+                markTransportPeer(peerID, sourceKey: sourceKey)
+                connectionNonces.removeValue(forKey: sourceKey)
+            }
+            if let nonceKey = candidate.key {
+                connectionNonces.removeValue(forKey: nonceKey)
+            }
+            rememberPresence(
+                peerID: peerID,
+                ownerPubkeyHex: ownerPubkeyHex,
+                profileEventID: sanitizedEventID(object["profile_event_id"] as? String)
+            )
+            return true
         }
-        if let sourceKey {
-            markTransportPeer(peerID, sourceKey: sourceKey)
-            connectionNonces.removeValue(forKey: sourceKey)
+        return false
+    }
+
+    private func presenceNonceCandidates(remotePeerID: String?, sourceKey: String?) -> [(key: String?, nonce: String)] {
+        if let remotePeerID, let nonce = peerNonces[remotePeerID] {
+            return [(nil, nonce)]
         }
-        rememberPresence(
-            peerID: peerID,
-            ownerPubkeyHex: ownerPubkeyHex,
-            profileEventID: sanitizedEventID(object["profile_event_id"] as? String)
-        )
-        return true
+        var candidates: [(key: String?, nonce: String)] = []
+        var seen = Set<String>()
+        if let sourceKey, let nonce = connectionNonces[sourceKey] {
+            candidates.append((sourceKey, nonce))
+            seen.insert(sourceKey)
+        }
+        for (key, nonce) in connectionNonces where !seen.contains(key) {
+            candidates.append((key, nonce))
+        }
+        return candidates
     }
 
     private func pruneIncomingFragments() {
@@ -1207,7 +1255,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         guard let remotePeerID = peerIDByPeripheral[peripheralID] else {
             return true
         }
-        if remotePeerID == excludingPeerID {
+        if let excludingPeerID, remotePeerID == excludingPeerID {
             return false
         }
         if lanService?.hasPeer(remotePeerID) == true {
@@ -1223,7 +1271,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         guard let remotePeerID = peerIDByCentral[centralID] else {
             return true
         }
-        if remotePeerID == excludingPeerID {
+        if let excludingPeerID, remotePeerID == excludingPeerID {
             return false
         }
         if lanService?.hasPeer(remotePeerID) == true {
