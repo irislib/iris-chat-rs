@@ -52,6 +52,7 @@ impl AppCore {
             local_device_pubkey_hex,
             authorization_state,
             active_chat_id: self.active_chat_id.clone(),
+            relay_transport: self.relay_transport_debug_snapshot(),
             current_protocol_plan,
             protocol_engine: self
                 .protocol_engine
@@ -183,6 +184,7 @@ impl AppCore {
             authorization_state: runtime.authorization_state,
             active_chat_id: runtime.active_chat_id,
             current_screen: format!("{current_screen:?}"),
+            relay_transport: runtime.relay_transport,
             chat_count: self.threads.len(),
             direct_chat_count,
             group_chat_count,
@@ -197,6 +199,39 @@ impl AppCore {
             recent_log: runtime.recent_log,
             current_chat_list: runtime.current_chat_list,
             latest_toast: runtime.toast,
+        }
+    }
+
+    fn relay_transport_debug_snapshot(&self) -> RuntimeRelayTransportDebug {
+        let runtime = &self.relay_transport_runtime;
+        let phase = if runtime.connect_in_flight {
+            "connecting"
+        } else if runtime.publish_drain_in_flight {
+            "publishing"
+        } else if runtime.next_retry_due_at.is_some() {
+            "backoff"
+        } else if self.relay_connected_count > 0 {
+            "connected"
+        } else {
+            "offline"
+        }
+        .to_string();
+        RuntimeRelayTransportDebug {
+            phase,
+            connect_in_flight: runtime.connect_in_flight,
+            connect_dirty: runtime.connect_dirty,
+            force_reconnect_dirty: runtime.force_reconnect_dirty,
+            publish_drain_in_flight: runtime.publish_drain_in_flight,
+            publish_drain_dirty: runtime.publish_drain_dirty,
+            connected_relay_count: self.relay_connected_count,
+            pending_relay_publish_count: self.pending_relay_publishes.len() as u64,
+            retry_backoff_attempt: runtime.retry_backoff_attempt,
+            next_retry_due_in_ms: runtime
+                .next_retry_due_at
+                .map(|due_at| due_at.saturating_duration_since(Instant::now()).as_millis() as u64),
+            next_retry_reason: runtime.next_retry_reason.clone(),
+            last_connect_reason: runtime.last_connect_reason.clone(),
+            last_drain_reason: runtime.last_drain_reason.clone(),
         }
     }
 

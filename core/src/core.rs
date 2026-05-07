@@ -9,7 +9,7 @@ use crate::state::{
     OutgoingAttachment, PeerProfileDebugSnapshot, PreferencesSnapshot, PublicInviteSnapshot,
     RelayConnectionSnapshot, Router, Screen, TypingIndicatorSnapshot,
 };
-use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
+use crate::updates::{AppUpdate, CoreMsg, InternalEvent, RelayPublishDrainResult};
 use flume::Sender;
 use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
 use nostr_double_ratchet::{
@@ -164,6 +164,7 @@ pub struct AppCore {
     protocol_reconnect_token: u64,
     defer_owner_app_keys_publish: bool,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
+    relay_transport_runtime: RelayTransportRuntime,
     direct_message_subscriptions: DirectMessageSubscriptionTracker,
     relay_status_watch_urls: HashSet<String>,
     relay_status_watch_generation: u64,
@@ -210,15 +211,13 @@ pub struct AppCore {
 }
 
 async fn connect_client_with_timeout(client: &Client, timeout: Duration) {
-    for attempt in 0..3 {
-        let _ = client.try_connect(timeout).await;
+    client.connect().await;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
         if connected_relay_count_for_client(client).await > 0 {
             return;
         }
-        if attempt < 2 {
-            let _ = client.disconnect().await;
-            sleep(Duration::from_millis(250 * (attempt + 1) as u64)).await;
-        }
+        sleep(Duration::from_millis(250)).await;
     }
 }
 

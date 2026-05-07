@@ -62,6 +62,7 @@ impl AppCore {
             protocol_reconnect_token: 0,
             defer_owner_app_keys_publish: false,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
+            relay_transport_runtime: RelayTransportRuntime::default(),
             direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
             relay_status_watch_urls: HashSet::new(),
             relay_status_watch_generation: 0,
@@ -116,11 +117,13 @@ impl AppCore {
                 InternalEvent::ProtocolSubscriptionReconcileCompleted { .. } => {
                     "ProtocolSubscriptionReconcileCompleted"
                 }
-                InternalEvent::RelayConnectionChecked { .. } => "RelayConnectionChecked",
+                InternalEvent::RelayTransportConnectionFinished { .. } => {
+                    "RelayTransportConnectionFinished"
+                }
                 InternalEvent::DebugSnapshotWriteFinished { .. } => "DebugSnapshotWriteFinished",
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
-                InternalEvent::RelayPublishFinished { .. } => "RelayPublishFinished",
+                InternalEvent::RelayPublishDrainFinished { .. } => "RelayPublishDrainFinished",
                 InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
@@ -234,6 +237,8 @@ impl AppCore {
         self.relay_status_watch_urls.clear();
         self.relay_status_by_url.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+        self.relay_transport_runtime = RelayTransportRuntime::default();
+        self.pending_relay_publish_inflight.clear();
         self.relay_connected_count = 0;
         self.all_relays_offline_since_secs = None;
         self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
@@ -500,8 +505,18 @@ impl AppCore {
                     failed,
                 );
             }
-            InternalEvent::RelayConnectionChecked { reason } => {
-                self.handle_relay_connection_checked(reason);
+            InternalEvent::RelayTransportConnectionFinished {
+                token,
+                reason,
+                relay_statuses,
+                connected_count,
+            } => {
+                self.handle_relay_transport_connection_finished(
+                    token,
+                    reason,
+                    relay_statuses,
+                    connected_count,
+                );
             }
             InternalEvent::DebugSnapshotWriteFinished { generation } => {
                 self.handle_debug_snapshot_write_finished(generation);
@@ -523,17 +538,8 @@ impl AppCore {
                     self.emit_state();
                 }
             }
-            InternalEvent::RelayPublishFinished {
-                event_id,
-                message_id,
-                chat_id,
-                success,
-                relay_urls,
-                detail,
-            } => {
-                self.handle_relay_publish_finished(
-                    event_id, message_id, chat_id, success, relay_urls, detail,
-                );
+            InternalEvent::RelayPublishDrainFinished { token, results } => {
+                self.handle_relay_publish_drain_finished(token, results);
             }
             InternalEvent::RetryPendingRelayPublishes { reason } => {
                 self.retry_pending_relay_publishes(&reason);

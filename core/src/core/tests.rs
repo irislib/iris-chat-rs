@@ -154,6 +154,11 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
         None,
         DeliveryState::Pending,
     );
+    core.logged_in
+        .as_mut()
+        .expect("logged in")
+        .relay_urls
+        .clear();
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
         .sign_with_keys(&device)
         .expect("event");
@@ -756,11 +761,13 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
             .is_empty(),
         "logged-in session should derive protocol subscriptions"
     );
+    core.protocol_subscription_runtime.liveness_due_at = None;
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
     let first_token = core.protocol_reconnect_token;
     let first_due = core
         .protocol_subscription_runtime
         .liveness_due_at
-        .expect("refresh should schedule liveness");
+        .expect("initial liveness should be scheduled");
 
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
     assert_eq!(
@@ -917,7 +924,7 @@ fn protocol_backfill_fetches_configure_relays_before_network_fetch() {
 }
 
 #[test]
-fn relay_connect_helper_retries_from_clean_disconnect_when_all_relays_stay_offline() {
+fn relay_connect_helper_does_not_disconnect_when_all_relays_stay_offline() {
     let core_source = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core.rs"),
     )
@@ -935,40 +942,49 @@ fn relay_connect_helper_retries_from_clean_disconnect_when_all_relays_stay_offli
         "connect helper must detect all-offline relay clients"
     );
     assert!(
-        body.contains("client.disconnect().await"),
-        "connect helper must force a clean reconnect when every relay remains offline"
+        !body.contains("client.disconnect().await"),
+        "normal relay connect helper must not tear down the shared client when every relay remains offline"
     );
     assert!(
-        body.contains("client.try_connect"),
-        "connect helper must use nostr-sdk's timed connect path instead of a bare connect"
+        body.contains("client.connect().await"),
+        "connect helper must start the shared relay client without owning disconnect lifecycle"
     );
 }
 
 #[test]
-fn runtime_publish_uses_durable_relay_connect_helper() {
+fn runtime_publish_uses_single_flight_transport_drain() {
     let publish_source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/publish_helpers.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/publishing.rs"),
     )
-    .expect("read publish helpers source");
+    .expect("read publishing source");
     let start = publish_source
-        .find("async fn ensure_publish_connection")
-        .expect("publish connection helper");
+        .find("pub(super) fn retry_pending_relay_publishes")
+        .expect("pending relay publish retry");
     let body = &publish_source[start
         ..publish_source[start..]
-            .find("\npub(super) async fn publish_event_once")
+            .find("\n    pub(super) fn handle_relay_publish_drain_finished")
             .map(|offset| start + offset)
             .unwrap_or(publish_source.len())];
     assert!(
-        body.contains("ensure_session_relays_configured(client, relay_urls).await"),
-        "publish connection helper must configure relays before sending"
+        body.contains("publish_drain_in_flight") && body.contains("publish_drain_dirty"),
+        "pending relay publishes must coalesce through one drain worker"
     );
     assert!(
-        body.contains("connect_client_with_timeout"),
-        "publish connection helper must share the durable relay connect helper"
+        body.contains("request_relay_connection"),
+        "offline pending publish retry must request the shared relay transport connection"
     );
     assert!(
-        !body.contains("Duration::from_millis(500)"),
-        "publish connection helper must not give Android public relays only 500ms to connect"
+        body.contains("publish_event_to_any_relay")
+            && body.contains("PENDING_RELAY_DRAIN_CONCURRENCY"),
+        "drain worker must publish with bounded no-connect attempts"
+    );
+    assert!(
+        !body.contains("connect_client_with_timeout") && !body.contains("client.disconnect"),
+        "drain worker must not connect or disconnect the shared relay client per pending event"
+    );
+    assert!(
+        !publish_source.contains("spawn_relay_publish_attempt"),
+        "pending relay publish retry must not spawn one connection-owning task per event"
     );
 }
 
@@ -1002,24 +1018,23 @@ fn direct_send_hot_path_does_not_force_global_catch_up_for_established_messages(
 }
 
 #[test]
-fn zero_connected_session_check_schedules_fast_reconnect() {
+fn zero_connected_transport_connect_schedules_backoff_retry() {
     let protocol_source = std::fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol.rs"),
     )
     .expect("read protocol source");
     let start = protocol_source
-        .find("pub(super) fn handle_relay_connection_checked")
-        .expect("connection checked handler");
+        .find("pub(super) fn handle_relay_transport_connection_finished")
+        .expect("transport connection handler");
     let body = &protocol_source[start
         ..protocol_source[start..]
-            .find("\n    pub(super) fn refresh_relay_connection_status")
+            .find("\n    pub(super) fn schedule_relay_transport_retry")
             .map(|offset| start + offset)
             .unwrap_or(protocol_source.len())];
     assert!(
-        body.contains("else if configured_relay_count > 0")
-            && body.contains("PROTOCOL_RECONNECT_CHECK_SECS")
-            && body.contains("schedule_protocol_subscription_liveness_check"),
-        "zero-connected startup checks must schedule a fast reconnect/liveness pass"
+        body.contains("schedule_relay_transport_retry(\"connect_failed\")")
+            && body.contains("retry_pending_relay_publishes(\"relay_transport_connected\")"),
+        "zero-connected transport checks must back off, while successful connects drain pending publishes"
     );
 }
 
@@ -3169,14 +3184,7 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
-    install_test_protocol_engine(
-        &mut core,
-        &bob_keys,
-        &bob_keys,
-        bob_storage,
-        None,
-        None,
-    );
+    install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, bob_storage, None, None);
 
     core.drain_pending_mobile_push_events();
     let thread = core.threads.get(&chat_id).expect("sender thread");

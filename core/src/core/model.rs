@@ -123,6 +123,22 @@ pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) last_emitted_plan_summary: Option<String>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct RelayTransportRuntime {
+    pub(super) connect_in_flight: bool,
+    pub(super) connect_dirty: bool,
+    pub(super) force_reconnect_dirty: bool,
+    pub(super) connect_token: u64,
+    pub(super) publish_drain_in_flight: bool,
+    pub(super) publish_drain_dirty: bool,
+    pub(super) publish_drain_token: u64,
+    pub(super) retry_backoff_attempt: u32,
+    pub(super) next_retry_due_at: Option<Instant>,
+    pub(super) next_retry_reason: Option<String>,
+    pub(super) last_connect_reason: Option<String>,
+    pub(super) last_drain_reason: Option<String>,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct ProtocolSubscriptionSpec {
     pub(super) filter: Filter,
@@ -169,6 +185,7 @@ pub(super) struct RuntimeDebugSnapshot {
     pub(super) local_device_pubkey_hex: Option<String>,
     pub(super) authorization_state: Option<String>,
     pub(super) active_chat_id: Option<String>,
+    pub(super) relay_transport: RuntimeRelayTransportDebug,
     pub(super) current_protocol_plan: Option<RuntimeProtocolPlanDebug>,
     pub(super) protocol_engine: Option<ProtocolEngineDebugSnapshot>,
     pub(super) pending_relay_publishes: Vec<RuntimePendingRelayPublishDebug>,
@@ -199,6 +216,7 @@ pub(super) struct SupportBundle {
     pub(super) authorization_state: Option<String>,
     pub(super) active_chat_id: Option<String>,
     pub(super) current_screen: String,
+    pub(super) relay_transport: RuntimeRelayTransportDebug,
     pub(super) chat_count: usize,
     pub(super) direct_chat_count: usize,
     pub(super) group_chat_count: usize,
@@ -213,6 +231,23 @@ pub(super) struct SupportBundle {
     pub(super) recent_log: Vec<DebugLogEntry>,
     pub(super) current_chat_list: Vec<String>,
     pub(super) latest_toast: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct RuntimeRelayTransportDebug {
+    pub(super) phase: String,
+    pub(super) connect_in_flight: bool,
+    pub(super) connect_dirty: bool,
+    pub(super) force_reconnect_dirty: bool,
+    pub(super) publish_drain_in_flight: bool,
+    pub(super) publish_drain_dirty: bool,
+    pub(super) connected_relay_count: u64,
+    pub(super) pending_relay_publish_count: u64,
+    pub(super) retry_backoff_attempt: u32,
+    pub(super) next_retry_due_in_ms: Option<u64>,
+    pub(super) next_retry_reason: Option<String>,
+    pub(super) last_connect_reason: Option<String>,
+    pub(super) last_drain_reason: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

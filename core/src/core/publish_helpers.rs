@@ -11,7 +11,8 @@ pub(super) async fn publish_event_with_retry(
     let mut last_error = "no relays configured".to_string();
 
     for attempt in 0..5 {
-        ensure_publish_connection(client, relay_urls).await;
+        ensure_session_relays_configured(client, relay_urls).await;
+        connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
         match publish_event_once(client, relay_urls, &event).await {
             Ok(()) => return Ok(()),
             Err(error) => last_error = error.to_string(),
@@ -25,6 +26,7 @@ pub(super) async fn publish_event_with_retry(
     Err(anyhow::anyhow!("{label}: {last_error}"))
 }
 
+#[cfg(test)]
 pub(super) async fn publish_event_fire_and_forget(
     client: &Client,
     relay_urls: &[RelayUrl],
@@ -35,13 +37,7 @@ pub(super) async fn publish_event_fire_and_forget(
         return Err(anyhow::anyhow!("{label}: no relays configured"));
     }
 
-    ensure_publish_connection(client, relay_urls).await;
     publish_event_to_any_relay(client, relay_urls, event, label).await
-}
-
-async fn ensure_publish_connection(client: &Client, relay_urls: &[RelayUrl]) {
-    ensure_session_relays_configured(client, relay_urls).await;
-    connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
 }
 
 pub(super) async fn publish_event_once(
@@ -58,7 +54,7 @@ pub(super) async fn publish_event_once(
         .map(|_| ())
 }
 
-async fn publish_event_to_any_relay(
+pub(super) async fn publish_event_to_any_relay(
     client: &Client,
     relay_urls: &[RelayUrl],
     event: &Event,
@@ -219,16 +215,14 @@ mod tests {
         )
         .await;
         let client = Client::new(Keys::generate());
+        let relay_urls = [first.clone(), second.clone()];
+        ensure_session_relays_configured(&client, &relay_urls).await;
+        connect_client_with_timeout(&client, Duration::from_secs(2)).await;
         let event = publish_test_event();
 
         let started = Instant::now();
-        let result = publish_event_fire_and_forget(
-            &client,
-            &[first.clone(), second.clone()],
-            &event,
-            "timing current",
-        )
-        .await;
+        let result =
+            publish_event_fire_and_forget(&client, &relay_urls, &event, "timing current").await;
         let elapsed = started.elapsed();
         result.map(|relays| (elapsed, relays.len()))
     }
@@ -290,12 +284,14 @@ mod tests {
             delayed_relay(Duration::from_millis(20), false, "duplicate: already have").await;
         let second = delayed_ok_relay(Duration::from_millis(600)).await;
         let client = Client::new(Keys::generate());
+        let relay_urls = [first, second];
+        ensure_session_relays_configured(&client, &relay_urls).await;
+        connect_client_with_timeout(&client, Duration::from_secs(2)).await;
         let event = publish_test_event();
         let started = Instant::now();
-        let accepted =
-            publish_event_fire_and_forget(&client, &[first, second], &event, "duplicate")
-                .await
-                .expect("terminal duplicate should count as success");
+        let accepted = publish_event_fire_and_forget(&client, &relay_urls, &event, "duplicate")
+            .await
+            .expect("terminal duplicate should count as success");
         let elapsed = started.elapsed();
 
         assert_eq!(accepted.len(), 1);
