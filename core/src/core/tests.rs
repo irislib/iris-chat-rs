@@ -1,7 +1,4 @@
 use super::*;
-// These legacy simulation tests target the removed NdrRuntime facade.
-// AppCore protocol coverage below exercises the current ProtocolEngine path.
-#[cfg(any())]
 use nostr_double_ratchet_runtime::{NdrRuntime, SessionManagerEvent};
 
 #[derive(Clone)]
@@ -2514,7 +2511,6 @@ fn collect_core_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathB
     }
 }
 
-#[cfg(any())]
 #[test]
 fn ndr_runtime_invite_session_round_trips_text() {
     let alice_keys = Keys::generate();
@@ -2718,7 +2714,6 @@ fn nearby_presence_event_binds_owner_to_ble_nonce_pair() {
     .is_empty());
 }
 
-#[cfg(any())]
 #[test]
 fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     let alice_keys = Keys::generate();
@@ -2855,7 +2850,6 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     );
 }
 
-#[cfg(any())]
 #[test]
 fn mobile_push_decrypts_compacted_apns_event_payload() {
     let alice_keys = Keys::generate();
@@ -2938,7 +2932,6 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
     assert_eq!(resolution.body, message);
 }
 
-#[cfg(any())]
 #[test]
 fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     let alice_keys = Keys::generate();
@@ -3058,7 +3051,6 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     assert_eq!(thread.messages.len(), 1, "duplicate push event is ignored");
 }
 
-#[cfg(any())]
 #[test]
 fn mobile_push_decrypt_suppresses_typing_rumors() {
     // Even with valid keys and a working ratchet, the notification
@@ -3261,7 +3253,6 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
     assert_eq!(resolution.title, "Alice from work");
 }
 
-#[cfg(any())]
 #[test]
 fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
     let alice_keys = Keys::generate();
@@ -3446,7 +3437,6 @@ fn appcore_persists_pending_group_sender_key_outer_when_no_group_message_emits()
     );
 }
 
-#[cfg(any())]
 #[test]
 fn appcore_defers_decrypted_delivery_ack_until_app_state_is_persisted() {
     let alice_keys = Keys::generate();
@@ -4616,7 +4606,6 @@ fn recent_protocol_filters_do_not_include_unscoped_message_backfill_for_cold_tra
     );
 }
 
-#[cfg(any())]
 #[test]
 fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_backfill() {
     let alice_keys = Keys::generate();
@@ -7202,7 +7191,6 @@ fn stored_pending_group_sender_key_message_count(
         .unwrap_or_default()
 }
 
-#[cfg(any())]
 fn stored_pending_decrypted_delivery_count(core: &AppCore, owner: &Keys, device: &Keys) -> usize {
     runtime_state_json(core, owner, device)
         .get("pending_decrypted_deliveries")
@@ -7224,7 +7212,6 @@ fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
         .expect("unknown group sender-key outer")
 }
 
-#[cfg(any())]
 fn delivered_texts() -> &'static std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>> {
     static DELIVERED: std::sync::OnceLock<
         std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>>,
@@ -7232,19 +7219,16 @@ fn delivered_texts() -> &'static std::sync::Mutex<std::collections::HashMap<usiz
     DELIVERED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
-#[cfg(any())]
 fn runtime_key(runtime: &NdrRuntime) -> usize {
     runtime as *const NdrRuntime as usize
 }
 
-#[cfg(any())]
 fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
     for event in drain_signed_events(from, signer) {
         deliver_event_to_runtime(to, event);
     }
 }
 
-#[cfg(any())]
 fn deliver_runtime_effects(
     from: &NdrRuntime,
     signer: &Keys,
@@ -7263,7 +7247,6 @@ fn deliver_runtime_effects(
     }
 }
 
-#[cfg(any())]
 fn accept_invite_and_deliver(
     acceptor: &NdrRuntime,
     acceptor_keys: &Keys,
@@ -7277,7 +7260,6 @@ fn accept_invite_and_deliver(
     deliver_runtime_effects(acceptor, acceptor_keys, acceptor.drain_events(), inviter);
 }
 
-#[cfg(any())]
 fn deliver_event_to_runtime(to: &NdrRuntime, event: Event) {
     to.process_received_event(event);
     let effects = to.drain_events();
@@ -7303,7 +7285,6 @@ fn deliver_event_to_runtime(to: &NdrRuntime, event: Event) {
     }
 }
 
-#[cfg(any())]
 fn apply_runtime_persist_effects(_runtime: &NdrRuntime, _effects: &[SessionManagerEvent]) {
     // Runtime persistence is internal. This helper keeps existing simulated
     // relay-delivery tests readable where they previously modeled app steps.
@@ -7317,7 +7298,6 @@ fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
         .collect()
 }
 
-#[cfg(any())]
 fn complete_first_contact(
     acceptor: &NdrRuntime,
     acceptor_keys: &Keys,
@@ -7334,7 +7314,6 @@ fn complete_first_contact(
     deliver_runtime_effects(acceptor, acceptor_keys, acceptor.drain_events(), inviter);
 }
 
-#[cfg(any())]
 fn signed_events_from_effects(effects: Vec<SessionManagerEvent>, signer: &Keys) -> Vec<Event> {
     effects
         .into_iter()
@@ -7349,7 +7328,6 @@ fn signed_events_from_effects(effects: Vec<SessionManagerEvent>, signer: &Keys) 
         .collect()
 }
 
-#[cfg(any())]
 fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
     let mut effects = runtime.drain_events();
     if effects.is_empty() {
@@ -7377,7 +7355,6 @@ fn serializable_key_pair_for_test(keys: &Keys) -> nostr_double_ratchet::Serializ
     }
 }
 
-#[cfg(any())]
 fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
     let mut value = serde_json::to_value(event).expect("event json");
     if let Some(object) = value.as_object_mut() {
@@ -7399,7 +7376,6 @@ fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
     value
 }
 
-#[cfg(any())]
 fn drain_text_messages(runtime: &NdrRuntime) -> Vec<String> {
     delivered_texts()
         .lock()
