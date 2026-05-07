@@ -2,15 +2,8 @@ use super::*;
 
 impl AppCore {
     pub(super) fn build_runtime_debug_snapshot(&self) -> RuntimeDebugSnapshot {
-        let current_protocol_plan =
-            self.compute_protocol_subscription_plan()
-                .map(|plan| RuntimeProtocolPlanDebug {
-                    runtime_subscriptions: plan.runtime_subscriptions,
-                    roster_authors: plan.roster_authors,
-                    invite_authors: plan.invite_authors,
-                    message_authors: plan.message_authors,
-                    invite_response_recipient: plan.invite_response_recipient,
-                });
+        let protocol_subscription = self.protocol_subscription_debug_snapshot();
+        let current_protocol_plan = protocol_subscription.desired_plan.clone();
         let tracked_owner_hexes = sorted_hexes(self.tracked_peer_owner_hexes());
         let current_chat_list = self.threads.keys().cloned().collect::<Vec<_>>();
         let (local_owner_pubkey_hex, local_device_pubkey_hex, authorization_state) =
@@ -54,6 +47,7 @@ impl AppCore {
             active_chat_id: self.active_chat_id.clone(),
             relay_transport: self.relay_transport_debug_snapshot(),
             current_protocol_plan,
+            protocol_subscription,
             protocol_engine: self
                 .protocol_engine
                 .as_ref()
@@ -185,6 +179,7 @@ impl AppCore {
             active_chat_id: runtime.active_chat_id,
             current_screen: format!("{current_screen:?}"),
             relay_transport: runtime.relay_transport,
+            protocol_subscription: runtime.protocol_subscription,
             chat_count: self.threads.len(),
             direct_chat_count,
             group_chat_count,
@@ -199,6 +194,27 @@ impl AppCore {
             recent_log: runtime.recent_log,
             current_chat_list: runtime.current_chat_list,
             latest_toast: runtime.toast,
+        }
+    }
+
+    fn protocol_subscription_debug_snapshot(&self) -> RuntimeProtocolSubscriptionDebug {
+        let runtime = &self.protocol_subscription_runtime;
+        RuntimeProtocolSubscriptionDebug {
+            desired_plan: runtime
+                .desired_plan
+                .clone()
+                .map(RuntimeProtocolPlanDebug::from),
+            applying_plan: runtime
+                .applying_plan
+                .clone()
+                .map(RuntimeProtocolPlanDebug::from),
+            applied_plan: runtime
+                .applied_plan
+                .clone()
+                .map(RuntimeProtocolPlanDebug::from),
+            refresh_in_flight: runtime.refresh_in_flight,
+            refresh_dirty: runtime.refresh_dirty,
+            force_reconnect_dirty: runtime.force_reconnect_dirty,
         }
     }
 
@@ -278,6 +294,19 @@ impl AppCore {
         self.state.toast = Some("Iris needs restart. Copy support bundle in Settings.".to_string());
         self.persist_debug_snapshot_best_effort();
         self.emit_state();
+    }
+}
+
+impl From<ProtocolSubscriptionPlan> for RuntimeProtocolPlanDebug {
+    fn from(plan: ProtocolSubscriptionPlan) -> Self {
+        Self {
+            runtime_subscriptions: plan.runtime_subscriptions,
+            roster_authors: plan.roster_authors,
+            invite_authors: plan.invite_authors,
+            message_authors: plan.message_authors,
+            group_sender_key_authors: plan.group_sender_key_authors,
+            invite_response_recipient: plan.invite_response_recipient,
+        }
     }
 }
 

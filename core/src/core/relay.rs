@@ -427,10 +427,21 @@ impl AppCore {
                     self.request_protocol_subscription_refresh();
                 }
                 ProtocolEffect::Subscribe { subid, filters } => {
-                    self.apply_runtime_subscription(subid, filters);
+                    self.push_debug_log(
+                        "appcore.protocol.subscribe_ignored",
+                        format!(
+                            "subid={subid} filters={} using_appcore_plan=true",
+                            filters.len()
+                        ),
+                    );
+                    self.request_protocol_subscription_refresh();
                 }
                 ProtocolEffect::Unsubscribe(subid) => {
-                    self.remove_runtime_subscription(subid);
+                    self.push_debug_log(
+                        "appcore.protocol.unsubscribe_ignored",
+                        format!("subid={subid} using_appcore_plan=true"),
+                    );
+                    self.request_protocol_subscription_refresh();
                 }
                 ProtocolEffect::FetchBackfill => {
                     self.fetch_recent_protocol_state();
@@ -519,100 +530,6 @@ impl AppCore {
             }
         }
         self.pending_decrypted_delivery_acks.clear();
-    }
-
-    fn apply_runtime_subscription(&mut self, subid: String, filters: Vec<Filter>) {
-        if filters.is_empty() {
-            return;
-        }
-
-        self.remove_runtime_subscription_family(&subid);
-        let mut changed = false;
-        let mut added_authors = Vec::new();
-        let multiple = filters.len() > 1;
-        for (index, filter) in filters.into_iter().enumerate() {
-            let indexed_subid = if multiple {
-                format!("{subid}-{index}")
-            } else {
-                subid.clone()
-            };
-            changed |= self.upsert_protocol_subscription(indexed_subid.clone(), filter.clone());
-            added_authors.extend(self.direct_message_subscriptions.register_subscription(
-                &indexed_subid,
-                serde_json::to_string(&filter).unwrap_or_default(),
-            ));
-        }
-        added_authors.sort_by_key(|pubkey| pubkey.to_hex());
-        added_authors.dedup();
-        if !added_authors.is_empty() {
-            self.mark_mobile_push_dirty();
-            self.rebuild_state();
-            self.emit_state();
-        }
-        for author in added_authors {
-            self.fetch_recent_messages_for_author(
-                author,
-                unix_now(),
-                NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
-            );
-        }
-        if changed {
-            self.reconcile_protocol_subscriptions("runtime_subscribe", false);
-            self.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
-        }
-        self.push_debug_log(
-            "runtime.subscribe",
-            format!(
-                "subid={subid} changed={changed} direct_authors={}",
-                self.direct_message_subscriptions.tracked_authors().len()
-            ),
-        );
-    }
-
-    fn remove_runtime_subscription(&mut self, subid: String) {
-        let removed = self.remove_runtime_subscription_family(&subid);
-        let Some(client) = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.client.clone())
-        else {
-            return;
-        };
-        self.runtime.spawn(async move {
-            let ids = if removed.is_empty() {
-                vec![subid]
-            } else {
-                removed
-            };
-            for id in ids {
-                let _ = client.unsubscribe(&SubscriptionId::new(id)).await;
-            }
-        });
-    }
-
-    pub(super) fn remove_runtime_subscription_family(&mut self, subid: &str) -> Vec<String> {
-        let previous_authors = self.direct_message_subscriptions.tracked_authors();
-        let prefix = format!("{subid}-");
-        let removed = self
-            .protocol_subscription_runtime
-            .active_subscriptions
-            .keys()
-            .filter(|existing| existing.as_str() == subid || existing.starts_with(&prefix))
-            .cloned()
-            .collect::<Vec<_>>();
-        for existing in &removed {
-            self.protocol_subscription_runtime
-                .active_subscriptions
-                .remove(existing);
-            self.direct_message_subscriptions
-                .unregister_subscription(existing);
-        }
-        if self.direct_message_subscriptions.tracked_authors() != previous_authors {
-            self.mark_mobile_push_dirty();
-            self.rebuild_state();
-            self.emit_state();
-        }
-        removed
     }
 
     /// Process an app-keys event (kind 30078) — adds/removes devices

@@ -105,22 +105,21 @@ pub(crate) struct ProtocolSubscriptionPlan {
     pub(crate) roster_authors: Vec<String>,
     pub(crate) invite_authors: Vec<String>,
     pub(crate) message_authors: Vec<String>,
+    pub(crate) group_sender_key_authors: Vec<String>,
     pub(crate) invite_response_recipient: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ProtocolSubscriptionRuntime {
-    pub(super) active_subscriptions: BTreeMap<String, ProtocolSubscriptionSpec>,
+    pub(super) desired_plan: Option<ProtocolSubscriptionPlan>,
+    pub(super) applying_plan: Option<ProtocolSubscriptionPlan>,
+    pub(super) applied_plan: Option<ProtocolSubscriptionPlan>,
     pub(super) refresh_token: u64,
     pub(super) reconcile_token: u64,
     pub(super) refresh_in_flight: bool,
     pub(super) refresh_dirty: bool,
     pub(super) force_reconnect_dirty: bool,
     pub(super) liveness_due_at: Option<Instant>,
-    /// Last subscription plan summary that was actually emitted via the
-    /// debug log / refresh-token bump. Lets the refresh path bail out early
-    /// when nothing has changed since the previous call.
-    pub(super) last_emitted_plan_summary: Option<String>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -137,12 +136,6 @@ pub(super) struct RelayTransportRuntime {
     pub(super) next_retry_reason: Option<String>,
     pub(super) last_connect_reason: Option<String>,
     pub(super) last_drain_reason: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-pub(super) struct ProtocolSubscriptionSpec {
-    pub(super) filter: Filter,
-    pub(super) summary: String,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -187,6 +180,7 @@ pub(super) struct RuntimeDebugSnapshot {
     pub(super) active_chat_id: Option<String>,
     pub(super) relay_transport: RuntimeRelayTransportDebug,
     pub(super) current_protocol_plan: Option<RuntimeProtocolPlanDebug>,
+    pub(super) protocol_subscription: RuntimeProtocolSubscriptionDebug,
     pub(super) protocol_engine: Option<ProtocolEngineDebugSnapshot>,
     pub(super) pending_relay_publishes: Vec<RuntimePendingRelayPublishDebug>,
     pub(super) tracked_owner_hexes: Vec<String>,
@@ -217,6 +211,7 @@ pub(super) struct SupportBundle {
     pub(super) active_chat_id: Option<String>,
     pub(super) current_screen: String,
     pub(super) relay_transport: RuntimeRelayTransportDebug,
+    pub(super) protocol_subscription: RuntimeProtocolSubscriptionDebug,
     pub(super) chat_count: usize,
     pub(super) direct_chat_count: usize,
     pub(super) group_chat_count: usize,
@@ -260,7 +255,19 @@ pub(super) struct RuntimeProtocolPlanDebug {
     #[serde(default)]
     pub(super) message_authors: Vec<String>,
     #[serde(default)]
+    pub(super) group_sender_key_authors: Vec<String>,
+    #[serde(default)]
     pub(super) invite_response_recipient: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(super) struct RuntimeProtocolSubscriptionDebug {
+    pub(super) desired_plan: Option<RuntimeProtocolPlanDebug>,
+    pub(super) applying_plan: Option<RuntimeProtocolPlanDebug>,
+    pub(super) applied_plan: Option<RuntimeProtocolPlanDebug>,
+    pub(super) refresh_in_flight: bool,
+    pub(super) refresh_dirty: bool,
+    pub(super) force_reconnect_dirty: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

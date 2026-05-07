@@ -1,10 +1,7 @@
 use super::*;
 
-const GROUP_OUTER_SUBSCRIPTION_ID: &str = "ndr-group-outer";
-const APPCORE_PROTOCOL_SUBSCRIPTION_ID: &str = "appcore-protocol";
-const PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID: &str = "ndr-private-invite-responses";
-const PRIVATE_INVITE_RESPONSE_AUTHOR_SUBSCRIPTION_ID: &str = "ndr-private-invite-responses-authors";
-const BOOTSTRAP_DIRECT_MESSAGE_SUBSCRIPTION_ID: &str = "ndr-runtime-messages-bootstrap";
+const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
+const PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS: u64 = 8;
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 pub(super) const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 const RELAY_TRANSPORT_RETRY_BACKOFF_SECS: [u64; 5] = [2, 5, 15, 30, 60];
@@ -223,12 +220,7 @@ impl AppCore {
     }
 
     pub(super) fn schedule_protocol_subscription_liveness_check(&mut self, after: Duration) {
-        if self
-            .protocol_subscription_runtime
-            .active_subscriptions
-            .is_empty()
-            && self.pending_relay_publishes.is_empty()
-        {
+        if !self.has_protocol_liveness_work() {
             self.protocol_subscription_runtime.liveness_due_at = None;
             return;
         }
@@ -250,6 +242,19 @@ impl AppCore {
                 InternalEvent::ProtocolSubscriptionLivenessCheck { token },
             )));
         });
+    }
+
+    fn has_protocol_liveness_work(&self) -> bool {
+        self.protocol_subscription_runtime.desired_plan.is_some()
+            || self.protocol_subscription_runtime.applying_plan.is_some()
+            || self.protocol_subscription_runtime.applied_plan.is_some()
+            || self.protocol_subscription_runtime.refresh_in_flight
+            || self.protocol_subscription_runtime.refresh_dirty
+            || !self.pending_relay_publishes.is_empty()
+            || self
+                .protocol_engine
+                .as_ref()
+                .is_some_and(|engine| engine.has_pending_inbound_direct_events())
     }
 
     pub(super) fn schedule_pending_device_invite_poll(&mut self, after: Duration) {
@@ -387,12 +392,38 @@ impl AppCore {
     }
 
     pub(super) fn fetch_recent_messages_for_tracked_peers(&self, now: UnixSeconds) {
-        let direct_authors = self.direct_message_subscriptions.tracked_authors();
-        let group_authors = self
-            .protocol_engine
+        let direct_authors = self
+            .protocol_subscription_runtime
+            .desired_plan
             .as_ref()
-            .map(ProtocolEngine::known_group_sender_event_pubkeys)
-            .unwrap_or_default();
+            .map(|plan| {
+                plan.message_authors
+                    .iter()
+                    .filter_map(|hex| PublicKey::parse(hex).ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| {
+                self.protocol_engine
+                    .as_ref()
+                    .map(ProtocolEngine::known_message_author_pubkeys)
+                    .unwrap_or_default()
+            });
+        let group_authors = self
+            .protocol_subscription_runtime
+            .desired_plan
+            .as_ref()
+            .map(|plan| {
+                plan.group_sender_key_authors
+                    .iter()
+                    .filter_map(|hex| PublicKey::parse(hex).ok())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|| {
+                self.protocol_engine
+                    .as_ref()
+                    .map(ProtocolEngine::known_group_sender_event_pubkeys)
+                    .unwrap_or_default()
+            });
         for author in direct_authors {
             self.fetch_recent_messages_for_author(author, now, CATCH_UP_LOOKBACK_SECS);
         }
@@ -406,11 +437,15 @@ impl AppCore {
     }
 
     pub(super) fn recent_protocol_filters(&self, now: UnixSeconds) -> Vec<Filter> {
-        let owners = self
-            .protocol_owner_hexes()
-            .into_iter()
-            .filter_map(|hex| PublicKey::parse(&hex).ok())
-            .collect::<Vec<_>>();
+        let Some(plan) = self
+            .protocol_subscription_runtime
+            .desired_plan
+            .clone()
+            .or_else(|| self.compute_protocol_subscription_plan())
+        else {
+            return Vec::new();
+        };
+        let owners = pubkeys_from_hexes(&plan.roster_authors);
         let mut filters = if owners.is_empty() {
             Vec::new()
         } else {
@@ -428,7 +463,7 @@ impl AppCore {
                     .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
             );
         }
-        let invite_authors = self.protocol_invite_author_pubkeys(&owners);
+        let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
         if !invite_authors.is_empty() {
             filters.push(
                 Filter::new()
@@ -441,17 +476,33 @@ impl AppCore {
                     .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
             );
         }
-        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
-            let message_authors = protocol_engine.known_message_author_pubkeys();
-            if !message_authors.is_empty() {
-                filters.push(build_direct_message_backfill_filter(
-                    message_authors,
-                    now.get().saturating_sub(CATCH_UP_LOOKBACK_SECS),
-                    DEVICE_INVITE_DISCOVERY_LIMIT,
-                ));
-            }
+        let message_authors = pubkeys_from_hexes(&plan.message_authors);
+        if !message_authors.is_empty() {
+            filters.push(build_direct_message_backfill_filter(
+                message_authors,
+                now.get().saturating_sub(CATCH_UP_LOOKBACK_SECS),
+                DEVICE_INVITE_DISCOVERY_LIMIT,
+            ));
         }
-        let private_invite_response_pubkeys = self.protocol_invite_response_pubkeys();
+
+        let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
+        if !group_sender_key_authors.is_empty() {
+            filters.push(
+                Filter::new()
+                    .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
+                    .authors(group_sender_key_authors)
+                    .since(Timestamp::from(
+                        now.get().saturating_sub(CATCH_UP_LOOKBACK_SECS),
+                    ))
+                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
+            );
+        }
+
+        let private_invite_response_pubkeys = plan
+            .invite_response_recipient
+            .as_deref()
+            .map(pubkeys_from_comma_separated_hexes)
+            .unwrap_or_default();
         if !private_invite_response_pubkeys.is_empty() {
             filters.push(
                 Filter::new()
@@ -884,29 +935,11 @@ impl AppCore {
         force: bool,
         force_reconnect_if_offline: bool,
     ) {
-        let Some((client, protocol_owners, group_authors, appcore_message_authors)) =
-            self.logged_in.as_ref().map(|logged_in| {
-                (
-                    logged_in.client.clone(),
-                    self.protocol_owner_hexes()
-                        .into_iter()
-                        .filter_map(|hex| PublicKey::parse(&hex).ok())
-                        .collect::<Vec<_>>(),
-                    self.protocol_engine
-                        .as_ref()
-                        .map(ProtocolEngine::known_group_sender_event_pubkeys)
-                        .unwrap_or_default(),
-                    self.protocol_engine
-                        .as_ref()
-                        .map(|engine| engine.known_message_author_pubkeys())
-                        .unwrap_or_default(),
-                )
-            })
-        else {
+        if self.logged_in.is_none() {
             self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
             self.relay_transport_runtime = RelayTransportRuntime::default();
             return;
-        };
+        }
         if self
             .logged_in
             .as_ref()
@@ -917,219 +950,25 @@ impl AppCore {
             self.relay_transport_runtime = RelayTransportRuntime::default();
             return;
         }
-        let protocol_invite_authors = self.protocol_invite_author_pubkeys(&protocol_owners);
-        let appcore_protocol_subscription_changed = {
-            let mut filters = Vec::new();
-            if !protocol_owners.is_empty() {
-                filters.push(
-                    Filter::new()
-                        .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
-                        .authors(protocol_owners.clone()),
-                );
-            }
-            if !protocol_invite_authors.is_empty() {
-                filters.push(
-                    Filter::new()
-                        .kind(Kind::from(INVITE_EVENT_KIND as u16))
-                        .authors(protocol_invite_authors.clone()),
-                );
-            }
-            if !filters.is_empty() {
-                let mut changed = false;
-                for (index, filter) in filters.into_iter().enumerate() {
-                    changed |= self.upsert_protocol_subscription(
-                        format!("{APPCORE_PROTOCOL_SUBSCRIPTION_ID}-{index}"),
-                        filter,
-                    );
-                }
-                changed
-            } else {
-                let removed =
-                    self.remove_runtime_subscription_family(APPCORE_PROTOCOL_SUBSCRIPTION_ID);
-                if !removed.is_empty() {
-                    let client = client.clone();
-                    self.runtime.spawn(async move {
-                        for id in removed {
-                            let _ = client.unsubscribe(&SubscriptionId::new(id)).await;
-                        }
-                    });
-                    true
-                } else {
-                    false
-                }
-            }
-        };
 
-        let appcore_direct_subscription_changed = if !appcore_message_authors.is_empty() {
-            let filter = Filter::new()
-                .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
-                .authors(appcore_message_authors.clone());
-            let subid = "ndr-runtime-messages-appcore".to_string();
-            let changed = self.upsert_protocol_subscription(subid.clone(), filter.clone());
-            let added_authors = self
-                .direct_message_subscriptions
-                .register_subscription(&subid, serde_json::to_string(&filter).unwrap_or_default());
-            for author in added_authors {
-                self.fetch_recent_messages_for_author(
-                    author,
-                    unix_now(),
-                    NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
-                );
-            }
-            changed
-        } else {
-            let removed = self
-                .protocol_subscription_runtime
-                .active_subscriptions
-                .remove("ndr-runtime-messages-appcore")
-                .is_some();
-            self.direct_message_subscriptions
-                .unregister_subscription("ndr-runtime-messages-appcore");
-            if removed {
-                let client = client.clone();
-                self.runtime.spawn(async move {
-                    let _ = client
-                        .unsubscribe(&SubscriptionId::new("ndr-runtime-messages-appcore"))
-                        .await;
-                });
-            }
-            removed
-        };
+        let previous_desired = self.protocol_subscription_runtime.desired_plan.clone();
+        let desired_plan = self.compute_protocol_subscription_plan();
+        let plan_changed = previous_desired != desired_plan;
+        self.note_protocol_plan_author_changes(previous_desired.as_ref(), desired_plan.as_ref());
+        self.protocol_subscription_runtime.desired_plan = desired_plan.clone();
 
-        let bootstrap_direct_subscription_changed = {
-            let removed = self
-                .protocol_subscription_runtime
-                .active_subscriptions
-                .remove(BOOTSTRAP_DIRECT_MESSAGE_SUBSCRIPTION_ID)
-                .is_some();
-            if removed {
-                let client = client.clone();
-                self.runtime.spawn(async move {
-                    let _ = client
-                        .unsubscribe(&SubscriptionId::new(
-                            BOOTSTRAP_DIRECT_MESSAGE_SUBSCRIPTION_ID,
-                        ))
-                        .await;
-                });
-            }
-            removed
-        };
-
-        let group_subscription_changed = if !group_authors.is_empty() {
-            let filter = Filter::new()
-                .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
-                .authors(group_authors.clone());
-            let subid = GROUP_OUTER_SUBSCRIPTION_ID.to_string();
-            let changed = self.upsert_protocol_subscription(subid.clone(), filter);
-            for author in group_authors {
-                self.fetch_recent_group_sender_key_messages_for_author(
-                    author,
-                    unix_now(),
-                    CATCH_UP_LOOKBACK_SECS,
-                );
-            }
-            changed
-        } else {
-            let removed = self
-                .protocol_subscription_runtime
-                .active_subscriptions
-                .remove(GROUP_OUTER_SUBSCRIPTION_ID)
-                .is_some();
-            if removed {
-                let client = client.clone();
-                self.runtime.spawn(async move {
-                    let _ = client
-                        .unsubscribe(&SubscriptionId::new(GROUP_OUTER_SUBSCRIPTION_ID))
-                        .await;
-                });
-            }
-            removed
-        };
-        let private_invite_response_pubkeys = self.protocol_invite_response_pubkeys();
-        let private_invite_subscription_changed = if !private_invite_response_pubkeys.is_empty() {
-            let filter = Filter::new()
-                .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
-                .pubkeys(private_invite_response_pubkeys);
-            self.upsert_protocol_subscription(
-                PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID.to_string(),
-                filter,
-            )
-        } else {
-            let removed = self
-                .protocol_subscription_runtime
-                .active_subscriptions
-                .remove(PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID)
-                .is_some();
-            if removed {
-                let client = client.clone();
-                self.runtime.spawn(async move {
-                    let _ = client
-                        .unsubscribe(&SubscriptionId::new(
-                            PRIVATE_INVITE_RESPONSE_SUBSCRIPTION_ID,
-                        ))
-                        .await;
-                });
-            }
-            removed
-        };
-        let private_invite_author_subscription_changed = if !protocol_invite_authors.is_empty() {
-            let filter = Filter::new()
-                .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
-                .authors(protocol_invite_authors.clone());
-            self.upsert_protocol_subscription(
-                PRIVATE_INVITE_RESPONSE_AUTHOR_SUBSCRIPTION_ID.to_string(),
-                filter,
-            )
-        } else {
-            let removed = self
-                .protocol_subscription_runtime
-                .active_subscriptions
-                .remove(PRIVATE_INVITE_RESPONSE_AUTHOR_SUBSCRIPTION_ID)
-                .is_some();
-            if removed {
-                let client = client.clone();
-                self.runtime.spawn(async move {
-                    let _ = client
-                        .unsubscribe(&SubscriptionId::new(
-                            PRIVATE_INVITE_RESPONSE_AUTHOR_SUBSCRIPTION_ID,
-                        ))
-                        .await;
-                });
-            }
-            removed
-        };
-        let subscription_filters_changed = appcore_protocol_subscription_changed
-            || appcore_direct_subscription_changed
-            || bootstrap_direct_subscription_changed
-            || group_subscription_changed
-            || private_invite_subscription_changed
-            || private_invite_author_subscription_changed;
-
-        // Only bump the refresh token + emit a debug log entry when the
-        // computed plan has actually changed since the last emission.
-        // Otherwise the log fills up with identical lines on every chat
-        // action even though nothing on the relay side moved.
-        let plan_summary =
-            summarize_protocol_plan(self.compute_protocol_subscription_plan().as_ref());
-        let plan_changed = self
-            .protocol_subscription_runtime
-            .last_emitted_plan_summary
-            .as_ref()
-            != Some(&plan_summary);
-        if plan_changed {
+        let plan_summary = summarize_protocol_plan(desired_plan.as_ref());
+        if force || plan_changed {
             self.protocol_subscription_runtime.refresh_token = self
                 .protocol_subscription_runtime
                 .refresh_token
                 .wrapping_add(1);
-            self.protocol_subscription_runtime.last_emitted_plan_summary =
-                Some(plan_summary.clone());
             self.push_debug_log("protocol.subscription.refresh", plan_summary);
         }
-        if force || plan_changed || subscription_filters_changed {
+        let unapplied = self.protocol_subscription_runtime.applied_plan != desired_plan;
+        if force || plan_changed || unapplied {
             let reason = if force {
                 "forced_refresh"
-            } else if subscription_filters_changed {
-                "filters_changed"
             } else {
                 "plan_changed"
             };
@@ -1141,13 +980,6 @@ impl AppCore {
     }
 
     pub(super) fn compute_protocol_subscription_plan(&self) -> Option<ProtocolSubscriptionPlan> {
-        let runtime_subscriptions = self
-            .protocol_subscription_runtime
-            .active_subscriptions
-            .keys()
-            .cloned()
-            .collect::<HashSet<_>>();
-        let runtime_subscriptions = sorted_hexes(runtime_subscriptions);
         let roster_authors = self
             .protocol_owner_hexes()
             .into_iter()
@@ -1172,6 +1004,15 @@ impl AppCore {
             .map(|pubkey| pubkey.to_hex())
             .collect::<HashSet<_>>();
         let message_authors = sorted_hexes(message_authors);
+        let group_sender_key_authors = self
+            .protocol_engine
+            .as_ref()
+            .map(ProtocolEngine::known_group_sender_event_pubkeys)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect::<HashSet<_>>();
+        let group_sender_key_authors = sorted_hexes(group_sender_key_authors);
         let invite_response_recipient = self
             .protocol_invite_response_pubkeys()
             .into_iter()
@@ -1180,13 +1021,80 @@ impl AppCore {
             .join(",");
         let invite_response_recipient =
             (!invite_response_recipient.is_empty()).then_some(invite_response_recipient);
-        (!runtime_subscriptions.is_empty()).then_some(ProtocolSubscriptionPlan {
-            runtime_subscriptions,
+        let has_filters = !roster_authors.is_empty()
+            || !invite_authors.is_empty()
+            || !message_authors.is_empty()
+            || !group_sender_key_authors.is_empty()
+            || invite_response_recipient.is_some();
+        has_filters.then_some(ProtocolSubscriptionPlan {
+            runtime_subscriptions: vec![PROTOCOL_SUBSCRIPTION_ID.to_string()],
             roster_authors,
             invite_authors,
             message_authors,
+            group_sender_key_authors,
             invite_response_recipient,
         })
+    }
+
+    fn note_protocol_plan_author_changes(
+        &mut self,
+        previous: Option<&ProtocolSubscriptionPlan>,
+        next: Option<&ProtocolSubscriptionPlan>,
+    ) {
+        let previous_message_authors = previous
+            .map(|plan| plan.message_authors.iter().cloned().collect::<HashSet<_>>())
+            .unwrap_or_default();
+        let next_message_authors = next
+            .map(|plan| plan.message_authors.iter().cloned().collect::<HashSet<_>>())
+            .unwrap_or_default();
+        let mut added_message_authors = next_message_authors
+            .difference(&previous_message_authors)
+            .cloned()
+            .collect::<Vec<_>>();
+        added_message_authors.sort();
+        if !added_message_authors.is_empty() {
+            self.mark_mobile_push_dirty();
+        }
+        for author_hex in added_message_authors {
+            if let Ok(author) = PublicKey::parse(&author_hex) {
+                self.fetch_recent_messages_for_author(
+                    author,
+                    unix_now(),
+                    NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
+                );
+            }
+        }
+
+        let previous_group_authors = previous
+            .map(|plan| {
+                plan.group_sender_key_authors
+                    .iter()
+                    .cloned()
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let next_group_authors = next
+            .map(|plan| {
+                plan.group_sender_key_authors
+                    .iter()
+                    .cloned()
+                    .collect::<HashSet<_>>()
+            })
+            .unwrap_or_default();
+        let mut added_group_authors = next_group_authors
+            .difference(&previous_group_authors)
+            .cloned()
+            .collect::<Vec<_>>();
+        added_group_authors.sort();
+        for author_hex in added_group_authors {
+            if let Ok(author) = PublicKey::parse(&author_hex) {
+                self.fetch_recent_group_sender_key_messages_for_author(
+                    author,
+                    unix_now(),
+                    CATCH_UP_LOOKBACK_SECS,
+                );
+            }
+        }
     }
 
     #[cfg(test)]
@@ -1340,12 +1248,13 @@ impl AppCore {
         if self.logged_in.is_none() {
             return;
         }
-        let has_active_subscriptions = !self
-            .protocol_subscription_runtime
-            .active_subscriptions
-            .is_empty();
+        let has_subscription_work = self.protocol_subscription_runtime.desired_plan.is_some()
+            || self.protocol_subscription_runtime.applied_plan.is_some()
+            || self.protocol_subscription_runtime.applying_plan.is_some()
+            || self.protocol_subscription_runtime.refresh_in_flight
+            || self.protocol_subscription_runtime.refresh_dirty;
         let has_pending_relay_publishes = !self.pending_relay_publishes.is_empty();
-        if !has_active_subscriptions && !has_pending_relay_publishes {
+        if !has_subscription_work && !has_pending_relay_publishes {
             return;
         }
         let connected_relays = self
@@ -1363,9 +1272,14 @@ impl AppCore {
                 })
             })
             .unwrap_or(0);
-        let should_retry_backfill = has_active_subscriptions
+        let desired_unapplied = self.protocol_subscription_runtime.desired_plan
+            != self.protocol_subscription_runtime.applied_plan;
+        let should_retry_backfill = self.protocol_subscription_runtime.desired_plan.is_some()
             && (connected_relays == 0
                 || self.tracked_peer_protocol_backfill_needed()
+                || self.protocol_subscription_runtime.refresh_in_flight
+                || self.protocol_subscription_runtime.refresh_dirty
+                || desired_unapplied
                 || self
                     .protocol_engine
                     .as_ref()
@@ -1377,7 +1291,7 @@ impl AppCore {
                 self.pending_relay_publishes.len()
             ),
         );
-        if has_active_subscriptions {
+        if has_subscription_work {
             self.reconcile_protocol_subscriptions("liveness_check", true);
         }
         if should_retry_backfill {
@@ -1396,20 +1310,6 @@ impl AppCore {
         ));
     }
 
-    pub(super) fn upsert_protocol_subscription(&mut self, subid: String, filter: Filter) -> bool {
-        let summary = protocol_subscription_filter_summary(&filter);
-        let changed = self
-            .protocol_subscription_runtime
-            .active_subscriptions
-            .get(&subid)
-            .map(|existing| existing.summary != summary)
-            .unwrap_or(true);
-        self.protocol_subscription_runtime
-            .active_subscriptions
-            .insert(subid, ProtocolSubscriptionSpec { filter, summary });
-        changed
-    }
-
     pub(super) fn reconcile_protocol_subscriptions(
         &mut self,
         reason: &'static str,
@@ -1422,18 +1322,11 @@ impl AppCore {
         else {
             return;
         };
-        let subscriptions = self
-            .protocol_subscription_runtime
-            .active_subscriptions
-            .iter()
-            .map(|(subid, spec)| (subid.clone(), spec.filter.clone()))
-            .collect::<Vec<_>>();
-        if subscriptions.is_empty() {
-            if self.protocol_subscription_runtime.refresh_in_flight {
-                self.protocol_subscription_runtime.refresh_dirty = true;
-                self.protocol_subscription_runtime.force_reconnect_dirty |=
-                    force_reconnect_if_offline;
-            }
+        let desired_plan = self.protocol_subscription_runtime.desired_plan.clone();
+        if desired_plan.is_none()
+            && self.protocol_subscription_runtime.applied_plan.is_none()
+            && !self.protocol_subscription_runtime.refresh_in_flight
+        {
             return;
         }
         if self.protocol_subscription_runtime.refresh_in_flight {
@@ -1460,9 +1353,16 @@ impl AppCore {
             self.schedule_relay_transport_retry("subscription_reconcile_offline");
             return;
         }
+        let previous_applied_plan = self.protocol_subscription_runtime.applied_plan.clone();
+        let filters = desired_plan
+            .as_ref()
+            .map(build_protocol_subscription_filters)
+            .unwrap_or_default();
+        let filter_count = filters.len() as u64;
         self.protocol_subscription_runtime.refresh_in_flight = true;
         self.protocol_subscription_runtime.refresh_dirty = false;
         self.protocol_subscription_runtime.force_reconnect_dirty = false;
+        self.protocol_subscription_runtime.applying_plan = desired_plan.clone();
         self.protocol_subscription_runtime.reconcile_token = self
             .protocol_subscription_runtime
             .reconcile_token
@@ -1471,50 +1371,66 @@ impl AppCore {
         let generation = self.protocol_reconnect_token;
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            let connected_relays = client
-                .relays()
-                .await
-                .values()
-                .filter(|relay| relay.status() == RelayStatus::Connected)
-                .count();
-
-            let mut applied = 0usize;
-            let mut failed = 0usize;
-            if connected_relays == 0 {
-                failed = subscriptions.len();
-            } else {
-                for (subid, filter) in subscriptions {
-                    match client
-                        .subscribe_with_id(SubscriptionId::new(subid), filter, None)
-                        .await
-                    {
-                        Ok(_) => applied += 1,
-                        Err(_) => failed += 1,
+            let apply_result = tokio::time::timeout(
+                Duration::from_secs(PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS),
+                async {
+                    ensure_session_relays_configured(&client, &relay_urls).await;
+                    let connected_before = connected_relay_count_for_client(&client).await as u64;
+                    if connected_before == 0 {
+                        return ProtocolSubscriptionApplyOutput {
+                            connected_before,
+                            connected_after: connected_before,
+                            filter_count: filters.len() as u64,
+                            success: false,
+                            error: Some("no connected relays".to_string()),
+                        };
                     }
-                }
+                    let subscription_id = SubscriptionId::new(PROTOCOL_SUBSCRIPTION_ID);
+                    if previous_applied_plan.is_some() {
+                        let _ = client.unsubscribe(&subscription_id).await;
+                    }
+                    let result = if filters.is_empty() {
+                        Ok(())
+                    } else {
+                        subscribe_protocol_filters_with_id(&client, subscription_id, filters).await
+                    };
+                    let connected_after = connected_relay_count_for_client(&client).await as u64;
+                    ProtocolSubscriptionApplyOutput {
+                        connected_before,
+                        connected_after,
+                        filter_count,
+                        success: result.is_ok(),
+                        error: result.err(),
+                    }
+                },
+            )
+            .await;
+            let mut output = match apply_result {
+                Ok(output) => output,
+                Err(_) => ProtocolSubscriptionApplyOutput {
+                    connected_before: connected_relay_count_for_client(&client).await as u64,
+                    connected_after: connected_relay_count_for_client(&client).await as u64,
+                    filter_count,
+                    success: false,
+                    error: Some("timed out".to_string()),
+                },
+            };
+            if output.connected_after == 0 {
+                output.connected_after = connected_relay_count_for_client(&client).await as u64;
             }
-            let connected_after = connected_relays;
-            let relay_statuses = client
-                .relays()
-                .await
-                .into_iter()
-                .map(|(relay_url, relay)| {
-                    let relay_url = normalize_nostr_relay_url(&relay_url.to_string())
-                        .unwrap_or_else(|_| relay_url.to_string());
-                    (relay_url, relay.status())
-                })
-                .collect::<Vec<_>>();
+            let relay_statuses = current_client_relay_statuses(&client).await;
             let _ = tx.send(CoreMsg::Internal(Box::new(
                 InternalEvent::ProtocolSubscriptionReconcileCompleted {
                     generation,
                     token,
                     reason: reason.to_string(),
+                    plan: desired_plan,
+                    success: output.success,
+                    error: output.error,
                     relay_statuses,
-                    connected_before: connected_relays as u64,
-                    connected_after: connected_after as u64,
-                    applied: applied as u64,
-                    failed: failed as u64,
+                    connected_before: output.connected_before,
+                    connected_after: output.connected_after,
+                    filter_count: output.filter_count,
                 },
             )));
         });
@@ -1525,11 +1441,13 @@ impl AppCore {
         generation: u64,
         token: u64,
         reason: String,
+        plan: Option<ProtocolSubscriptionPlan>,
+        success: bool,
+        error: Option<String>,
         relay_statuses: Vec<(String, RelayStatus)>,
         connected_before: u64,
         connected_after: u64,
-        applied: u64,
-        failed: u64,
+        filter_count: u64,
     ) {
         if generation != self.protocol_reconnect_token {
             return;
@@ -1538,16 +1456,21 @@ impl AppCore {
             return;
         }
         self.protocol_subscription_runtime.refresh_in_flight = false;
+        self.protocol_subscription_runtime.applying_plan = None;
         let refresh_dirty = self.protocol_subscription_runtime.refresh_dirty;
         let force_reconnect_dirty = self.protocol_subscription_runtime.force_reconnect_dirty;
         self.protocol_subscription_runtime.refresh_dirty = false;
         self.protocol_subscription_runtime.force_reconnect_dirty = false;
+        if success {
+            self.protocol_subscription_runtime.applied_plan = plan;
+        }
 
         self.apply_relay_statuses(relay_statuses);
         self.push_debug_log(
             "protocol.subscription.reconcile",
             format!(
-                "reason={reason} connected_before={connected_before} connected_after={connected_after} applied={applied} failed={failed} dirty={refresh_dirty}"
+                "reason={reason} connected_before={connected_before} connected_after={connected_after} filters={filter_count} success={success} dirty={refresh_dirty} error={}",
+                error.as_deref().unwrap_or("")
             ),
         );
         if connected_after > 0 {
@@ -1560,6 +1483,14 @@ impl AppCore {
         }
         if refresh_dirty {
             self.request_protocol_subscription_refresh_inner(false, force_reconnect_dirty);
+        } else if !success
+            && self.protocol_subscription_runtime.desired_plan
+                != self.protocol_subscription_runtime.applied_plan
+        {
+            self.protocol_subscription_runtime.refresh_dirty = true;
+            self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                PROTOCOL_RECONNECT_CHECK_SECS,
+            ));
         }
         self.rebuild_state();
         self.emit_state();
@@ -1573,8 +1504,10 @@ impl AppCore {
     }
 
     pub(super) fn known_message_author_hexes(&self) -> HashSet<String> {
-        self.direct_message_subscriptions
-            .tracked_authors()
+        self.protocol_engine
+            .as_ref()
+            .map(ProtocolEngine::known_message_author_pubkeys)
+            .unwrap_or_default()
             .into_iter()
             .map(|pubkey| pubkey.to_hex())
             .collect()
@@ -1598,8 +1531,130 @@ impl AppCore {
     }
 }
 
-fn protocol_subscription_filter_summary(filter: &Filter) -> String {
-    serde_json::to_string(filter).unwrap_or_else(|_| "<filter>".to_string())
+struct ProtocolSubscriptionApplyOutput {
+    connected_before: u64,
+    connected_after: u64,
+    filter_count: u64,
+    success: bool,
+    error: Option<String>,
+}
+
+pub(super) fn build_protocol_subscription_filters(plan: &ProtocolSubscriptionPlan) -> Vec<Filter> {
+    let roster_authors = pubkeys_from_hexes(&plan.roster_authors);
+    let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
+    let message_authors = pubkeys_from_hexes(&plan.message_authors);
+    let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
+    let invite_response_recipients = plan
+        .invite_response_recipient
+        .as_deref()
+        .map(pubkeys_from_comma_separated_hexes)
+        .unwrap_or_default();
+
+    let mut filters = Vec::new();
+    if !roster_authors.is_empty() {
+        filters.push(
+            Filter::new()
+                .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
+                .authors(roster_authors),
+        );
+    }
+    if !invite_authors.is_empty() {
+        filters.push(
+            Filter::new()
+                .kind(Kind::from(INVITE_EVENT_KIND as u16))
+                .authors(invite_authors.clone()),
+        );
+        filters.push(
+            Filter::new()
+                .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
+                .authors(invite_authors),
+        );
+    }
+    if !message_authors.is_empty() {
+        filters.push(
+            Filter::new()
+                .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
+                .authors(message_authors),
+        );
+    }
+    if !group_sender_key_authors.is_empty() {
+        filters.push(
+            Filter::new()
+                .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
+                .authors(group_sender_key_authors),
+        );
+    }
+    if !invite_response_recipients.is_empty() {
+        filters.push(
+            Filter::new()
+                .kind(Kind::from(INVITE_RESPONSE_KIND as u16))
+                .pubkeys(invite_response_recipients),
+        );
+    }
+    filters
+}
+
+fn pubkeys_from_hexes(hexes: &[String]) -> Vec<PublicKey> {
+    hexes
+        .iter()
+        .filter_map(|hex| PublicKey::parse(hex).ok())
+        .collect()
+}
+
+fn pubkeys_from_comma_separated_hexes(hexes: &str) -> Vec<PublicKey> {
+    hexes
+        .split(',')
+        .filter(|hex| !hex.is_empty())
+        .filter_map(|hex| PublicKey::parse(hex).ok())
+        .collect()
+}
+
+async fn current_client_relay_statuses(client: &Client) -> Vec<(String, RelayStatus)> {
+    client
+        .relays()
+        .await
+        .into_iter()
+        .map(|(relay_url, relay)| {
+            let relay_url = normalize_nostr_relay_url(&relay_url.to_string())
+                .unwrap_or_else(|_| relay_url.to_string());
+            (relay_url, relay.status())
+        })
+        .collect()
+}
+
+async fn subscribe_protocol_filters_with_id(
+    client: &Client,
+    subscription_id: SubscriptionId,
+    filters: Vec<Filter>,
+) -> Result<(), String> {
+    let relays = client.relays().await;
+    let mut attempted = 0usize;
+    let mut accepted = 0usize;
+    let mut last_error = None;
+    for relay in relays.values() {
+        if relay.status() != RelayStatus::Connected {
+            continue;
+        }
+        attempted = attempted.saturating_add(1);
+        match relay
+            .subscribe_with_id(
+                subscription_id.clone(),
+                filters.clone(),
+                SubscribeOptions::default(),
+            )
+            .await
+        {
+            Ok(()) => accepted = accepted.saturating_add(1),
+            Err(error) => last_error = Some(error.to_string()),
+        }
+    }
+    if accepted > 0 {
+        Ok(())
+    } else if attempted == 0 {
+        Err("no connected relays".to_string())
+    } else {
+        Err(last_error.unwrap_or_else(|| "no relay accepted subscription".to_string()))
+    }
 }
 
 async fn fetch_events_for_filters(

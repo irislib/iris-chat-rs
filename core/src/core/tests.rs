@@ -1,3 +1,4 @@
+use super::protocol::build_protocol_subscription_filters;
 use super::*;
 use nostr_double_ratchet_runtime::{NdrRuntime, SessionManagerEvent};
 
@@ -41,6 +42,26 @@ impl StorageAdapter for SwitchableFailStorage {
 
     fn list(&self, prefix: &str) -> nostr_double_ratchet_runtime::Result<Vec<String>> {
         self.inner.list(prefix)
+    }
+}
+
+fn protocol_plan_for_test(
+    message_authors: Vec<PublicKey>,
+    group_sender_key_authors: Vec<PublicKey>,
+) -> ProtocolSubscriptionPlan {
+    ProtocolSubscriptionPlan {
+        runtime_subscriptions: vec!["ndr-protocol".to_string()],
+        roster_authors: Vec::new(),
+        invite_authors: Vec::new(),
+        message_authors: message_authors
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect(),
+        group_sender_key_authors: group_sender_key_authors
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect(),
+        invite_response_recipient: None,
     }
 }
 
@@ -300,9 +321,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
         logged_in.relay_urls = relay_urls;
     }
     assert!(
-        core.protocol_subscription_runtime
-            .active_subscriptions
-            .is_empty(),
+        core.protocol_subscription_runtime.desired_plan.is_none(),
         "test should cover pending publish retry without subscription state"
     );
 
@@ -622,10 +641,10 @@ fn protocol_subscription_reconcile_defers_while_in_flight() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("subscription-reconcile-single-flight", &owner, &device);
-    core.upsert_protocol_subscription(
-        "test-subscription".to_string(),
-        Filter::new().kind(Kind::from(MESSAGE_EVENT_KIND as u16)),
-    );
+    core.protocol_subscription_runtime.desired_plan = Some(protocol_plan_for_test(
+        vec![device.public_key()],
+        Vec::new(),
+    ));
     core.protocol_subscription_runtime.refresh_in_flight = true;
 
     core.reconcile_protocol_subscriptions("test", true);
@@ -634,6 +653,87 @@ fn protocol_subscription_reconcile_defers_while_in_flight() {
     assert!(core.protocol_subscription_runtime.refresh_dirty);
     assert!(core.protocol_subscription_runtime.force_reconnect_dirty);
     assert_eq!(core.protocol_subscription_runtime.reconcile_token, 0);
+}
+
+#[test]
+fn protocol_subscription_desired_plan_is_not_applied_before_reconcile_success() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-desired-not-applied", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.request_protocol_subscription_refresh_forced();
+
+    assert!(
+        core.protocol_subscription_runtime.desired_plan.is_some(),
+        "refresh computes the desired plan synchronously"
+    );
+    assert_eq!(
+        core.protocol_subscription_runtime.applied_plan, None,
+        "desired plan must not be reported as applied before relay apply succeeds"
+    );
+}
+
+#[test]
+fn failed_protocol_subscription_apply_clears_inflight_and_keeps_dirty() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-apply-failure", &owner, &device);
+    let plan = protocol_plan_for_test(vec![device.public_key()], Vec::new());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applying_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+    core.protocol_subscription_runtime.reconcile_token = 3;
+
+    core.handle_protocol_subscription_reconcile_completed(
+        core.protocol_reconnect_token,
+        3,
+        "test_failure".to_string(),
+        Some(plan),
+        false,
+        Some("injected failure".to_string()),
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        1,
+        1,
+        1,
+    );
+
+    assert!(!core.protocol_subscription_runtime.refresh_in_flight);
+    assert!(core.protocol_subscription_runtime.applying_plan.is_none());
+    assert!(core.protocol_subscription_runtime.refresh_dirty);
+    assert!(core.protocol_subscription_runtime.applied_plan.is_none());
+    assert!(core.protocol_subscription_runtime.liveness_due_at.is_some());
+}
+
+#[test]
+fn successful_protocol_subscription_apply_sets_applied_plan() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-apply-success", &owner, &device);
+    let plan = protocol_plan_for_test(vec![device.public_key()], Vec::new());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applying_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+    core.protocol_subscription_runtime.reconcile_token = 5;
+
+    core.handle_protocol_subscription_reconcile_completed(
+        core.protocol_reconnect_token,
+        5,
+        "test_success".to_string(),
+        Some(plan.clone()),
+        true,
+        None,
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        1,
+        1,
+        1,
+    );
+
+    assert!(!core.protocol_subscription_runtime.refresh_in_flight);
+    assert_eq!(core.protocol_subscription_runtime.applied_plan, Some(plan));
+    assert!(core.protocol_subscription_runtime.applying_plan.is_none());
 }
 
 #[test]
@@ -649,9 +749,11 @@ fn stale_protocol_subscription_reconcile_completion_is_ignored() {
         4,
         7,
         "stale".to_string(),
+        None,
+        false,
+        None,
         vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
         0,
-        1,
         1,
         0,
     );
@@ -725,10 +827,7 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_missing_appkeys_when_conn
     core.active_chat_id = Some(peer.public_key().to_hex());
     core.request_protocol_subscription_refresh_forced();
     assert!(
-        !core
-            .protocol_subscription_runtime
-            .active_subscriptions
-            .is_empty(),
+        core.protocol_subscription_runtime.desired_plan.is_some(),
         "tracked peer setup should create runtime protocol subscriptions"
     );
 
@@ -755,10 +854,7 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
 
     core.request_protocol_subscription_refresh_forced();
     assert!(
-        !core
-            .protocol_subscription_runtime
-            .active_subscriptions
-            .is_empty(),
+        core.protocol_subscription_runtime.desired_plan.is_some(),
         "logged-in session should derive protocol subscriptions"
     );
     core.protocol_subscription_runtime.liveness_due_at = None;
@@ -811,7 +907,6 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
     let device = Keys::generate();
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
-    let unrelated_author = Keys::generate();
     let relay = crate::local_relay::TestRelay::start();
     let mut core = logged_in_test_core("tracked-peer-roster-no-session-backfill", &owner, &device);
 
@@ -857,20 +952,6 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
     );
     core.active_chat_id = Some(peer_owner.public_key().to_hex());
 
-    let unrelated_filter = Filter::new()
-        .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
-        .authors(vec![unrelated_author.public_key()]);
-    core.direct_message_subscriptions.register_subscription(
-        "ndr-runtime-messages",
-        serde_json::to_string(&unrelated_filter).expect("filter json"),
-    );
-    assert!(
-        !core
-            .direct_message_subscriptions
-            .tracked_authors()
-            .is_empty(),
-        "the regression requires other active message authors"
-    );
     assert!(
         core.protocol_engine
             .as_ref()
@@ -879,9 +960,10 @@ fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_sessio
             .is_empty(),
         "peer roster without invite response must not have message authors yet"
     );
-    core.upsert_protocol_subscription(
-        "ndr-runtime-protocol".to_string(),
-        Filter::new().kind(Kind::from(APP_KEYS_EVENT_KIND as u16)),
+    core.request_protocol_subscription_refresh_forced();
+    assert!(
+        core.protocol_subscription_runtime.desired_plan.is_some(),
+        "tracked peer roster should derive protocol-state subscriptions"
     );
 
     core.debug_log.clear();
@@ -1070,7 +1152,7 @@ fn liveness_retries_pending_inbound_direct_events() {
         .expect("liveness handler");
     let body = &protocol_source[start
         ..protocol_source[start..]
-            .find("\n    pub(super) fn upsert_protocol_subscription")
+            .find("\n    pub(super) fn reconcile_protocol_subscriptions")
             .map(|offset| start + offset)
             .unwrap_or(protocol_source.len())];
     assert!(
@@ -4723,12 +4805,7 @@ fn protocol_filters_track_invite_responses_by_known_device_authors() {
     core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
 
     core.request_protocol_subscription_refresh_forced();
-    let active_filters = core
-        .protocol_subscription_runtime
-        .active_subscriptions
-        .values()
-        .map(|subscription| subscription.filter.clone())
-        .collect::<Vec<_>>();
+    let active_filters = desired_protocol_filters(&core);
     assert!(
         has_filter_with_kind_author(&active_filters, INVITE_EVENT_KIND, peer_device.public_key()),
         "live invite subscription should track known device authors, not owner pubkeys"
@@ -4740,6 +4817,58 @@ fn protocol_filters_track_invite_responses_by_known_device_authors() {
             peer_device.public_key()
         ),
         "live invite response subscription should also track known peer device authors"
+    );
+}
+
+#[test]
+fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
+    let owner = Keys::generate();
+    let invite_author = Keys::generate();
+    let message_author = Keys::generate();
+    let group_author = Keys::generate();
+    let invite_response_recipient = Keys::generate();
+    let plan = ProtocolSubscriptionPlan {
+        runtime_subscriptions: vec!["ndr-protocol".to_string()],
+        roster_authors: vec![owner.public_key().to_hex()],
+        invite_authors: vec![invite_author.public_key().to_hex()],
+        message_authors: vec![message_author.public_key().to_hex()],
+        group_sender_key_authors: vec![group_author.public_key().to_hex()],
+        invite_response_recipient: Some(invite_response_recipient.public_key().to_hex()),
+    };
+
+    let filters = build_protocol_subscription_filters(&plan);
+
+    assert!(
+        has_filter_with_kind_author(&filters, APP_KEYS_EVENT_KIND, owner.public_key()),
+        "app-key filters must be derived from roster authors"
+    );
+    assert!(
+        has_filter_with_kind_author(&filters, INVITE_EVENT_KIND, invite_author.public_key()),
+        "invite filters must be derived from known device authors"
+    );
+    assert!(
+        has_filter_with_kind_author(&filters, INVITE_RESPONSE_KIND, invite_author.public_key()),
+        "invite-response author filters must be derived from known device authors"
+    );
+    assert!(
+        has_filter_with_kind_author(&filters, MESSAGE_EVENT_KIND, message_author.public_key()),
+        "message filters must be derived from message authors"
+    );
+    assert!(
+        has_filter_with_kind_author(
+            &filters,
+            GROUP_SENDER_KEY_MESSAGE_KIND,
+            group_author.public_key()
+        ),
+        "group sender-key filters must be derived from group authors"
+    );
+    assert!(
+        has_filter_with_kind_pubkey(
+            &filters,
+            INVITE_RESPONSE_KIND,
+            invite_response_recipient.public_key()
+        ),
+        "private invite-response filters must be derived from recipient #p values"
     );
 }
 
@@ -4958,12 +5087,7 @@ fn direct_message_discovery_backfill_stays_scoped_for_partial_tracked_peer_state
     core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
 
     core.request_protocol_subscription_refresh_forced();
-    let active_filters = core
-        .protocol_subscription_runtime
-        .active_subscriptions
-        .values()
-        .map(|subscription| subscription.filter.clone())
-        .collect::<Vec<_>>();
+    let active_filters = desired_protocol_filters(&core);
     assert!(
         !has_bootstrap_message_filter(&active_filters),
         "unscoped live message subscriptions flood public relays; bootstrap discovery must stay bounded to backfill"
@@ -4989,12 +5113,7 @@ fn direct_message_discovery_does_not_install_cold_peer_live_bootstrap_subscripti
     core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
 
     core.request_protocol_subscription_refresh_forced();
-    let active_filters = core
-        .protocol_subscription_runtime
-        .active_subscriptions
-        .values()
-        .map(|subscription| subscription.filter.clone())
-        .collect::<Vec<_>>();
+    let active_filters = desired_protocol_filters(&core);
     assert!(
         !has_bootstrap_message_filter(&active_filters),
         "cold direct chats should not create an unscoped live message subscription"
@@ -5016,6 +5135,15 @@ fn has_bootstrap_message_filter(filters: &[Filter]) -> bool {
                 });
             has_message_kind && filter.get("authors").is_none()
         })
+}
+
+fn desired_protocol_filters(core: &AppCore) -> Vec<Filter> {
+    build_protocol_subscription_filters(
+        core.protocol_subscription_runtime
+            .desired_plan
+            .as_ref()
+            .expect("desired protocol plan"),
+    )
 }
 
 fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey) -> bool {
@@ -5041,6 +5169,32 @@ fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey)
                         .any(|value| value.as_str() == Some(author_hex.as_str()))
                 });
             has_kind && has_author
+        })
+}
+
+fn has_filter_with_kind_pubkey(filters: &[Filter], kind: u32, pubkey: PublicKey) -> bool {
+    let pubkey_hex = pubkey.to_hex();
+    filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .any(|filter| {
+            let has_kind = filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|value| value.as_u64() == Some(kind as u64))
+                });
+            let has_pubkey = filter
+                .get("#p")
+                .and_then(|pubkeys| pubkeys.as_array())
+                .is_some_and(|pubkeys| {
+                    pubkeys
+                        .iter()
+                        .any(|value| value.as_str() == Some(pubkey_hex.as_str()))
+                });
+            has_kind && has_pubkey
         })
 }
 

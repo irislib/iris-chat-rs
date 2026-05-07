@@ -63,7 +63,6 @@ impl AppCore {
             defer_owner_app_keys_publish: false,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             relay_transport_runtime: RelayTransportRuntime::default(),
-            direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
             relay_status_watch_urls: HashSet::new(),
             relay_status_watch_generation: 0,
             relay_status_by_url: BTreeMap::new(),
@@ -488,21 +487,25 @@ impl AppCore {
                 generation,
                 token,
                 reason,
+                plan,
+                success,
+                error,
                 relay_statuses,
                 connected_before,
                 connected_after,
-                applied,
-                failed,
+                filter_count,
             } => {
                 self.handle_protocol_subscription_reconcile_completed(
                     generation,
                     token,
                     reason,
+                    plan,
+                    success,
+                    error,
                     relay_statuses,
                     connected_before,
                     connected_after,
-                    applied,
-                    failed,
+                    filter_count,
                 );
             }
             InternalEvent::RelayTransportConnectionFinished {

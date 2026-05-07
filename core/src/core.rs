@@ -31,12 +31,10 @@ use nostr_double_ratchet_nostr::{
     parse_message_event,
 };
 use nostr_double_ratchet_pairwise_codec as pairwise_codec;
-use nostr_double_ratchet_runtime::{
-    build_direct_message_backfill_filter, DirectMessageSubscriptionTracker, StorageAdapter,
-};
+use nostr_double_ratchet_runtime::{build_direct_message_backfill_filter, StorageAdapter};
 use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
-    RelayStatus, RelayUrl, SubscriptionId, Timestamp, ToBech32,
+    RelayStatus, RelayUrl, SubscribeOptions, SubscriptionId, Timestamp, ToBech32,
 };
 use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
@@ -165,7 +163,6 @@ pub struct AppCore {
     defer_owner_app_keys_publish: bool,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     relay_transport_runtime: RelayTransportRuntime,
-    direct_message_subscriptions: DirectMessageSubscriptionTracker,
     relay_status_watch_urls: HashSet<String>,
     relay_status_watch_generation: u64,
     relay_status_by_url: BTreeMap<String, RelayStatus>,

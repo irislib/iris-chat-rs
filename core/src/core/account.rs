@@ -294,7 +294,6 @@ impl AppCore {
         self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.relay_transport_runtime = RelayTransportRuntime::default();
-        self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
         self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();
         self.relay_status_by_url.clear();
@@ -502,7 +501,6 @@ impl AppCore {
         self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.relay_transport_runtime = RelayTransportRuntime::default();
-        self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
         self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();
         self.relay_status_by_url.clear();
