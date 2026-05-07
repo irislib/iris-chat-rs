@@ -537,6 +537,150 @@ fn relay_status_events_match_normalized_relay_urls() {
     assert!(core.debug_log.iter().any(|entry| {
         entry.category == "relay.status" && entry.detail.starts_with("url=wss://relay.example ")
     }));
+    let relay_status_log_count = core
+        .debug_log
+        .iter()
+        .filter(|entry| entry.category == "relay.status")
+        .count();
+
+    core.handle_relay_status_changed("wss://relay.example".to_string(), RelayStatus::Connected);
+    core.handle_relay_status_changed_for_generation(
+        "wss://relay.example".to_string(),
+        RelayStatus::Disconnected,
+        core.relay_status_watch_generation.wrapping_add(1),
+    );
+
+    assert_eq!(
+        core.debug_log
+            .iter()
+            .filter(|entry| entry.category == "relay.status")
+            .count(),
+        relay_status_log_count
+    );
+    assert_eq!(core.relay_connected_count, 1);
+}
+
+#[test]
+fn duplicate_protocol_publish_for_same_target_is_suppressed() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("duplicate-protocol-publish", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "duplicate-publish-message".to_string();
+    let target_device_id = "target-device".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "dedupe me".to_string(),
+        1_777_159_500,
+        None,
+        DeliveryState::Pending,
+    );
+    let first = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "first")
+        .sign_with_keys(&device)
+        .expect("first event");
+    let first_event_id = first.id.to_string();
+    let second = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "second")
+        .sign_with_keys(&device)
+        .expect("second event");
+    let second_event_id = second.id.to_string();
+
+    assert!(core.publish_runtime_event_with_metadata(
+        first,
+        APPCORE_PROTOCOL_LABEL,
+        Some((message_id.clone(), chat_id.clone())),
+        Some("inner-message".to_string()),
+        Some(chat_id.clone()),
+        Some(target_device_id.clone()),
+    ));
+    assert!(!core.publish_runtime_event_with_metadata(
+        second,
+        APPCORE_PROTOCOL_LABEL,
+        Some((message_id, chat_id.clone())),
+        Some("inner-message".to_string()),
+        Some(chat_id),
+        Some(target_device_id),
+    ));
+
+    assert!(core.pending_relay_publishes.contains_key(&first_event_id));
+    assert!(!core.pending_relay_publishes.contains_key(&second_event_id));
+    assert_eq!(core.pending_relay_publishes.len(), 1);
+    assert!(core.debug_log.iter().any(|entry| {
+        entry.category == "publish.runtime.queue"
+            && entry.detail.contains("skipped=duplicate_pending")
+    }));
+}
+
+#[test]
+fn protocol_subscription_reconcile_defers_while_in_flight() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-reconcile-single-flight", &owner, &device);
+    core.upsert_protocol_subscription(
+        "test-subscription".to_string(),
+        Filter::new().kind(Kind::from(MESSAGE_EVENT_KIND as u16)),
+    );
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+
+    core.reconcile_protocol_subscriptions("test", true);
+
+    assert!(core.protocol_subscription_runtime.refresh_in_flight);
+    assert!(core.protocol_subscription_runtime.refresh_dirty);
+    assert!(core.protocol_subscription_runtime.force_reconnect_dirty);
+    assert_eq!(core.protocol_subscription_runtime.reconcile_token, 0);
+}
+
+#[test]
+fn stale_protocol_subscription_reconcile_completion_is_ignored() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-reconcile-stale", &owner, &device);
+    core.protocol_reconnect_token = 5;
+    core.protocol_subscription_runtime.reconcile_token = 7;
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+
+    core.handle_protocol_subscription_reconcile_completed(
+        4,
+        7,
+        "stale".to_string(),
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        0,
+        1,
+        1,
+        0,
+    );
+
+    assert!(core.protocol_subscription_runtime.refresh_in_flight);
+    assert_eq!(core.relay_connected_count, 0);
+}
+
+#[test]
+fn debug_snapshot_write_is_coalesced_while_in_flight() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("debug-snapshot-coalesce", &owner, &device);
+    core.debug_snapshot_write_inflight = true;
+
+    core.persist_debug_snapshot_best_effort();
+
+    assert!(core.debug_snapshot_write_inflight);
+    assert!(core.debug_snapshot_write_dirty);
+}
+
+#[test]
+fn stale_debug_snapshot_write_completion_is_ignored() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("debug-snapshot-stale", &owner, &device);
+    core.debug_snapshot_write_generation = 10;
+    core.debug_snapshot_write_inflight = true;
+    core.debug_snapshot_write_dirty = true;
+
+    core.handle_debug_snapshot_write_finished(9);
+
+    assert!(core.debug_snapshot_write_inflight);
+    assert!(core.debug_snapshot_write_dirty);
 }
 
 #[test]

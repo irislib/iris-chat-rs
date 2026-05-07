@@ -401,6 +401,8 @@ impl AppCore {
                 .collect::<HashSet<_>>();
             self.relay_status_watch_urls
                 .retain(|url| configured_relays.contains(url));
+            self.relay_status_by_url
+                .retain(|url, _| configured_relays.contains(url));
             self.schedule_session_connect();
             self.request_protocol_subscription_refresh_forced();
             self.fetch_recent_protocol_state();

@@ -112,6 +112,10 @@ pub(crate) struct ProtocolSubscriptionPlan {
 pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) active_subscriptions: BTreeMap<String, ProtocolSubscriptionSpec>,
     pub(super) refresh_token: u64,
+    pub(super) reconcile_token: u64,
+    pub(super) refresh_in_flight: bool,
+    pub(super) refresh_dirty: bool,
+    pub(super) force_reconnect_dirty: bool,
     pub(super) liveness_due_at: Option<Instant>,
     /// Last subscription plan summary that was actually emitted via the
     /// debug log / refresh-token bump. Lets the refresh path bail out early

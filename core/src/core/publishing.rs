@@ -201,6 +201,16 @@ impl AppCore {
         if !self.prune_or_skip_superseded_app_keys_publish(event) {
             return false;
         }
+        if let Some(existing_event_id) = self.find_equivalent_pending_protocol_publish(&pending) {
+            self.push_debug_log(
+                "publish.runtime.queue",
+                format!(
+                    "label={} skipped=duplicate_pending existing_event_id={existing_event_id} event_id={}",
+                    pending.label, pending.event_id
+                ),
+            );
+            return false;
+        }
         if let Err(error) = self.app_store.upsert_pending_relay_publish(&pending) {
             self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
             return false;
@@ -225,6 +235,28 @@ impl AppCore {
             }
         }
         true
+    }
+
+    fn find_equivalent_pending_protocol_publish(
+        &self,
+        pending: &PendingRelayPublish,
+    ) -> Option<String> {
+        if !is_protocol_pending_publish(pending) {
+            return None;
+        }
+        self.pending_relay_publishes
+            .values()
+            .find(|existing| {
+                existing.event_id != pending.event_id
+                    && is_protocol_pending_publish(existing)
+                    && existing.label == pending.label
+                    && existing.message_id == pending.message_id
+                    && existing.chat_id == pending.chat_id
+                    && existing.inner_event_id == pending.inner_event_id
+                    && existing.target_owner_pubkey_hex == pending.target_owner_pubkey_hex
+                    && existing.target_device_id == pending.target_device_id
+            })
+            .map(|existing| existing.event_id.clone())
     }
 
     pub(super) fn retry_pending_relay_publishes(&mut self, reason: &str) {
@@ -559,4 +591,13 @@ impl AppCore {
     pub(super) fn republish_local_identity_artifacts(&mut self) {
         self.publish_local_identity_artifacts();
     }
+}
+
+fn is_protocol_pending_publish(pending: &PendingRelayPublish) -> bool {
+    matches!(
+        pending.label.as_str(),
+        APPCORE_PROTOCOL_LABEL
+            | APPCORE_PROTOCOL_BOOTSTRAP_LABEL
+            | APPCORE_PROTOCOL_FIRST_CONTACT_LABEL
+    ) && (pending.message_id.is_some() || pending.inner_event_id.is_some())
 }

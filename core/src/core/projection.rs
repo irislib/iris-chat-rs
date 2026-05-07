@@ -353,24 +353,15 @@ impl AppCore {
 
     fn build_relay_connection_snapshots(&self) -> Vec<RelayConnectionSnapshot> {
         let relay_statuses = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| {
-                self.runtime.block_on(async {
-                    logged_in
-                        .client
-                        .relays()
-                        .await
-                        .into_iter()
-                        .map(|(url, relay)| {
-                            let url = normalize_nostr_relay_url(&url.to_string())
-                                .unwrap_or_else(|_| url.to_string());
-                            (url, relay_connection_status(relay.status()).to_string())
-                        })
-                        .collect::<BTreeMap<_, _>>()
-                })
+            .relay_status_by_url
+            .iter()
+            .map(|(url, status)| {
+                (
+                    url.clone(),
+                    relay_connection_status(status.clone()).to_string(),
+                )
             })
-            .unwrap_or_default();
+            .collect::<BTreeMap<_, _>>();
 
         self.preferences
             .nostr_relay_urls

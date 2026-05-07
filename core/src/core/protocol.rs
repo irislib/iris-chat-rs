@@ -695,6 +695,7 @@ impl AppCore {
             if !self.relay_status_watch_urls.insert(relay_url.clone()) {
                 continue;
             }
+            let generation = self.relay_status_watch_generation;
             let mut notifications = relay.notifications();
             let tx = self.core_sender.clone();
             self.runtime.spawn(async move {
@@ -705,6 +706,7 @@ impl AppCore {
                                 InternalEvent::RelayStatusChanged {
                                     relay_url: relay_url.clone(),
                                     status,
+                                    generation,
                                 },
                             )));
                         }
@@ -713,6 +715,7 @@ impl AppCore {
                                 InternalEvent::RelayStatusChanged {
                                     relay_url: relay_url.clone(),
                                     status: RelayStatus::Terminated,
+                                    generation,
                                 },
                             )));
                         }
@@ -1067,22 +1070,50 @@ impl AppCore {
         })
     }
 
+    #[cfg(test)]
     pub(super) fn handle_relay_status_changed(&mut self, relay_url: String, status: RelayStatus) {
+        self.handle_relay_status_changed_for_generation(
+            relay_url,
+            status,
+            self.relay_status_watch_generation,
+        );
+    }
+
+    pub(super) fn handle_relay_status_changed_for_generation(
+        &mut self,
+        relay_url: String,
+        status: RelayStatus,
+        generation: u64,
+    ) {
+        if generation != self.relay_status_watch_generation {
+            return;
+        }
         let normalized_relay_url =
             normalize_nostr_relay_url(&relay_url).unwrap_or_else(|_| relay_url.clone());
         if !self
-            .preferences
-            .nostr_relay_urls
+            .configured_relay_url_set()
             .contains(&normalized_relay_url)
         {
             return;
         }
+        if self
+            .relay_status_by_url
+            .get(&normalized_relay_url)
+            .is_some_and(|existing| *existing == status)
+        {
+            return;
+        }
+        let was_connected = self.relay_connected_count > 0;
+        self.relay_status_by_url
+            .insert(normalized_relay_url.clone(), status.clone());
+        self.refresh_relay_connection_status_from_cached_statuses();
+        let is_connected = self.relay_connected_count > 0;
         self.push_debug_log(
             "relay.status",
             format!("url={normalized_relay_url} status={status}"),
         );
         match status {
-            RelayStatus::Connected => {
+            RelayStatus::Connected if !was_connected && is_connected => {
                 self.reconcile_protocol_subscriptions("relay_connected", false);
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers(unix_now());
@@ -1092,11 +1123,15 @@ impl AppCore {
                     PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
                 ));
             }
-            RelayStatus::Disconnected | RelayStatus::Terminated | RelayStatus::Sleeping => {
+            RelayStatus::Connected => {}
+            RelayStatus::Disconnected | RelayStatus::Terminated | RelayStatus::Sleeping
+                if was_connected && !is_connected =>
+            {
                 self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
                     PROTOCOL_RECONNECT_CHECK_SECS,
                 ));
             }
+            RelayStatus::Disconnected | RelayStatus::Terminated | RelayStatus::Sleeping => {}
             RelayStatus::Initialized
             | RelayStatus::Pending
             | RelayStatus::Connecting
@@ -1134,22 +1169,39 @@ impl AppCore {
     }
 
     pub(super) fn refresh_relay_connection_status(&mut self) {
-        let configured_relay_count = self
-            .logged_in
-            .as_ref()
-            .map(|logged_in| logged_in.relay_urls.len())
-            .unwrap_or(0);
-        let connected_relay_count = self.connected_relay_count();
-        self.relay_connected_count = connected_relay_count;
+        let relay_statuses = self.current_client_relay_statuses();
+        self.apply_relay_statuses(relay_statuses);
+    }
 
-        if configured_relay_count == 0 || connected_relay_count > 0 {
+    fn refresh_relay_connection_status_from_cached_statuses(&mut self) {
+        let configured = self.configured_relay_url_set();
+        let configured_relay_count = configured.len();
+        self.relay_connected_count = self
+            .relay_status_by_url
+            .iter()
+            .filter(|(url, status)| {
+                configured.contains(url.as_str()) && **status == RelayStatus::Connected
+            })
+            .count() as u64;
+        self.update_all_relays_offline_since(configured_relay_count);
+    }
+
+    fn apply_relay_statuses(&mut self, relay_statuses: Vec<(String, RelayStatus)>) {
+        for (relay_url, status) in relay_statuses {
+            self.relay_status_by_url.insert(relay_url, status);
+        }
+        self.refresh_relay_connection_status_from_cached_statuses();
+    }
+
+    fn update_all_relays_offline_since(&mut self, configured_relay_count: usize) {
+        if configured_relay_count == 0 || self.relay_connected_count > 0 {
             self.all_relays_offline_since_secs = None;
         } else if self.all_relays_offline_since_secs.is_none() {
             self.all_relays_offline_since_secs = Some(unix_now().get());
         }
     }
 
-    fn connected_relay_count(&self) -> u64 {
+    fn current_client_relay_statuses(&self) -> Vec<(String, RelayStatus)> {
         self.logged_in
             .as_ref()
             .map(|logged_in| {
@@ -1158,12 +1210,24 @@ impl AppCore {
                         .client
                         .relays()
                         .await
-                        .values()
-                        .filter(|relay| relay.status() == RelayStatus::Connected)
-                        .count() as u64
+                        .into_iter()
+                        .map(|(relay_url, relay)| {
+                            let relay_url = normalize_nostr_relay_url(&relay_url.to_string())
+                                .unwrap_or_else(|_| relay_url.to_string());
+                            (relay_url, relay.status())
+                        })
+                        .collect::<Vec<_>>()
                 })
             })
-            .unwrap_or(0)
+            .unwrap_or_default()
+    }
+
+    fn configured_relay_url_set(&self) -> HashSet<String> {
+        self.preferences
+            .nostr_relay_urls
+            .iter()
+            .filter_map(|url| normalize_nostr_relay_url(url).ok())
+            .collect()
     }
 
     pub(super) fn handle_protocol_subscription_liveness_check(&mut self, token: u64) {
@@ -1245,7 +1309,7 @@ impl AppCore {
     }
 
     pub(super) fn reconcile_protocol_subscriptions(
-        &self,
+        &mut self,
         reason: &'static str,
         force_reconnect_if_offline: bool,
     ) {
@@ -1263,8 +1327,31 @@ impl AppCore {
             .map(|(subid, spec)| (subid.clone(), spec.filter.clone()))
             .collect::<Vec<_>>();
         if subscriptions.is_empty() {
+            if self.protocol_subscription_runtime.refresh_in_flight {
+                self.protocol_subscription_runtime.refresh_dirty = true;
+                self.protocol_subscription_runtime.force_reconnect_dirty |=
+                    force_reconnect_if_offline;
+            }
             return;
         }
+        if self.protocol_subscription_runtime.refresh_in_flight {
+            self.protocol_subscription_runtime.refresh_dirty = true;
+            self.protocol_subscription_runtime.force_reconnect_dirty |= force_reconnect_if_offline;
+            self.push_debug_log(
+                "protocol.subscription.reconcile",
+                format!("reason={reason} deferred=in_flight"),
+            );
+            return;
+        }
+        self.protocol_subscription_runtime.refresh_in_flight = true;
+        self.protocol_subscription_runtime.refresh_dirty = false;
+        self.protocol_subscription_runtime.force_reconnect_dirty = false;
+        self.protocol_subscription_runtime.reconcile_token = self
+            .protocol_subscription_runtime
+            .reconcile_token
+            .wrapping_add(1);
+        let token = self.protocol_subscription_runtime.reconcile_token;
+        let generation = self.protocol_reconnect_token;
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
@@ -1277,16 +1364,11 @@ impl AppCore {
             if force_reconnect_if_offline && connected_relays == 0 {
                 let _ = client.disconnect().await;
             }
-            connect_client_with_timeout(
-                &client,
-                Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
-            )
-            .await;
-            let connected_after = wait_for_connected_relays(
-                &client,
-                Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS),
-            )
-            .await;
+            connect_client_with_timeout(&client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
+                .await;
+            let connected_after =
+                wait_for_connected_relays(&client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS))
+                    .await;
 
             let mut applied = 0usize;
             let mut failed = 0usize;
@@ -1303,21 +1385,74 @@ impl AppCore {
                     }
                 }
             }
-            let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
-                category: "protocol.subscription.reconcile".to_string(),
-                detail: format!(
-                    "reason={reason} relays={} connected_before={} connected_after={} applied={applied} failed={failed}",
-                    relay_urls.len(),
-                    connected_relays,
-                    connected_after,
-                ),
-            })));
+            let relay_statuses = client
+                .relays()
+                .await
+                .into_iter()
+                .map(|(relay_url, relay)| {
+                    let relay_url = normalize_nostr_relay_url(&relay_url.to_string())
+                        .unwrap_or_else(|_| relay_url.to_string());
+                    (relay_url, relay.status())
+                })
+                .collect::<Vec<_>>();
             let _ = tx.send(CoreMsg::Internal(Box::new(
-                InternalEvent::RelayConnectionChecked {
-                    reason: format!("subscription_{reason}"),
+                InternalEvent::ProtocolSubscriptionReconcileCompleted {
+                    generation,
+                    token,
+                    reason: reason.to_string(),
+                    relay_statuses,
+                    connected_before: connected_relays as u64,
+                    connected_after: connected_after as u64,
+                    applied: applied as u64,
+                    failed: failed as u64,
                 },
             )));
         });
+    }
+
+    pub(super) fn handle_protocol_subscription_reconcile_completed(
+        &mut self,
+        generation: u64,
+        token: u64,
+        reason: String,
+        relay_statuses: Vec<(String, RelayStatus)>,
+        connected_before: u64,
+        connected_after: u64,
+        applied: u64,
+        failed: u64,
+    ) {
+        if generation != self.protocol_reconnect_token {
+            return;
+        }
+        if token != self.protocol_subscription_runtime.reconcile_token {
+            return;
+        }
+        self.protocol_subscription_runtime.refresh_in_flight = false;
+        let refresh_dirty = self.protocol_subscription_runtime.refresh_dirty;
+        let force_reconnect_dirty = self.protocol_subscription_runtime.force_reconnect_dirty;
+        self.protocol_subscription_runtime.refresh_dirty = false;
+        self.protocol_subscription_runtime.force_reconnect_dirty = false;
+
+        self.apply_relay_statuses(relay_statuses);
+        self.push_debug_log(
+            "protocol.subscription.reconcile",
+            format!(
+                "reason={reason} connected_before={connected_before} connected_after={connected_after} applied={applied} failed={failed} dirty={refresh_dirty}"
+            ),
+        );
+        if connected_after > 0 {
+            self.retry_protocol_engine_pending_outbound("subscription_reconciled");
+            self.retry_pending_relay_publishes("subscription_reconciled");
+        } else {
+            self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
+                PROTOCOL_RECONNECT_CHECK_SECS,
+            ));
+        }
+        if refresh_dirty {
+            self.request_protocol_subscription_refresh_inner(false, force_reconnect_dirty);
+        }
+        self.rebuild_state();
+        self.emit_state();
     }
 
     pub(super) fn can_poll_pending_device_invites(&self) -> bool {

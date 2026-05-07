@@ -69,8 +69,12 @@ impl AppCore {
         }
     }
 
-    pub(super) fn persist_debug_snapshot_best_effort(&self) {
+    pub(super) fn persist_debug_snapshot_best_effort(&mut self) {
         if self.logged_in.is_none() {
+            return;
+        }
+        if self.debug_snapshot_write_inflight {
+            self.debug_snapshot_write_dirty = true;
             return;
         }
         let snapshot = self.build_runtime_debug_snapshot();
@@ -87,11 +91,33 @@ impl AppCore {
         }
 
         #[cfg(not(target_os = "ios"))]
-        self.runtime.spawn_blocking(move || {
-            if let Ok(bytes) = serde_json::to_vec_pretty(&snapshot) {
-                let _ = fs::create_dir_all(&data_dir);
-                let _ = fs::write(path, bytes);
-            }
-        });
+        {
+            self.debug_snapshot_write_inflight = true;
+            self.debug_snapshot_write_dirty = false;
+            self.debug_snapshot_write_generation =
+                self.debug_snapshot_write_generation.wrapping_add(1);
+            let generation = self.debug_snapshot_write_generation;
+            let tx = self.core_sender.clone();
+            self.runtime.spawn_blocking(move || {
+                if let Ok(bytes) = serde_json::to_vec_pretty(&snapshot) {
+                    let _ = fs::create_dir_all(&data_dir);
+                    let _ = fs::write(path, bytes);
+                }
+                let _ = tx.send(CoreMsg::Internal(Box::new(
+                    InternalEvent::DebugSnapshotWriteFinished { generation },
+                )));
+            });
+        }
+    }
+
+    pub(super) fn handle_debug_snapshot_write_finished(&mut self, generation: u64) {
+        if generation != self.debug_snapshot_write_generation {
+            return;
+        }
+        self.debug_snapshot_write_inflight = false;
+        if self.debug_snapshot_write_dirty {
+            self.debug_snapshot_write_dirty = false;
+            self.persist_debug_snapshot_best_effort();
+        }
     }
 }

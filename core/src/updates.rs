@@ -62,9 +62,23 @@ pub(crate) enum InternalEvent {
     RelayStatusChanged {
         relay_url: String,
         status: RelayStatus,
+        generation: u64,
+    },
+    ProtocolSubscriptionReconcileCompleted {
+        generation: u64,
+        token: u64,
+        reason: String,
+        relay_statuses: Vec<(String, RelayStatus)>,
+        connected_before: u64,
+        connected_after: u64,
+        applied: u64,
+        failed: u64,
     },
     RelayConnectionChecked {
         reason: String,
+    },
+    DebugSnapshotWriteFinished {
+        generation: u64,
     },
     DebugLog {
         category: String,

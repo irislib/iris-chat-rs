@@ -166,6 +166,8 @@ pub struct AppCore {
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     direct_message_subscriptions: DirectMessageSubscriptionTracker,
     relay_status_watch_urls: HashSet<String>,
+    relay_status_watch_generation: u64,
+    relay_status_by_url: BTreeMap<String, RelayStatus>,
     relay_connected_count: u64,
     all_relays_offline_since_secs: Option<u64>,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
@@ -175,6 +177,9 @@ pub struct AppCore {
     pending_mobile_push_events: VecDeque<Event>,
     debug_log: VecDeque<DebugLogEntry>,
     debug_event_counters: DebugEventCounters,
+    debug_snapshot_write_generation: u64,
+    debug_snapshot_write_inflight: bool,
+    debug_snapshot_write_dirty: bool,
     /// Reentrancy guard: while > 0, `rebuild_state` / `emit_state` /
     /// `persist_best_effort` only set the matching dirty flag. The outermost
     /// `exit_batch()` call performs a single rebuild + persist + emit so a

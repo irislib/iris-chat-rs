@@ -294,7 +294,14 @@ impl AppCore {
         self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
+        self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();
+        self.relay_status_by_url.clear();
+        self.relay_connected_count = 0;
+        self.all_relays_offline_since_secs = None;
+        self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
+        self.debug_snapshot_write_inflight = false;
+        self.debug_snapshot_write_dirty = false;
         self.cached_mobile_push = MobilePushSyncSnapshot::default();
         self.mobile_push_dirty = true;
         self.last_emitted_state = None;
@@ -494,11 +501,19 @@ impl AppCore {
         self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.direct_message_subscriptions = DirectMessageSubscriptionTracker::new();
+        self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
+        self.relay_status_watch_urls.clear();
+        self.relay_status_by_url.clear();
+        self.relay_connected_count = 0;
+        self.all_relays_offline_since_secs = None;
         self.defer_owner_app_keys_publish = false;
         self.pending_relay_publishes.clear();
         self.pending_relay_publish_inflight.clear();
         self.debug_log.clear();
         self.debug_event_counters = DebugEventCounters::default();
+        self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
+        self.debug_snapshot_write_inflight = false;
+        self.debug_snapshot_write_dirty = false;
         self.next_message_id = 1;
 
         let now = unix_now();
