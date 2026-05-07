@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+print_one() {
+  printf 'Build output: %s\n' "$1"
+}
+
+macos_app_path() {
+  local project="$ROOT/macos/IrisChatMac.xcodeproj"
+  local scheme="IrisChatMac"
+  local settings
+  local target_build_dir
+  local wrapper_name
+  local app_path
+
+  settings="$(
+    xcodebuild \
+      -project "$project" \
+      -scheme "$scheme" \
+      -destination 'platform=macOS' \
+      -showBuildSettings 2>/dev/null || true
+  )"
+  target_build_dir="$(awk -F' = ' '/^[[:space:]]*(TARGET_BUILD_DIR|BUILT_PRODUCTS_DIR) = / { print $2; exit }' <<<"$settings")"
+  wrapper_name="$(awk -F' = ' '/^[[:space:]]*(WRAPPER_NAME|FULL_PRODUCT_NAME) = / { print $2; exit }' <<<"$settings")"
+  if [[ -n "${target_build_dir:-}" && -n "${wrapper_name:-}" ]]; then
+    app_path="$target_build_dir/$wrapper_name"
+    if [[ -d "$app_path" ]]; then
+      print_one "$app_path"
+      return 0
+    fi
+  fi
+
+  app_path="$(
+    python3 - "$HOME/Library/Developer/Xcode/DerivedData" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+candidates = sorted(
+    [*root.glob("**/Debug/Iris Chat.app"), *root.glob("**/Debug/IrisChatMac.app")],
+    key=lambda path: path.stat().st_mtime,
+    reverse=True,
+)
+if candidates:
+    print(candidates[0])
+PY
+  )"
+  if [[ -n "${app_path:-}" && -d "$app_path" ]]; then
+    print_one "$app_path"
+    return 0
+  fi
+
+  echo "Build output not found under $HOME/Library/Developer/Xcode/DerivedData" >&2
+  return 1
+}
+
+case "$(uname -s)" in
+  Darwin)
+    macos_app_path
+    ;;
+  Linux)
+    print_one "iris-chat-linux-dev:/workspace/iris-chat-rs/linux/target/debug/iris-chat"
+    ;;
+  MINGW*|MSYS*|CYGWIN*)
+    print_one "$ROOT/windows/IrisChat/bin/x64/${IRIS_WINDOWS_DOTNET_CONFIG:-Debug}/net8.0-windows/win-x64/publish/IrisChat.exe"
+    ;;
+  *)
+    echo "No local build output path for $(uname -s)." >&2
+    exit 1
+    ;;
+esac

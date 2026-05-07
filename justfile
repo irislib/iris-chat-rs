@@ -94,6 +94,7 @@ build:
         MINGW*|MSYS*|CYGWIN*) just windows-build ;; \
         *) echo "No local build target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
     esac
+    @./scripts/build-output-path
 
 ios-gen-swift:
     ./scripts/ios-build ios-gen-swift

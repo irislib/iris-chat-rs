@@ -54,7 +54,8 @@ just run-windows
 ```
 
 `just run` dispatches to the native app for the local desktop platform.
-`just build` builds the native app for the local desktop platform.
+`just build` builds the native app for the local desktop platform and prints
+the app output path.
 
 ## Check
 
