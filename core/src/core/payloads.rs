@@ -194,10 +194,3 @@ pub(super) fn chat_settings_ttl_seconds(content: &str) -> Option<u64> {
         .or_else(|| value.get("message_ttl_seconds"))
         .and_then(serde_json::Value::as_u64)
 }
-
-pub(super) fn send_options_for_expiration(expires_at_secs: Option<u64>) -> Option<SendOptions> {
-    expires_at_secs.map(|expires_at| SendOptions {
-        expires_at: Some(expires_at),
-        ttl_seconds: None,
-    })
-}

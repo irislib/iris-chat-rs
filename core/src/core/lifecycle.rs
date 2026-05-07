@@ -19,6 +19,7 @@ impl AppCore {
     ) -> anyhow::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
+            .max_blocking_threads(8)
             .build()?;
 
         let state = AppState::empty();
@@ -39,6 +40,7 @@ impl AppCore {
             data_dir,
             state: state.clone(),
             logged_in: None,
+            protocol_engine: None,
             pending_linked_device: None,
             private_chat_invites: BTreeMap::new(),
             threads: BTreeMap::new(),
@@ -60,20 +62,25 @@ impl AppCore {
             protocol_reconnect_token: 0,
             defer_owner_app_keys_publish: false,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
-            direct_message_subscriptions: DirectMessageSubscriptionTracker::new(),
+            relay_transport_runtime: RelayTransportRuntime::default(),
             relay_status_watch_urls: HashSet::new(),
+            relay_status_watch_generation: 0,
+            relay_status_by_url: BTreeMap::new(),
             relay_connected_count: 0,
             all_relays_offline_since_secs: None,
             pending_relay_publishes: BTreeMap::new(),
             pending_relay_publish_inflight: HashSet::new(),
+            pending_decrypted_delivery_acks: HashSet::new(),
             event_transport_channels: BTreeMap::new(),
             pending_mobile_push_events: VecDeque::new(),
             debug_log: VecDeque::new(),
             debug_event_counters: DebugEventCounters::default(),
+            debug_snapshot_write_generation: 0,
+            debug_snapshot_write_inflight: false,
+            debug_snapshot_write_dirty: false,
             batch_depth: 0,
             batch_dirty_state: false,
             batch_dirty_persist: false,
-            setup_user_done: HashSet::new(),
             last_emitted_state: None,
             app_store,
             _data_dir_lock: data_dir_lock,
@@ -106,10 +113,17 @@ impl AppCore {
                 InternalEvent::PollPendingDeviceInvites { .. } => "PollPendingDeviceInvites",
                 InternalEvent::PruneExpiredMessages { .. } => "PruneExpiredMessages",
                 InternalEvent::RelayStatusChanged { .. } => "RelayStatusChanged",
-                InternalEvent::RelayConnectionChecked { .. } => "RelayConnectionChecked",
+                InternalEvent::ProtocolSubscriptionReconcileCompleted { .. } => {
+                    "ProtocolSubscriptionReconcileCompleted"
+                }
+                InternalEvent::RelayTransportConnectionFinished { .. } => {
+                    "RelayTransportConnectionFinished"
+                }
+                InternalEvent::DebugSnapshotWriteFinished { .. } => "DebugSnapshotWriteFinished",
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
-                InternalEvent::RelayPublishFinished { .. } => "RelayPublishFinished",
+                InternalEvent::RelayPublishDrainFinished { .. } => "RelayPublishDrainFinished",
+                InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
                     "ProfilePictureUploadFinished"
@@ -197,7 +211,13 @@ impl AppCore {
         self.stop_pending_linked_device();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();
+        self.relay_status_by_url.clear();
+        self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
+        self.debug_snapshot_write_inflight = false;
+        self.debug_snapshot_write_dirty = false;
+        self.protocol_engine = None;
         if let Some(existing) = self.logged_in.take() {
             self.runtime.block_on(async {
                 existing.client.unsubscribe_all().await;
@@ -212,10 +232,17 @@ impl AppCore {
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
+        self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();
+        self.relay_status_by_url.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+        self.relay_transport_runtime = RelayTransportRuntime::default();
+        self.pending_relay_publish_inflight.clear();
         self.relay_connected_count = 0;
         self.all_relays_offline_since_secs = None;
+        self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
+        self.debug_snapshot_write_inflight = false;
+        self.debug_snapshot_write_dirty = false;
         self.state.busy.syncing_network = false;
         self.persist_best_effort();
 
@@ -411,10 +438,10 @@ impl AppCore {
             }
             InternalEvent::FetchTrackedPeerCatchUp => {
                 let now = unix_now();
-                self.process_runtime_events();
                 self.push_debug_log("protocol.catch_up.schedule", "fetch tracked peers");
                 self.fetch_recent_protocol_state();
                 self.fetch_recent_messages_for_tracked_peers(now);
+                self.retry_protocol_engine_pending_outbound("tracked_peer_catch_up");
                 if self.is_device_roster_open() {
                     self.fetch_pending_device_invites_for_local_owner();
                 }
@@ -449,11 +476,53 @@ impl AppCore {
                 }
                 self.exit_batch();
             }
-            InternalEvent::RelayStatusChanged { relay_url, status } => {
-                self.handle_relay_status_changed(relay_url, status);
+            InternalEvent::RelayStatusChanged {
+                relay_url,
+                status,
+                generation,
+            } => {
+                self.handle_relay_status_changed_for_generation(relay_url, status, generation);
             }
-            InternalEvent::RelayConnectionChecked { reason } => {
-                self.handle_relay_connection_checked(reason);
+            InternalEvent::ProtocolSubscriptionReconcileCompleted {
+                generation,
+                token,
+                reason,
+                plan,
+                success,
+                error,
+                relay_statuses,
+                connected_before,
+                connected_after,
+                filter_count,
+            } => {
+                self.handle_protocol_subscription_reconcile_completed(
+                    generation,
+                    token,
+                    reason,
+                    plan,
+                    success,
+                    error,
+                    relay_statuses,
+                    connected_before,
+                    connected_after,
+                    filter_count,
+                );
+            }
+            InternalEvent::RelayTransportConnectionFinished {
+                token,
+                reason,
+                relay_statuses,
+                connected_count,
+            } => {
+                self.handle_relay_transport_connection_finished(
+                    token,
+                    reason,
+                    relay_statuses,
+                    connected_count,
+                );
+            }
+            InternalEvent::DebugSnapshotWriteFinished { generation } => {
+                self.handle_debug_snapshot_write_finished(generation);
             }
             InternalEvent::DebugLog { category, detail } => {
                 self.push_debug_log(&category, detail);
@@ -472,17 +541,11 @@ impl AppCore {
                     self.emit_state();
                 }
             }
-            InternalEvent::RelayPublishFinished {
-                event_id,
-                message_id,
-                chat_id,
-                success,
-                relay_urls,
-                detail,
-            } => {
-                self.handle_relay_publish_finished(
-                    event_id, message_id, chat_id, success, relay_urls, detail,
-                );
+            InternalEvent::RelayPublishDrainFinished { token, results } => {
+                self.handle_relay_publish_drain_finished(token, results);
+            }
+            InternalEvent::RetryPendingRelayPublishes { reason } => {
+                self.retry_pending_relay_publishes(&reason);
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);

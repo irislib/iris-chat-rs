@@ -38,16 +38,11 @@ impl AppCore {
         &mut self,
         peer_input: &str,
     ) -> anyhow::Result<String> {
-        let (chat_id, peer_pubkey) = parse_peer_input(peer_input)?;
+        let (chat_id, _) = parse_peer_input(peer_input)?;
         let now = unix_now().get();
         self.prune_expired_messages(now);
         self.ensure_thread_record(&chat_id, now).unread_count = 0;
         self.load_latest_message_page_for_chat(&chat_id);
-
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            logged_in.ndr_runtime.setup_user(peer_pubkey)?;
-        }
-        self.process_runtime_events();
 
         self.active_chat_id = Some(chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
@@ -352,66 +347,55 @@ impl AppCore {
             return;
         };
 
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            if let Err(error) = logged_in.ndr_runtime.setup_user(peer_pubkey) {
-                self.state.toast = Some(error.to_string());
-                return;
-            }
-        }
-        self.process_runtime_events();
-
-        let Some(logged_in) = self.logged_in.as_ref() else {
+        let Some(protocol_engine) = self.protocol_engine.as_mut() else {
+            self.state.toast = Some("Protocol engine is not ready.".to_string());
             return;
         };
-        let result = logged_in.ndr_runtime.send_text_with_inner_id(
+        let result = protocol_engine.send_direct_text(
             peer_pubkey,
-            text.to_string(),
-            send_options_for_expiration(expires_at_secs),
+            &normalized_chat_id,
+            text,
+            expires_at_secs,
+            now,
         );
-
         match result {
-            Ok((inner_id, event_ids)) => {
-                let message_id = if inner_id.is_empty() {
-                    self.allocate_message_id()
-                } else {
-                    inner_id
-                };
-                let delivery = if event_ids.is_empty() {
+            Ok(result) => {
+                let delivery = if result.event_ids.is_empty() {
                     DeliveryState::Queued
                 } else {
                     DeliveryState::Pending
                 };
                 self.push_debug_log(
-                    "message.direct.send",
+                    "message.direct.send.appcore",
                     format!(
-                        "chat_id={normalized_chat_id} message_id={message_id} event_ids={}",
-                        event_ids.len()
+                        "chat_id={normalized_chat_id} message_id={} event_ids={} queued_targets={}",
+                        result.message_id,
+                        result.event_ids.len(),
+                        result.queued_targets.len()
                     ),
                 );
                 self.push_outgoing_message_with_id(
-                    message_id.clone(),
+                    result.message_id.clone(),
                     &normalized_chat_id,
                     text.to_string(),
                     now.get(),
                     expires_at_secs,
                     delivery,
                 );
-                let completions = event_ids
+                let completions = result
+                    .event_ids
                     .iter()
                     .map(|event_id| {
                         (
                             event_id.clone(),
-                            (message_id.clone(), normalized_chat_id.clone()),
+                            (result.message_id.clone(), normalized_chat_id.clone()),
                         )
                     })
                     .collect::<BTreeMap<_, _>>();
-                self.process_runtime_events_with_completions(&completions);
-                self.sync_message_delivery_trace(&normalized_chat_id, &message_id);
-                if event_ids.is_empty() {
-                    self.request_protocol_subscription_refresh();
-                    if self.fetch_recent_protocol_state() {
-                        self.state.busy.syncing_network = true;
-                    }
+                self.process_protocol_engine_effects_with_completions(result.effects, &completions);
+                self.sync_message_delivery_trace(&normalized_chat_id, &result.message_id);
+                if !result.queued_targets.is_empty() {
+                    self.handle_queued_protocol_targets("message.direct", &result.queued_targets);
                 }
             }
             Err(error) => {
@@ -439,30 +423,38 @@ impl AppCore {
             }
         };
         let message_id = self.allocate_message_id();
-        let result = self.logged_in.as_ref().map(|logged_in| {
-            logged_in
-                .ndr_runtime
-                .send_group_message(&group_id, payload, Some(message_id.clone()))
-        });
+        let result = self
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.send_group_payload(&group_id, payload, Some(message_id.clone())));
         match result {
-            Some(Ok(event_ids)) => {
+            Some(Ok(result)) => {
+                let delivery = if result.event_ids.is_empty() {
+                    DeliveryState::Queued
+                } else {
+                    DeliveryState::Pending
+                };
                 self.push_outgoing_message_with_id(
                     message_id.clone(),
                     chat_id,
                     text.to_string(),
                     now.get(),
                     expires_at_secs,
-                    DeliveryState::Pending,
+                    delivery,
                 );
-                let completions = event_ids
+                let completions = result
+                    .event_ids
                     .iter()
                     .map(|event_id| (event_id.clone(), (message_id.clone(), chat_id.to_string())))
                     .collect::<BTreeMap<_, _>>();
-                self.process_runtime_events_with_completions(&completions);
+                self.process_protocol_engine_effects_with_completions(result.effects, &completions);
                 self.sync_message_delivery_trace(chat_id, &message_id);
+                if !result.queued_targets.is_empty() {
+                    self.handle_queued_protocol_targets("message.group", &result.queued_targets);
+                }
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
-            None => {}
+            None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
         }
     }
 
@@ -489,6 +481,61 @@ impl AppCore {
                     ) {
                         recipient.delivery = DeliveryState::Sent;
                         recipient.updated_at_secs = unix_now().get();
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn mark_message_publish_succeeded(
+        &mut self,
+        chat_id: &str,
+        message_id: &str,
+        target_owner_pubkey_hex: Option<&str>,
+    ) {
+        let local_owner = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        match target_owner_pubkey_hex {
+            Some(target_owner) if local_owner.as_deref() == Some(target_owner) => {}
+            Some(target_owner) => {
+                if let Some(recipient) = message
+                    .recipient_deliveries
+                    .iter_mut()
+                    .find(|recipient| recipient.owner_pubkey_hex == target_owner)
+                {
+                    if matches!(
+                        recipient.delivery,
+                        DeliveryState::Pending | DeliveryState::Queued
+                    ) {
+                        recipient.delivery = DeliveryState::Sent;
+                        recipient.updated_at_secs = unix_now().get();
+                    }
+                }
+            }
+            None => {
+                if message.recipient_deliveries.is_empty() {
+                    message.delivery = DeliveryState::Sent;
+                } else {
+                    for recipient in &mut message.recipient_deliveries {
+                        if matches!(
+                            recipient.delivery,
+                            DeliveryState::Pending | DeliveryState::Queued
+                        ) {
+                            recipient.delivery = DeliveryState::Sent;
+                            recipient.updated_at_secs = unix_now().get();
+                        }
                     }
                 }
             }
@@ -579,22 +626,16 @@ impl AppCore {
             })
             .filter_map(|pending| pending.last_error.clone())
             .last();
-        let queued_protocol_targets = self
-            .logged_in
-            .as_ref()
-            .and_then(|logged_in| {
-                logged_in
-                    .ndr_runtime
+        let mut queued_protocol_targets = Vec::new();
+        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
+            queued_protocol_targets.extend(
+                protocol_engine
                     .queued_message_diagnostics(Some(message_id))
-                    .ok()
-            })
-            .map(|entries| {
-                entries
-                    .into_iter()
-                    .map(|entry| entry.target_key)
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+                    .into_iter(),
+            );
+            queued_protocol_targets.sort();
+            queued_protocol_targets.dedup();
+        }
 
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
@@ -609,6 +650,55 @@ impl AppCore {
         message.delivery_trace.pending_relay_event_ids = pending_relay_event_ids;
         message.delivery_trace.queued_protocol_targets = queued_protocol_targets;
         message.delivery_trace.last_transport_error = last_transport_error;
+    }
+
+    pub(super) fn reconcile_outgoing_message_delivery(&mut self, chat_id: &str, message_id: &str) {
+        let local_owner = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
+        let pending_relay = self.pending_relay_publishes.values().any(|pending| {
+            pending.chat_id.as_deref() == Some(chat_id)
+                && pending.message_id.as_deref() == Some(message_id)
+                && pending.target_owner_pubkey_hex.as_deref() != local_owner.as_deref()
+        });
+        let queued_protocol = self
+            .protocol_engine
+            .as_ref()
+            .is_some_and(|protocol_engine| {
+                protocol_engine.has_queued_remote_message_work(message_id)
+            });
+        let Some(thread) = self.threads.get_mut(chat_id) else {
+            return;
+        };
+        let Some(message) = thread
+            .messages
+            .iter_mut()
+            .find(|message| message.id == message_id)
+        else {
+            return;
+        };
+        if !message.is_outgoing || matches!(message.delivery, DeliveryState::Failed) {
+            return;
+        }
+        let recipients_complete = message.recipient_deliveries.iter().all(|recipient| {
+            matches!(
+                recipient.delivery,
+                DeliveryState::Sent | DeliveryState::Received | DeliveryState::Seen
+            )
+        });
+        if pending_relay || queued_protocol || !recipients_complete {
+            if matches!(message.delivery, DeliveryState::Sent) {
+                message.delivery = DeliveryState::Pending;
+            }
+            return;
+        }
+        if matches!(
+            message.delivery,
+            DeliveryState::Pending | DeliveryState::Queued
+        ) {
+            message.delivery = DeliveryState::Sent;
+        }
     }
 
     pub(super) fn push_outgoing_message_with_id(
@@ -899,12 +989,70 @@ impl AppCore {
         chat_id: &str,
         kind: u32,
         content: &str,
-        _tags: Vec<Vec<String>>,
-        _now_ms: Option<u64>,
+        tags: Vec<Vec<String>>,
+        now_ms: Option<u64>,
     ) {
         if kind == CHAT_MESSAGE_KIND {
             self.send_group_message(chat_id, content, unix_now(), None);
+            return;
         }
+        let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
+            return;
+        };
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return;
+        };
+        let created_at = unix_now();
+        let mut nostr_tags = Vec::new();
+        for tag in tags {
+            if let Ok(tag) = nostr::Tag::parse(tag) {
+                nostr_tags.push(tag);
+            }
+        }
+        if let Ok(group_tag) = nostr::Tag::parse(["l", group_id.as_str()]) {
+            nostr_tags.push(group_tag);
+        }
+        let mut unsigned = UnsignedEvent::new(
+            owner_pubkey,
+            Timestamp::from_secs(created_at.get()),
+            Kind::Custom(kind as u16),
+            nostr_tags,
+            content.to_string(),
+        );
+        unsigned.ensure_id();
+        let payload = match serde_json::to_vec(&unsigned) {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.push_debug_log("group.control.encode", error.to_string());
+                return;
+            }
+        };
+        let inner_event_id = unsigned.id.as_ref().map(ToString::to_string);
+        let result = self
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.send_group_payload(&group_id, payload, inner_event_id.clone()));
+        match result {
+            Some(Ok(result)) => {
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
+                );
+                if !result.queued_targets.is_empty() {
+                    self.request_protocol_subscription_refresh();
+                    if self.fetch_recent_protocol_state() {
+                        self.state.busy.syncing_network = true;
+                    }
+                }
+            }
+            Some(Err(error)) => self.push_debug_log("group.control.send", error.to_string()),
+            None => {}
+        }
+        let _ = now_ms;
     }
 
     #[cfg(test)]
@@ -932,31 +1080,67 @@ impl AppCore {
         content: String,
         outer_event_id: Option<String>,
     ) {
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            let group_outcome = logged_in.ndr_runtime.group_handle_incoming_payload_outcome(
+        if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+            let group_outcome = match protocol_engine.process_group_pairwise_payload(
                 content.as_bytes(),
                 sender_owner,
                 sender_device,
-            );
+            ) {
+                Ok(group_outcome) => group_outcome,
+                Err(error) => {
+                    self.push_debug_log("appcore.protocol.group.payload.error", error.to_string());
+                    return;
+                }
+            };
             if !group_outcome.events.is_empty() {
+                if !group_outcome.queued_targets.is_empty() {
+                    self.handle_queued_protocol_targets(
+                        "group.pairwise",
+                        &group_outcome.queued_targets,
+                    );
+                }
                 for group_event in group_outcome.events {
                     self.apply_group_decrypted_event(group_event);
                 }
+                self.process_protocol_engine_effects_with_completions(
+                    group_outcome.effects,
+                    &BTreeMap::new(),
+                );
                 self.request_protocol_subscription_refresh();
                 return;
             }
             if group_outcome.consumed {
+                if !group_outcome.queued_targets.is_empty() {
+                    self.handle_queued_protocol_targets(
+                        "group.pairwise",
+                        &group_outcome.queued_targets,
+                    );
+                }
+                self.process_protocol_engine_effects_with_completions(
+                    group_outcome.effects,
+                    &BTreeMap::new(),
+                );
                 self.request_protocol_subscription_refresh();
                 return;
             }
         }
 
+        let effective_sender_owner = self.direct_message_display_sender_owner(
+            sender_owner,
+            sender_device,
+            conversation_owner,
+        );
+
         let Some(runtime_rumor) = parse_runtime_rumor(&content) else {
             let chat_id = self.logged_in.as_ref().and_then(|logged_in| {
-                direct_self_sync_chat_id(sender_owner, logged_in.owner_pubkey, conversation_owner)
+                direct_self_sync_chat_id(
+                    effective_sender_owner,
+                    logged_in.owner_pubkey,
+                    conversation_owner,
+                )
             });
             self.apply_runtime_text_message(
-                sender_owner,
+                effective_sender_owner,
                 chat_id,
                 content,
                 unix_now().get(),
@@ -978,18 +1162,18 @@ impl AppCore {
             return;
         };
         let chat_id = chat_id_for_runtime_message(
-            sender_owner,
+            effective_sender_owner,
             local_owner,
             conversation_owner,
             runtime_rumor.tags.iter(),
         );
-        let is_outgoing = sender_owner == local_owner;
+        let is_outgoing = effective_sender_owner == local_owner;
         let message_id = runtime_rumor.id.or_else(|| outer_event_id.clone());
 
         match kind {
             CHAT_MESSAGE_KIND => {
                 self.apply_runtime_text_message(
-                    sender_owner,
+                    effective_sender_owner,
                     Some(chat_id.clone()),
                     runtime_rumor.content,
                     created_at_secs,
@@ -1004,7 +1188,7 @@ impl AppCore {
                 }
             }
             REACTION_KIND => {
-                let sender_hex = sender_owner.to_hex();
+                let sender_hex = effective_sender_owner.to_hex();
                 for message_id in message_ids_from_tags(runtime_rumor.tags.iter()) {
                     self.apply_incoming_reaction_to_chat(
                         &chat_id,
@@ -1031,14 +1215,14 @@ impl AppCore {
                 if !is_outgoing {
                     self.apply_typing_event(
                         chat_id,
-                        sender_owner.to_hex(),
+                        effective_sender_owner.to_hex(),
                         created_at_secs,
                         expires_at_secs,
                     );
                 }
             }
             CHAT_SETTINGS_KIND => {
-                let actor = self.owner_display_label(&sender_owner.to_hex());
+                let actor = self.owner_display_label(&effective_sender_owner.to_hex());
                 self.apply_chat_settings_control(
                     &chat_id,
                     &actor,
@@ -1048,6 +1232,86 @@ impl AppCore {
             }
             _ => {}
         }
+    }
+
+    fn direct_message_display_sender_owner(
+        &self,
+        sender_owner: PublicKey,
+        sender_device: Option<PublicKey>,
+        conversation_owner: Option<PublicKey>,
+    ) -> PublicKey {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return sender_owner;
+        };
+        if let Some(owner) = sender_device
+            .and_then(|device| self.direct_owner_for_known_device_pubkey(device))
+            .or_else(|| self.direct_owner_for_known_device_pubkey(sender_owner))
+        {
+            return owner;
+        }
+        if let Some(conversation_owner) = conversation_owner {
+            if conversation_owner != logged_in.owner_pubkey
+                && (sender_owner == logged_in.owner_pubkey
+                    || self.is_known_local_owner_device_pubkey(sender_owner)
+                    || sender_device
+                        .is_some_and(|device| self.is_known_local_owner_device_pubkey(device)))
+            {
+                return logged_in.owner_pubkey;
+            }
+        }
+        sender_owner
+    }
+
+    fn direct_owner_for_known_device_pubkey(&self, device_pubkey: PublicKey) -> Option<PublicKey> {
+        let device_hex = device_pubkey.to_hex();
+        for known in self.app_keys.values() {
+            if known
+                .devices
+                .iter()
+                .any(|device| device.identity_pubkey_hex == device_hex)
+            {
+                return PublicKey::parse(&known.owner_pubkey_hex).ok();
+            }
+        }
+
+        let hint = self
+            .protocol_engine
+            .as_ref()
+            .and_then(|protocol_engine| protocol_engine.owner_hint_for_device(device_pubkey))?;
+        if hint.verified || self.should_trust_claimed_direct_owner(hint.owner) {
+            Some(hint.owner)
+        } else {
+            None
+        }
+    }
+
+    fn should_trust_claimed_direct_owner(&self, owner: PublicKey) -> bool {
+        let owner_hex = owner.to_hex();
+        self.tracked_peer_owner_hexes().contains(&owner_hex)
+            || self.owner_profiles.contains_key(&owner_hex)
+    }
+
+    fn is_known_local_owner_device_pubkey(&self, device_pubkey: PublicKey) -> bool {
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return false;
+        };
+        if device_pubkey == logged_in.device_keys.public_key() {
+            return true;
+        }
+        let owner_hex = logged_in.owner_pubkey.to_hex();
+        if self.app_keys.get(&owner_hex).is_some_and(|app_keys| {
+            app_keys
+                .devices
+                .iter()
+                .any(|device| device.identity_pubkey_hex == device_pubkey.to_hex())
+        }) {
+            return true;
+        }
+        self.protocol_engine
+            .as_ref()
+            .is_some_and(|protocol_engine| {
+                protocol_engine.is_known_local_owner_device(device_pubkey)
+            })
     }
 
     #[allow(clippy::too_many_arguments)]

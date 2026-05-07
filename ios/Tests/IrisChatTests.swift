@@ -299,112 +299,23 @@ private func makeIsolatedUserDefaults() -> (defaults: UserDefaults, suiteName: S
 }
 
 final class IrisChatTests: XCTestCase {
-    func testAppLaunchRecoveryMarksFirstLaunchHealthy() {
+    func testLaunchRecoveryDefaultsAreClearedWithoutAffectingAuthStartup() {
         let (defaults, suiteName) = makeIsolatedUserDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
-        let recovery = AppLaunchRecovery.begin(
-            appVersion: "3.0.18",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_000)
-        )
+        defaults.set(true, forKey: LaunchRecoveryDefaults.pendingKey)
+        defaults.set("launch-id", forKey: LaunchRecoveryDefaults.launchIDKey)
+        defaults.set("3.0.18", forKey: LaunchRecoveryDefaults.versionKey)
+        defaults.set(1_000.0, forKey: LaunchRecoveryDefaults.startedAtKey)
+        defaults.set("3.0.18", forKey: LaunchRecoveryDefaults.disabledVersionKey)
 
-        XCTAssertFalse(recovery.isRecoveryLaunch)
-        XCTAssertTrue(defaults.bool(forKey: AppLaunchRecovery.pendingKey))
+        LaunchRecoveryDefaults.clear(userDefaults: defaults)
 
-        recovery.markHealthy()
-
-        XCTAssertFalse(defaults.bool(forKey: AppLaunchRecovery.pendingKey))
-        XCTAssertNil(defaults.string(forKey: AppLaunchRecovery.launchIDKey))
-        XCTAssertNil(defaults.string(forKey: AppLaunchRecovery.disabledVersionKey))
-    }
-
-    func testAppLaunchRecoverySkipsAutoRestoreAfterFailedLaunch() {
-        let (defaults, suiteName) = makeIsolatedUserDefaults()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        _ = AppLaunchRecovery.begin(
-            appVersion: "3.0.18",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_000)
-        )
-        let recovery = AppLaunchRecovery.begin(
-            appVersion: "3.0.18",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_005)
-        )
-
-        XCTAssertTrue(recovery.isRecoveryLaunch)
-        XCTAssertEqual(defaults.string(forKey: AppLaunchRecovery.disabledVersionKey), "3.0.18")
-    }
-
-    func testAppLaunchRecoveryClearsDisabledVersionAfterHealthyRecoveryLaunch() {
-        let (defaults, suiteName) = makeIsolatedUserDefaults()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        _ = AppLaunchRecovery.begin(
-            appVersion: "3.0.18",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_000)
-        )
-        let recovery = AppLaunchRecovery.begin(
-            appVersion: "3.0.18",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_005)
-        )
-
-        XCTAssertTrue(recovery.isRecoveryLaunch)
-
-        recovery.markHealthy()
-
-        XCTAssertNil(defaults.string(forKey: AppLaunchRecovery.disabledVersionKey))
-        let nextLaunch = AppLaunchRecovery.begin(
-            appVersion: "3.0.18",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_010)
-        )
-        XCTAssertFalse(nextLaunch.isRecoveryLaunch)
-    }
-
-    func testAppLaunchRecoveryDoesNotCarryDisabledVersionAcrossUpdates() {
-        let (defaults, suiteName) = makeIsolatedUserDefaults()
-        defer { defaults.removePersistentDomain(forName: suiteName) }
-
-        _ = AppLaunchRecovery.begin(
-            appVersion: "3.0.18",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_000)
-        )
-        _ = AppLaunchRecovery.begin(
-            appVersion: "3.0.18",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_005)
-        )
-        let nextVersion = AppLaunchRecovery.begin(
-            appVersion: "3.0.19",
-            environment: [:],
-            enabled: true,
-            userDefaults: defaults,
-            now: Date(timeIntervalSince1970: 1_010)
-        )
-
-        XCTAssertFalse(nextVersion.isRecoveryLaunch)
+        XCTAssertNil(defaults.object(forKey: LaunchRecoveryDefaults.pendingKey))
+        XCTAssertNil(defaults.string(forKey: LaunchRecoveryDefaults.launchIDKey))
+        XCTAssertNil(defaults.string(forKey: LaunchRecoveryDefaults.versionKey))
+        XCTAssertNil(defaults.object(forKey: LaunchRecoveryDefaults.startedAtKey))
+        XCTAssertNil(defaults.string(forKey: LaunchRecoveryDefaults.disabledVersionKey))
     }
 
 #if os(iOS)

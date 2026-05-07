@@ -9,31 +9,41 @@ use crate::state::{
     OutgoingAttachment, PeerProfileDebugSnapshot, PreferencesSnapshot, PublicInviteSnapshot,
     RelayConnectionSnapshot, Router, Screen, TypingIndicatorSnapshot,
 };
-use crate::updates::{AppUpdate, CoreMsg, InternalEvent};
+use crate::updates::{AppUpdate, CoreMsg, InternalEvent, RelayPublishDrainResult};
 use flume::Sender;
-use nostr::{EventBuilder, UnsignedEvent};
-use nostr_double_ratchet::{GroupIncomingEvent, GroupSnapshot, Invite, SessionState};
+use nostr::{Alphabet, EventBuilder, SingleLetterTag, UnsignedEvent};
+use nostr_double_ratchet::{
+    AuthorizedDevice, DevicePubkey as NdrDevicePubkey, DeviceRoster, GroupIncomingEvent,
+    GroupManagerSnapshot, GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend,
+    GroupProtocol, GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, Invite,
+    MessageEnvelope, OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap,
+    SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
+};
 use nostr_double_ratchet_nostr::{
     apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,
-    APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_SENDER_KEY_MESSAGE_KIND,
-    INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND,
-    TYPING_KIND,
+    NostrGroupManager, APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND,
+    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND,
+    REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
 };
-use nostr_double_ratchet_runtime::{
-    build_direct_message_backfill_filter, DirectMessageSubscriptionTracker,
-    NdrProtocolBackfillOptions, NdrRuntime, SendOptions, SessionManagerEvent, StorageAdapter,
+use nostr_double_ratchet_nostr::{
+    group_sender_key_message_event, invite_response_event, message_event,
+    parse_group_sender_key_message_event, parse_invite_event, parse_invite_response_event,
+    parse_message_event,
 };
+use nostr_double_ratchet_pairwise_codec as pairwise_codec;
+use nostr_double_ratchet_runtime::{build_direct_message_backfill_filter, StorageAdapter};
 use nostr_sdk::prelude::{
     Client, Event, Filter, Keys, Kind, PublicKey, RelayNotification, RelayPoolNotification,
-    RelayStatus, RelayUrl, SubscriptionId, Timestamp, ToBech32,
+    RelayStatus, RelayUrl, SubscribeOptions, SubscriptionId, Timestamp, ToBech32,
 };
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::time::{sleep, Duration};
+use tokio::time::{sleep, sleep_until, Duration, Instant};
 
 mod account;
 mod attachment_upload;
@@ -58,6 +68,7 @@ mod profile;
 mod profile_helpers;
 mod projection;
 mod protocol;
+mod protocol_engine;
 mod protocol_filters;
 mod publish_helpers;
 mod publishing;
@@ -69,6 +80,9 @@ mod support;
 mod tests;
 
 pub(crate) const NEARBY_PRESENCE_KIND: u16 = 22242;
+pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
+pub(super) const APPCORE_PROTOCOL_BOOTSTRAP_LABEL: &str = "appcore-protocol-bootstrap";
+pub(super) const APPCORE_PROTOCOL_FIRST_CONTACT_LABEL: &str = "appcore-protocol-first-contact";
 
 type OwnerPubkey = PublicKey;
 type DevicePubkey = PublicKey;
@@ -82,7 +96,6 @@ impl UnixSeconds {
     }
 }
 
-#[cfg(test)]
 use account::known_app_keys_from_ndr;
 use account::known_app_keys_to_ndr;
 use attachment_upload::upload_profile_picture_to_hashtree;
@@ -103,6 +116,7 @@ pub(crate) use model::ProtocolSubscriptionPlan;
 use model::*;
 use payloads::*;
 use profile_helpers::*;
+use protocol_engine::*;
 use protocol_filters::*;
 use publish_helpers::*;
 use storage::{
@@ -117,6 +131,7 @@ pub struct AppCore {
     data_dir: PathBuf,
     state: AppState,
     logged_in: Option<LoggedInState>,
+    protocol_engine: Option<ProtocolEngine>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
     private_chat_invites: BTreeMap<String, Invite>,
     threads: BTreeMap<String, ThreadRecord>,
@@ -147,16 +162,22 @@ pub struct AppCore {
     protocol_reconnect_token: u64,
     defer_owner_app_keys_publish: bool,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
-    direct_message_subscriptions: DirectMessageSubscriptionTracker,
+    relay_transport_runtime: RelayTransportRuntime,
     relay_status_watch_urls: HashSet<String>,
+    relay_status_watch_generation: u64,
+    relay_status_by_url: BTreeMap<String, RelayStatus>,
     relay_connected_count: u64,
     all_relays_offline_since_secs: Option<u64>,
     pending_relay_publishes: BTreeMap<String, PendingRelayPublish>,
     pending_relay_publish_inflight: HashSet<String>,
+    pending_decrypted_delivery_acks: HashSet<String>,
     event_transport_channels: BTreeMap<String, String>,
     pending_mobile_push_events: VecDeque<Event>,
     debug_log: VecDeque<DebugLogEntry>,
     debug_event_counters: DebugEventCounters,
+    debug_snapshot_write_generation: u64,
+    debug_snapshot_write_inflight: bool,
+    debug_snapshot_write_dirty: bool,
     /// Reentrancy guard: while > 0, `rebuild_state` / `emit_state` /
     /// `persist_best_effort` only set the matching dirty flag. The outermost
     /// `exit_batch()` call performs a single rebuild + persist + emit so a
@@ -164,12 +185,6 @@ pub struct AppCore {
     batch_depth: u32,
     batch_dirty_state: bool,
     batch_dirty_persist: bool,
-    /// Owners we've already passed through `ndr_runtime.setup_user(...)`.
-    /// `setup_user` is idempotent at the subscription level, but the work
-    /// it triggers in `sync_direct_message_subscriptions` (walking every
-    /// session, JSON-serialising state) is ~300ms per call on Android
-    /// debug. Skipping known owners turns a 5 s per-tap cost into < 50 ms.
-    setup_user_done: HashSet<String>,
     /// Last `AppState` we successfully pushed across the FFI boundary, kept
     /// so `emit_state_inner` can skip pushes that don't change anything
     /// user-visible (a full `AppState` JNI marshal + Compose recomposition
@@ -194,5 +209,20 @@ pub struct AppCore {
 
 async fn connect_client_with_timeout(client: &Client, timeout: Duration) {
     client.connect().await;
-    client.wait_for_connection(timeout).await;
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if connected_relay_count_for_client(client).await > 0 {
+            return;
+        }
+        sleep(Duration::from_millis(250)).await;
+    }
+}
+
+async fn connected_relay_count_for_client(client: &Client) -> usize {
+    client
+        .relays()
+        .await
+        .values()
+        .filter(|relay| relay.status() == RelayStatus::Connected)
+        .count()
 }

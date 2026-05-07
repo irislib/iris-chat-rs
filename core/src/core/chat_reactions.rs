@@ -34,7 +34,11 @@ impl AppCore {
     }
 
     pub(super) fn send_reaction(&mut self, chat_id: &str, message_id: &str, emoji: &str) {
-        let Some(logged_in) = self.logged_in.as_ref() else {
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
             return;
         };
         if parse_group_id_from_chat_id(chat_id).is_some() {
@@ -46,28 +50,26 @@ impl AppCore {
         }
 
         if let Ok((_, peer)) = parse_peer_input(chat_id) {
-            if emoji.is_empty() {
-                // The shared NDR helper rejects empty content, so build the
-                // raw kind-7 rumor ourselves to broadcast an unreact.
+            let now = unix_now();
+            if let Ok(unsigned) = pairwise_codec::reaction_event(
+                owner_pubkey,
+                message_id.to_string(),
+                emoji.to_string(),
+                pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
+            ) {
+                self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction");
+            } else if emoji.is_empty() {
                 if let Ok(e_tag) = nostr::Tag::parse(["e", message_id]) {
                     let unsigned = UnsignedEvent::new(
-                        peer,
+                        owner_pubkey,
                         Timestamp::from_secs(unix_now().get()),
                         Kind::Custom(REACTION_KIND as u16),
                         vec![e_tag],
                         String::new(),
                     );
-                    let _ = logged_in.ndr_runtime.send_event(peer, unsigned);
+                    self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "reaction");
                 }
-            } else {
-                let _ = logged_in.ndr_runtime.send_reaction(
-                    peer,
-                    message_id.to_string(),
-                    emoji.to_string(),
-                    None,
-                );
             }
-            self.process_runtime_events();
         }
     }
 

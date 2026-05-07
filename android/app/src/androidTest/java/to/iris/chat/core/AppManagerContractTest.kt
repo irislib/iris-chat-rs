@@ -103,6 +103,16 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun background_flushes_rust_core_before_process_can_be_stopped() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+
+        appManager.appBackgrounded()
+
+        assertEquals(1, rust.prepareForSuspendCount)
+    }
+
+    @Test
     fun active_chat_notification_suppression_matches_direct_sender() {
         rustFactory.initialStates += makeAppState(
             currentChat = makeCurrentChat(chatId = "ABCDEF", kind = ChatKind.DIRECT),
@@ -574,6 +584,7 @@ private class MockRustAppClient(
     val dispatchedActions = mutableListOf<AppAction>()
     var peerDebug: PeerProfileDebugSnapshot? = null
     var dispatchError: Throwable? = null
+    var prepareForSuspendCount = 0
     var shutdownCount = 0
     private var reconciler: AppReconciler? = null
 
@@ -611,6 +622,10 @@ private class MockRustAppClient(
     override fun exportSupportBundleJson(): String = """{"ok":true}"""
 
     override fun peerProfileDebug(ownerInput: String): PeerProfileDebugSnapshot? = peerDebug
+
+    override fun prepareForSuspend() {
+        prepareForSuspendCount += 1
+    }
 
     override fun listenForUpdates(reconciler: AppReconciler) {
         this.reconciler = reconciler

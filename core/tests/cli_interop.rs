@@ -65,6 +65,34 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
         .unwrap_or_else(|error| panic!("invalid json: {error}\nstdout={stdout}\nstderr={stderr}"))
 }
 
+fn debug_snapshot(data_dir: &Path) -> String {
+    std::fs::read_to_string(data_dir.join("iris_chat_runtime_debug.json"))
+        .unwrap_or_else(|error| format!("debug snapshot unavailable: {error}"))
+}
+
+fn relay_event_summary(relay: &TestRelay) -> Value {
+    Value::Array(
+        relay
+            .events()
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event.get("kind").and_then(Value::as_u64),
+                    Some(1059 | 1060 | 30078)
+                )
+            })
+            .map(|event| {
+                serde_json::json!({
+                    "id": event.get("id").cloned().unwrap_or(Value::Null),
+                    "kind": event.get("kind").cloned().unwrap_or(Value::Null),
+                    "pubkey": event.get("pubkey").cloned().unwrap_or(Value::Null),
+                    "tags": event.get("tags").cloned().unwrap_or(Value::Null),
+                })
+            })
+            .collect(),
+    )
+}
+
 fn start_iris(data_dir: &Path, args: &[&str]) -> std::process::Child {
     Command::new(iris_binary())
         .arg("--json")
@@ -424,8 +452,11 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
             let _ = bob_child.wait();
             let bob_sync = run_iris(bob.path(), &["sync", "--wait-ms", "2000"]);
             let bob_read = run_iris(bob.path(), &["read", alice_user_id]);
+            let fresh_debug = debug_snapshot(alice_fresh.path());
+            let bob_debug = debug_snapshot(bob.path());
+            let relay_events = relay_event_summary(&relay);
             panic!(
-                "bob did not receive fresh restored send; trace={}; bob_sync={bob_sync}; bob_read={bob_read}; relay_kinds={relay_kinds:?}",
+                "bob did not receive fresh restored send; trace={}; fresh_debug={fresh_debug}; bob_sync={bob_sync}; bob_read={bob_read}; bob_debug={bob_debug}; relay_events={relay_events}; relay_kinds={relay_kinds:?}",
                 sent["data"]["delivery_trace"],
             );
         }
@@ -448,8 +479,10 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
             let alice_sync = run_iris(alice_old.path(), &["sync", "--wait-ms", "2000"]);
             let alice_read = run_iris(alice_old.path(), &["read", bob_user_id]);
             let fresh_read = run_iris(alice_fresh.path(), &["read", bob_user_id]);
+            let fresh_debug = debug_snapshot(alice_fresh.path());
+            let alice_debug = debug_snapshot(alice_old.path());
             panic!(
-                "old alice did not receive sender copy; trace={}; alice_sync={alice_sync}; alice_read={alice_read}; fresh_read={fresh_read}; relay_kinds={relay_kinds:?}",
+                "old alice did not receive sender copy; trace={}; alice_sync={alice_sync}; alice_read={alice_read}; fresh_read={fresh_read}; fresh_debug={fresh_debug}; alice_debug={alice_debug}; relay_kinds={relay_kinds:?}",
                 sent["data"]["delivery_trace"],
             );
         }

@@ -83,3 +83,54 @@ iris_e2e_run_and_log() {
   } | tee -a "${log_file}" >&2
   "$@" 2>&1 | tee -a "${log_file}"
 }
+
+iris_e2e_ensure_android_package() {
+  local adb="$1"
+  local serial="$2"
+  local package_name="$3"
+  local apk_path="$4"
+  local log_file="$5"
+
+  if "${adb}" -s "${serial}" shell pm path "${package_name}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  {
+    printf 'Android package %s missing on %s; reinstalling %s\n' \
+      "${package_name}" "${serial}" "${apk_path}"
+  } | tee -a "${log_file}" >&2
+  "${adb}" -s "${serial}" install -r "${apk_path}" 2>&1 | tee -a "${log_file}"
+  "${adb}" -s "${serial}" shell pm path "${package_name}" >/dev/null
+}
+
+iris_e2e_install_android_package() {
+  local adb="$1"
+  local serial="$2"
+  local package_name="$3"
+  local apk_path="$4"
+  local log_file="$5"
+
+  {
+    printf 'Installing Android package %s on %s from %s\n' \
+      "${package_name}" "${serial}" "${apk_path}"
+  } | tee -a "${log_file}" >&2
+  "${adb}" -s "${serial}" install -r "${apk_path}" 2>&1 | tee -a "${log_file}"
+  "${adb}" -s "${serial}" shell pm path "${package_name}" >/dev/null
+}
+
+iris_e2e_wait_android_public_network() {
+  local adb="$1"
+  local serial="$2"
+  local timeout_secs="${3:-60}"
+  local deadline=$((SECONDS + timeout_secs))
+  while (( SECONDS < deadline )); do
+    if "${adb}" -s "${serial}" shell \
+      'ping -c 1 -W 3 8.8.8.8 >/dev/null 2>&1 && ping -c 1 -W 3 google.com >/dev/null 2>&1' \
+      >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 2
+  done
+  echo "Android device ${serial} does not have working public internet/DNS; public-relay E2E cannot run reliably." >&2
+  return 1
+}

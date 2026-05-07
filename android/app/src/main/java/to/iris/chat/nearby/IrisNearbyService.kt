@@ -301,6 +301,7 @@ class IrisNearbyService(
             )
         ownOutbound[event.eventId] = record
         forwarded.remove(event.eventId)
+        peerInventorySentMillis.clear()
         if (record.kind == 0L) {
             NearbyProfileEvent.fromEventJson(event.eventJson)?.let { profile ->
                 ownProfileEventId = record.id
@@ -313,6 +314,7 @@ class IrisNearbyService(
             if (record.kind == 0L) {
                 sendHello(excludingPeerId = null)
             }
+            sendInventory(excludingPeerId = null)
             sendEvent(record, excludingPeerId = null)
         }
     }
@@ -791,6 +793,9 @@ class IrisNearbyService(
         return true
     }
 
+    private fun blePayloadBytesForMtu(mtu: Int): Int =
+        (mtu - 3).coerceIn(20, BLE_CHUNK_BYTES)
+
     @SuppressLint("MissingPermission")
     private suspend fun notifyDevice(
         server: BluetoothGattServer,
@@ -1239,11 +1244,11 @@ class IrisNearbyService(
         excludingPeerId: String?,
     ): Boolean {
         val remotePeerId = peerIdsByAddress[address]
-        if (excludingPeerId != null && remotePeerId == excludingPeerId) {
-            return false
-        }
         if (remotePeerId == null) {
             return true
+        }
+        if (remotePeerId == excludingPeerId) {
+            return false
         }
         if (lanService.hasPeer(remotePeerId)) {
             return false
@@ -1259,11 +1264,11 @@ class IrisNearbyService(
         excludingPeerId: String?,
     ): Boolean {
         val remotePeerId = peerIdsByAddress[address]
-        if (excludingPeerId != null && remotePeerId == excludingPeerId) {
-            return false
-        }
         if (remotePeerId == null) {
             return true
+        }
+        if (remotePeerId == excludingPeerId) {
+            return false
         }
         if (lanService.hasPeer(remotePeerId)) {
             return false
@@ -1736,7 +1741,7 @@ class IrisNearbyService(
                 guardBluetooth("GATT MTU changed", Unit, statusOnFailure = null) {
                     val address = gatt.device.address
                     if (status == BluetoothGatt.GATT_SUCCESS) {
-                        mtuPayloadBytes[address] = (mtu - 3).coerceAtLeast(20)
+                        mtuPayloadBytes[address] = blePayloadBytesForMtu(mtu)
                         Log.d(TAG, "MTU $mtu for $address")
                     } else {
                         Log.w(TAG, "MTU request failed for $address status=$status")
@@ -1831,7 +1836,7 @@ class IrisNearbyService(
             override fun onMtuChanged(device: BluetoothDevice, mtu: Int) {
                 guardBluetooth("server MTU changed", Unit, statusOnFailure = null) {
                     val address = device.address
-                    mtuPayloadBytes[address] = (mtu - 3).coerceAtLeast(20)
+                    mtuPayloadBytes[address] = blePayloadBytesForMtu(mtu)
                     Log.d(TAG, "server MTU $mtu for $address")
                 }
             }

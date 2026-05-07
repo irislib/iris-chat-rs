@@ -140,29 +140,41 @@ impl AppCore {
             .clone()
             .unwrap_or_else(|| response.invitee_identity.to_hex());
         let session_state = response.session.state;
-        let import_result = self
-            .logged_in
-            .as_ref()
-            .expect("checked logged in")
-            .ndr_runtime
-            .import_session_state(owner_pubkey, Some(peer_device_id.clone()), session_state);
-        if let Err(error) = import_result {
-            self.push_debug_log(
-                "invite.private_response.import",
-                format!(
-                    "event_id={event_id} owner={} error={error}",
-                    owner_pubkey.to_hex()
-                ),
-            );
-            return false;
+        let import_result = self.protocol_engine.as_mut().map(|engine| {
+            engine.import_session_state(
+                owner_pubkey,
+                Some(peer_device_id.clone()),
+                session_state,
+                unix_now(),
+            )
+        });
+        let retry_batch = match import_result {
+            Some(Ok(retry_batch)) => retry_batch,
+            Some(Err(error)) => {
+                self.push_debug_log(
+                    "invite.private_response.import",
+                    format!(
+                        "event_id={event_id} owner={} error={error}",
+                        owner_pubkey.to_hex()
+                    ),
+                );
+                return false;
+            }
+            None => return false,
+        };
+        self.process_protocol_engine_retry_batch("private_invite_response", retry_batch);
+        self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
+        if self.fetch_recent_protocol_state() {
+            self.state.busy.syncing_network = true;
         }
+        self.fetch_recent_messages_for_tracked_peers(unix_now());
+        self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
 
         let chat_id = owner_pubkey.to_hex();
         self.ensure_thread_record(&chat_id, unix_now().get())
             .unread_count = 0;
         self.remember_recent_handshake_peer(chat_id, peer_device_id, unix_now().get());
         self.forget_private_chat_invite_keys(&[invite_key]);
-        self.process_runtime_events();
         self.push_debug_log(
             "invite.private_response",
             format!("event_id={event_id} owner={}", owner_pubkey.to_hex()),
@@ -215,15 +227,11 @@ impl AppCore {
     fn accept_parsed_invite(&mut self, invite: Invite) -> anyhow::Result<String> {
         let owner_pubkey = invite.owner_public_key.unwrap_or(invite.inviter);
         let chat_id = owner_pubkey.to_hex();
-        let result = {
-            let logged_in = self
-                .logged_in
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
-            logged_in
-                .ndr_runtime
-                .accept_invite(&invite, Some(owner_pubkey))?
-        };
+        let result = self
+            .protocol_engine
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Protocol engine is not ready."))?
+            .accept_invite(&invite, Some(owner_pubkey))?;
 
         self.ensure_thread_record(&chat_id, unix_now().get())
             .unread_count = 0;
@@ -235,7 +243,7 @@ impl AppCore {
         // Accepting an invite installs a new session — invalidate the
         // cached mobile-push snapshot so the new recipient appears.
         self.mark_mobile_push_dirty();
-        self.process_runtime_events();
+        self.process_protocol_engine_effects_with_completions(result.effects, &BTreeMap::new());
         Ok(chat_id)
     }
 
@@ -287,14 +295,22 @@ impl AppCore {
         };
 
         let created_at = event.created_at.as_secs();
-        self.apply_app_keys_event(&event);
-        self.push_debug_log(
-            "invite.app_keys.preload",
-            format!(
-                "owner={} result=applied created_at={created_at}",
-                owner_pubkey.to_hex()
+        match self.apply_app_keys_event(&event) {
+            Ok(_) => self.push_debug_log(
+                "invite.app_keys.preload",
+                format!(
+                    "owner={} result=applied created_at={created_at}",
+                    owner_pubkey.to_hex()
+                ),
             ),
-        );
+            Err(error) => self.push_debug_log(
+                "invite.app_keys.preload",
+                format!(
+                    "owner={} result=apply_failed error={error}",
+                    owner_pubkey.to_hex()
+                ),
+            ),
+        }
     }
 }
 

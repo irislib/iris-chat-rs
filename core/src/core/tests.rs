@@ -1,4 +1,69 @@
+use super::protocol::build_protocol_subscription_filters;
 use super::*;
+use nostr_double_ratchet_runtime::{NdrRuntime, SessionManagerEvent};
+
+#[derive(Clone)]
+struct SwitchableFailStorage {
+    inner: nostr_double_ratchet_runtime::InMemoryStorage,
+    fail_puts: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl SwitchableFailStorage {
+    fn new() -> Self {
+        Self {
+            inner: nostr_double_ratchet_runtime::InMemoryStorage::new(),
+            fail_puts: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    fn set_fail_puts(&self, fail: bool) {
+        self.fail_puts
+            .store(fail, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+impl StorageAdapter for SwitchableFailStorage {
+    fn get(&self, key: &str) -> nostr_double_ratchet_runtime::Result<Option<String>> {
+        self.inner.get(key)
+    }
+
+    fn put(&self, key: &str, value: String) -> nostr_double_ratchet_runtime::Result<()> {
+        if self.fail_puts.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(nostr_double_ratchet_runtime::Error::Storage(
+                "injected storage failure".to_string(),
+            ));
+        }
+        self.inner.put(key, value)
+    }
+
+    fn del(&self, key: &str) -> nostr_double_ratchet_runtime::Result<()> {
+        self.inner.del(key)
+    }
+
+    fn list(&self, prefix: &str) -> nostr_double_ratchet_runtime::Result<Vec<String>> {
+        self.inner.list(prefix)
+    }
+}
+
+fn protocol_plan_for_test(
+    message_authors: Vec<PublicKey>,
+    group_sender_key_authors: Vec<PublicKey>,
+) -> ProtocolSubscriptionPlan {
+    ProtocolSubscriptionPlan {
+        runtime_subscriptions: vec!["ndr-protocol".to_string()],
+        roster_authors: Vec::new(),
+        invite_authors: Vec::new(),
+        message_authors: message_authors
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect(),
+        group_sender_key_authors: group_sender_key_authors
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect(),
+        invite_response_recipient: None,
+    }
+}
 
 #[test]
 fn restoring_invalid_secret_key_shows_normie_error() {
@@ -110,6 +175,11 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
         None,
         DeliveryState::Pending,
     );
+    core.logged_in
+        .as_mut()
+        .expect("logged in")
+        .relay_urls
+        .clear();
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
         .sign_with_keys(&device)
         .expect("event");
@@ -174,6 +244,132 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
             .map(|message| &message.delivery),
         Some(&DeliveryState::Sent)
     );
+}
+
+#[test]
+fn staged_first_contact_queues_payload_durably_before_delayed_publish() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("staged-first-contact-queue", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "first-contact-message".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "staged".to_string(),
+        unix_now().get(),
+        None,
+        DeliveryState::Pending,
+    );
+    let bootstrap = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "bootstrap")
+        .sign_with_keys(&device)
+        .expect("bootstrap event");
+    let payload = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
+        .sign_with_keys(&device)
+        .expect("payload event");
+    let payload_id = payload.id.to_string();
+    let completions = BTreeMap::from([(payload_id.clone(), (message_id.clone(), chat_id.clone()))]);
+
+    core.process_protocol_engine_effects_with_completions(
+        vec![ProtocolEffect::PublishStagedFirstContact {
+            bootstrap: vec![ProtocolPublishEvent {
+                event: bootstrap,
+                inner_event_id: None,
+                target_owner_pubkey_hex: None,
+                target_device_id: None,
+            }],
+            payload: vec![ProtocolPublishEvent {
+                event: payload,
+                inner_event_id: Some(message_id.clone()),
+                target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+                target_device_id: Some(peer.public_key().to_hex()),
+            }],
+        }],
+        &completions,
+    );
+
+    let pending = core
+        .pending_relay_publishes
+        .get(&payload_id)
+        .expect("payload should be queued before delayed publish");
+    assert_eq!(pending.label, "appcore-protocol-first-contact");
+    assert_eq!(pending.message_id.as_deref(), Some(message_id.as_str()));
+    assert_eq!(pending.chat_id.as_deref(), Some(chat_id.as_str()));
+    assert!(
+        !core.pending_relay_publish_inflight.contains(&payload_id),
+        "payload should be durable but not in flight until the first-contact delay fires"
+    );
+}
+
+#[test]
+fn liveness_retries_pending_relay_publish_without_active_protocol_subscription() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let relay = crate::local_relay::TestRelay::start();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let (core_tx, core_rx) = flume::unbounded();
+    let mut core = logged_in_test_core_at_data_dir(
+        &owner,
+        &device,
+        temp_dir.path().to_string_lossy().to_string(),
+    );
+    core.core_sender = core_tx;
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    {
+        let logged_in = core.logged_in.as_mut().expect("logged in");
+        logged_in.relay_urls = relay_urls;
+    }
+    assert!(
+        core.protocol_subscription_runtime.desired_plan.is_none(),
+        "test should cover pending publish retry without subscription state"
+    );
+
+    let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
+        .sign_with_keys(&device)
+        .expect("event");
+    let event_id = event.id.to_string();
+    core.pending_relay_publishes.insert(
+        event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: event_id.clone(),
+            label: "app-keys".to_string(),
+            event_json: serde_json::to_string(&event).expect("event json"),
+            inner_event_id: None,
+            target_owner_pubkey_hex: None,
+            target_device_id: None,
+            message_id: None,
+            chat_id: None,
+            created_at_secs: event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: Some("initial offline publish failed".to_string()),
+        },
+    );
+
+    core.handle_protocol_subscription_liveness_check(core.protocol_reconnect_token);
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        while let Ok(msg) = core_rx.try_recv() {
+            core.handle_message(msg);
+        }
+        if relay.events().iter().any(|event| {
+            event.get("id").and_then(|value| value.as_str()) == Some(event_id.as_str())
+        }) && !core.pending_relay_publishes.contains_key(&event_id)
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    assert!(
+        relay.events().iter().any(|event| {
+            event.get("id").and_then(|value| value.as_str()) == Some(event_id.as_str())
+        }),
+        "liveness must retry queued relay publishes even without active protocol subscriptions"
+    );
+    assert!(!core.pending_relay_publishes.contains_key(&event_id));
 }
 
 #[test]
@@ -288,6 +484,28 @@ fn app_keys_publish_prunes_superseded_pending_publish() {
 }
 
 #[test]
+fn upserting_existing_local_app_key_device_is_protocol_noop() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("appkeys-existing-device-noop", &owner, &device);
+    let owner_hex = owner.public_key().to_hex();
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+    let initial = core
+        .app_keys
+        .get(&owner_hex)
+        .expect("local AppKeys")
+        .clone();
+
+    core.upsert_local_app_key_device(owner.public_key(), device.public_key());
+
+    assert_eq!(
+        core.app_keys.get(&owner_hex),
+        Some(&initial),
+        "restoring the same owner/device must not create a newer local AppKeys protocol state"
+    );
+}
+
+#[test]
 fn relay_duplicate_or_newer_replaceable_rejection_is_terminal_success() {
     assert!(relay_publish_failure_is_terminal_success(
         "duplicate: already have this event"
@@ -343,6 +561,2195 @@ fn relay_status_events_match_normalized_relay_urls() {
     assert!(core.debug_log.iter().any(|entry| {
         entry.category == "relay.status" && entry.detail.starts_with("url=wss://relay.example ")
     }));
+    let relay_status_log_count = core
+        .debug_log
+        .iter()
+        .filter(|entry| entry.category == "relay.status")
+        .count();
+
+    core.handle_relay_status_changed("wss://relay.example".to_string(), RelayStatus::Connected);
+    core.handle_relay_status_changed_for_generation(
+        "wss://relay.example".to_string(),
+        RelayStatus::Disconnected,
+        core.relay_status_watch_generation.wrapping_add(1),
+    );
+
+    assert_eq!(
+        core.debug_log
+            .iter()
+            .filter(|entry| entry.category == "relay.status")
+            .count(),
+        relay_status_log_count
+    );
+    assert_eq!(core.relay_connected_count, 1);
+}
+
+#[test]
+fn duplicate_protocol_publish_for_same_target_is_suppressed() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("duplicate-protocol-publish", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "duplicate-publish-message".to_string();
+    let target_device_id = "target-device".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "dedupe me".to_string(),
+        1_777_159_500,
+        None,
+        DeliveryState::Pending,
+    );
+    let first = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "first")
+        .sign_with_keys(&device)
+        .expect("first event");
+    let first_event_id = first.id.to_string();
+    let second = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "second")
+        .sign_with_keys(&device)
+        .expect("second event");
+    let second_event_id = second.id.to_string();
+
+    assert!(core.publish_runtime_event_with_metadata(
+        first,
+        APPCORE_PROTOCOL_LABEL,
+        Some((message_id.clone(), chat_id.clone())),
+        Some("inner-message".to_string()),
+        Some(chat_id.clone()),
+        Some(target_device_id.clone()),
+    ));
+    assert!(!core.publish_runtime_event_with_metadata(
+        second,
+        APPCORE_PROTOCOL_LABEL,
+        Some((message_id, chat_id.clone())),
+        Some("inner-message".to_string()),
+        Some(chat_id),
+        Some(target_device_id),
+    ));
+
+    assert!(core.pending_relay_publishes.contains_key(&first_event_id));
+    assert!(!core.pending_relay_publishes.contains_key(&second_event_id));
+    assert_eq!(core.pending_relay_publishes.len(), 1);
+    assert!(core.debug_log.iter().any(|entry| {
+        entry.category == "publish.runtime.queue"
+            && entry.detail.contains("skipped=duplicate_pending")
+    }));
+}
+
+#[test]
+fn protocol_subscription_reconcile_defers_while_in_flight() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-reconcile-single-flight", &owner, &device);
+    core.protocol_subscription_runtime.desired_plan = Some(protocol_plan_for_test(
+        vec![device.public_key()],
+        Vec::new(),
+    ));
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+
+    core.reconcile_protocol_subscriptions("test", true);
+
+    assert!(core.protocol_subscription_runtime.refresh_in_flight);
+    assert!(core.protocol_subscription_runtime.refresh_dirty);
+    assert!(core.protocol_subscription_runtime.force_reconnect_dirty);
+    assert_eq!(core.protocol_subscription_runtime.reconcile_token, 0);
+}
+
+#[test]
+fn protocol_subscription_desired_plan_is_not_applied_before_reconcile_success() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-desired-not-applied", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.request_protocol_subscription_refresh_forced();
+
+    assert!(
+        core.protocol_subscription_runtime.desired_plan.is_some(),
+        "refresh computes the desired plan synchronously"
+    );
+    assert_eq!(
+        core.protocol_subscription_runtime.applied_plan, None,
+        "desired plan must not be reported as applied before relay apply succeeds"
+    );
+}
+
+#[test]
+fn failed_protocol_subscription_apply_clears_inflight_and_keeps_dirty() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-apply-failure", &owner, &device);
+    let plan = protocol_plan_for_test(vec![device.public_key()], Vec::new());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applying_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+    core.protocol_subscription_runtime.reconcile_token = 3;
+
+    core.handle_protocol_subscription_reconcile_completed(
+        core.protocol_reconnect_token,
+        3,
+        "test_failure".to_string(),
+        Some(plan),
+        false,
+        Some("injected failure".to_string()),
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        1,
+        1,
+        1,
+    );
+
+    assert!(!core.protocol_subscription_runtime.refresh_in_flight);
+    assert!(core.protocol_subscription_runtime.applying_plan.is_none());
+    assert!(core.protocol_subscription_runtime.refresh_dirty);
+    assert!(core.protocol_subscription_runtime.applied_plan.is_none());
+    assert!(core.protocol_subscription_runtime.liveness_due_at.is_some());
+}
+
+#[test]
+fn successful_protocol_subscription_apply_sets_applied_plan() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-apply-success", &owner, &device);
+    let plan = protocol_plan_for_test(vec![device.public_key()], Vec::new());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applying_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+    core.protocol_subscription_runtime.reconcile_token = 5;
+
+    core.handle_protocol_subscription_reconcile_completed(
+        core.protocol_reconnect_token,
+        5,
+        "test_success".to_string(),
+        Some(plan.clone()),
+        true,
+        None,
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        1,
+        1,
+        1,
+    );
+
+    assert!(!core.protocol_subscription_runtime.refresh_in_flight);
+    assert_eq!(core.protocol_subscription_runtime.applied_plan, Some(plan));
+    assert!(core.protocol_subscription_runtime.applying_plan.is_none());
+}
+
+#[test]
+fn stale_protocol_subscription_reconcile_completion_is_ignored() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-reconcile-stale", &owner, &device);
+    core.protocol_reconnect_token = 5;
+    core.protocol_subscription_runtime.reconcile_token = 7;
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+
+    core.handle_protocol_subscription_reconcile_completed(
+        4,
+        7,
+        "stale".to_string(),
+        None,
+        false,
+        None,
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        0,
+        1,
+        0,
+    );
+
+    assert!(core.protocol_subscription_runtime.refresh_in_flight);
+    assert_eq!(core.relay_connected_count, 0);
+}
+
+#[test]
+fn debug_snapshot_write_is_coalesced_while_in_flight() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("debug-snapshot-coalesce", &owner, &device);
+    core.debug_snapshot_write_inflight = true;
+
+    core.persist_debug_snapshot_best_effort();
+
+    assert!(core.debug_snapshot_write_inflight);
+    assert!(core.debug_snapshot_write_dirty);
+}
+
+#[test]
+fn stale_debug_snapshot_write_completion_is_ignored() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("debug-snapshot-stale", &owner, &device);
+    core.debug_snapshot_write_generation = 10;
+    core.debug_snapshot_write_inflight = true;
+    core.debug_snapshot_write_dirty = true;
+
+    core.handle_debug_snapshot_write_finished(9);
+
+    assert!(core.debug_snapshot_write_inflight);
+    assert!(core.debug_snapshot_write_dirty);
+}
+
+#[test]
+fn liveness_retries_protocol_backfill_for_tracked_peer_missing_appkeys_when_connected() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let relay = crate::local_relay::TestRelay::start();
+    let mut core = logged_in_test_core("tracked-peer-liveness-backfill", &owner, &device);
+
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
+    {
+        let logged_in = core.logged_in.as_mut().expect("logged in");
+        logged_in.relay_urls = relay_urls.clone();
+        let client = logged_in.client.clone();
+        let connected = core.runtime.block_on(async {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                let connected = client
+                    .relays()
+                    .await
+                    .values()
+                    .filter(|relay| relay.status() == RelayStatus::Connected)
+                    .count();
+                if connected > 0 || tokio::time::Instant::now() >= deadline {
+                    break connected;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        });
+        assert!(connected > 0, "test relay must be connected");
+    }
+
+    core.active_chat_id = Some(peer.public_key().to_hex());
+    core.request_protocol_subscription_refresh_forced();
+    assert!(
+        core.protocol_subscription_runtime.desired_plan.is_some(),
+        "tracked peer setup should create runtime protocol subscriptions"
+    );
+
+    core.debug_log.clear();
+    let token = core.protocol_reconnect_token;
+    core.handle_protocol_subscription_liveness_check(token);
+
+    assert!(
+        core.debug_log
+            .iter()
+            .any(|entry| entry.category == "protocol.catch_up.fetch"),
+        "connected-relay liveness must still backfill tracked peers with missing AppKeys"
+    );
+}
+
+#[test]
+fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("protocol-liveness-earliest-deadline", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.request_protocol_subscription_refresh_forced();
+    assert!(
+        core.protocol_subscription_runtime.desired_plan.is_some(),
+        "logged-in session should derive protocol subscriptions"
+    );
+    core.protocol_subscription_runtime.liveness_due_at = None;
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
+    let first_token = core.protocol_reconnect_token;
+    let first_due = core
+        .protocol_subscription_runtime
+        .liveness_due_at
+        .expect("initial liveness should be scheduled");
+
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
+    assert_eq!(
+        core.protocol_reconnect_token, first_token,
+        "a later/equal liveness request must not cancel the pending reconnect"
+    );
+    assert_eq!(
+        core.protocol_subscription_runtime.liveness_due_at,
+        Some(first_due)
+    );
+
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
+    let fast_token = core.protocol_reconnect_token;
+    let fast_due = core
+        .protocol_subscription_runtime
+        .liveness_due_at
+        .expect("fast reconnect should be scheduled");
+    assert!(
+        fast_token > first_token,
+        "an earlier liveness request should replace the previous deadline"
+    );
+    assert!(
+        fast_due < first_due,
+        "fast reconnect should move the liveness deadline earlier"
+    );
+
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
+    assert_eq!(
+        core.protocol_reconnect_token, fast_token,
+        "a later liveness request must not starve the fast reconnect"
+    );
+    assert_eq!(
+        core.protocol_subscription_runtime.liveness_due_at,
+        Some(fast_due)
+    );
+}
+
+#[test]
+fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_session() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let relay = crate::local_relay::TestRelay::start();
+    let mut core = logged_in_test_core("tracked-peer-roster-no-session-backfill", &owner, &device);
+
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
+    {
+        let logged_in = core.logged_in.as_mut().expect("logged in");
+        logged_in.relay_urls = relay_urls.clone();
+        let client = logged_in.client.clone();
+        let connected = core.runtime.block_on(async {
+            ensure_session_relays_configured(&client, &relay_urls).await;
+            connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+            loop {
+                let connected = client
+                    .relays()
+                    .await
+                    .values()
+                    .filter(|relay| relay.status() == RelayStatus::Connected)
+                    .count();
+                if connected > 0 || tokio::time::Instant::now() >= deadline {
+                    break connected;
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        });
+        assert!(connected > 0, "test relay must be connected");
+    }
+
+    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
+    {
+        let batch = core
+            .protocol_engine
+            .as_mut()
+            .expect("protocol engine")
+            .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys.clone(), 1)
+            .expect("ingest peer appkeys");
+        core.process_protocol_engine_retry_batch("test_app_keys", batch);
+    }
+    core.app_keys.insert(
+        peer_owner.public_key().to_hex(),
+        known_app_keys_from_ndr(peer_owner.public_key(), &peer_app_keys, 1),
+    );
+    core.active_chat_id = Some(peer_owner.public_key().to_hex());
+
+    assert!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .message_author_pubkeys_for_owner(peer_owner.public_key())
+            .is_empty(),
+        "peer roster without invite response must not have message authors yet"
+    );
+    core.request_protocol_subscription_refresh_forced();
+    assert!(
+        core.protocol_subscription_runtime.desired_plan.is_some(),
+        "tracked peer roster should derive protocol-state subscriptions"
+    );
+
+    core.debug_log.clear();
+    let token = core.protocol_reconnect_token;
+    core.handle_protocol_subscription_liveness_check(token);
+
+    assert!(
+        core.debug_log
+            .iter()
+            .any(|entry| entry.category == "protocol.catch_up.fetch"),
+        "connected-relay liveness must backfill tracked peers that have AppKeys but no session authors"
+    );
+}
+
+#[test]
+fn protocol_backfill_fetches_configure_relays_before_network_fetch() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol.rs"),
+    )
+    .expect("read protocol source");
+    for fn_name in [
+        "fetch_recent_messages_for_author",
+        "fetch_recent_group_sender_key_messages_for_author",
+        "fetch_recent_protocol_state",
+    ] {
+        let start = protocol_source
+            .find(&format!("pub(super) fn {fn_name}"))
+            .unwrap_or_else(|| panic!("missing {fn_name}"));
+        let body = &protocol_source[start..];
+        let end = body
+            .find("\n    pub(super) fn ")
+            .or_else(|| body.find("\n    fn "))
+            .unwrap_or(body.len());
+        let body = &body[..end];
+        assert!(
+            body.contains("ensure_session_relays_configured(&client, &relay_urls).await;"),
+            "{fn_name} must configure relays before fetching public-relay backfill"
+        );
+    }
+}
+
+#[test]
+fn relay_connect_helper_does_not_disconnect_when_all_relays_stay_offline() {
+    let core_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core.rs"),
+    )
+    .expect("read core source");
+    let start = core_source
+        .find("async fn connect_client_with_timeout")
+        .expect("connect helper");
+    let body = &core_source[start
+        ..core_source[start..]
+            .find("\nasync fn connected_relay_count_for_client")
+            .map(|offset| start + offset)
+            .unwrap_or(core_source.len())];
+    assert!(
+        body.contains("connected_relay_count_for_client(client).await > 0"),
+        "connect helper must detect all-offline relay clients"
+    );
+    assert!(
+        !body.contains("client.disconnect().await"),
+        "normal relay connect helper must not tear down the shared client when every relay remains offline"
+    );
+    assert!(
+        body.contains("client.connect().await"),
+        "connect helper must start the shared relay client without owning disconnect lifecycle"
+    );
+}
+
+#[test]
+fn runtime_publish_uses_single_flight_transport_drain() {
+    let publish_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/publishing.rs"),
+    )
+    .expect("read publishing source");
+    let start = publish_source
+        .find("pub(super) fn retry_pending_relay_publishes")
+        .expect("pending relay publish retry");
+    let body = &publish_source[start
+        ..publish_source[start..]
+            .find("\n    pub(super) fn handle_relay_publish_drain_finished")
+            .map(|offset| start + offset)
+            .unwrap_or(publish_source.len())];
+    assert!(
+        body.contains("publish_drain_in_flight") && body.contains("publish_drain_dirty"),
+        "pending relay publishes must coalesce through one drain worker"
+    );
+    assert!(
+        body.contains("request_relay_connection"),
+        "offline pending publish retry must request the shared relay transport connection"
+    );
+    assert!(
+        body.contains("publish_event_to_any_relay")
+            && body.contains("PENDING_RELAY_DRAIN_CONCURRENCY"),
+        "drain worker must publish with bounded no-connect attempts"
+    );
+    assert!(
+        !body.contains("connect_client_with_timeout") && !body.contains("client.disconnect"),
+        "drain worker must not connect or disconnect the shared relay client per pending event"
+    );
+    assert!(
+        !publish_source.contains("spawn_relay_publish_attempt"),
+        "pending relay publish retry must not spawn one connection-owning task per event"
+    );
+}
+
+#[test]
+fn direct_send_hot_path_does_not_force_global_catch_up_for_established_messages() {
+    let chats_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/chats.rs"),
+    )
+    .expect("read chats source");
+    let start = chats_source
+        .find("pub(super) fn send_direct_message")
+        .expect("send_direct_message");
+    let body = &chats_source[start
+        ..chats_source[start..]
+            .find("\n    pub(super) fn send_group_message")
+            .map(|offset| start + offset)
+            .unwrap_or(chats_source.len())];
+
+    assert!(
+        !body.contains("request_protocol_subscription_refresh_forced_reconnect_if_offline"),
+        "normal direct sends must not force relay/subscription reconnect on every message"
+    );
+    assert!(
+        !body.contains("fetch_recent_messages_for_tracked_peers"),
+        "normal direct sends must not launch global tracked-peer catch-up on every message"
+    );
+    assert!(
+        !body.contains("schedule_tracked_peer_catch_up"),
+        "normal direct sends must not schedule delayed global catch-up on every message"
+    );
+}
+
+#[test]
+fn zero_connected_transport_connect_schedules_backoff_retry() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol.rs"),
+    )
+    .expect("read protocol source");
+    let start = protocol_source
+        .find("pub(super) fn handle_relay_transport_connection_finished")
+        .expect("transport connection handler");
+    let body = &protocol_source[start
+        ..protocol_source[start..]
+            .find("\n    pub(super) fn schedule_relay_transport_retry")
+            .map(|offset| start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        body.contains("schedule_relay_transport_retry(\"connect_failed\")")
+            && body.contains("retry_pending_relay_publishes(\"relay_transport_connected\")"),
+        "zero-connected transport checks must back off, while successful connects drain pending publishes"
+    );
+}
+
+#[test]
+fn pending_inbound_direct_message_schedules_fast_liveness_retry() {
+    let relay_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/relay.rs"),
+    )
+    .expect("read relay source");
+    let start = relay_source
+        .find("\"appcore.protocol.message.pending\"")
+        .expect("pending direct message branch");
+    let body = &relay_source[start
+        ..relay_source[start..]
+            .find("Err(error)")
+            .map(|offset| start + offset)
+            .unwrap_or(relay_source.len())];
+    assert!(
+        body.contains("schedule_protocol_subscription_liveness_check")
+            && body.contains("PROTOCOL_RECONNECT_CHECK_SECS"),
+        "pending inbound direct events must schedule a fast protocol retry instead of waiting for restart/foreground"
+    );
+}
+
+#[test]
+fn liveness_retries_pending_inbound_direct_events() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol.rs"),
+    )
+    .expect("read protocol source");
+    let start = protocol_source
+        .find("pub(super) fn handle_protocol_subscription_liveness_check")
+        .expect("liveness handler");
+    let body = &protocol_source[start
+        ..protocol_source[start..]
+            .find("\n    pub(super) fn reconcile_protocol_subscriptions")
+            .map(|offset| start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        body.contains("has_pending_inbound_direct_events")
+            && body.contains("should_retry_backfill"),
+        "protocol liveness must retry durable pending inbound direct events even when tracked-peer backfill appears complete"
+    );
+}
+
+#[test]
+fn appcore_sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol_engine.rs"),
+    )
+    .expect("read protocol engine source");
+    let start = protocol_source
+        .find("fn resolve_message_sender_owner")
+        .expect("sender resolver");
+    let body = &protocol_source[start
+        ..protocol_source[start..]
+            .find("\n    fn ensure_local_roster")
+            .map(|offset| start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        body.contains("PendingOwnerClaim"),
+        "claimed owners must be represented as pending, not collapsed into a device owner"
+    );
+    assert!(
+        !body.contains("NdrOwnerPubkey::from_bytes(envelope.sender.to_bytes())"),
+        "message envelope sender is a ratchet sender key and must not become the canonical owner"
+    );
+}
+
+#[test]
+fn pending_inbound_owner_targets_use_cached_metadata_not_event_reparse() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol_engine.rs"),
+    )
+    .expect("read protocol engine source");
+    let start = protocol_source
+        .find("fn pending_inbound_owner_claim_targets")
+        .expect("pending inbound target collector");
+    let body = &protocol_source[start
+        ..protocol_source[start..]
+            .find("\n    fn pending_group_pairwise_owner_claim_targets")
+            .map(|offset| start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        body.contains("claimed_owner_pubkey_hex"),
+        "pending inbound owner target collection must use cached owner metadata"
+    );
+    assert!(
+        !body.contains("parse_message_event"),
+        "pending inbound owner target collection runs on the relay hot path and must not verify every pending event"
+    );
+}
+
+#[test]
+fn relay_pending_inbound_replays_are_short_circuited() {
+    let relay_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/relay.rs"),
+    )
+    .expect("read relay source");
+    let start = relay_source
+        .find("if kind == MESSAGE_EVENT_KIND")
+        .expect("message event branch");
+    let body = &relay_source[start
+        ..relay_source[start..]
+            .find("\n        self.remember_event(event_id);")
+            .map(|offset| start + offset)
+            .unwrap_or(relay_source.len())];
+    assert!(
+        body.contains("has_pending_inbound_direct_event_id")
+            && body.contains("appcore.protocol.message.pending_replay"),
+        "relay replays of already-durable pending inbound events must avoid reparsing and refetching immediately"
+    );
+}
+
+#[test]
+fn group_sender_key_ignored_results_are_consumed_without_retry_queue() {
+    let protocol_source = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol_engine.rs"),
+    )
+    .expect("read protocol engine source");
+    let process_start = protocol_source
+        .find("pub(super) fn process_group_outer_event")
+        .expect("process group outer function");
+    let process_body = &protocol_source[process_start
+        ..protocol_source[process_start..]
+            .find("pub(super) fn process_group_pairwise_payload")
+            .map(|offset| process_start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        process_body.contains("if result.pending"),
+        "group outer handling must queue sender-key messages only for explicit pending results"
+    );
+    assert!(
+        !process_body.contains("if result.events.is_empty()"),
+        "ignored sender-key results have no events but must not be queued for retry"
+    );
+
+    let handle_start = protocol_source
+        .find("fn handle_group_sender_key_message")
+        .expect("handle sender key function");
+    let handle_body = &protocol_source[handle_start
+        ..protocol_source[handle_start..]
+            .find("fn upsert_pending_outbound")
+            .map(|offset| handle_start + offset)
+            .unwrap_or(protocol_source.len())];
+    assert!(
+        handle_body.contains("GroupSenderKeyHandleResult::Ignored")
+            && handle_body.contains("consumed: true"),
+        "ignored parsed sender-key events should be consumed so public-relay replays do not loop"
+    );
+}
+
+#[test]
+fn appcore_protocol_engine_missing_remote_owner_send_keeps_owner_pending() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let result = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "first",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+
+    let published_peer_targets = result
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::PublishSignedForInnerEvent {
+                target_owner_pubkey_hex,
+                ..
+            } => target_owner_pubkey_hex.clone(),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !published_peer_targets.contains(&peer_owner.public_key().to_hex()),
+        "peer owner must not be considered published before peer protocol state exists"
+    );
+    let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
+    let local_owner_marker = format!("owner:{}", owner.public_key().to_hex());
+    assert!(result.queued_targets.contains(&owner_marker));
+    assert!(result.queued_targets.contains(&local_owner_marker));
+    let snapshot = engine.debug_snapshot();
+    assert_eq!(snapshot.pending_outbound_count, 1);
+    assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
+    assert!(snapshot
+        .pending_outbound_targets
+        .contains(&local_owner_marker));
+}
+
+#[test]
+fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pending() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let result = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "first",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    let owner_marker = format!("owner:{}", peer_owner.public_key().to_hex());
+    let local_owner_marker = format!("owner:{}", owner.public_key().to_hex());
+    assert!(result.queued_targets.contains(&owner_marker));
+    assert!(result.queued_targets.contains(&local_owner_marker));
+
+    let retries = engine
+        .retry_pending_outbound(NdrUnixSeconds(10_000))
+        .expect("retry pending outbound");
+    assert_eq!(retries.len(), 1);
+    assert_eq!(retries[0].message_id, result.message_id);
+    assert!(retries[0].event_ids.is_empty());
+    assert!(
+        retries[0]
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, ProtocolEffect::FetchProtocolState { .. })),
+        "retrying missing roster work should re-emit protocol backfill from the engine"
+    );
+    assert!(retries[0].queued_targets.contains(&owner_marker));
+    let snapshot = engine.debug_snapshot();
+    assert_eq!(snapshot.pending_outbound_count, 1);
+    assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
+}
+
+#[test]
+fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut engine = test_protocol_engine_with_storage(
+        &owner,
+        &device,
+        storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys");
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
+    let invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("peer invite");
+    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_device)
+        .expect("signed invite");
+    engine
+        .observe_invite_event(&invite_event)
+        .expect("observe invite");
+    let before = engine.session_manager_snapshot_for_test();
+
+    storage.set_fail_puts(true);
+    let result = engine.send_direct_text(
+        peer_owner.public_key(),
+        &peer_owner.public_key().to_hex(),
+        "rollback",
+        None,
+        UnixSeconds(3),
+    );
+
+    assert!(result.is_err());
+    assert_eq!(
+        engine.session_manager_snapshot_for_test(),
+        before,
+        "failed persistence must roll back in-memory ratchet state"
+    );
+    assert_eq!(
+        engine.debug_snapshot().pending_outbound_count,
+        0,
+        "failed persistence must not leave pending outbound state in memory"
+    );
+}
+
+#[test]
+fn appcore_group_create_storage_failure_rolls_back_protocol_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let storage = Arc::new(SwitchableFailStorage::new());
+    let mut engine = test_protocol_engine_with_storage(
+        &owner,
+        &device,
+        storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    let before_sessions = engine.session_manager_snapshot_for_test();
+    let before_groups = engine.group_manager_snapshot_for_test();
+
+    storage.set_fail_puts(true);
+    let result = engine.create_group(
+        "rollback group".to_string(),
+        vec![peer_owner.public_key()],
+        UnixSeconds(3),
+    );
+
+    assert!(result.is_err());
+    assert_eq!(
+        engine.session_manager_snapshot_for_test(),
+        before_sessions,
+        "failed group persistence must roll back session fanout preparation"
+    );
+    assert_eq!(
+        engine.group_manager_snapshot_for_test(),
+        before_groups,
+        "failed group persistence must roll back group manager state"
+    );
+    assert_eq!(
+        engine.debug_snapshot().pending_group_fanout_count,
+        0,
+        "failed group persistence must not leave pending group fanouts in memory"
+    );
+}
+
+#[test]
+fn appcore_invite_event_wakes_device_queued_direct_send_before_retry_delay() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let send = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "queued until invite",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
+        "missing peer roster should be queued"
+    );
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", owner.public_key().to_hex())),
+        "local sibling discovery should remain queued until the owner roster is known to have no siblings"
+    );
+
+    let app_keys_batch = engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 4)]),
+            4,
+        )
+        .expect("peer appkeys");
+    assert_eq!(app_keys_batch.direct_results.len(), 1);
+    assert!(
+        app_keys_batch.direct_results[0]
+            .queued_targets
+            .contains(&peer_device.public_key().to_hex()),
+        "after peer roster discovery, the peer device invite should remain missing"
+    );
+    assert!(
+        !app_keys_batch.direct_results[0]
+            .queued_targets
+            .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
+        "peer owner discovery should be drained after AppKeys arrive"
+    );
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(5), &mut rng);
+    let invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("peer invite");
+    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_device)
+        .expect("signed invite");
+
+    let invite_batch = engine
+        .observe_invite_event(&invite_event)
+        .expect("observe invite");
+
+    assert_eq!(invite_batch.direct_results.len(), 1);
+    assert_eq!(invite_batch.direct_results[0].message_id, send.message_id);
+    assert_eq!(invite_batch.direct_results[0].event_ids.len(), 1);
+    assert!(
+        !engine
+            .debug_snapshot()
+            .pending_outbound_targets
+            .contains(&peer_device.public_key().to_hex()),
+        "remote peer fanout should be fully drained"
+    );
+}
+
+#[test]
+fn appcore_direct_send_keeps_local_sibling_probe_until_local_appkeys_and_invite_arrive() {
+    let owner = Keys::generate();
+    let fresh_device = Keys::generate();
+    let old_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &fresh_device);
+
+    let send = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "self sync should not be dropped",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", peer_owner.public_key().to_hex())),
+        "remote owner discovery should remain queued"
+    );
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", owner.public_key().to_hex())),
+        "local sibling roster discovery must be queued until local AppKeys have been observed"
+    );
+
+    let local_app_keys_created_at = unix_now().get();
+    let local_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(old_device.public_key(), 1),
+        DeviceEntry::new(fresh_device.public_key(), local_app_keys_created_at),
+    ]);
+    let app_keys_batch = engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            local_app_keys,
+            local_app_keys_created_at,
+        )
+        .expect("local appkeys");
+    assert_eq!(app_keys_batch.direct_results.len(), 1);
+    assert!(
+        app_keys_batch.direct_results[0]
+            .queued_targets
+            .contains(&old_device.public_key().to_hex()),
+        "local AppKeys should turn the local owner probe into the old device invite target"
+    );
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(5), &mut rng);
+    let old_invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(old_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())),
+        None,
+    )
+    .expect("old device invite");
+    let old_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&old_invite)
+        .expect("invite event")
+        .sign_with_keys(&old_device)
+        .expect("signed invite");
+
+    let invite_batch = engine
+        .observe_invite_event(&old_invite_event)
+        .expect("observe old device invite");
+    assert_eq!(invite_batch.direct_results.len(), 1);
+    let retry = &invite_batch.direct_results[0];
+    assert_eq!(retry.message_id, send.message_id);
+    assert!(
+        retry.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::PublishStagedFirstContact { payload, .. }
+                if payload.iter().any(|publish| publish.target_owner_pubkey_hex.as_deref()
+                    == Some(owner.public_key().to_hex().as_str())
+                    && publish.target_device_id.as_deref()
+                        == Some(old_device.public_key().to_hex().as_str()))
+        )) || retry.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::PublishSignedForInnerEvent {
+                target_owner_pubkey_hex,
+                target_device_id,
+                ..
+            } if target_owner_pubkey_hex.as_deref() == Some(owner.public_key().to_hex().as_str())
+                && target_device_id.as_deref() == Some(old_device.public_key().to_hex().as_str())
+        )),
+        "old local device should receive a sender-copy publish after its invite arrives"
+    );
+}
+
+#[test]
+fn appcore_local_appkeys_backfill_replaces_seeded_single_device_roster() {
+    let owner = Keys::generate();
+    let fresh_device = Keys::generate();
+    let old_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &fresh_device);
+
+    let send = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "older local appkeys should still discover old sibling",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    assert!(
+        send.queued_targets
+            .contains(&format!("owner:{}", owner.public_key().to_hex())),
+        "freshly seeded local device should start with owner-level sibling discovery"
+    );
+
+    let batch = engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            AppKeys::new(vec![
+                DeviceEntry::new(old_device.public_key(), 1),
+                DeviceEntry::new(fresh_device.public_key(), 1),
+            ]),
+            1,
+        )
+        .expect("stale local appkeys");
+    assert_eq!(batch.direct_results.len(), 1);
+    assert!(
+        batch.direct_results[0]
+            .queued_targets
+            .contains(&old_device.public_key().to_hex()),
+        "AppCore's merged local roster is authoritative even when its event timestamp predates the seeded local invite"
+    );
+
+    let snapshot = engine.debug_snapshot();
+    let pending = snapshot
+        .pending_outbound_details
+        .iter()
+        .find(|pending| pending.message_id == send.message_id)
+        .expect("pending send detail");
+    assert_eq!(
+        pending.remaining_local_sibling_targets,
+        vec![old_device.public_key().to_hex()]
+    );
+    assert!(
+        !pending
+            .queued_targets
+            .contains(&format!("owner:{}", owner.public_key().to_hex())),
+        "once the merged local roster is installed, retries should target the concrete old device"
+    );
+}
+
+#[test]
+fn invite_response_observation_emits_targeted_owner_message_backfill() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys");
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (_peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+
+    let batch = engine
+        .observe_invite_response_event(&response_event)
+        .expect("observe invite response");
+
+    assert!(
+        !engine
+            .message_author_pubkeys_for_owner(peer_owner.public_key())
+            .is_empty(),
+        "observing the invite response should install receiver state for the peer"
+    );
+    assert!(
+        batch.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::FetchRecentMessagesForOwner {
+                owner_pubkey,
+                reason,
+                ..
+            } if *owner_pubkey == peer_owner.public_key() && *reason == "invite_response"
+        )),
+        "learning a peer from an invite response must trigger owner-targeted message backfill"
+    );
+}
+
+#[test]
+fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (mut peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+    engine
+        .observe_invite_response_event(&response_event)
+        .expect("observe invite response");
+
+    let plan = peer_session
+        .plan_send(b"hello-before-appkeys", NdrUnixSeconds(11))
+        .expect("peer plans message");
+    let sent = peer_session.apply_send(plan);
+    let message_event =
+        nostr_double_ratchet_nostr::message_event(&sent.envelope).expect("message event");
+
+    let decrypted = engine
+        .process_direct_message_event(&message_event)
+        .expect("process direct message");
+    assert!(
+        decrypted.is_none(),
+        "claimed-owner messages must wait until the owner claim is verified"
+    );
+    assert_eq!(engine.debug_snapshot().pending_inbound_count, 1);
+    let sender_message_pubkey_hex = sent.envelope.sender.to_hex();
+    let peer_owner_hex = peer_owner.public_key().to_hex();
+    let pending_inbound = engine.pending_inbound_for_test();
+    let pending = pending_inbound.first().expect("pending inbound");
+    assert_eq!(pending.event_id, message_event.id.to_string());
+    assert!(
+        pending.has_envelope,
+        "pending inbound must store the parsed envelope so retries do not verify the outer event again"
+    );
+    assert_eq!(
+        pending.sender_message_pubkey_hex.as_deref(),
+        Some(sender_message_pubkey_hex.as_str())
+    );
+    assert_eq!(
+        pending.claimed_owner_pubkey_hex.as_deref(),
+        Some(peer_owner_hex.as_str())
+    );
+    assert!(
+        pending.metadata_verified,
+        "queued pending inbound metadata should be produced by the already verified parse"
+    );
+    assert_eq!(
+        engine.queued_owner_claim_targets(),
+        vec![format!("owner:{}", peer_owner.public_key().to_hex())]
+    );
+
+    let batch = engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 12)]),
+            12,
+        )
+        .expect("peer appkeys");
+    assert_eq!(batch.direct_messages.len(), 1);
+    assert_eq!(batch.direct_messages[0].sender, peer_owner.public_key());
+    assert_eq!(
+        batch.direct_messages[0].sender_device,
+        Some(peer_device.public_key())
+    );
+    assert_eq!(batch.direct_messages[0].content, "hello-before-appkeys");
+    assert_eq!(engine.debug_snapshot().pending_inbound_count, 0);
+}
+
+#[test]
+fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (_peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+    engine
+        .observe_invite_response_event(&response_event)
+        .expect("observe invite response");
+
+    let group_id = "claimed-owner-group".to_string();
+    let snapshot = test_group_snapshot(
+        &group_id,
+        "Claimed Owner Group",
+        peer_owner.public_key(),
+        vec![peer_owner.public_key(), owner.public_key()],
+        vec![peer_owner.public_key()],
+        1,
+    );
+    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+        &codec,
+        nostr_double_ratchet::GroupPayloadEncodeContext {
+            local_device_pubkey: ndr_device_pubkey(peer_device.public_key()),
+            created_at: NdrUnixSeconds(11),
+        },
+        &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot { snapshot },
+    )
+    .expect("group metadata payload");
+
+    let outcome = engine
+        .process_group_pairwise_payload(
+            &payload,
+            peer_device.public_key(),
+            Some(peer_device.public_key()),
+        )
+        .expect("process group payload");
+    assert!(outcome.consumed);
+    assert!(outcome.events.is_empty());
+    assert_eq!(
+        outcome.queued_targets,
+        vec![format!("owner:{}", peer_owner.public_key().to_hex())]
+    );
+    assert_eq!(
+        engine.debug_snapshot().pending_group_pairwise_payload_count,
+        1
+    );
+
+    let batch = engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 12)]),
+            12,
+        )
+        .expect("peer appkeys");
+    let created = batch
+        .group_result
+        .events
+        .iter()
+        .find_map(|event| match event {
+            GroupIncomingEvent::MetadataUpdated(snapshot) if snapshot.group_id == group_id => {
+                Some(snapshot)
+            }
+            _ => None,
+        })
+        .expect("group metadata applied after owner claim verification");
+    assert_eq!(
+        created.created_by,
+        ndr_owner_pubkey(peer_owner.public_key())
+    );
+    assert_eq!(
+        engine.debug_snapshot().pending_group_pairwise_payload_count,
+        0
+    );
+}
+
+#[test]
+fn queued_direct_send_schedules_fast_protocol_retry_tick() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-direct-fast-retry", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.send_direct_message(
+        &peer.public_key().to_hex(),
+        "queued until app keys arrive",
+        UnixSeconds(1_777_000_000),
+        None,
+    );
+
+    let due_at = core
+        .protocol_subscription_runtime
+        .liveness_due_at
+        .expect("queued protocol work should schedule liveness");
+    assert!(
+        due_at <= Instant::now() + Duration::from_secs(5),
+        "queued direct work should schedule a fast retry tick, not wait for the normal liveness interval"
+    );
+}
+
+#[test]
+fn queued_direct_send_starts_targeted_owner_protocol_fetch() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-direct-targeted-fetch", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+    observe_current_device_appkeys_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &owner,
+        &device,
+    );
+
+    core.send_direct_message(
+        &peer.public_key().to_hex(),
+        "queued until targeted app keys arrive",
+        UnixSeconds(1_777_000_000),
+        None,
+    );
+
+    let target = format!("owner:{}", peer.public_key().to_hex());
+    assert!(
+        core.debug_log.iter().any(|entry| {
+            entry.category == "appcore.protocol.queued" && entry.detail.contains(&target)
+        }) && core.debug_log.iter().any(|entry| {
+            entry.category == "protocol.engine_fetch.fetch" && entry.detail.contains("filters=1")
+        }),
+        "queued direct owner work should start a narrow AppKeys fetch for {target}"
+    );
+}
+
+#[test]
+fn queued_protocol_filters_are_narrow_for_missing_owner_roster() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    let result = engine
+        .send_direct_text(
+            peer.public_key(),
+            &peer.public_key().to_hex(),
+            "queued until appkeys",
+            None,
+            UnixSeconds(1_777_159_500),
+        )
+        .expect("direct send");
+    let filters = result
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::FetchProtocolState { filters, .. } => Some(filters.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert_eq!(filters.len(), 1);
+    assert!(has_filter_with_kind_author(
+        &filters,
+        APP_KEYS_EVENT_KIND,
+        peer.public_key()
+    ));
+    assert!(
+        !has_bootstrap_message_filter(&filters),
+        "queued owner discovery must not depend on an unscoped message bootstrap filter"
+    );
+}
+
+#[test]
+fn queued_group_create_schedules_fast_protocol_retry_tick() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-group-fast-retry", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.create_group("Queued group", &[peer.public_key().to_hex()]);
+
+    let debug = core
+        .protocol_engine
+        .as_ref()
+        .expect("protocol engine")
+        .debug_snapshot();
+    assert!(
+        debug.pending_group_fanout_count > 0,
+        "missing group member protocol state should leave a durable group fanout"
+    );
+    let due_at = core
+        .protocol_subscription_runtime
+        .liveness_due_at
+        .expect("queued group work should schedule liveness");
+    assert!(
+        due_at <= Instant::now() + Duration::from_secs(5),
+        "queued group work should schedule a fast retry tick, not wait for the normal liveness interval"
+    );
+}
+
+#[test]
+fn queued_group_retry_without_protocol_progress_reschedules_fast_tick() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-group-retry-reschedule", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.create_group("Queued group", &[peer.public_key().to_hex()]);
+    core.protocol_subscription_runtime.liveness_due_at = None;
+
+    let retry_at = unix_now().get().saturating_add(10_000);
+    let batch = core
+        .protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .retry_pending_protocol(NdrUnixSeconds(retry_at))
+        .expect("retry pending protocol");
+    assert!(
+        !batch.group_result.effects.iter().any(|effect| matches!(
+            effect,
+            ProtocolEffect::PublishSigned(_)
+                | ProtocolEffect::PublishUnsigned(_)
+                | ProtocolEffect::PublishSignedForInnerEvent { .. }
+                | ProtocolEffect::PublishStagedFirstContact { .. }
+        )),
+        "missing member protocol state should not produce group publishes yet"
+    );
+    assert!(
+        !batch.group_result.queued_targets.is_empty(),
+        "the retry batch must report the still-queued group target"
+    );
+
+    core.process_protocol_engine_retry_batch("test_group_retry", batch);
+
+    let due_at = core
+        .protocol_subscription_runtime
+        .liveness_due_at
+        .expect("still-queued group work should schedule liveness");
+    assert!(
+        due_at <= Instant::now() + Duration::from_secs(5),
+        "still-queued group work should keep a fast retry tick alive"
+    );
+}
+
+#[test]
+fn appcore_protocol_engine_partial_fanout_publishes_ready_device_and_queues_missing_device() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_phone = Keys::generate();
+    let peer_laptop = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let peer_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(peer_phone.public_key(), 1),
+        DeviceEntry::new(peer_laptop.public_key(), 1),
+    ]);
+    engine
+        .ingest_app_keys_snapshot(peer_owner.public_key(), peer_app_keys, 1)
+        .expect("peer appkeys");
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(2), &mut rng);
+    let phone_invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_phone.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("phone invite");
+    let phone_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&phone_invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_phone)
+        .expect("signed invite");
+    engine
+        .observe_invite_event(&phone_invite_event)
+        .expect("observe phone invite");
+
+    let result = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "hello",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+
+    assert_eq!(result.event_ids.len(), 1);
+    assert!(
+        result
+            .queued_targets
+            .contains(&peer_laptop.public_key().to_hex()),
+        "missing peer laptop should remain queued"
+    );
+    let staged = result
+        .effects
+        .iter()
+        .find_map(|effect| match effect {
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
+                Some((bootstrap, payload))
+            }
+            _ => None,
+        })
+        .expect("first contact should stage bootstrap before payload");
+    assert!(
+        staged
+            .0
+            .iter()
+            .any(|publish| publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND),
+        "bootstrap phase should contain the invite response"
+    );
+    assert_eq!(
+        staged.0[0].inner_event_id.as_deref(),
+        Some(result.message_id.as_str()),
+        "bootstrap publish must be tied to the app message so payload can wait on it"
+    );
+    assert_eq!(
+        staged.0[0].target_owner_pubkey_hex.as_deref(),
+        Some(peer_owner.public_key().to_hex().as_str())
+    );
+    assert_eq!(
+        staged.1.len(),
+        1,
+        "payload phase should contain the ready phone delivery"
+    );
+    assert_eq!(
+        staged.1[0].target_owner_pubkey_hex.as_deref(),
+        Some(peer_owner.public_key().to_hex().as_str())
+    );
+
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(120), &mut rng);
+    let laptop_invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_laptop.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("laptop invite");
+    let laptop_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&laptop_invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_laptop)
+        .expect("signed invite");
+    let batch = engine
+        .observe_invite_event(&laptop_invite_event)
+        .expect("observe laptop invite");
+
+    assert_eq!(batch.direct_results.len(), 1);
+    let retry = &batch.direct_results[0];
+    assert_eq!(retry.message_id, result.message_id);
+    assert_eq!(retry.event_ids.len(), 1);
+    assert!(
+        !retry
+            .queued_targets
+            .contains(&peer_laptop.public_key().to_hex()),
+        "all remote devices should be prepared after the missing invite arrives"
+    );
+    assert!(
+        !engine
+            .debug_snapshot()
+            .pending_outbound_targets
+            .contains(&peer_laptop.public_key().to_hex()),
+        "remote peer fanout should be fully drained"
+    );
+}
+
+#[test]
+fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let current_sender = Keys::generate();
+    let next_sender = Keys::generate();
+    let skipped_sender = Keys::generate();
+    let our_current = Keys::generate();
+    let our_next = Keys::generate();
+    let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
+    let local_device = NdrDevicePubkey::from_bytes(device.public_key().to_bytes());
+    let peer_owner_pubkey = NdrOwnerPubkey::from_bytes(peer_owner.public_key().to_bytes());
+    let peer_device_pubkey = NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes());
+    let current_sender_pubkey = NdrDevicePubkey::from_bytes(current_sender.public_key().to_bytes());
+    let next_sender_pubkey = NdrDevicePubkey::from_bytes(next_sender.public_key().to_bytes());
+    let skipped_sender_pubkey = NdrDevicePubkey::from_bytes(skipped_sender.public_key().to_bytes());
+    let mut skipped_keys = BTreeMap::new();
+    skipped_keys.insert(
+        skipped_sender_pubkey,
+        nostr_double_ratchet::SkippedKeysEntry::default(),
+    );
+    let session_state = SessionState {
+        root_key: [1; 32],
+        their_current_nostr_public_key: Some(current_sender_pubkey),
+        their_next_nostr_public_key: Some(next_sender_pubkey),
+        our_previous_nostr_key: None,
+        our_current_nostr_key: Some(serializable_key_pair_for_test(&our_current)),
+        our_next_nostr_key: serializable_key_pair_for_test(&our_next),
+        receiving_chain_key: Some([2; 32]),
+        sending_chain_key: Some([3; 32]),
+        sending_chain_message_number: 0,
+        receiving_chain_message_number: 0,
+        previous_sending_chain_message_count: 0,
+        skipped_keys,
+    };
+    let seed_session_manager = SessionManagerSnapshot {
+        local_owner_pubkey: local_owner,
+        local_device_pubkey: local_device,
+        local_invite: None,
+        users: vec![nostr_double_ratchet::UserRecordSnapshot {
+            owner_pubkey: peer_owner_pubkey,
+            roster: Some(DeviceRoster::new(
+                NdrUnixSeconds(1),
+                vec![AuthorizedDevice::new(peer_device_pubkey, NdrUnixSeconds(1))],
+            )),
+            devices: vec![nostr_double_ratchet::DeviceRecordSnapshot {
+                device_pubkey: peer_device_pubkey,
+                authorized: true,
+                is_stale: false,
+                stale_since: None,
+                claimed_owner_pubkey: Some(peer_owner_pubkey),
+                public_invite: None,
+                invite_response_generated: true,
+                active_session: Some(session_state),
+                inactive_sessions: Vec::new(),
+                last_activity: Some(NdrUnixSeconds(1)),
+                created_at: NdrUnixSeconds(1),
+            }],
+        }],
+    };
+    let storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let local_invite = Invite::create_new(
+        device.public_key(),
+        Some(device.public_key().to_hex()),
+        None,
+    )
+    .expect("local invite");
+    let engine = ProtocolEngine::load_or_seed(
+        storage,
+        owner.public_key(),
+        &device,
+        local_invite,
+        seed_session_manager,
+        NostrGroupManager::new(local_owner).snapshot(),
+    )
+    .expect("protocol engine");
+
+    let authors = engine.message_author_pubkeys_for_owner(peer_owner.public_key());
+    assert!(
+        authors.contains(&current_sender.public_key()),
+        "current sender author must stay subscribed"
+    );
+    assert!(
+        authors.contains(&next_sender.public_key()),
+        "next sender author must be subscribed so the next ratchet event is not missed"
+    );
+    assert!(
+        authors.contains(&skipped_sender.public_key()),
+        "skipped sender author must be backfilled for out-of-order relay delivery"
+    );
+}
+
+#[test]
+fn local_sibling_direct_send_uses_author_known_before_publish() {
+    let owner = Keys::generate();
+    let primary_device = Keys::generate();
+    let linked_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let mut primary = test_protocol_engine(&owner, &primary_device);
+    let mut linked = test_protocol_engine(&owner, &linked_device);
+
+    let local_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(primary_device.public_key(), 1),
+        DeviceEntry::new(linked_device.public_key(), 1),
+    ]);
+    primary
+        .ingest_app_keys_snapshot(owner.public_key(), local_app_keys.clone(), 1)
+        .expect("primary local appkeys");
+    linked
+        .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
+        .expect("linked local appkeys");
+
+    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let linked_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&linked_invite)
+        .expect("linked invite event")
+        .sign_with_keys(&linked_device)
+        .expect("signed linked invite");
+    primary
+        .observe_invite_event(&linked_invite_event)
+        .expect("primary observes linked invite");
+
+    let (session, response) = linked_invite
+        .accept_with_owner(
+            primary_device.public_key(),
+            primary_device.secret_key().to_secret_bytes(),
+            Some(primary_device.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .expect("primary accepts linked invite");
+    primary
+        .import_session_state(
+            owner.public_key(),
+            Some(linked_device.public_key().to_hex()),
+            session.state,
+            UnixSeconds(2),
+        )
+        .expect("primary imports linked session");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+    let linked_response = nostr_double_ratchet_nostr::process_invite_response_event(
+        &linked_invite,
+        &response_event,
+        linked_device.secret_key().to_secret_bytes(),
+    )
+    .expect("linked processes invite response")
+    .expect("response addressed to linked invite");
+    linked
+        .import_session_state(
+            owner.public_key(),
+            Some(primary_device.public_key().to_hex()),
+            linked_response.session.state,
+            UnixSeconds(2),
+        )
+        .expect("linked imports primary session");
+
+    let known_authors_before = linked.message_author_pubkeys_for_owner(owner.public_key());
+    assert!(
+        !known_authors_before.is_empty(),
+        "linked device must know at least one primary sender author after link setup"
+    );
+
+    let result = primary
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "sender copy should be immediately discoverable",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+
+    let local_sibling_events = result
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::PublishSignedForInnerEvent {
+                event,
+                target_owner_pubkey_hex,
+                target_device_id,
+                ..
+            } if target_owner_pubkey_hex.as_deref()
+                == Some(owner.public_key().to_hex().as_str())
+                && target_device_id.as_deref()
+                    == Some(linked_device.public_key().to_hex().as_str()) =>
+            {
+                Some(event)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        local_sibling_events.len(),
+        1,
+        "direct send should prepare one sender-copy event for the linked device"
+    );
+    assert!(
+        known_authors_before.contains(&local_sibling_events[0].pubkey),
+        "sender-copy event author {} must already be in the linked device's message subscriptions; known={:?}",
+        local_sibling_events[0].pubkey.to_hex(),
+        known_authors_before
+            .iter()
+            .map(PublicKey::to_hex)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !result.effects.iter().any(|effect| {
+            matches!(
+                effect,
+                ProtocolEffect::PublishSigned(event)
+                    if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND
+            )
+        }),
+        "ordinary direct sender-copy fanout must not refresh the linked-device bootstrap session"
+    );
+}
+
+#[test]
+fn local_sibling_publish_ack_does_not_mark_peer_recipient_sent() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("local-sibling-ack-direct-delivery", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "direct-first".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "first".to_string(),
+        1_777_159_500,
+        None,
+        DeliveryState::Pending,
+    );
+
+    let local_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "local sibling")
+        .sign_with_keys(&device)
+        .expect("local sibling event");
+    let local_event_id = local_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        local_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: local_event_id.clone(),
+            label: "test".to_string(),
+            event_json: serde_json::to_string(&local_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(owner.public_key().to_hex()),
+            target_device_id: Some(sibling.public_key().to_hex()),
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: local_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+    core.handle_relay_publish_finished(
+        local_event_id,
+        Some(message_id.clone()),
+        Some(chat_id.clone()),
+        true,
+        vec!["wss://relay.example".to_string()],
+        "local sibling ack".to_string(),
+    );
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after local ack");
+    assert_eq!(message.delivery, DeliveryState::Pending);
+    assert_eq!(message.recipient_deliveries.len(), 1);
+    assert_eq!(
+        message.recipient_deliveries[0].owner_pubkey_hex,
+        peer.public_key().to_hex()
+    );
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Pending
+    );
+
+    let lingering_local_event =
+        EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "local still pending")
+            .sign_with_keys(&device)
+            .expect("lingering local event");
+    let lingering_local_event_id = lingering_local_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        lingering_local_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: lingering_local_event_id.clone(),
+            label: "test".to_string(),
+            event_json: serde_json::to_string(&lingering_local_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(owner.public_key().to_hex()),
+            target_device_id: Some(sibling.public_key().to_hex()),
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: lingering_local_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+
+    let peer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "peer")
+        .sign_with_keys(&device)
+        .expect("peer event");
+    let peer_event_id = peer_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        peer_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: peer_event_id.clone(),
+            label: "test".to_string(),
+            event_json: serde_json::to_string(&peer_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+            target_device_id: Some(peer.public_key().to_hex()),
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: peer_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+    core.handle_relay_publish_finished(
+        peer_event_id,
+        Some(message_id.clone()),
+        Some(chat_id.clone()),
+        true,
+        vec!["wss://relay.example".to_string()],
+        "peer ack".to_string(),
+    );
+
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after peer ack");
+    assert!(
+        core.pending_relay_publishes
+            .contains_key(&lingering_local_event_id),
+        "local sibling pending relay work should not decide peer recipient delivery"
+    );
+    assert_eq!(message.delivery, DeliveryState::Sent);
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Sent
+    );
+}
+
+#[test]
+fn first_contact_payload_waits_for_bootstrap_publish_success() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("first-contact-bootstrap-gates-payload", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "direct-first-contact".to_string();
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "first".to_string(),
+        1_777_159_500,
+        None,
+        DeliveryState::Pending,
+    );
+
+    let bootstrap_event = EventBuilder::new(
+        Kind::from(INVITE_RESPONSE_KIND as u16),
+        "first contact bootstrap",
+    )
+    .sign_with_keys(&device)
+    .expect("bootstrap event");
+    let bootstrap_event_id = bootstrap_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        bootstrap_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: bootstrap_event_id.clone(),
+            label: APPCORE_PROTOCOL_BOOTSTRAP_LABEL.to_string(),
+            event_json: serde_json::to_string(&bootstrap_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+            target_device_id: None,
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: bootstrap_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+
+    let payload_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
+        .sign_with_keys(&device)
+        .expect("payload event");
+    let payload_event_id = payload_event.id.to_string();
+    core.pending_relay_publishes.insert(
+        payload_event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: owner.public_key().to_hex(),
+            event_id: payload_event_id.clone(),
+            label: APPCORE_PROTOCOL_FIRST_CONTACT_LABEL.to_string(),
+            event_json: serde_json::to_string(&payload_event).expect("event json"),
+            inner_event_id: Some(message_id.clone()),
+            target_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+            target_device_id: Some(peer.public_key().to_hex()),
+            message_id: Some(message_id.clone()),
+            chat_id: Some(chat_id.clone()),
+            created_at_secs: payload_event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+        },
+    );
+
+    let payload_pending = core
+        .pending_relay_publishes
+        .get(&payload_event_id)
+        .expect("payload pending");
+    assert!(
+        core.should_delay_first_contact_payload_publish(payload_pending),
+        "payload must not publish while its invite-response bootstrap is still pending"
+    );
+
+    core.handle_relay_publish_finished(
+        bootstrap_event_id,
+        Some(message_id.clone()),
+        Some(chat_id.clone()),
+        true,
+        vec!["wss://relay.example".to_string()],
+        "bootstrap ack".to_string(),
+    );
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after bootstrap ack");
+    assert_eq!(
+        message.delivery,
+        DeliveryState::Pending,
+        "bootstrap relay ack must not mark the peer message sent"
+    );
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Pending
+    );
+    let payload_pending = core
+        .pending_relay_publishes
+        .get(&payload_event_id)
+        .expect("payload still pending after bootstrap");
+    assert!(
+        !core.should_delay_first_contact_payload_publish(payload_pending),
+        "payload may publish after bootstrap succeeds"
+    );
+
+    core.handle_relay_publish_finished(
+        payload_event_id,
+        Some(message_id.clone()),
+        Some(chat_id.clone()),
+        true,
+        vec!["wss://relay.example".to_string()],
+        "payload ack".to_string(),
+    );
+    let message = core
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("message after payload ack");
+    assert_eq!(message.delivery, DeliveryState::Sent);
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Sent
+    );
+}
+
+#[test]
+fn appcore_hot_path_has_no_runtime_references() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = vec![manifest.join("src/core.rs")];
+    collect_core_rs_files(&manifest.join("src/core"), &mut files);
+
+    let forbidden = [
+        "NdrRuntime",
+        "ndr_runtime",
+        "setup_user",
+        "process_runtime_effects",
+        "RuntimeEffect",
+    ];
+    let mut hits = Vec::new();
+    for path in files {
+        if path.file_name().and_then(|name| name.to_str()) == Some("tests.rs") {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path).expect("read core source");
+        for needle in forbidden {
+            if content.contains(needle) {
+                hits.push(format!("{} contains {needle}", path.display()));
+            }
+        }
+    }
+
+    assert!(
+        hits.is_empty(),
+        "AppCore hot-path runtime references remain:\n{}",
+        hits.join("\n")
+    );
+}
+
+fn collect_core_rs_files(dir: &std::path::Path, files: &mut Vec<std::path::PathBuf>) {
+    for entry in std::fs::read_dir(dir).expect("read core dir") {
+        let path = entry.expect("dir entry").path();
+        if path.is_dir() {
+            collect_core_rs_files(&path, files);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
 }
 
 #[test]
@@ -377,9 +2784,7 @@ fn ndr_runtime_invite_session_round_trips_text() {
         None,
     );
     bob.init().expect("bob init");
-    bob.accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob, &bob_keys, &alice);
+    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
     complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     alice
@@ -413,22 +2818,12 @@ fn local_identity_artifacts_offer_profile_metadata_to_nearby() {
     let device_id = device.public_key().to_hex();
     let invite =
         Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
-    let runtime = NdrRuntime::new(
-        device.public_key(),
-        device.secret_key().to_secret_bytes(),
-        device_id,
-        owner.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    runtime.init().expect("runtime init");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
@@ -510,22 +2905,12 @@ fn nearby_presence_event_binds_owner_to_ble_nonce_pair() {
     let device_id = device.public_key().to_hex();
     let invite =
         Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
-    let runtime = NdrRuntime::new(
-        device.public_key(),
-        device.secret_key().to_secret_bytes(),
-        device_id,
-        owner.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    runtime.init().expect("runtime init");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
@@ -610,9 +2995,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
         None,
     );
     bob.init().expect("bob init");
-    bob.accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob, &bob_keys, &alice);
+    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
     complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     let user_record_key = "v2/runtime-state";
@@ -699,7 +3082,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
         None,
     );
     bob_restarted.init().expect("bob restarted init");
-    bob_restarted.process_received_event(message_event);
+    deliver_event_to_runtime(&bob_restarted, message_event);
     assert!(
         drain_text_messages(&bob_restarted)
             .iter()
@@ -747,9 +3130,7 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
         None,
     );
     bob.init().expect("bob init");
-    bob.accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob, &bob_keys, &alice);
+    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
     complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     let message = "compacted apns preview";
@@ -796,6 +3177,8 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
 fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     let alice_keys = Keys::generate();
     let bob_keys = Keys::generate();
+    let bob_storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
 
     let mut invite = Invite::create_new(
         alice_keys.public_key(),
@@ -820,14 +3203,17 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         bob_keys.secret_key().to_secret_bytes(),
         bob_keys.public_key().to_hex(),
         bob_keys.public_key(),
-        None,
+        Some(Arc::clone(&bob_storage)),
         None,
     );
     bob_runtime.init().expect("bob init");
-    bob_runtime
-        .accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    accept_invite_and_deliver(
+        &bob_runtime,
+        &bob_keys,
+        &invite,
+        alice_keys.public_key(),
+        &alice,
+    );
     complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
 
     let message = "push-only event";
@@ -877,10 +3263,10 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
         device_keys: bob_keys.clone(),
         client: Client::new(bob_keys.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: bob_runtime,
         local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
+    install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, bob_storage, None, None);
 
     core.drain_pending_mobile_push_events();
     let thread = core.threads.get(&chat_id).expect("sender thread");
@@ -942,9 +3328,7 @@ fn mobile_push_decrypt_suppresses_typing_rumors() {
         None,
     );
     bob.init().expect("bob init");
-    bob.accept_invite(&invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob, &bob_keys, &alice);
+    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
     complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
 
     alice
@@ -1023,22 +3407,12 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
         None,
     )
     .expect("invite");
-    let runtime = NdrRuntime::new(
-        device.public_key(),
-        device.secret_key().to_secret_bytes(),
-        device.public_key().to_hex(),
-        owner.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    runtime.init().expect("runtime init");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
@@ -1153,14 +3527,17 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         None,
     );
     bob_runtime.init().expect("bob init");
-    bob_runtime
-        .accept_invite(&alice_invite, Some(alice_keys.public_key()))
-        .expect("bob accepts alice invite");
-    deliver_published_events(&bob_runtime, &bob_keys, &alice);
+    accept_invite_and_deliver(
+        &bob_runtime,
+        &bob_keys,
+        &alice_invite,
+        alice_keys.public_key(),
+        &alice,
+    );
     complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
     let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
     let user_record_key = "v2/runtime-state";
-    let ratchet_before = bob_storage
+    let legacy_runtime_before = bob_storage
         .get(&user_record_key)
         .expect("read bob ratchet before message")
         .expect("bob ratchet before message");
@@ -1183,10 +3560,16 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         device_keys: bob_keys.clone(),
         client: Client::new(bob_keys.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: bob_runtime,
         local_invite: bob_local_invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, storage, None, None);
+    let protocol_state_before = runtime_state_json(&core, &bob_keys, &bob_keys).to_string();
     core.owner_profiles.insert(
         alice_keys.public_key().to_hex(),
         OwnerProfileRecord {
@@ -1228,13 +3611,18 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
         core.batch_dirty_persist,
         "full state save should still be deferred inside the core batch"
     );
-    let ratchet_after = bob_storage
+    let protocol_state_after = runtime_state_json(&core, &bob_keys, &bob_keys).to_string();
+    assert_ne!(
+        protocol_state_before, protocol_state_after,
+        "foreground AppCore protocol engine should consume the relay event before the push handler runs"
+    );
+    let legacy_runtime_after = bob_storage
         .get(&user_record_key)
         .expect("read bob ratchet after message")
         .expect("bob ratchet after message");
-    assert_ne!(
-        ratchet_before, ratchet_after,
-        "foreground runtime should have consumed the relay event before the push handler runs"
+    assert_eq!(
+        legacy_runtime_before, legacy_runtime_after,
+        "foreground AppCore handling must not mutate legacy runtime storage"
     );
 
     let resolution = decrypt_mobile_push_notification(
@@ -1251,6 +3639,159 @@ fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
     assert!(resolution.should_show);
     assert_eq!(resolution.title, "Alice");
     assert_eq!(resolution.body, message);
+}
+
+#[test]
+fn appcore_persists_pending_group_sender_key_outer_when_no_group_message_emits() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender_event = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.start_primary_session(owner.clone(), device.clone(), false, false)
+        .expect("primary session");
+    let outer = unknown_group_sender_key_outer_event(&sender_event);
+    let event_id = outer.id.to_string();
+
+    core.handle_relay_event(outer);
+
+    assert!(
+        core.seen_event_ids.contains(&event_id),
+        "unknown group sender-key outer should be consumed by group runtime instead of falling through to pairwise decrypt"
+    );
+    assert_eq!(
+        stored_pending_group_sender_key_message_count(&core, &owner, &device),
+        1,
+        "group runtime pending outer must be durably stored even when no app-visible group message is emitted yet"
+    );
+}
+
+#[test]
+fn appcore_defers_decrypted_delivery_ack_until_app_state_is_persisted() {
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_path_buf();
+    let bob_shared_conn = crate::core::storage::open_database(&data_dir).expect("bob db");
+    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        bob_shared_conn.clone(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+
+    let mut alice_invite = Invite::create_new(
+        alice_keys.public_key(),
+        Some(alice_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("alice invite");
+    alice_invite.owner_public_key = Some(alice_keys.public_key());
+
+    let alice = NdrRuntime::new(
+        alice_keys.public_key(),
+        alice_keys.secret_key().to_secret_bytes(),
+        alice_keys.public_key().to_hex(),
+        alice_keys.public_key(),
+        None,
+        Some(alice_invite.clone()),
+    );
+    alice.init().expect("alice init");
+
+    let bob_runtime = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        Some(bob_storage.clone()),
+        None,
+    );
+    bob_runtime.init().expect("bob init");
+    accept_invite_and_deliver(
+        &bob_runtime,
+        &bob_keys,
+        &alice_invite,
+        alice_keys.public_key(),
+        &alice,
+    );
+    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
+    let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
+
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir.to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let bob_local_invite = Invite::create_new(
+        bob_keys.public_key(),
+        Some(bob_keys.public_key().to_hex()),
+        None,
+    )
+    .expect("bob local invite");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: bob_keys.public_key(),
+        owner_keys: Some(bob_keys.clone()),
+        device_keys: bob_keys.clone(),
+        client: Client::new(bob_keys.clone()),
+        relay_urls: Vec::new(),
+        local_invite: bob_local_invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, storage, None, None);
+
+    let message = "ack after app persist";
+    alice
+        .send_text(bob_keys.public_key(), message.to_string(), None)
+        .expect("alice sends");
+    let message_event = drain_signed_events(&alice, &alice_keys)
+        .into_iter()
+        .find(|event| {
+            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
+                && bob_message_authors.contains(&event.pubkey)
+        })
+        .expect("message event for Bob");
+
+    core.enter_batch();
+    core.handle_relay_event(message_event);
+
+    assert!(
+        core.threads
+            .get(&alice_keys.public_key().to_hex())
+            .is_some_and(|thread| thread
+                .messages
+                .iter()
+                .any(|message| message.body == "ack after app persist")),
+        "decrypted message should be applied in memory immediately"
+    );
+    assert_eq!(
+        stored_message_count(&core),
+        1,
+        "notification-preview durability may write the message row immediately, but full app-state persistence is still batch-deferred"
+    );
+    assert_eq!(
+        stored_pending_decrypted_delivery_count(&core, &bob_keys, &bob_keys),
+        1,
+        "runtime decrypted delivery must remain pending until app state is durably saved"
+    );
+
+    core.exit_batch();
+
+    assert_eq!(stored_message_count(&core), 1);
+    assert_eq!(
+        stored_pending_decrypted_delivery_count(&core, &bob_keys, &bob_keys),
+        0,
+        "persisting app state should ack and clear the runtime decrypted delivery"
+    );
 }
 
 #[test]
@@ -1489,11 +4030,13 @@ fn peer_profile_debug_reports_known_user_context() {
     let app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 10)]);
 
     core.apply_known_app_keys_snapshot(peer.public_key(), &app_keys, 10);
-    core.logged_in
-        .as_ref()
-        .expect("logged in")
-        .ndr_runtime
-        .ingest_app_keys_snapshot(peer.public_key(), app_keys, 10);
+    let batch = core
+        .protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .ingest_app_keys_snapshot(peer.public_key(), app_keys, 10)
+        .expect("ingest app keys");
+    core.process_protocol_engine_retry_batch("test_app_keys", batch);
     core.remember_recent_handshake_peer(peer_hex.clone(), peer_device_hex, 123);
     core.handle_action(AppAction::CreateChat {
         peer_input: peer_hex.clone(),
@@ -1623,7 +4166,7 @@ fn restored_authorized_linked_device_is_not_revoked_by_cached_roster() {
 }
 
 #[test]
-fn app_keys_cache_ignores_older_roster_events() {
+fn app_keys_cache_merges_older_roster_events_additively() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let old_device = Keys::generate();
@@ -1651,8 +4194,8 @@ fn app_keys_cache_ignores_older_roster_events() {
     let stale = AppKeys::new(vec![DeviceEntry::new(old_device.public_key(), 10)]);
     assert!(
         core.apply_known_app_keys_snapshot(owner.public_key(), &stale, 10)
-            .is_none(),
-        "older app-key events must not replace the cached roster"
+            .is_some(),
+        "older owner-signed app-key events should add missing devices without replacing the cached timestamp"
     );
 
     let cached = core
@@ -1664,7 +4207,7 @@ fn app_keys_cache_ignores_older_roster_events() {
         .devices
         .iter()
         .any(|entry| entry.identity_pubkey_hex == device.public_key().to_hex()));
-    assert!(!cached
+    assert!(cached
         .devices
         .iter()
         .any(|entry| entry.identity_pubkey_hex == old_device.public_key().to_hex()));
@@ -1724,6 +4267,110 @@ fn app_keys_cache_merges_same_timestamp_roster_events() {
         .devices
         .iter()
         .any(|entry| entry.identity_pubkey_hex == device_b.public_key().to_hex()));
+}
+
+#[test]
+fn app_keys_runtime_storage_failure_does_not_mark_seen_or_mutate_app_cache() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let remote_owner = Keys::generate();
+    let remote_device = Keys::generate();
+    let runtime_storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "appkeys-runtime-storage-failure",
+        &owner,
+        &device,
+        runtime_storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    let remote_event = AppKeys::new(vec![DeviceEntry::new(remote_device.public_key(), 1)])
+        .get_event(remote_owner.public_key())
+        .sign_with_keys(&remote_owner)
+        .expect("remote app keys event");
+    let event_id = remote_event.id.to_string();
+
+    runtime_storage.set_fail_puts(true);
+    core.handle_relay_event(remote_event.clone());
+
+    assert!(
+        !core.seen_event_ids.contains(&event_id),
+        "transient runtime persistence failure must not dedupe the protocol event"
+    );
+    assert!(
+        !core
+            .app_keys
+            .contains_key(&remote_owner.public_key().to_hex()),
+        "app projection must not commit AppKeys that runtime failed to persist"
+    );
+    assert!(
+        core.protocol_engine
+            .as_ref()
+            .unwrap()
+            .known_device_identity_pubkeys_for_owner(remote_owner.public_key())
+            .is_empty(),
+        "runtime roster must remain unchanged after failed persistence"
+    );
+
+    runtime_storage.set_fail_puts(false);
+    core.handle_relay_event(remote_event);
+
+    assert!(core.seen_event_ids.contains(&event_id));
+    assert!(core
+        .app_keys
+        .get(&remote_owner.public_key().to_hex())
+        .is_some_and(|known| known
+            .devices
+            .iter()
+            .any(|entry| { entry.identity_pubkey_hex == remote_device.public_key().to_hex() })));
+    assert_eq!(
+        core.protocol_engine
+            .as_ref()
+            .unwrap()
+            .known_device_identity_pubkeys_for_owner(remote_owner.public_key()),
+        vec![remote_device.public_key()]
+    );
+}
+
+#[test]
+fn invite_runtime_storage_failure_does_not_mark_seen() {
+    use nostr_double_ratchet_nostr::InviteNostrExt;
+
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let remote_owner = Keys::generate();
+    let remote_device = Keys::generate();
+    let runtime_storage = Arc::new(SwitchableFailStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "invite-runtime-storage-failure",
+        &owner,
+        &device,
+        runtime_storage.clone() as Arc<dyn StorageAdapter>,
+    );
+    let mut invite = Invite::create_new(
+        remote_device.public_key(),
+        Some(remote_device.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("remote invite");
+    invite.owner_public_key = Some(remote_owner.public_key());
+    let invite_event = invite
+        .get_event()
+        .expect("invite unsigned event")
+        .sign_with_keys(&remote_device)
+        .expect("invite event");
+    let event_id = invite_event.id.to_string();
+
+    runtime_storage.set_fail_puts(true);
+    core.handle_relay_event(invite_event.clone());
+
+    assert!(
+        !core.seen_event_ids.contains(&event_id),
+        "transient runtime persistence failure must not dedupe invite events"
+    );
+
+    runtime_storage.set_fail_puts(false);
+    core.handle_relay_event(invite_event);
+
+    assert!(core.seen_event_ids.contains(&event_id));
 }
 
 #[test]
@@ -1883,7 +4530,8 @@ fn restored_owner_app_keys_backfill_merges_current_device_and_republishes() {
         .get_event(owner.public_key())
         .sign_with_keys(&owner)
         .expect("remote app keys event");
-    core.apply_app_keys_event(&remote_event);
+    core.apply_app_keys_event(&remote_event)
+        .expect("apply remote app keys");
 
     let known = core
         .app_keys
@@ -1957,7 +4605,8 @@ fn app_keys_event_rerenders_device_roster_even_when_authorization_is_unchanged()
         .get_event_at(owner.public_key(), remote_created_at)
         .sign_with_keys(&owner)
         .expect("app keys event");
-    core.apply_app_keys_event(&remote_event);
+    core.apply_app_keys_event(&remote_event)
+        .expect("apply remote app keys");
 
     let roster = core.state.device_roster.as_ref().expect("device roster");
     assert_eq!(roster.devices.len(), 2);
@@ -2078,11 +4727,10 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
         LocalAuthorizationState::AwaitingApproval
     );
     assert!(core.pending_linked_device.is_none());
-    assert!(logged_in
-        .ndr_runtime
-        .export_active_sessions()
-        .iter()
-        .any(|(peer, _, _)| *peer == owner.public_key()));
+    assert!(core
+        .protocol_engine
+        .as_ref()
+        .is_some_and(|engine| engine.active_session_count_for_owner(owner.public_key()) > 0));
 }
 
 #[test]
@@ -2132,11 +4780,479 @@ fn recent_protocol_filters_include_runtime_invite_response_backfill() {
 }
 
 #[test]
+fn protocol_filters_track_invite_responses_by_known_device_authors() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("protocol-invite-response-author", &owner, &device);
+    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
+    core.app_keys.insert(
+        peer_owner.public_key().to_hex(),
+        known_app_keys_from_ndr(peer_owner.public_key(), &peer_app_keys, 1),
+    );
+    core.active_chat_id = Some(peer_owner.public_key().to_hex());
+
+    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    assert!(
+        has_filter_with_kind_author(&filters, INVITE_RESPONSE_KIND, peer_device.public_key()),
+        "invite response backfill should not depend only on #p indexing"
+    );
+
+    let relay = crate::local_relay::TestRelay::start();
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.request_protocol_subscription_refresh_forced();
+    let active_filters = desired_protocol_filters(&core);
+    assert!(
+        has_filter_with_kind_author(&active_filters, INVITE_EVENT_KIND, peer_device.public_key()),
+        "live invite subscription should track known device authors, not owner pubkeys"
+    );
+    assert!(
+        has_filter_with_kind_author(
+            &active_filters,
+            INVITE_RESPONSE_KIND,
+            peer_device.public_key()
+        ),
+        "live invite response subscription should also track known peer device authors"
+    );
+}
+
+#[test]
+fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
+    let owner = Keys::generate();
+    let invite_author = Keys::generate();
+    let message_author = Keys::generate();
+    let group_author = Keys::generate();
+    let invite_response_recipient = Keys::generate();
+    let plan = ProtocolSubscriptionPlan {
+        runtime_subscriptions: vec!["ndr-protocol".to_string()],
+        roster_authors: vec![owner.public_key().to_hex()],
+        invite_authors: vec![invite_author.public_key().to_hex()],
+        message_authors: vec![message_author.public_key().to_hex()],
+        group_sender_key_authors: vec![group_author.public_key().to_hex()],
+        invite_response_recipient: Some(invite_response_recipient.public_key().to_hex()),
+    };
+
+    let filters = build_protocol_subscription_filters(&plan);
+
+    assert!(
+        has_filter_with_kind_author(&filters, APP_KEYS_EVENT_KIND, owner.public_key()),
+        "app-key filters must be derived from roster authors"
+    );
+    assert!(
+        has_filter_with_kind_author(&filters, INVITE_EVENT_KIND, invite_author.public_key()),
+        "invite filters must be derived from known device authors"
+    );
+    assert!(
+        has_filter_with_kind_author(&filters, INVITE_RESPONSE_KIND, invite_author.public_key()),
+        "invite-response author filters must be derived from known device authors"
+    );
+    assert!(
+        has_filter_with_kind_author(&filters, MESSAGE_EVENT_KIND, message_author.public_key()),
+        "message filters must be derived from message authors"
+    );
+    assert!(
+        has_filter_with_kind_author(
+            &filters,
+            GROUP_SENDER_KEY_MESSAGE_KIND,
+            group_author.public_key()
+        ),
+        "group sender-key filters must be derived from group authors"
+    );
+    assert!(
+        has_filter_with_kind_pubkey(
+            &filters,
+            INVITE_RESPONSE_KIND,
+            invite_response_recipient.public_key()
+        ),
+        "private invite-response filters must be derived from recipient #p values"
+    );
+}
+
+#[test]
+fn recent_protocol_filters_do_not_include_unscoped_message_backfill_for_cold_tracked_peer() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("protocol-backfill-cold-peer", &owner, &device);
+    core.active_chat_id = Some(peer.public_key().to_hex());
+
+    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    assert!(
+        !has_bootstrap_message_filter(&filters),
+        "cold peer discovery must fetch protocol state, not unscoped public message events"
+    );
+}
+
+#[test]
+fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_backfill() {
+    let alice_keys = Keys::generate();
+    let bob_keys = Keys::generate();
+    let mallory_keys = Keys::generate();
+    let carol_keys = Keys::generate();
+    let mut alice_invite = Invite::create_new(
+        alice_keys.public_key(),
+        Some(alice_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("invite");
+    alice_invite.owner_public_key = Some(alice_keys.public_key());
+    let alice = NdrRuntime::new(
+        alice_keys.public_key(),
+        alice_keys.secret_key().to_secret_bytes(),
+        alice_keys.public_key().to_hex(),
+        alice_keys.public_key(),
+        None,
+        Some(alice_invite.clone()),
+    );
+    alice.init().expect("alice init");
+    let bob_runtime = NdrRuntime::new(
+        bob_keys.public_key(),
+        bob_keys.secret_key().to_secret_bytes(),
+        bob_keys.public_key().to_hex(),
+        bob_keys.public_key(),
+        None,
+        None,
+    );
+    bob_runtime.init().expect("bob init");
+    accept_invite_and_deliver(
+        &bob_runtime,
+        &bob_keys,
+        &alice_invite,
+        alice_keys.public_key(),
+        &alice,
+    );
+    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
+    let alice_session_state = bob_runtime
+        .get_message_push_session_states(alice_keys.public_key())
+        .into_iter()
+        .next()
+        .expect("Bob has Alice session")
+        .state;
+
+    let mut mallory_invite = Invite::create_new(
+        mallory_keys.public_key(),
+        Some(mallory_keys.public_key().to_hex()),
+        Some(1),
+    )
+    .expect("mallory invite");
+    mallory_invite.owner_public_key = Some(mallory_keys.public_key());
+    let mallory = NdrRuntime::new(
+        mallory_keys.public_key(),
+        mallory_keys.secret_key().to_secret_bytes(),
+        mallory_keys.public_key().to_hex(),
+        mallory_keys.public_key(),
+        None,
+        Some(mallory_invite.clone()),
+    );
+    mallory.init().expect("mallory init");
+    let carol_runtime = NdrRuntime::new(
+        carol_keys.public_key(),
+        carol_keys.secret_key().to_secret_bytes(),
+        carol_keys.public_key().to_hex(),
+        carol_keys.public_key(),
+        None,
+        None,
+    );
+    carol_runtime.init().expect("carol init");
+    accept_invite_and_deliver(
+        &carol_runtime,
+        &carol_keys,
+        &mallory_invite,
+        mallory_keys.public_key(),
+        &mallory,
+    );
+    complete_first_contact(
+        &carol_runtime,
+        &carol_keys,
+        mallory_keys.public_key(),
+        &mallory,
+    );
+    mallory
+        .send_text(
+            carol_keys.public_key(),
+            "queued until unrelated protocol state arrives".to_string(),
+            None,
+        )
+        .expect("mallory sends");
+    let carol_message_authors = carol_runtime.get_all_message_push_author_pubkeys();
+    let message_event = drain_signed_events(&mallory, &mallory_keys)
+        .into_iter()
+        .find(|event| {
+            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
+                && carol_message_authors.contains(&event.pubkey)
+        })
+        .expect("message event for Carol");
+    let message_event_id = message_event.id.to_string();
+
+    let mut core = logged_in_test_core("pending-inbound-keeps-bootstrap", &bob_keys, &bob_keys);
+    core.active_chat_id = Some(alice_keys.public_key().to_hex());
+    let alice_app_keys = AppKeys::new(vec![DeviceEntry::new(alice_keys.public_key(), 1)]);
+    let batch = core
+        .protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .ingest_app_keys_snapshot(alice_keys.public_key(), alice_app_keys.clone(), 1)
+        .expect("alice appkeys");
+    core.process_protocol_engine_retry_batch("test_alice_appkeys", batch);
+    core.app_keys.insert(
+        alice_keys.public_key().to_hex(),
+        known_app_keys_from_ndr(alice_keys.public_key(), &alice_app_keys, 1),
+    );
+    core.protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .import_session_state(
+            alice_keys.public_key(),
+            Some(alice_keys.public_key().to_hex()),
+            alice_session_state,
+            UnixSeconds(2),
+        )
+        .expect("alice session import");
+    assert!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .message_author_pubkeys_for_owner(alice_keys.public_key())
+            .is_empty()
+            == false,
+        "tracked peer starts with app keys and known message authors"
+    );
+    assert!(
+        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
+        "without pending inbound work the known peer no longer needs broad bootstrap"
+    );
+    core.handle_relay_event(message_event);
+    assert!(
+        !core
+            .protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .has_pending_inbound_direct_events(),
+        "unknown public message authors must not become durable pending inbound work"
+    );
+    assert!(
+        core.has_seen_event(&message_event_id),
+        "ignored public message events should be remembered so relay replays do not reprocess them"
+    );
+    assert!(
+        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
+        "ignored unknown messages must not enable unscoped public backfill"
+    );
+}
+
+#[test]
+fn direct_message_discovery_backfill_stays_scoped_for_partial_tracked_peer_state() {
+    let owner = Keys::generate();
+    let linked_device = Keys::generate();
+    let primary_device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core(
+        "partial-tracked-peer-message-bootstrap",
+        &owner,
+        &linked_device,
+    );
+
+    install_local_sibling_session_for_test(&mut core, &owner, &linked_device, &primary_device);
+    assert!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .message_author_pubkeys_for_owner(owner.public_key())
+            .len()
+            > 0,
+        "linked device should already know a primary-device message author"
+    );
+    assert!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .message_author_pubkeys_for_owner(peer.public_key())
+            .is_empty(),
+        "fresh peer should still need message-author discovery"
+    );
+    core.active_chat_id = Some(peer.public_key().to_hex());
+
+    assert!(
+        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
+        "partial peer state must not trigger unscoped public message backfill"
+    );
+
+    let relay = crate::local_relay::TestRelay::start();
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.request_protocol_subscription_refresh_forced();
+    let active_filters = desired_protocol_filters(&core);
+    assert!(
+        !has_bootstrap_message_filter(&active_filters),
+        "unscoped live message subscriptions flood public relays; bootstrap discovery must stay bounded to backfill"
+    );
+}
+
+#[test]
+fn direct_message_discovery_does_not_install_cold_peer_live_bootstrap_subscription() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("cold-peer-no-live-bootstrap", &owner, &device);
+    core.active_chat_id = Some(peer.public_key().to_hex());
+
+    assert!(
+        !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
+        "cold tracked peer discovery should stay on protocol-state filters"
+    );
+
+    let relay = crate::local_relay::TestRelay::start();
+    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
+    core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    core.request_protocol_subscription_refresh_forced();
+    let active_filters = desired_protocol_filters(&core);
+    assert!(
+        !has_bootstrap_message_filter(&active_filters),
+        "cold direct chats should not create an unscoped live message subscription"
+    );
+}
+
+fn has_bootstrap_message_filter(filters: &[Filter]) -> bool {
+    filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .any(|filter| {
+            let has_message_kind = filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|kind| kind.as_u64() == Some(MESSAGE_EVENT_KIND as u64))
+                });
+            has_message_kind && filter.get("authors").is_none()
+        })
+}
+
+fn desired_protocol_filters(core: &AppCore) -> Vec<Filter> {
+    build_protocol_subscription_filters(
+        core.protocol_subscription_runtime
+            .desired_plan
+            .as_ref()
+            .expect("desired protocol plan"),
+    )
+}
+
+fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey) -> bool {
+    let author_hex = author.to_hex();
+    filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .any(|filter| {
+            let has_kind = filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|value| value.as_u64() == Some(kind as u64))
+                });
+            let has_author = filter
+                .get("authors")
+                .and_then(|authors| authors.as_array())
+                .is_some_and(|authors| {
+                    authors
+                        .iter()
+                        .any(|value| value.as_str() == Some(author_hex.as_str()))
+                });
+            has_kind && has_author
+        })
+}
+
+fn has_filter_with_kind_pubkey(filters: &[Filter], kind: u32, pubkey: PublicKey) -> bool {
+    let pubkey_hex = pubkey.to_hex();
+    filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .any(|filter| {
+            let has_kind = filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|value| value.as_u64() == Some(kind as u64))
+                });
+            let has_pubkey = filter
+                .get("#p")
+                .and_then(|pubkeys| pubkeys.as_array())
+                .is_some_and(|pubkeys| {
+                    pubkeys
+                        .iter()
+                        .any(|value| value.as_str() == Some(pubkey_hex.as_str()))
+                });
+            has_kind && has_pubkey
+        })
+}
+
+fn install_local_sibling_session_for_test(
+    core: &mut AppCore,
+    owner: &Keys,
+    linked_device: &Keys,
+    primary_device: &Keys,
+) {
+    let local_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(primary_device.public_key(), 1),
+        DeviceEntry::new(linked_device.public_key(), 1),
+    ]);
+    core.protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
+        .expect("local appkeys");
+
+    let linked_invite = core
+        .protocol_engine
+        .as_ref()
+        .expect("protocol engine")
+        .local_invite_for_test()
+        .expect("linked invite");
+    let (_primary_session, response) = linked_invite
+        .accept_with_owner(
+            primary_device.public_key(),
+            primary_device.secret_key().to_secret_bytes(),
+            Some(primary_device.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .expect("primary accepts linked invite");
+    let linked_response = nostr_double_ratchet_nostr::process_invite_response_event(
+        &linked_invite,
+        &nostr_double_ratchet_nostr::invite_response_event(&response)
+            .expect("invite response event"),
+        linked_device.secret_key().to_secret_bytes(),
+    )
+    .expect("linked processes invite response")
+    .expect("response addressed to linked invite");
+    core.protocol_engine
+        .as_mut()
+        .expect("protocol engine")
+        .import_session_state(
+            owner.public_key(),
+            Some(primary_device.public_key().to_hex()),
+            linked_response.session.state,
+            UnixSeconds(2),
+        )
+        .expect("linked imports primary session");
+}
+
+#[test]
 fn create_invite_generates_private_link_without_public_republish() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("private-invite-create", &owner, &device);
-    core.process_runtime_events();
     core.pending_relay_publishes.clear();
 
     let local_invite_response_pubkey = core
@@ -2207,7 +5323,6 @@ fn private_invite_first_message_installs_creator_session() {
         &alice_owner,
         &alice_device,
     );
-    alice.process_runtime_events();
     alice.pending_relay_publishes.clear();
     alice.handle_action(AppAction::CreatePublicInvite);
     let invite_url = alice
@@ -2219,7 +5334,6 @@ fn private_invite_first_message_installs_creator_session() {
         .clone();
 
     let mut bob = logged_in_test_core("private-invite-roundtrip-bob", &bob_owner, &bob_device);
-    bob.process_runtime_events();
     bob.pending_relay_publishes.clear();
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
@@ -2231,6 +5345,12 @@ fn private_invite_first_message_installs_creator_session() {
         chat_id: alice_owner.public_key().to_hex(),
         text: "hello from private invite".to_string(),
     });
+    assert!(
+        bob.protocol_engine
+            .as_ref()
+            .is_some_and(|engine| !engine.known_message_author_pubkeys().is_empty()),
+        "sending through a private invite must install scoped message authors"
+    );
     let response = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
         .into_iter()
         .next()
@@ -2238,19 +5358,21 @@ fn private_invite_first_message_installs_creator_session() {
     alice.handle_relay_event(response);
 
     assert!(
-        alice
-            .logged_in
-            .as_ref()
-            .expect("alice logged in")
-            .ndr_runtime
-            .export_active_session_state(bob_owner.public_key())
-            .expect("alice session export")
-            .is_some(),
+        alice.protocol_engine.as_ref().is_some_and(|engine| {
+            engine.active_session_count_for_owner(bob_owner.public_key()) > 0
+        }),
         "Alice should install Bob's session from the private invite response"
     );
     assert!(
         alice.private_chat_invites.is_empty(),
         "one-use private invite should be removed after a matching response"
+    );
+    assert!(
+        alice
+            .protocol_engine
+            .as_ref()
+            .is_some_and(|engine| !engine.known_message_author_pubkeys().is_empty()),
+        "private invite response import must immediately enable scoped peer message discovery"
     );
 }
 
@@ -2347,6 +5469,299 @@ fn web_runtime_message_duplicates_dedupe_by_inner_rumor_id() {
         .collect::<Vec<_>>();
     assert_eq!(matching.len(), 1);
     assert_eq!(matching[0].id, inner_id);
+}
+
+#[test]
+fn remote_runtime_rumor_pubkey_and_p_tags_do_not_choose_direct_chat() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let forged_peer = Keys::generate();
+    let mut core = logged_in_test_core("runtime-forged-remote-route", &owner, &device);
+    let inner_id = "1".repeat(64);
+    let content = serde_json::json!({
+        "content": "route must stay on authenticated sender",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_493u64,
+        "tags": [["p", forged_peer.public_key().to_hex()], ["recipient-owner", forged_peer.public_key().to_hex()]],
+        "pubkey": forged_peer.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("2".repeat(64)));
+
+    let sender_chat_id = sender.public_key().to_hex();
+    let forged_chat_id = forged_peer.public_key().to_hex();
+    assert!(core
+        .threads
+        .get(&sender_chat_id)
+        .is_some_and(|thread| thread.messages.iter().any(|message| message.id == inner_id)));
+    assert!(
+        !core.threads.contains_key(&forged_chat_id),
+        "remote plaintext p/pubkey hints must not create or select a forged peer chat"
+    );
+}
+
+#[test]
+fn self_sync_runtime_metadata_overrides_malicious_inner_p_tag() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let real_peer = Keys::generate();
+    let forged_peer = Keys::generate();
+    let mut core = logged_in_test_core("runtime-forged-self-sync-route", &owner, &device);
+    let inner_id = "3".repeat(64);
+    let content = serde_json::json!({
+        "content": "self sync route comes from runtime metadata",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_500u64,
+        "tags": [["p", forged_peer.public_key().to_hex()]],
+        "pubkey": forged_peer.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        owner.public_key(),
+        Some(sibling_device.public_key()),
+        Some(real_peer.public_key()),
+        content,
+        Some("4".repeat(64)),
+    );
+
+    let real_chat_id = real_peer.public_key().to_hex();
+    let forged_chat_id = forged_peer.public_key().to_hex();
+    assert!(core
+        .threads
+        .get(&real_chat_id)
+        .is_some_and(|thread| thread.messages.iter().any(|message| message.id == inner_id)));
+    assert!(
+        !core.threads.contains_key(&forged_chat_id),
+        "self-sync plaintext p tag must not override authenticated runtime conversation metadata"
+    );
+}
+
+#[test]
+fn self_synced_direct_message_from_device_claim_routes_to_peer_owner() {
+    let owner = Keys::generate();
+    let linked_device = Keys::generate();
+    let primary_device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("self-sync-device-claim-route", &owner, &linked_device);
+    let local_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(linked_device.public_key(), 1),
+        DeviceEntry::new(primary_device.public_key(), 1),
+    ]);
+    core.app_keys.insert(
+        owner.public_key().to_hex(),
+        known_app_keys_from_ndr(owner.public_key(), &local_app_keys, 1),
+    );
+    let peer_chat_id = peer.public_key().to_hex();
+    let primary_device_chat_id = primary_device.public_key().to_hex();
+    let inner_id = "8".repeat(64);
+    let content = serde_json::json!({
+        "content": "sent from primary device",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_501u64,
+        "tags": [["p", peer_chat_id]],
+        "pubkey": owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        primary_device.public_key(),
+        Some(primary_device.public_key()),
+        Some(peer.public_key()),
+        content,
+        Some("9".repeat(64)),
+    );
+
+    let thread = core.threads.get(&peer_chat_id).expect("peer thread");
+    assert_eq!(thread.messages.len(), 1);
+    let message = &thread.messages[0];
+    assert_eq!(message.id, inner_id);
+    assert_eq!(message.body, "sent from primary device");
+    assert!(message.is_outgoing);
+    assert_eq!(message.delivery, DeliveryState::Sent);
+    assert!(
+        !core.threads.contains_key(&primary_device_chat_id),
+        "known local device metadata must not create a direct chat with the device identity"
+    );
+}
+
+#[test]
+fn incoming_direct_message_from_known_peer_device_routes_to_owner_thread() {
+    let owner = Keys::generate();
+    let local_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("remote-known-device-route", &owner, &local_device);
+    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
+    core.app_keys.insert(
+        peer_owner.public_key().to_hex(),
+        known_app_keys_from_ndr(peer_owner.public_key(), &peer_app_keys, 1),
+    );
+    let peer_owner_chat_id = peer_owner.public_key().to_hex();
+    let peer_device_chat_id = peer_device.public_key().to_hex();
+    core.ensure_thread_record(&peer_owner_chat_id, 1);
+    let inner_id = "a".repeat(64);
+    let content = serde_json::json!({
+        "content": "sent from peer device",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_502u64,
+        "tags": [],
+        "pubkey": peer_owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        peer_device.public_key(),
+        Some(peer_device.public_key()),
+        None,
+        content,
+        Some("b".repeat(64)),
+    );
+
+    let thread = core
+        .threads
+        .get(&peer_owner_chat_id)
+        .expect("peer owner thread");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].id, inner_id);
+    assert_eq!(thread.messages[0].body, "sent from peer device");
+    assert!(!thread.messages[0].is_outgoing);
+    assert!(
+        !core.threads.contains_key(&peer_device_chat_id),
+        "known peer device metadata must not create a direct chat with the device identity"
+    );
+}
+
+#[test]
+fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thread() {
+    let owner = Keys::generate();
+    let local_device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("remote-claimed-device-route", &owner, &local_device);
+    let peer_owner_chat_id = peer_owner.public_key().to_hex();
+    let peer_device_chat_id = peer_device.public_key().to_hex();
+    core.ensure_thread_record(&peer_owner_chat_id, 1);
+
+    let mut session_snapshot = SessionManager::new(
+        NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()),
+        local_device.secret_key().to_secret_bytes(),
+    )
+    .snapshot();
+    session_snapshot
+        .users
+        .push(nostr_double_ratchet::UserRecordSnapshot {
+            owner_pubkey: NdrOwnerPubkey::from_bytes(peer_device.public_key().to_bytes()),
+            roster: None,
+            devices: vec![nostr_double_ratchet::DeviceRecordSnapshot {
+                device_pubkey: NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+                authorized: true,
+                is_stale: false,
+                stale_since: None,
+                claimed_owner_pubkey: Some(NdrOwnerPubkey::from_bytes(
+                    peer_owner.public_key().to_bytes(),
+                )),
+                public_invite: None,
+                invite_response_generated: false,
+                active_session: None,
+                inactive_sessions: Vec::new(),
+                last_activity: Some(NdrUnixSeconds(1)),
+                created_at: NdrUnixSeconds(1),
+            }],
+        });
+    let storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(
+        &mut core,
+        &owner,
+        &local_device,
+        storage,
+        Some(session_snapshot),
+        None,
+    );
+
+    let inner_id = "c".repeat(64);
+    let content = serde_json::json!({
+        "content": "sent before app keys backfill",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_503u64,
+        "tags": [],
+        "pubkey": peer_owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        peer_device.public_key(),
+        Some(peer_device.public_key()),
+        None,
+        content,
+        Some("d".repeat(64)),
+    );
+
+    let thread = core
+        .threads
+        .get(&peer_owner_chat_id)
+        .expect("peer owner thread");
+    assert_eq!(thread.messages.len(), 1);
+    assert_eq!(thread.messages[0].id, inner_id);
+    assert_eq!(thread.messages[0].body, "sent before app keys backfill");
+    assert!(
+        !core.threads.contains_key(&peer_device_chat_id),
+        "tracked claimed peer device must route to the owner chat while AppKeys are still catching up"
+    );
+}
+
+#[test]
+fn receipt_runtime_rumor_uses_authenticated_sender_chat_not_malicious_tags() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let forged_peer = Keys::generate();
+    let mut core = logged_in_test_core("runtime-forged-receipt-route", &owner, &device);
+    let sender_chat_id = sender.public_key().to_hex();
+    let message_id = "5".repeat(64);
+    core.push_outgoing_message_with_id(
+        message_id.clone(),
+        &sender_chat_id,
+        "pending outbound".to_string(),
+        1_777_159_492,
+        None,
+        DeliveryState::Sent,
+    );
+    let content = serde_json::json!({
+        "content": "seen",
+        "kind": RECEIPT_KIND,
+        "created_at": 1_777_159_493u64,
+        "tags": [["e", message_id], ["p", forged_peer.public_key().to_hex()]],
+        "pubkey": forged_peer.public_key().to_hex(),
+        "id": "6".repeat(64),
+    })
+    .to_string();
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("7".repeat(64)));
+
+    let message = core
+        .threads
+        .get(&sender_chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("sender chat message");
+    assert_eq!(message.delivery, DeliveryState::Seen);
+    assert!(!core
+        .threads
+        .contains_key(&forged_peer.public_key().to_hex()));
 }
 
 #[test]
@@ -3333,22 +6748,12 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
             None,
         )
         .expect("local invite");
-        let runtime = NdrRuntime::new(
-            device.public_key(),
-            device.secret_key().to_secret_bytes(),
-            device.public_key().to_hex(),
-            owner.public_key(),
-            None,
-            Some(invite.clone()),
-        );
-        runtime.init().expect("runtime init");
         core.logged_in = Some(LoggedInState {
             owner_pubkey: owner.public_key(),
             owner_keys: Some(owner.clone()),
             device_keys: device.clone(),
             client: Client::new(device.clone()),
             relay_urls: Vec::new(),
-            ndr_runtime: runtime,
             local_invite: invite,
             authorization_state: LocalAuthorizationState::Authorized,
         });
@@ -3526,22 +6931,12 @@ fn appcore_clear_persistence_drops_sqlite_state() {
         None,
     )
     .expect("invite");
-    let runtime = NdrRuntime::new(
-        device.public_key(),
-        device.secret_key().to_secret_bytes(),
-        device.public_key().to_hex(),
-        owner.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    runtime.init().expect("runtime init");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
@@ -3894,6 +7289,40 @@ fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
     )
 }
 
+fn logged_in_test_core_with_storage(
+    label: &str,
+    owner: &Keys,
+    device: &Keys,
+    storage: Arc<dyn StorageAdapter>,
+) -> AppCore {
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-{label}-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let device_id = device.public_key().to_hex();
+    let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+        .expect("local invite");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    install_test_protocol_engine(&mut core, owner, device, storage, None, None);
+    core
+}
+
 fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String) -> AppCore {
     let mut core = AppCore::new(
         flume::unbounded().0,
@@ -3904,26 +7333,106 @@ fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String
     let device_id = device.public_key().to_hex();
     let invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
         .expect("local invite");
-    let runtime = NdrRuntime::new(
-        device.public_key(),
-        device.secret_key().to_secret_bytes(),
-        device_id,
-        owner.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    runtime.init().expect("runtime init");
     core.logged_in = Some(LoggedInState {
         owner_pubkey: owner.public_key(),
         owner_keys: Some(owner.clone()),
         device_keys: device.clone(),
         client: Client::new(device.clone()),
         relay_urls: Vec::new(),
-        ndr_runtime: runtime,
         local_invite: invite,
         authorization_state: LocalAuthorizationState::Authorized,
     });
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        owner.public_key().to_hex(),
+        device.public_key().to_hex(),
+    )) as Arc<dyn StorageAdapter>;
+    install_test_protocol_engine(&mut core, owner, device, storage, None, None);
     core
+}
+
+fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
+    let storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    test_protocol_engine_with_storage(owner, device, storage)
+}
+
+fn test_protocol_engine_with_storage(
+    owner: &Keys,
+    device: &Keys,
+    storage: Arc<dyn StorageAdapter>,
+) -> ProtocolEngine {
+    let local_owner = NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes());
+    let local_invite = Invite::create_new(
+        device.public_key(),
+        Some(device.public_key().to_hex()),
+        None,
+    )
+    .expect("local invite");
+    let session_manager =
+        SessionManager::new(local_owner, device.secret_key().to_secret_bytes()).snapshot();
+    let group_manager = NostrGroupManager::new(local_owner).snapshot();
+    ProtocolEngine::load_or_seed(
+        storage,
+        owner.public_key(),
+        device,
+        local_invite,
+        session_manager,
+        group_manager,
+    )
+    .expect("protocol engine")
+}
+
+fn observe_current_device_appkeys_for_test(
+    engine: &mut ProtocolEngine,
+    owner: &Keys,
+    device: &Keys,
+) {
+    let created_at = unix_now().get();
+    engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(device.public_key(), created_at)]),
+            created_at,
+        )
+        .expect("local appkeys");
+}
+
+fn install_test_protocol_engine(
+    core: &mut AppCore,
+    owner: &Keys,
+    device: &Keys,
+    storage: Arc<dyn StorageAdapter>,
+    seed_session_manager: Option<SessionManagerSnapshot>,
+    seed_group_manager: Option<GroupManagerSnapshot>,
+) {
+    let local_invite = core
+        .logged_in
+        .as_ref()
+        .expect("logged in")
+        .local_invite
+        .clone();
+    let seed_session_manager = seed_session_manager.unwrap_or_else(|| {
+        SessionManager::new(
+            NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes()),
+            device.secret_key().to_secret_bytes(),
+        )
+        .snapshot()
+    });
+    let seed_group_manager = seed_group_manager.unwrap_or_else(|| {
+        NostrGroupManager::new(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())).snapshot()
+    });
+    core.protocol_engine = Some(
+        ProtocolEngine::load_or_seed(
+            storage,
+            owner.public_key(),
+            device,
+            local_invite,
+            seed_session_manager,
+            seed_group_manager,
+        )
+        .expect("protocol engine"),
+    );
 }
 
 fn stored_message_count(core: &AppCore) -> i64 {
@@ -3962,10 +7471,129 @@ fn stored_chat_ttl(core: &AppCore, chat_id: &str) -> Option<u64> {
         .map(|row| row.get::<_, i64>(0).unwrap() as u64)
 }
 
+fn runtime_state_json(core: &AppCore, owner: &Keys, device: &Keys) -> serde_json::Value {
+    let storage = crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        owner.public_key().to_hex(),
+        device.public_key().to_hex(),
+    );
+    let value = storage
+        .get("appcore/protocol-engine-state-v1")
+        .expect("read appcore protocol state")
+        .or_else(|| storage.get("v2/runtime-state").expect("read runtime state"))
+        .expect("protocol state exists");
+    serde_json::from_str(&value).expect("runtime state json")
+}
+
+fn stored_pending_group_sender_key_message_count(
+    core: &AppCore,
+    owner: &Keys,
+    device: &Keys,
+) -> usize {
+    runtime_state_json(core, owner, device)
+        .get("pending_group_sender_key_messages")
+        .and_then(|value| value.as_array())
+        .map(Vec::len)
+        .unwrap_or_default()
+}
+
+fn stored_pending_decrypted_delivery_count(core: &AppCore, owner: &Keys, device: &Keys) -> usize {
+    runtime_state_json(core, owner, device)
+        .get("pending_decrypted_deliveries")
+        .and_then(|value| value.as_array())
+        .map(Vec::len)
+        .unwrap_or_default()
+}
+
+fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
+    use base64::Engine;
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&7_u32.to_be_bytes());
+    payload.extend_from_slice(&1_u32.to_be_bytes());
+    payload.extend_from_slice(&[42_u8; 32]);
+    let content = base64::engine::general_purpose::STANDARD.encode(payload);
+    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
+        .sign_with_keys(sender_event)
+        .expect("unknown group sender-key outer")
+}
+
+fn delivered_texts() -> &'static std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>> {
+    static DELIVERED: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<usize, Vec<String>>>,
+    > = std::sync::OnceLock::new();
+    DELIVERED.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn runtime_key(runtime: &NdrRuntime) -> usize {
+    runtime as *const NdrRuntime as usize
+}
+
 fn deliver_published_events(from: &NdrRuntime, signer: &Keys, to: &NdrRuntime) {
     for event in drain_signed_events(from, signer) {
-        to.process_received_event(event);
+        deliver_event_to_runtime(to, event);
     }
+}
+
+fn deliver_runtime_effects(
+    from: &NdrRuntime,
+    signer: &Keys,
+    effects: Vec<SessionManagerEvent>,
+    to: &NdrRuntime,
+) {
+    apply_runtime_persist_effects(from, &effects);
+    let events = signed_events_from_effects(effects, signer);
+    for event in &events {
+        deliver_event_to_runtime(to, event.clone());
+    }
+    for event in events {
+        from.ack_prepared_publish(&event.id.to_string())
+            .expect("ack prepared publish");
+        apply_runtime_persist_effects(from, &from.drain_events());
+    }
+}
+
+fn accept_invite_and_deliver(
+    acceptor: &NdrRuntime,
+    acceptor_keys: &Keys,
+    invite: &Invite,
+    inviter_pubkey: PublicKey,
+    inviter: &NdrRuntime,
+) {
+    acceptor
+        .accept_invite(invite, Some(inviter_pubkey))
+        .expect("accept invite");
+    deliver_runtime_effects(acceptor, acceptor_keys, acceptor.drain_events(), inviter);
+}
+
+fn deliver_event_to_runtime(to: &NdrRuntime, event: Event) {
+    to.process_received_event(event);
+    let effects = to.drain_events();
+    apply_runtime_persist_effects(to, &effects);
+    let mut messages = Vec::new();
+    for effect in effects {
+        if let SessionManagerEvent::DecryptedMessage { content, .. } = effect {
+            messages.push(
+                serde_json::from_str::<UnsignedEvent>(&content)
+                    .ok()
+                    .map(|event| event.content)
+                    .unwrap_or(content),
+            );
+        }
+    }
+    if !messages.is_empty() {
+        delivered_texts()
+            .lock()
+            .unwrap()
+            .entry(runtime_key(to))
+            .or_default()
+            .extend(messages);
+    }
+}
+
+fn apply_runtime_persist_effects(_runtime: &NdrRuntime, _effects: &[SessionManagerEvent]) {
+    // Runtime persistence is internal. This helper keeps existing simulated
+    // relay-delivery tests readable where they previously modeled app steps.
 }
 
 fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
@@ -3989,12 +7617,11 @@ fn complete_first_contact(
             None,
         )
         .expect("first-contact bootstrap send");
-    deliver_published_events(acceptor, acceptor_keys, inviter);
+    deliver_runtime_effects(acceptor, acceptor_keys, acceptor.drain_events(), inviter);
 }
 
-fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
-    runtime
-        .drain_events()
+fn signed_events_from_effects(effects: Vec<SessionManagerEvent>, signer: &Keys) -> Vec<Event> {
+    effects
         .into_iter()
         .filter_map(|event| match event {
             SessionManagerEvent::Publish(unsigned) if unsigned.pubkey == signer.public_key() => {
@@ -4005,6 +7632,33 @@ fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
             _ => None,
         })
         .collect()
+}
+
+fn drain_signed_events(runtime: &NdrRuntime, signer: &Keys) -> Vec<Event> {
+    let mut effects = runtime.drain_events();
+    if effects.is_empty() {
+        runtime.reload_from_storage().expect("reload runtime");
+        effects.extend(runtime.drain_events());
+    }
+    let mut seen = HashSet::new();
+    let events = signed_events_from_effects(effects, signer)
+        .into_iter()
+        .filter(|event| seen.insert(event.id))
+        .collect::<Vec<_>>();
+    for event in &events {
+        runtime
+            .ack_prepared_publish(&event.id.to_string())
+            .expect("ack prepared publish");
+        apply_runtime_persist_effects(runtime, &runtime.drain_events());
+    }
+    events
+}
+
+fn serializable_key_pair_for_test(keys: &Keys) -> nostr_double_ratchet::SerializableKeyPair {
+    nostr_double_ratchet::SerializableKeyPair {
+        public_key: NdrDevicePubkey::from_bytes(keys.public_key().to_bytes()),
+        private_key: keys.secret_key().to_secret_bytes(),
+    }
 }
 
 fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
@@ -4029,19 +7683,11 @@ fn compact_event_payload_for_apns_test(event: &Event) -> serde_json::Value {
 }
 
 fn drain_text_messages(runtime: &NdrRuntime) -> Vec<String> {
-    runtime
-        .drain_events()
-        .into_iter()
-        .filter_map(|event| match event {
-            SessionManagerEvent::DecryptedMessage { content, .. } => {
-                serde_json::from_str::<UnsignedEvent>(&content)
-                    .ok()
-                    .map(|event| event.content)
-                    .or(Some(content))
-            }
-            _ => None,
-        })
-        .collect()
+    delivered_texts()
+        .lock()
+        .unwrap()
+        .remove(&runtime_key(runtime))
+        .unwrap_or_default()
 }
 
 /// End-to-end round-trip: upload a real image to the hashtree network and

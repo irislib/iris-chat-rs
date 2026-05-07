@@ -111,11 +111,11 @@ if [[ "${SETUP}" == "runtime" ]]; then
     F01|F03|F04|F05|F07|F08|F09|F10|F11|F12|F13)
       (
         cd "${ROOT_DIR}/../nostr-double-ratchet/rust" &&
-          cargo test -p nostr-double-ratchet prerelease
+          cargo test --workspace
       )
       (
         cd "${ROOT_DIR}/core" &&
-          cargo test prerelease
+          cargo test
       )
       exit 0
       ;;

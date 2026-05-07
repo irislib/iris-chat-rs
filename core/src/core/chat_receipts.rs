@@ -49,7 +49,11 @@ impl AppCore {
         receipt_type: &str,
         message_ids: Vec<String>,
     ) {
-        let Some(logged_in) = self.logged_in.as_ref() else {
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
             return;
         };
         if is_group_chat_id(chat_id) {
@@ -59,10 +63,19 @@ impl AppCore {
                 .collect();
             self.send_group_event(chat_id, RECEIPT_KIND, receipt_type, tags, None);
         } else if let Ok((_, peer)) = parse_peer_input(chat_id) {
-            let _ = logged_in
-                .ndr_runtime
-                .send_receipt(peer, receipt_type, message_ids, None);
-            self.process_runtime_events();
+            let now = unix_now();
+            let receipt_type_for_pairwise = match receipt_type {
+                "seen" => pairwise_codec::ReceiptType::Seen,
+                _ => pairwise_codec::ReceiptType::Delivered,
+            };
+            if let Ok(unsigned) = pairwise_codec::receipt_event(
+                owner_pubkey,
+                receipt_type_for_pairwise,
+                message_ids.clone(),
+                pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
+            ) {
+                self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "receipt");
+            }
         }
     }
 

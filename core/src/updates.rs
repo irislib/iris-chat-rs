@@ -62,9 +62,28 @@ pub(crate) enum InternalEvent {
     RelayStatusChanged {
         relay_url: String,
         status: RelayStatus,
+        generation: u64,
     },
-    RelayConnectionChecked {
+    ProtocolSubscriptionReconcileCompleted {
+        generation: u64,
+        token: u64,
         reason: String,
+        plan: Option<crate::core::ProtocolSubscriptionPlan>,
+        success: bool,
+        error: Option<String>,
+        relay_statuses: Vec<(String, RelayStatus)>,
+        connected_before: u64,
+        connected_after: u64,
+        filter_count: u64,
+    },
+    RelayTransportConnectionFinished {
+        token: u64,
+        reason: String,
+        relay_statuses: Vec<(String, RelayStatus)>,
+        connected_count: u64,
+    },
+    DebugSnapshotWriteFinished {
+        generation: u64,
     },
     DebugLog {
         category: String,
@@ -74,13 +93,12 @@ pub(crate) enum InternalEvent {
         chat_id: String,
         author: String,
     },
-    RelayPublishFinished {
-        event_id: String,
-        message_id: Option<String>,
-        chat_id: Option<String>,
-        success: bool,
-        relay_urls: Vec<String>,
-        detail: String,
+    RelayPublishDrainFinished {
+        token: u64,
+        results: Vec<RelayPublishDrainResult>,
+    },
+    RetryPendingRelayPublishes {
+        reason: String,
     },
     AttachmentUploadFinished {
         chat_id: String,
@@ -90,4 +108,14 @@ pub(crate) enum InternalEvent {
         result: Result<String, String>,
     },
     SyncComplete,
+}
+
+#[derive(Debug)]
+pub(crate) struct RelayPublishDrainResult {
+    pub(crate) event_id: String,
+    pub(crate) message_id: Option<String>,
+    pub(crate) chat_id: Option<String>,
+    pub(crate) success: bool,
+    pub(crate) relay_urls: Vec<String>,
+    pub(crate) detail: String,
 }

@@ -61,13 +61,32 @@ impl AppCore {
                 Vec::new(),
                 None,
             );
-        } else if let (Some(logged_in), Ok((_, peer))) = (
-            self.logged_in.as_ref(),
+        } else if let (Some(owner_pubkey), Ok((_, peer))) = (
+            self.logged_in
+                .as_ref()
+                .map(|logged_in| logged_in.owner_pubkey),
             parse_peer_input(&normalized_chat_id),
         ) {
             let ttl = normalized_ttl.unwrap_or(0);
-            let _ = logged_in.ndr_runtime.send_chat_settings(peer, ttl);
-            self.process_runtime_events();
+            let now = unix_now();
+            let ttl_setting = if ttl == 0 {
+                pairwise_codec::ChatSettingsTtl::DisablePeerExpiration
+            } else {
+                pairwise_codec::ChatSettingsTtl::Seconds(ttl)
+            };
+            if let Ok(unsigned) = pairwise_codec::chat_settings_event(
+                owner_pubkey,
+                ttl_setting,
+                now.get(),
+                now.get().saturating_mul(1000),
+            ) {
+                self.send_protocol_engine_unsigned_event(
+                    peer,
+                    &normalized_chat_id,
+                    unsigned,
+                    "chat_settings",
+                );
+            }
         }
         self.rebuild_state();
         self.persist_best_effort();
@@ -382,9 +401,12 @@ impl AppCore {
                 .collect::<HashSet<_>>();
             self.relay_status_watch_urls
                 .retain(|url| configured_relays.contains(url));
+            self.relay_status_by_url
+                .retain(|url, _| configured_relays.contains(url));
             self.schedule_session_connect();
             self.request_protocol_subscription_refresh_forced();
             self.fetch_recent_protocol_state();
+            self.retry_protocol_engine_pending_outbound("relays_changed");
             self.retry_pending_relay_publishes("relays_changed");
         }
     }

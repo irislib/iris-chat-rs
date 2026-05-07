@@ -131,6 +131,11 @@ CHARLIE_SERIAL="${SERIALS[3]}"
 for serial in "${ALICE_SERIAL}" "${ALICE_LINKED_SERIAL}" "${BOB_SERIAL}" "${CHARLIE_SERIAL}"; do
   "${ADB}" -s "${serial}" get-state >/dev/null
 done
+if [[ "${RELAY_MODE}" == "public" ]]; then
+  for serial in "${ALICE_SERIAL}" "${ALICE_LINKED_SERIAL}" "${BOB_SERIAL}" "${CHARLIE_SERIAL}"; do
+    iris_e2e_wait_android_public_network "${ADB}" "${serial}" 90
+  done
+fi
 
 {
   printf 'setup=android\n'
@@ -233,8 +238,18 @@ if [[ "${SKIP_BUILD}" -eq 0 ]]; then
     cd "${ROOT_DIR}/android" &&
       IRIS_DEBUG_RELAYS="${RELAYS}" \
       IRIS_DEBUG_RELAY_SET_ID="${RELAY_SET_ID}" \
-      ./gradlew :app:installDebug :app:installDebugAndroidTest
+      ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
   ) 2>&1 | tee -a "${LOG_FILE}"
+  for serial in "${ALICE_SERIAL}" "${ALICE_LINKED_SERIAL}" "${BOB_SERIAL}" "${CHARLIE_SERIAL}"; do
+    iris_e2e_install_android_package \
+      "${ADB}" "${serial}" "${APP_PACKAGE}" \
+      "${ROOT_DIR}/android/app/build/outputs/apk/debug/app-debug.apk" \
+      "${LOG_FILE}"
+    iris_e2e_install_android_package \
+      "${ADB}" "${serial}" "${TEST_PACKAGE}" \
+      "${ROOT_DIR}/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" \
+      "${LOG_FILE}"
+  done
 fi
 
 if [[ "${FRESH}" -eq 1 ]]; then

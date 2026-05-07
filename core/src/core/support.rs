@@ -2,11 +2,8 @@ use super::*;
 
 impl AppCore {
     pub(super) fn build_runtime_debug_snapshot(&self) -> RuntimeDebugSnapshot {
-        let current_protocol_plan =
-            self.compute_protocol_subscription_plan()
-                .map(|plan| RuntimeProtocolPlanDebug {
-                    runtime_subscriptions: plan.runtime_subscriptions,
-                });
+        let protocol_subscription = self.protocol_subscription_debug_snapshot();
+        let current_protocol_plan = protocol_subscription.desired_plan.clone();
         let tracked_owner_hexes = sorted_hexes(self.tracked_peer_owner_hexes());
         let current_chat_list = self.threads.keys().cloned().collect::<Vec<_>>();
         let (local_owner_pubkey_hex, local_device_pubkey_hex, authorization_state) =
@@ -48,7 +45,28 @@ impl AppCore {
             local_device_pubkey_hex,
             authorization_state,
             active_chat_id: self.active_chat_id.clone(),
+            relay_transport: self.relay_transport_debug_snapshot(),
             current_protocol_plan,
+            protocol_subscription,
+            protocol_engine: self
+                .protocol_engine
+                .as_ref()
+                .map(ProtocolEngine::debug_snapshot),
+            pending_relay_publishes: self
+                .pending_relay_publishes
+                .values()
+                .map(|pending| RuntimePendingRelayPublishDebug {
+                    event_id: pending.event_id.clone(),
+                    label: pending.label.clone(),
+                    inner_event_id: pending.inner_event_id.clone(),
+                    target_owner_pubkey_hex: pending.target_owner_pubkey_hex.clone(),
+                    target_device_id: pending.target_device_id.clone(),
+                    message_id: pending.message_id.clone(),
+                    chat_id: pending.chat_id.clone(),
+                    attempt_count: pending.attempt_count,
+                    last_error: pending.last_error.clone(),
+                })
+                .collect(),
             tracked_owner_hexes,
             known_users,
             recent_handshake_peers: self
@@ -87,11 +105,10 @@ impl AppCore {
             .map(|known| known.devices.len() as u64)
             .unwrap_or(0);
         let known_device_count = self
-            .logged_in
+            .protocol_engine
             .as_ref()
-            .map(|logged_in| {
-                logged_in
-                    .ndr_runtime
+            .map(|engine| {
+                engine
                     .known_device_identity_pubkeys_for_owner(owner_pubkey)
                     .len() as u64
             })
@@ -161,11 +178,15 @@ impl AppCore {
             authorization_state: runtime.authorization_state,
             active_chat_id: runtime.active_chat_id,
             current_screen: format!("{current_screen:?}"),
+            relay_transport: runtime.relay_transport,
+            protocol_subscription: runtime.protocol_subscription,
             chat_count: self.threads.len(),
             direct_chat_count,
             group_chat_count,
             unread_chat_count,
             protocol: runtime.current_protocol_plan,
+            protocol_engine: runtime.protocol_engine,
+            pending_relay_publishes: runtime.pending_relay_publishes,
             tracked_owner_hexes: runtime.tracked_owner_hexes,
             known_users: runtime.known_users,
             recent_handshake_peers: runtime.recent_handshake_peers,
@@ -176,26 +197,74 @@ impl AppCore {
         }
     }
 
+    fn protocol_subscription_debug_snapshot(&self) -> RuntimeProtocolSubscriptionDebug {
+        let runtime = &self.protocol_subscription_runtime;
+        RuntimeProtocolSubscriptionDebug {
+            desired_plan: runtime
+                .desired_plan
+                .clone()
+                .map(RuntimeProtocolPlanDebug::from),
+            applying_plan: runtime
+                .applying_plan
+                .clone()
+                .map(RuntimeProtocolPlanDebug::from),
+            applied_plan: runtime
+                .applied_plan
+                .clone()
+                .map(RuntimeProtocolPlanDebug::from),
+            refresh_in_flight: runtime.refresh_in_flight,
+            refresh_dirty: runtime.refresh_dirty,
+            force_reconnect_dirty: runtime.force_reconnect_dirty,
+        }
+    }
+
+    fn relay_transport_debug_snapshot(&self) -> RuntimeRelayTransportDebug {
+        let runtime = &self.relay_transport_runtime;
+        let phase = if runtime.connect_in_flight {
+            "connecting"
+        } else if runtime.publish_drain_in_flight {
+            "publishing"
+        } else if runtime.next_retry_due_at.is_some() {
+            "backoff"
+        } else if self.relay_connected_count > 0 {
+            "connected"
+        } else {
+            "offline"
+        }
+        .to_string();
+        RuntimeRelayTransportDebug {
+            phase,
+            connect_in_flight: runtime.connect_in_flight,
+            connect_dirty: runtime.connect_dirty,
+            force_reconnect_dirty: runtime.force_reconnect_dirty,
+            publish_drain_in_flight: runtime.publish_drain_in_flight,
+            publish_drain_dirty: runtime.publish_drain_dirty,
+            connected_relay_count: self.relay_connected_count,
+            pending_relay_publish_count: self.pending_relay_publishes.len() as u64,
+            retry_backoff_attempt: runtime.retry_backoff_attempt,
+            next_retry_due_in_ms: runtime
+                .next_retry_due_at
+                .map(|due_at| due_at.saturating_duration_since(Instant::now()).as_millis() as u64),
+            next_retry_reason: runtime.next_retry_reason.clone(),
+            last_connect_reason: runtime.last_connect_reason.clone(),
+            last_drain_reason: runtime.last_drain_reason.clone(),
+        }
+    }
+
     fn peer_debug_session_counts(&self, owner_pubkey: PublicKey) -> PeerDebugSessionCounts {
-        let Some(logged_in) = self.logged_in.as_ref() else {
+        let Some(protocol_engine) = self.protocol_engine.as_ref() else {
             return PeerDebugSessionCounts::default();
         };
 
-        let sessions = logged_in
-            .ndr_runtime
-            .get_message_push_session_states(owner_pubkey);
+        let sessions = protocol_engine.message_session_debug_snapshots(owner_pubkey);
         let tracked_sender_count = sessions
             .iter()
             .flat_map(|session| session.tracked_sender_pubkeys.iter())
             .map(|sender| sender.to_hex())
             .collect::<HashSet<_>>()
             .len() as u64;
-        let active_session_count = logged_in
-            .ndr_runtime
-            .export_active_sessions()
-            .into_iter()
-            .filter(|(owner, _, _)| *owner == owner_pubkey)
-            .count() as u64;
+        let active_session_count =
+            protocol_engine.active_session_count_for_owner(owner_pubkey) as u64;
 
         PeerDebugSessionCounts {
             active_session_count,
@@ -225,6 +294,19 @@ impl AppCore {
         self.state.toast = Some("Iris needs restart. Copy support bundle in Settings.".to_string());
         self.persist_debug_snapshot_best_effort();
         self.emit_state();
+    }
+}
+
+impl From<ProtocolSubscriptionPlan> for RuntimeProtocolPlanDebug {
+    fn from(plan: ProtocolSubscriptionPlan) -> Self {
+        Self {
+            runtime_subscriptions: plan.runtime_subscriptions,
+            roster_authors: plan.roster_authors,
+            invite_authors: plan.invite_authors,
+            message_authors: plan.message_authors,
+            group_sender_key_authors: plan.group_sender_key_authors,
+            invite_response_recipient: plan.invite_response_recipient,
+        }
     }
 }
 
