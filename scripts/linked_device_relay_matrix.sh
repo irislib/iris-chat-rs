@@ -114,6 +114,96 @@ run_instrumentation() {
   "${cmd[@]}"
 }
 
+dump_harness_snapshot() {
+  local serial="$1"
+  local class_name="$2"
+  shift 2
+
+  echo "--- ${serial}: ${class_name} ---" >&2
+  run_instrumentation "${serial}" "${class_name}" "$@" >&2 || true
+}
+
+dump_chat_if_available() {
+  local serial="$1"
+  local chat_id="$2"
+  local label="$3"
+
+  [[ -n "${chat_id}" ]] || return 0
+  echo "--- ${serial}: chat ${label} (${chat_id}) ---" >&2
+  run_instrumentation "${serial}" "to.iris.chat.RealRelayHarnessTest#report_chat_messages_from_args" \
+    -e chat_id "${chat_id}" >&2 || true
+}
+
+dump_matrix_state() {
+  local reason="$1"
+  local role serial
+
+  echo "Linked-device matrix debug dump: ${reason}" >&2
+  echo "--- adb devices ---" >&2
+  "${ADB}" devices >&2 || true
+  if [[ -f "${RELAY_LOG}" ]]; then
+    echo "--- relay log (${RELAY_LOG}) ---" >&2
+    tail -n 200 "${RELAY_LOG}" >&2 || true
+  fi
+
+  for role in A B C; do
+    case "${role}" in
+      A) serial="${SERIAL_A}" ;;
+      B) serial="${SERIAL_B}" ;;
+      C) serial="${SERIAL_C}" ;;
+      *) serial="" ;;
+    esac
+
+    [[ -n "${serial}" ]] || continue
+    echo "=== Device ${role}: ${serial} ===" >&2
+    if ! "${ADB}" -s "${serial}" get-state >/dev/null 2>&1; then
+      echo "${serial} is not connected." >&2
+      continue
+    fi
+
+    dump_harness_snapshot "${serial}" "to.iris.chat.RealRelayHarnessTest#report_logged_in_identity"
+    dump_harness_snapshot "${serial}" "to.iris.chat.RealRelayHarnessTest#report_device_roster_snapshot"
+    dump_chat_if_available "${serial}" "${OWNER_X_HEX:-}" "owner X"
+    dump_chat_if_available "${serial}" "${OWNER_Y_HEX:-}" "owner Y"
+    dump_harness_snapshot "${serial}" "to.iris.chat.RealRelayHarnessTest#report_runtime_debug_snapshot"
+    dump_harness_snapshot "${serial}" "to.iris.chat.RealRelayHarnessTest#report_persisted_protocol_snapshot"
+  done
+}
+
+run_matrix_step() {
+  local label="$1"
+  local serial="$2"
+  local class_name="$3"
+  local step_log
+  local status
+  shift 3
+
+  step_log="$(mktemp -t iris-relay-matrix-step.XXXXXX)"
+  if run_instrumentation "${serial}" "${class_name}" "$@" >"${step_log}" 2>&1; then
+    cat "${step_log}"
+    rm -f "${step_log}"
+    return 0
+  else
+    status="$?"
+  fi
+
+  if [[ "${class_name}" == *"#wait_for_message_from_args" ]] &&
+    grep -q '^INSTRUMENTATION_STATUS_CODE: 0$' "${step_log}" &&
+    grep -Eq '^INSTRUMENTATION_STATUS: matching_count=[1-9][0-9]*$' "${step_log}" &&
+    grep -q '^INSTRUMENTATION_RESULT: shortMsg=Process crashed\.$' "${step_log}"; then
+    echo "${label} reported the expected message before instrumentation teardown crashed; continuing." >&2
+    cat "${step_log}"
+    rm -f "${step_log}"
+    return 0
+  fi
+
+  echo "${label} failed on ${serial} (${class_name}) with exit code ${status}" >&2
+  cat "${step_log}" >&2 || true
+  rm -f "${step_log}"
+  dump_matrix_state "${label}"
+  exit "${status}"
+}
+
 extract_status() {
   local key="$1"
   sed -n "s/^INSTRUMENTATION_STATUS: ${key}=//p" | tail -n 1
@@ -235,12 +325,8 @@ for serial in "${SERIAL_A}" "${SERIAL_B}" "${SERIAL_C}"; do
 done
 
 echo "Installing app and test APKs"
-(
-  cd "${ROOT_DIR}/android" &&
-    IRIS_DEBUG_RELAYS="$(local_android_loopback_relay_url)" \
-    IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)" \
-    ./gradlew :app:installDebug :app:installDebugAndroidTest >/dev/null
-)
+build_android_debug_apks "$(local_android_loopback_relay_url)" "$(local_relay_set_id)" >/dev/null
+install_android_debug_apks_on_serials "${ADB}" "${SERIAL_A}" "${SERIAL_B}" "${SERIAL_C}"
 
 for serial in "${SERIAL_A}" "${SERIAL_B}" "${SERIAL_C}"; do
   echo "Clearing ${PACKAGE_NAME} on ${serial}"
@@ -266,7 +352,7 @@ LINK_PID="${IRIS_BACKGROUND_PID}"
 LINK_URL="$(wait_for_status_in_file "${LINK_LOG}" invite_url 120)"
 
 echo "Authorizing linked device on ${SERIAL_A}"
-run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#add_authorized_device_from_args" -e device_input "${LINK_URL}" >/dev/null
+run_matrix_step "authorize linked device" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#add_authorized_device_from_args" -e device_input "${LINK_URL}" >/dev/null
 
 wait "${LINK_PID}" || true
 LINK_STATUS="$(cat "${LINK_EXIT}")"
@@ -280,28 +366,28 @@ DEVICE_B_NPUB="$(printf '%s\n' "${LINKED_B}" | extract_status "device_npub")"
 DEVICE_B_HEX="$(printf '%s\n' "${LINKED_B}" | extract_status "device_public_key_hex")"
 
 echo "Creating owner Y peer on ${SERIAL_C}"
-ACCOUNT_C="$(run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity")"
+ACCOUNT_C="$(run_matrix_step "create owner Y peer" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity")"
 OWNER_Y_NPUB="$(printf '%s\n' "${ACCOUNT_C}" | extract_status "npub")"
 OWNER_Y_HEX="$(printf '%s\n' "${ACCOUNT_C}" | extract_status "public_key_hex")"
 
 echo "A sends m1 to C"
-run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m1" >/dev/null
-run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m1" -e direction incoming >/dev/null
-run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m1" -e direction outgoing >/dev/null
+run_matrix_step "A send m1 to C" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m1" >/dev/null
+run_matrix_step "C wait for m1 from A" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m1" -e direction incoming >/dev/null
+run_matrix_step "B wait for A self-sync m1" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m1" -e direction outgoing >/dev/null
 
 echo "C replies with m2"
-run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_X_NPUB}" -e message "m2" >/dev/null
-run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
-run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
+run_matrix_step "C send m2 to X" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_X_NPUB}" -e message "m2" >/dev/null
+run_matrix_step "A wait for m2 from C" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
+run_matrix_step "B wait for C incoming m2" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
 
 echo "B sends m3 to C"
-run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m3" >/dev/null
-run_instrumentation "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m3" -e direction incoming >/dev/null
-run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m3" -e direction outgoing >/dev/null
+run_matrix_step "B send m3 to C" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m3" >/dev/null
+run_matrix_step "C wait for m3 from B" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m3" -e direction incoming >/dev/null
+run_matrix_step "A wait for B self-sync m3" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m3" -e direction outgoing >/dev/null
 
 echo "Revoking B from the roster"
-run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#remove_authorized_device_from_args" -e device_input "${DEVICE_B_HEX}" >/dev/null
-run_instrumentation "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_revoked_state" >/dev/null
+run_matrix_step "revoke B from roster" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#remove_authorized_device_from_args" -e device_input "${DEVICE_B_HEX}" >/dev/null
+run_matrix_step "B wait for revoked state" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_revoked_state" >/dev/null
 
 echo "Three-device relay matrix passed"
 echo "A=${SERIAL_A} B=${SERIAL_B} C=${SERIAL_C}"

@@ -353,12 +353,8 @@ done
 
 if [[ "${SKIP_BUILD}" -eq 0 ]]; then
   echo "Building Android debug apps against $(local_android_loopback_relay_url) ($(local_relay_set_id))"
-  (
-    cd "${ROOT_DIR}/android" &&
-      IRIS_DEBUG_RELAYS="$(local_android_loopback_relay_url)" \
-      IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)" \
-      ./gradlew :app:installDebug :app:installDebugAndroidTest
-  )
+  build_android_debug_apks "$(local_android_loopback_relay_url)" "$(local_relay_set_id)"
+  install_android_debug_apks_on_serials "${ADB}" "${ANDROID_ADMIN_SERIAL}" "${ANDROID_MEMBER_SERIAL}"
 
   echo "Building iOS XCFramework against $(local_ios_relay_url) ($(local_relay_set_id))"
   (

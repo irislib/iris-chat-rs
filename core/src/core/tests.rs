@@ -585,18 +585,18 @@ fn relay_status_events_match_normalized_relay_urls() {
 }
 
 #[test]
-fn duplicate_protocol_publish_for_same_target_is_suppressed() {
+fn distinct_protocol_publishes_for_same_target_are_kept() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
-    let mut core = logged_in_test_core("duplicate-protocol-publish", &owner, &device);
+    let mut core = logged_in_test_core("distinct-protocol-publishes", &owner, &device);
     let chat_id = peer.public_key().to_hex();
     let message_id = "duplicate-publish-message".to_string();
     let target_device_id = "target-device".to_string();
     core.push_outgoing_message_with_id(
         message_id.clone(),
         &chat_id,
-        "dedupe me".to_string(),
+        "keep both".to_string(),
         1_777_159_500,
         None,
         DeliveryState::Pending,
@@ -618,7 +618,7 @@ fn duplicate_protocol_publish_for_same_target_is_suppressed() {
         Some(chat_id.clone()),
         Some(target_device_id.clone()),
     ));
-    assert!(!core.publish_runtime_event_with_metadata(
+    assert!(core.publish_runtime_event_with_metadata(
         second,
         APPCORE_PROTOCOL_LABEL,
         Some((message_id, chat_id.clone())),
@@ -628,12 +628,8 @@ fn duplicate_protocol_publish_for_same_target_is_suppressed() {
     ));
 
     assert!(core.pending_relay_publishes.contains_key(&first_event_id));
-    assert!(!core.pending_relay_publishes.contains_key(&second_event_id));
-    assert_eq!(core.pending_relay_publishes.len(), 1);
-    assert!(core.debug_log.iter().any(|entry| {
-        entry.category == "publish.runtime.queue"
-            && entry.detail.contains("skipped=duplicate_pending")
-    }));
+    assert!(core.pending_relay_publishes.contains_key(&second_event_id));
+    assert_eq!(core.pending_relay_publishes.len(), 2);
 }
 
 #[test]
@@ -1688,7 +1684,7 @@ fn appcore_local_appkeys_backfill_replaces_seeded_single_device_roster() {
 }
 
 #[test]
-fn invite_response_observation_emits_targeted_owner_message_backfill() {
+fn invite_response_observation_installs_session_author_state() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer_owner = Keys::generate();
@@ -1714,7 +1710,7 @@ fn invite_response_observation_emits_targeted_owner_message_backfill() {
     let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
         .expect("invite response event");
 
-    let batch = engine
+    engine
         .observe_invite_response_event(&response_event)
         .expect("observe invite response");
 
@@ -1723,17 +1719,6 @@ fn invite_response_observation_emits_targeted_owner_message_backfill() {
             .message_author_pubkeys_for_owner(peer_owner.public_key())
             .is_empty(),
         "observing the invite response should install receiver state for the peer"
-    );
-    assert!(
-        batch.effects.iter().any(|effect| matches!(
-            effect,
-            ProtocolEffect::FetchRecentMessagesForOwner {
-                owner_pubkey,
-                reason,
-                ..
-            } if *owner_pubkey == peer_owner.public_key() && *reason == "invite_response"
-        )),
-        "learning a peer from an invite response must trigger owner-targeted message backfill"
     );
 }
 
@@ -2427,6 +2412,241 @@ fn local_sibling_direct_send_uses_author_known_before_publish() {
             )
         }),
         "ordinary direct sender-copy fanout must not refresh the linked-device bootstrap session"
+    );
+}
+
+#[test]
+fn local_sibling_group_send_bootstrap_makes_staged_payload_author_fetchable() {
+    let owner = Keys::generate();
+    let primary_device = Keys::generate();
+    let linked_device = Keys::generate();
+    let admin_owner = Keys::generate();
+    let admin_device = Keys::generate();
+    let mut primary = test_protocol_engine(&owner, &primary_device);
+    let mut linked = test_protocol_engine(&owner, &linked_device);
+
+    let local_app_keys = AppKeys::new(vec![
+        DeviceEntry::new(primary_device.public_key(), 1),
+        DeviceEntry::new(linked_device.public_key(), 1),
+    ]);
+    primary
+        .ingest_app_keys_snapshot(owner.public_key(), local_app_keys.clone(), 1)
+        .expect("primary local appkeys");
+    linked
+        .ingest_app_keys_snapshot(owner.public_key(), local_app_keys, 1)
+        .expect("linked local appkeys");
+
+    let linked_invite = linked.local_invite_for_test().expect("linked invite");
+    let (primary_session, response) = linked_invite
+        .accept_with_owner(
+            primary_device.public_key(),
+            primary_device.secret_key().to_secret_bytes(),
+            Some(primary_device.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .expect("primary accepts linked invite");
+    primary
+        .import_session_state(
+            owner.public_key(),
+            Some(linked_device.public_key().to_hex()),
+            primary_session.state,
+            UnixSeconds(2),
+        )
+        .expect("primary imports linked session");
+    let linked_response = nostr_double_ratchet_nostr::process_invite_response_event(
+        &linked_invite,
+        &nostr_double_ratchet_nostr::invite_response_event(&response)
+            .expect("invite response event"),
+        linked_device.secret_key().to_secret_bytes(),
+    )
+    .expect("linked processes invite response")
+    .expect("response addressed to linked invite");
+    linked
+        .import_session_state(
+            owner.public_key(),
+            Some(primary_device.public_key().to_hex()),
+            linked_response.session.state,
+            UnixSeconds(2),
+        )
+        .expect("linked imports primary session");
+    let mut primary_invite = primary
+        .local_invite_for_test()
+        .expect("primary invite for linked sibling");
+    primary_invite.owner_public_key = Some(owner.public_key());
+    primary_invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
+    let primary_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&primary_invite)
+        .expect("primary invite unsigned")
+        .sign_with_keys(&primary_device)
+        .expect("primary invite event");
+    linked
+        .observe_invite_event(&primary_invite_event)
+        .expect("linked observes primary invite");
+
+    let admin_app_keys = AppKeys::new(vec![DeviceEntry::new(admin_device.public_key(), 1)]);
+    primary
+        .ingest_app_keys_snapshot(admin_owner.public_key(), admin_app_keys.clone(), 1)
+        .expect("primary admin appkeys");
+    linked
+        .ingest_app_keys_snapshot(admin_owner.public_key(), admin_app_keys, 1)
+        .expect("linked admin appkeys");
+
+    let group_id = "linked-sibling-group".to_string();
+    let mut snapshot = test_group_snapshot(
+        &group_id,
+        "Linked Sibling Group",
+        admin_owner.public_key(),
+        vec![admin_owner.public_key(), owner.public_key()],
+        vec![admin_owner.public_key()],
+        1,
+    );
+    snapshot.protocol = nostr_double_ratchet::GroupProtocol::PairwiseFanoutV1;
+    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+        &codec,
+        nostr_double_ratchet::GroupPayloadEncodeContext {
+            local_device_pubkey: ndr_device_pubkey(admin_device.public_key()),
+            created_at: NdrUnixSeconds(11),
+        },
+        &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot { snapshot },
+    )
+    .expect("metadata payload");
+    primary
+        .process_group_pairwise_payload(
+            &metadata_payload,
+            admin_owner.public_key(),
+            Some(admin_device.public_key()),
+        )
+        .expect("primary processes group metadata");
+    linked
+        .process_group_pairwise_payload(
+            &metadata_payload,
+            admin_owner.public_key(),
+            Some(admin_device.public_key()),
+        )
+        .expect("linked processes group metadata");
+
+    let known_primary_authors = primary.message_author_pubkeys_for_owner(owner.public_key());
+    assert!(
+        !known_primary_authors.is_empty(),
+        "primary must know linked-device message authors after sibling setup"
+    );
+
+    let result = linked
+        .send_group_payload(
+            &group_id,
+            b"linked sibling group body".to_vec(),
+            Some("linked-group-inner".to_string()),
+        )
+        .expect("linked group send");
+    let target_owner_hex = owner.public_key().to_hex();
+    let target_device_hex = primary_device.public_key().to_hex();
+    let local_sibling_events = result
+        .effects
+        .iter()
+        .flat_map(|effect| match effect {
+            ProtocolEffect::PublishSignedForInnerEvent {
+                event,
+                target_owner_pubkey_hex,
+                target_device_id,
+                ..
+            } if target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
+                && target_device_id.as_deref() == Some(target_device_hex.as_str()) =>
+            {
+                vec![event.clone()]
+            }
+            ProtocolEffect::PublishStagedFirstContact { payload, .. } => payload
+                .iter()
+                .filter(|publish| {
+                    publish.target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
+                        && publish.target_device_id.as_deref() == Some(target_device_hex.as_str())
+                })
+                .map(|publish| publish.event.clone())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let local_sibling_bootstrap_events = result
+        .effects
+        .iter()
+        .flat_map(|effect| match effect {
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload }
+                if payload.iter().any(|publish| {
+                    publish.target_owner_pubkey_hex.as_deref() == Some(target_owner_hex.as_str())
+                        && publish.target_device_id.as_deref() == Some(target_device_hex.as_str())
+                }) =>
+            {
+                bootstrap
+                    .iter()
+                    .map(|publish| publish.event.clone())
+                    .collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        !local_sibling_events.is_empty(),
+        "group send should prepare a local sibling copy for the primary device; queued={:?} pending_group_fanouts={} pending_targets={:?}",
+        result.queued_targets,
+        linked.debug_snapshot().pending_group_fanout_count,
+        linked.debug_snapshot().pending_group_fanout_targets
+    );
+    assert!(
+        !local_sibling_bootstrap_events.is_empty(),
+        "first-contact local sibling group copy should include invite-response bootstrap"
+    );
+    for event in &local_sibling_bootstrap_events {
+        primary
+            .observe_invite_response_event(event)
+            .expect("primary processes linked bootstrap response");
+    }
+    let known_primary_authors_after_bootstrap =
+        primary.message_author_pubkeys_for_owner(owner.public_key());
+    assert!(
+        local_sibling_events
+            .iter()
+            .all(|event| known_primary_authors_after_bootstrap.contains(&event.pubkey)),
+        "local sibling group event authors must be known after first-contact bootstrap; before={:?} after={:?} event_authors={:?}",
+        known_primary_authors
+            .iter()
+            .map(PublicKey::to_hex)
+            .collect::<Vec<_>>(),
+        known_primary_authors_after_bootstrap
+            .iter()
+            .map(PublicKey::to_hex)
+            .collect::<Vec<_>>(),
+        local_sibling_events
+            .iter()
+            .map(|event| event.pubkey.to_hex())
+            .collect::<Vec<_>>()
+    );
+
+    let mut received_messages = Vec::new();
+    for event in &local_sibling_events {
+        let decrypted = primary
+            .process_direct_message_event(event)
+            .expect("primary processes linked group copy")
+            .expect("primary decrypts linked group copy");
+        let outcome = primary
+            .process_group_pairwise_payload(
+                decrypted.content.as_bytes(),
+                decrypted.sender,
+                decrypted.sender_device,
+            )
+            .expect("primary processes group payload from linked copy");
+        received_messages.extend(outcome.events.into_iter().filter_map(|event| match event {
+            GroupIncomingEvent::Message(message) => Some(message),
+            _ => None,
+        }));
+    }
+    assert!(
+        received_messages.iter().any(|message| {
+            message.group_id == group_id
+                && message.sender_owner == ndr_owner_pubkey(owner.public_key())
+                && message.sender_device == Some(ndr_device_pubkey(linked_device.public_key()))
+                && message.body == b"linked sibling group body".to_vec()
+        }),
+        "primary should apply linked-device group copy as an owner-authored message"
     );
 }
 
@@ -5035,8 +5255,8 @@ fn unknown_direct_message_author_is_ignored_instead_of_bootstrapping_public_back
         "unknown public message authors must not become durable pending inbound work"
     );
     assert!(
-        core.has_seen_event(&message_event_id),
-        "ignored public message events should be remembered so relay replays do not reprocess them"
+        !core.has_seen_event(&message_event_id),
+        "ignored encrypted message events must stay retryable because later bootstrap state can make the sender decryptable"
     );
     assert!(
         !has_bootstrap_message_filter(&core.recent_protocol_filters(UnixSeconds(1_777_159_500))),
@@ -5800,6 +6020,63 @@ fn self_synced_direct_message_is_rendered_as_outgoing_on_linked_device() {
 }
 
 #[test]
+fn retry_batch_self_synced_direct_message_updates_open_chat_projection() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("retry-self-sync-open-chat", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let inner_id = "b".repeat(64);
+    let content = serde_json::json!({
+        "content": "sent while open",
+        "kind": CHAT_MESSAGE_KIND,
+        "created_at": 1_777_159_500u64,
+        "tags": [["p", chat_id], ["ms", "1777159500123"]],
+        "pubkey": owner.public_key().to_hex(),
+        "id": inner_id,
+    })
+    .to_string();
+
+    core.open_chat(&chat_id);
+    assert!(core
+        .state
+        .current_chat
+        .as_ref()
+        .expect("open chat")
+        .messages
+        .is_empty());
+
+    core.process_protocol_engine_retry_batch(
+        "test_self_sync",
+        ProtocolRetryBatch {
+            direct_messages: vec![ProtocolDecryptedMessage {
+                sender: owner.public_key(),
+                sender_device: Some(sibling_device.public_key()),
+                conversation_owner: Some(peer.public_key()),
+                content,
+                event_id: Some("c".repeat(64)),
+            }],
+            ..ProtocolRetryBatch::default()
+        },
+    );
+
+    let message = core
+        .state
+        .current_chat
+        .as_ref()
+        .expect("open chat after retry")
+        .messages
+        .iter()
+        .find(|message| message.id == inner_id)
+        .expect("self-synced message in open chat projection");
+    assert_eq!(message.body, "sent while open");
+    assert!(message.is_outgoing);
+    assert_eq!(message.delivery, DeliveryState::Sent);
+    assert_eq!(stored_message_count(&core), 1);
+}
+
+#[test]
 fn self_synced_direct_message_updates_existing_local_outgoing_without_duplicate() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -6496,13 +6773,20 @@ fn group_runtime_chat_message_is_persisted() {
     core.preferences.send_read_receipts = false;
     let group_id = "group-runtime-message".to_string();
     let chat_id = group_chat_id(&group_id);
+    let payload = serde_json::json!({
+        "version": 1,
+        "body": "group secret",
+        "message_id": "group-secret-id",
+    })
+    .to_string()
+    .into_bytes();
 
     core.apply_group_decrypted_event(GroupIncomingEvent::Message(
         nostr_double_ratchet::GroupReceivedMessage {
             group_id,
             sender_owner: ndr_owner_pubkey(sender_owner.public_key()),
             sender_device: Some(ndr_device_pubkey(sender_device.public_key())),
-            body: b"group secret".to_vec(),
+            body: payload,
             revision: 1,
         },
     ));
@@ -6510,7 +6794,66 @@ fn group_runtime_chat_message_is_persisted() {
     let thread = core.threads.get(&chat_id).expect("group thread");
     assert_eq!(thread.messages.len(), 1);
     assert_eq!(thread.messages[0].body, "group secret");
+    assert_eq!(thread.messages[0].id, "group-secret-id");
     assert_eq!(thread.messages[0].expires_at_secs, None);
+}
+
+#[test]
+fn app_group_message_payload_id_dedupes_pairwise_fanout_copies() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender_owner = Keys::generate();
+    let sender_device = Keys::generate();
+    let mut core = logged_in_test_core("group-pairwise-dedupe", &owner, &device);
+    core.preferences.send_read_receipts = false;
+    let group_id = "group-pairwise-dedupe".to_string();
+    let chat_id = group_chat_id(&group_id);
+    let payload = serde_json::json!({
+        "version": 1,
+        "body": "deduped group body",
+        "message_id": "group-message-id",
+    })
+    .to_string()
+    .into_bytes();
+
+    for _ in 0..2 {
+        core.apply_group_decrypted_event(GroupIncomingEvent::Message(
+            nostr_double_ratchet::GroupReceivedMessage {
+                group_id: group_id.clone(),
+                sender_owner: ndr_owner_pubkey(sender_owner.public_key()),
+                sender_device: Some(ndr_device_pubkey(sender_device.public_key())),
+                body: payload.clone(),
+                revision: 1,
+            },
+        ));
+    }
+
+    let thread = core.threads.get(&chat_id).expect("group thread");
+    let matching = thread
+        .messages
+        .iter()
+        .filter(|message| message.body == "deduped group body")
+        .collect::<Vec<_>>();
+    assert_eq!(matching.len(), 1);
+    assert_eq!(matching[0].id, "group-message-id");
+}
+
+#[test]
+fn group_message_wire_ids_do_not_use_local_counters() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("group-wire-message-id", &owner, &device);
+    core.next_message_id = 2;
+
+    let first = core.allocate_group_message_id();
+    let second = core.allocate_group_message_id();
+
+    assert_ne!(first, "2");
+    assert_ne!(second, "3");
+    assert_ne!(first, second);
+    assert_eq!(core.next_message_id, 2);
+    assert!(first.len() == 64 && first.chars().all(|ch| ch.is_ascii_hexdigit()));
+    assert!(second.len() == 64 && second.chars().all(|ch| ch.is_ascii_hexdigit()));
 }
 
 #[test]
@@ -6638,7 +6981,7 @@ fn create_group_allows_self_only_group() {
     assert_eq!(group.name, "Notes");
     assert_eq!(
         group.protocol,
-        nostr_double_ratchet::GroupProtocol::sender_key_v1()
+        nostr_double_ratchet::GroupProtocol::PairwiseFanoutV1
     );
     assert_eq!(group.members, vec![owner]);
     assert_eq!(group.admins, vec![owner]);

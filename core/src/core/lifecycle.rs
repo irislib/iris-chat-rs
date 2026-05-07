@@ -119,6 +119,7 @@ impl AppCore {
                 InternalEvent::RelayTransportConnectionFinished { .. } => {
                     "RelayTransportConnectionFinished"
                 }
+                #[cfg(not(target_os = "ios"))]
                 InternalEvent::DebugSnapshotWriteFinished { .. } => "DebugSnapshotWriteFinished",
                 InternalEvent::DebugLog { .. } => "DebugLog",
                 InternalEvent::TypingIndicatorExpired { .. } => "TypingIndicatorExpired",
@@ -521,6 +522,7 @@ impl AppCore {
                     connected_count,
                 );
             }
+            #[cfg(not(target_os = "ios"))]
             InternalEvent::DebugSnapshotWriteFinished { generation } => {
                 self.handle_debug_snapshot_write_finished(generation);
             }

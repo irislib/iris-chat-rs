@@ -5,6 +5,10 @@ const PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS: u64 = 8;
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 pub(super) const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 const RELAY_TRANSPORT_RETRY_BACKOFF_SECS: [u64; 5] = [2, 5, 15, 30, 60];
+#[cfg(not(test))]
+const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 2] = [2_500, 10_000];
+#[cfg(test)]
+const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 1] = [50];
 
 impl AppCore {
     pub(super) fn send_protocol_engine_unsigned_event(
@@ -113,6 +117,9 @@ impl AppCore {
         } else {
             self.handle_queued_protocol_targets(reason, &queued_targets);
         }
+        self.persist_best_effort();
+        self.rebuild_state();
+        self.emit_state();
     }
 
     pub(super) fn handle_queued_protocol_targets(
@@ -278,6 +285,15 @@ impl AppCore {
         now: UnixSeconds,
         lookback_secs: u64,
     ) {
+        self.fetch_recent_messages_for_authors(vec![author_pubkey], now, lookback_secs);
+    }
+
+    fn fetch_recent_messages_for_authors(
+        &self,
+        author_pubkeys: Vec<PublicKey>,
+        now: UnixSeconds,
+        lookback_secs: u64,
+    ) {
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -285,8 +301,11 @@ impl AppCore {
         else {
             return;
         };
+        if author_pubkeys.is_empty() {
+            return;
+        }
         let filter = build_direct_message_backfill_filter(
-            [author_pubkey],
+            author_pubkeys,
             now.get().saturating_sub(lookback_secs),
             DEVICE_INVITE_DISCOVERY_LIMIT,
         );
@@ -305,57 +324,45 @@ impl AppCore {
         });
     }
 
-    pub(super) fn fetch_recent_messages_for_owner(
-        &mut self,
-        owner_pubkey: PublicKey,
-        now: UnixSeconds,
+    fn schedule_new_message_author_backfill(
+        &self,
+        author_pubkeys: Vec<PublicKey>,
         lookback_secs: u64,
-        reason: &'static str,
     ) {
-        let Some((client, relay_urls, authors)) = self.logged_in.as_ref().map(|logged_in| {
-            (
-                logged_in.client.clone(),
-                logged_in.relay_urls.clone(),
-                self.protocol_engine
-                    .as_ref()
-                    .map(|engine| engine.message_author_pubkeys_for_owner(owner_pubkey))
-                    .unwrap_or_default(),
-            )
-        }) else {
+        let Some((client, relay_urls)) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| (logged_in.client.clone(), logged_in.relay_urls.clone()))
+        else {
             return;
         };
-        if authors.is_empty() {
-            self.push_debug_log(
-                "protocol.owner_message_fetch.skip",
-                format!("reason={reason} owner={} authors=0", owner_pubkey.to_hex()),
-            );
+        if author_pubkeys.is_empty() {
             return;
         }
-        let filter = build_direct_message_backfill_filter(
-            authors,
-            now.get().saturating_sub(lookback_secs),
-            DEVICE_INVITE_DISCOVERY_LIMIT,
-        );
-        self.push_debug_log(
-            "protocol.owner_message_fetch.fetch",
-            format!(
-                "reason={reason} owner={} lookback_secs={lookback_secs}",
-                owner_pubkey.to_hex()
-            ),
-        );
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-            if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
-                let collected = events.iter().cloned().collect::<Vec<_>>();
-                if !collected.is_empty() {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::FetchCatchUpEvents(collected),
-                    )));
+        for delay_ms in NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS {
+            let client = client.clone();
+            let relay_urls = relay_urls.clone();
+            let authors = author_pubkeys.clone();
+            let tx = self.core_sender.clone();
+            self.runtime.spawn(async move {
+                sleep(Duration::from_millis(delay_ms)).await;
+                let filter = build_direct_message_backfill_filter(
+                    authors,
+                    unix_now().get().saturating_sub(lookback_secs),
+                    DEVICE_INVITE_DISCOVERY_LIMIT,
+                );
+                ensure_session_relays_configured(&client, &relay_urls).await;
+                connect_client_with_timeout(&client, Duration::from_secs(5)).await;
+                if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
+                    let collected = events.iter().cloned().collect::<Vec<_>>();
+                    if !collected.is_empty() {
+                        let _ = tx.send(CoreMsg::Internal(Box::new(
+                            InternalEvent::FetchCatchUpEvents(collected),
+                        )));
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 
     pub(super) fn fetch_recent_group_sender_key_messages_for_author(
@@ -1055,14 +1062,20 @@ impl AppCore {
         if !added_message_authors.is_empty() {
             self.mark_mobile_push_dirty();
         }
-        for author_hex in added_message_authors {
-            if let Ok(author) = PublicKey::parse(&author_hex) {
-                self.fetch_recent_messages_for_author(
-                    author,
-                    unix_now(),
-                    NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
-                );
-            }
+        let added_message_author_pubkeys = added_message_authors
+            .into_iter()
+            .filter_map(|author_hex| PublicKey::parse(&author_hex).ok())
+            .collect::<Vec<_>>();
+        if !added_message_author_pubkeys.is_empty() {
+            self.fetch_recent_messages_for_authors(
+                added_message_author_pubkeys.clone(),
+                unix_now(),
+                NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
+            );
+            self.schedule_new_message_author_backfill(
+                added_message_author_pubkeys,
+                NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
+            );
         }
 
         let previous_group_authors = previous

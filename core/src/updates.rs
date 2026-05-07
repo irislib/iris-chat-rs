@@ -82,6 +82,7 @@ pub(crate) enum InternalEvent {
         relay_statuses: Vec<(String, RelayStatus)>,
         connected_count: u64,
     },
+    #[cfg(not(target_os = "ios"))]
     DebugSnapshotWriteFinished {
         generation: u64,
     },

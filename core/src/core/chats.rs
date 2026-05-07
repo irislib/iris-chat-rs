@@ -1,4 +1,5 @@
 use super::*;
+use rand::RngCore;
 
 const OPEN_CHAT_MESSAGES_PER_PAGE: usize = 80;
 
@@ -415,14 +416,14 @@ impl AppCore {
             self.state.toast = Some("Invalid group id.".to_string());
             return;
         };
-        let payload = match encode_app_group_message_payload(text) {
+        let message_id = self.allocate_group_message_id();
+        let payload = match encode_app_group_message_payload(text, &message_id) {
             Ok(payload) => payload,
             Err(error) => {
                 self.state.toast = Some(error.to_string());
                 return;
             }
         };
-        let message_id = self.allocate_message_id();
         let result = self
             .protocol_engine
             .as_mut()
@@ -434,6 +435,38 @@ impl AppCore {
                 } else {
                     DeliveryState::Pending
                 };
+                let staged_effects = result
+                    .effects
+                    .iter()
+                    .filter(|effect| {
+                        matches!(effect, ProtocolEffect::PublishStagedFirstContact { .. })
+                    })
+                    .count();
+                let signed_effects = result
+                    .effects
+                    .iter()
+                    .filter(|effect| matches!(effect, ProtocolEffect::PublishSigned(_)))
+                    .count();
+                let targeted_effects = result
+                    .effects
+                    .iter()
+                    .filter(|effect| {
+                        matches!(effect, ProtocolEffect::PublishSignedForInnerEvent { .. })
+                    })
+                    .count();
+                self.push_debug_log(
+                    "message.group.send.appcore",
+                    format!(
+                        "chat_id={chat_id} message_id={message_id} event_ids={} effects={} staged={} signed={} targeted={} queued_targets={} targets={}",
+                        result.event_ids.len(),
+                        result.effects.len(),
+                        staged_effects,
+                        signed_effects,
+                        targeted_effects,
+                        result.queued_targets.len(),
+                        summarize_group_send_effect_targets(&result.effects)
+                    ),
+                );
                 self.push_outgoing_message_with_id(
                     message_id.clone(),
                     chat_id,
@@ -1372,6 +1405,12 @@ impl AppCore {
         id.to_string()
     }
 
+    pub(super) fn allocate_group_message_id(&mut self) -> String {
+        let mut bytes = [0_u8; 32];
+        OsRng.fill_bytes(&mut bytes);
+        lower_hex(&bytes)
+    }
+
     fn initial_recipient_deliveries(
         &self,
         chat_id: &str,
@@ -1434,6 +1473,53 @@ fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapsho
     }
 }
 
+fn summarize_group_send_effect_targets(effects: &[ProtocolEffect]) -> String {
+    let mut targets = Vec::new();
+    for effect in effects {
+        match effect {
+            ProtocolEffect::PublishSigned(event) => {
+                targets.push(format!("signed:none:{}:{}", event.pubkey, event.id));
+            }
+            ProtocolEffect::PublishSignedForInnerEvent {
+                event,
+                target_owner_pubkey_hex,
+                target_device_id,
+                ..
+            } => {
+                targets.push(format!(
+                    "targeted:{}/{}:{}:{}",
+                    target_owner_pubkey_hex.as_deref().unwrap_or(""),
+                    target_device_id.as_deref().unwrap_or(""),
+                    event.pubkey,
+                    event.id
+                ));
+            }
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => {
+                for publish in bootstrap {
+                    targets.push(format!(
+                        "staged_bootstrap:{}/{}:{}:{}",
+                        publish.target_owner_pubkey_hex.as_deref().unwrap_or(""),
+                        publish.target_device_id.as_deref().unwrap_or(""),
+                        publish.event.pubkey,
+                        publish.event.id
+                    ));
+                }
+                for publish in payload {
+                    targets.push(format!(
+                        "staged_payload:{}/{}:{}:{}",
+                        publish.target_owner_pubkey_hex.as_deref().unwrap_or(""),
+                        publish.target_device_id.as_deref().unwrap_or(""),
+                        publish.event.pubkey,
+                        publish.event.id
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+    targets.join("|")
+}
+
 fn delivery_trace_for_source_event(source_event_id: Option<&str>) -> MessageDeliveryTraceSnapshot {
     let mut trace = MessageDeliveryTraceSnapshot::default();
     if let Some(source_event_id) = source_event_id {
@@ -1447,6 +1533,16 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
         return;
     }
     values.push(value.to_string());
+}
+
+fn lower_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
 }
 
 fn message_order(message: &ChatMessageSnapshot) -> (u64, u64, &str) {

@@ -180,12 +180,8 @@ ANDROID_REVERSE_PORT="${RELAY_PORT}"
 ANDROID_RELAY_URL="ws://127.0.0.1:${RELAY_PORT}"
 
 echo "==> Building Android app + test APK against ${ANDROID_RELAY_URL} (${RELAY_SET_ID})"
-(
-  cd "${ROOT_DIR}/android" &&
-    IRIS_DEBUG_RELAYS="${ANDROID_RELAY_URL}" \
-    IRIS_DEBUG_RELAY_SET_ID="${RELAY_SET_ID}" \
-    ./gradlew :app:installDebug :app:installDebugAndroidTest
-)
+build_android_debug_apks "${ANDROID_RELAY_URL}" "${RELAY_SET_ID}"
+install_android_debug_apks_on_serials "${ADB}" "${ANDROID_SERIAL}"
 
 echo "==> Clearing Android app state"
 "${ADB}" -s "${ANDROID_SERIAL}" shell pm clear "${ANDROID_APP_PACKAGE}" >/dev/null || true

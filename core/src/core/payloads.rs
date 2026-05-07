@@ -20,18 +20,24 @@ const APP_GROUP_MESSAGE_PAYLOAD_VERSION: u8 = 1;
 pub(super) struct AppGroupMessagePayload {
     pub(super) version: u8,
     pub(super) body: String,
+    pub(super) message_id: String,
 }
 
-pub(super) fn encode_app_group_message_payload(body: &str) -> anyhow::Result<Vec<u8>> {
+pub(super) fn encode_app_group_message_payload(
+    body: &str,
+    message_id: &str,
+) -> anyhow::Result<Vec<u8>> {
     Ok(serde_json::to_vec(&AppGroupMessagePayload {
         version: APP_GROUP_MESSAGE_PAYLOAD_VERSION,
         body: body.to_string(),
+        message_id: message_id.to_string(),
     })?)
 }
 
 pub(super) fn decode_app_group_message_payload(payload: &[u8]) -> Option<AppGroupMessagePayload> {
     let decoded = serde_json::from_slice::<AppGroupMessagePayload>(payload).ok()?;
-    (decoded.version == APP_GROUP_MESSAGE_PAYLOAD_VERSION).then_some(decoded)
+    (decoded.version == APP_GROUP_MESSAGE_PAYLOAD_VERSION && !decoded.message_id.is_empty())
+        .then_some(decoded)
 }
 
 pub(super) fn normalize_group_id(value: &str) -> Option<String> {

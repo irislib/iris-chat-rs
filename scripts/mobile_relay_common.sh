@@ -103,3 +103,36 @@ stop_local_rust_relay() {
     wait "${pid}" >/dev/null 2>&1 || true
   fi
 }
+
+android_debug_apk() {
+  printf '%s/android/app/build/outputs/apk/debug/app-debug.apk' "${ROOT_DIR}"
+}
+
+android_debug_test_apk() {
+  printf '%s/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk' "${ROOT_DIR}"
+}
+
+build_android_debug_apks() {
+  local relay_url="$1"
+  local relay_set_id="$2"
+
+  (
+    cd "${ROOT_DIR}/android" &&
+      IRIS_DEBUG_RELAYS="${relay_url}" \
+      IRIS_DEBUG_RELAY_SET_ID="${relay_set_id}" \
+      ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+  )
+}
+
+install_android_debug_apks_on_serials() {
+  local adb="$1"
+  shift
+
+  local serial
+  for serial in "$@"; do
+    [[ -n "${serial}" ]] || continue
+    echo "Installing Android debug APKs on ${serial}"
+    "${adb}" -s "${serial}" install -r -d "$(android_debug_apk)" >/dev/null
+    "${adb}" -s "${serial}" install -r -d -t "$(android_debug_test_apk)" >/dev/null
+  done
+}

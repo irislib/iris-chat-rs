@@ -1,7 +1,10 @@
 use super::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 use super::*;
 
+#[cfg(not(test))]
 const FIRST_CONTACT_STAGE_DELAY_MS: u64 = 1_500;
+#[cfg(test)]
+const FIRST_CONTACT_STAGE_DELAY_MS: u64 = 25;
 
 impl AppCore {
     pub(super) fn runtime_publish_completion(
@@ -187,7 +190,6 @@ impl AppCore {
                         "appcore.protocol.message.ignored",
                         "unknown message author",
                     );
-                    self.remember_event(event_id);
                     self.persist_best_effort();
                     self.rebuild_state();
                     self.emit_state();
@@ -412,19 +414,6 @@ impl AppCore {
                         );
                         self.schedule_first_contact_payload_publish();
                     }
-                }
-                ProtocolEffect::FetchRecentMessagesForOwner {
-                    owner_pubkey,
-                    lookback_secs,
-                    reason,
-                } => {
-                    self.fetch_recent_messages_for_owner(
-                        owner_pubkey,
-                        unix_now(),
-                        lookback_secs,
-                        reason,
-                    );
-                    self.request_protocol_subscription_refresh();
                 }
                 ProtocolEffect::Subscribe { subid, filters } => {
                     self.push_debug_log(

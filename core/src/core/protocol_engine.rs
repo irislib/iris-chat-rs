@@ -5,7 +5,6 @@ const LEGACY_RUNTIME_STATE_KEY: &str = "v2/runtime-state";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
-const TARGETED_OWNER_BACKFILL_LOOKBACK_SECS: u64 = 300;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
 const INVITES_L_TAG: &str = "double-ratchet/invites";
 
@@ -104,11 +103,6 @@ pub(super) enum ProtocolEffect {
     PublishStagedFirstContact {
         bootstrap: Vec<ProtocolPublishEvent>,
         payload: Vec<ProtocolPublishEvent>,
-    },
-    FetchRecentMessagesForOwner {
-        owner_pubkey: PublicKey,
-        lookback_secs: u64,
-        reason: &'static str,
     },
     FetchProtocolState {
         filters: Vec<Filter>,
@@ -1049,9 +1043,7 @@ impl ProtocolEngine {
             self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
             return Err(error);
         }
-        let mut batch = self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))?;
-        self.enqueue_owner_message_backfill_effect(&mut batch.effects, owner_pubkey, "app_keys");
-        Ok(batch)
+        self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
     }
 
     pub(super) fn observe_invite_event(
@@ -1125,18 +1117,7 @@ impl ProtocolEngine {
             self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
             return Err(error);
         }
-        let mut batch = self.retry_pending_protocol(ctx.now)?;
-        if let Some(processed) = processed {
-            let owner = processed
-                .claimed_owner_pubkey
-                .unwrap_or(processed.owner_pubkey);
-            self.enqueue_owner_message_backfill_effect(
-                &mut batch.effects,
-                public_owner(owner)?,
-                "invite_response",
-            );
-        }
-        Ok(batch)
+        self.retry_pending_protocol(ctx.now)
     }
 
     pub(super) fn accept_invite(
@@ -1180,7 +1161,6 @@ impl ProtocolEngine {
         } else {
             self.persist()?;
         }
-        self.enqueue_owner_message_backfill_effect(&mut effects, invite_owner, "accept_invite");
         Ok(ProtocolAcceptInviteResult {
             owner_pubkey: invite_owner,
             inviter_device_pubkey: public_device(invite.inviter_device_pubkey)?,
@@ -1208,13 +1188,7 @@ impl ProtocolEngine {
             NdrUnixSeconds(now.get()),
         );
         self.persist()?;
-        let mut batch = self.retry_pending_protocol(NdrUnixSeconds(now.get()))?;
-        self.enqueue_owner_message_backfill_effect(
-            &mut batch.effects,
-            peer_pubkey,
-            "import_session_state",
-        );
-        Ok(batch)
+        self.retry_pending_protocol(NdrUnixSeconds(now.get()))
     }
 
     pub(super) fn create_group(
@@ -1231,7 +1205,7 @@ impl ProtocolEngine {
                 &mut ctx,
                 name,
                 member_owners.into_iter().map(ndr_owner).collect(),
-                GroupProtocol::sender_key_v1(),
+                GroupProtocol::PairwiseFanoutV1,
             )?;
             let mut output = engine.protocol_group_send_from_prepared(&result.prepared, None)?;
             output.snapshot = Some(result.group);
@@ -2287,12 +2261,12 @@ impl ProtocolEngine {
         let mut event_ids = Vec::new();
         let mut effects = Vec::new();
         effects.extend(protocol_effects_from_group_prepared_publish(
-            &prepared.remote,
+            &prepared.local_sibling,
             inner_event_id.clone(),
             &mut event_ids,
         )?);
         effects.extend(protocol_effects_from_group_prepared_publish(
-            &prepared.local_sibling,
+            &prepared.remote,
             inner_event_id,
             &mut event_ids,
         )?);
@@ -2677,25 +2651,6 @@ impl ProtocolEngine {
 
     fn needs_local_sibling_roster_probe(&self, prepared: &PreparedSend) -> bool {
         prepared.deliveries.is_empty() && prepared.relay_gaps.is_empty()
-    }
-
-    fn enqueue_owner_message_backfill_effect(
-        &self,
-        effects: &mut Vec<ProtocolEffect>,
-        owner_pubkey: PublicKey,
-        reason: &'static str,
-    ) {
-        if self
-            .message_author_pubkeys_for_owner(owner_pubkey)
-            .is_empty()
-        {
-            return;
-        }
-        effects.push(ProtocolEffect::FetchRecentMessagesForOwner {
-            owner_pubkey,
-            lookback_secs: TARGETED_OWNER_BACKFILL_LOOKBACK_SECS,
-            reason,
-        });
     }
 
     fn append_queued_protocol_backfill(

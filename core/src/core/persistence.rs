@@ -110,6 +110,7 @@ impl AppCore {
         }
     }
 
+    #[cfg(not(target_os = "ios"))]
     pub(super) fn handle_debug_snapshot_write_finished(&mut self, generation: u64) {
         if generation != self.debug_snapshot_write_generation {
             return;

@@ -257,8 +257,12 @@ wait_for_status_in_file() {
 
 report_debug_snapshot() {
   local serial="$1"
+  if [[ -n "${GROUP_CHAT_ID:-}" ]]; then
+    echo "----- chat messages: ${serial} -----" >&2
+    run_test "${serial}" report_chat_messages_from_args chat_id "${GROUP_CHAT_ID}" | tail -n 20 >&2 || true
+  fi
   echo "----- debug snapshot: ${serial} -----" >&2
-  run_test "${serial}" report_runtime_debug_snapshot | tail -n 30 >&2 || true
+  run_test "${serial}" report_runtime_debug_snapshot | tail -n 80 >&2 || true
   echo "----- persisted snapshot: ${serial} -----" >&2
   run_test "${serial}" report_persisted_protocol_snapshot | tail -n 20 >&2 || true
 }
@@ -284,12 +288,8 @@ if [[ "${CLEAR_STATE}" -eq 1 ]]; then
 fi
 
 echo "Installing app and test APKs"
-(
-  cd "${ROOT_DIR}/android" &&
-    IRIS_DEBUG_RELAYS="$(local_android_loopback_relay_url)" \
-    IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)" \
-    ./gradlew :app:installDebug :app:installDebugAndroidTest >/dev/null
-)
+build_android_debug_apks "$(local_android_loopback_relay_url)" "$(local_relay_set_id)" >/dev/null
+install_android_debug_apks_on_serials "${ADB}" "${PRIMARY_SERIAL}" "${LINKED_SERIAL}" "${ADMIN_SERIAL}"
 
 echo "Creating primary owner on ${PRIMARY_SERIAL}"
 PRIMARY_IDENTITY="$(run_test "${PRIMARY_SERIAL}" create_account_and_report_identity)"
@@ -354,9 +354,18 @@ run_test "${LINKED_SERIAL}" wait_for_message_from_args \
   message "${ADMIN_MESSAGE}" >/dev/null
 
 echo "Sending group message from linked device"
-run_test "${LINKED_SERIAL}" send_message_from_args \
-  chat_id "${GROUP_CHAT_ID}" \
-  message "${LINKED_MESSAGE}" >/dev/null
+if [[ "${IRIS_RESTORE_SMOKE_TRACE_SEND:-0}" == "1" ]]; then
+  LINKED_SEND_OUTPUT="$(run_test "${LINKED_SERIAL}" send_message_from_args \
+    chat_id "${GROUP_CHAT_ID}" \
+    message "${LINKED_MESSAGE}")"
+  printf '%s\n' "${LINKED_SEND_OUTPUT}" >&2
+  echo "----- post-send linked debug snapshot -----" >&2
+  run_test "${LINKED_SERIAL}" report_runtime_debug_snapshot | tail -n 80 >&2 || true
+else
+  run_test "${LINKED_SERIAL}" send_message_from_args \
+    chat_id "${GROUP_CHAT_ID}" \
+    message "${LINKED_MESSAGE}" >/dev/null
+fi
 run_test "${ADMIN_SERIAL}" wait_for_message_from_args \
   chat_id "${GROUP_CHAT_ID}" \
   message "${LINKED_MESSAGE}" \

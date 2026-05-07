@@ -5,6 +5,8 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="${ROOT_DIR}/android"
 ANDROID_TEST_AVD="${IRIS_ANDROID_QA_AVD:-Medium_Phone_API_36.1}"
+PACKAGE_NAME="to.iris.chat.debug"
+TEST_PACKAGE_NAME="to.iris.chat.debug.test"
 CONTRACT_CLASSES="to.iris.chat.core.AppManagerContractTest"
 SMOKE_CLASSES="to.iris.chat.PikaLikeUiTest,to.iris.chat.account.AndroidKeystoreSecretStoreTest"
 
@@ -38,17 +40,53 @@ resolve_serial() {
   printf '%s\n' "${boot_output}" | awk 'NR == 1 { print $2 }'
 }
 
+android_sdk_dir() {
+  local sdk_dir
+  sdk_dir="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+  if [[ -z "${sdk_dir}" && -f "${ANDROID_DIR}/local.properties" ]]; then
+    sdk_dir="$(sed -n 's/^sdk\.dir=//p' "${ANDROID_DIR}/local.properties" | tail -n 1)"
+  fi
+  printf '%s\n' "${sdk_dir}"
+}
+
+reset_android_app_state() {
+  local serial="$1"
+  local sdk_dir adb_path
+  sdk_dir="$(android_sdk_dir)"
+  adb_path="${sdk_dir}/platform-tools/adb"
+  if [[ -z "${sdk_dir}" || ! -x "${adb_path}" ]]; then
+    return 0
+  fi
+
+  "${adb_path}" -s "${serial}" shell am force-stop "${PACKAGE_NAME}" >/dev/null 2>&1 || true
+  "${adb_path}" -s "${serial}" shell am force-stop "${TEST_PACKAGE_NAME}" >/dev/null 2>&1 || true
+  "${adb_path}" -s "${serial}" shell pm clear "${PACKAGE_NAME}" >/dev/null 2>&1 || true
+  "${adb_path}" -s "${serial}" shell pm clear "${TEST_PACKAGE_NAME}" >/dev/null 2>&1 || true
+}
+
 run_filtered_android_test() {
   local serial="$1"
   local classes="$2"
 
-  (
+  reset_android_app_state "${serial}"
+  if ! (
     cd "${ANDROID_DIR}"
     ANDROID_SERIAL="${serial}" \
       ./gradlew \
       :app:connectedDebugAndroidTest \
       -Pandroid.testInstrumentationRunnerArguments.class="${classes}"
-  )
+  ); then
+    echo "Android instrumentation failed for ${classes}; resetting app state and retrying once." >&2
+    reset_android_app_state "${serial}"
+    (
+      cd "${ANDROID_DIR}"
+      ANDROID_SERIAL="${serial}" \
+        ./gradlew \
+        :app:connectedDebugAndroidTest \
+        -Pandroid.testInstrumentationRunnerArguments.class="${classes}"
+    )
+  fi
+  reset_android_app_state "${serial}"
 }
 
 if [[ "${IRIS_SKIP_FAST:-0}" != "1" ]]; then

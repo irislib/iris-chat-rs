@@ -316,33 +316,41 @@ impl AppCore {
             }
             GroupIncomingEvent::Message(message) => {
                 let chat_id = group_chat_id(&message.group_id);
-                let payload = decode_app_group_message_payload(&message.body);
-                let body = payload
-                    .map(|payload| payload.body)
-                    .unwrap_or_else(|| String::from_utf8_lossy(&message.body).to_string());
                 let sender_owner = PublicKey::from_slice(&message.sender_owner.to_bytes())
                     .expect("owner pubkey bytes must be valid");
+                if let Some(payload) = decode_app_group_message_payload(&message.body) {
+                    let is_outgoing = self
+                        .logged_in
+                        .as_ref()
+                        .map(|logged_in| sender_owner == logged_in.owner_pubkey)
+                        .unwrap_or(false);
+                    self.apply_runtime_text_message(
+                        sender_owner,
+                        Some(chat_id),
+                        payload.body,
+                        unix_now().get(),
+                        None,
+                        Some(payload.message_id.clone()),
+                        None,
+                    );
+                    if is_outgoing {
+                        self.request_protocol_subscription_refresh();
+                    }
+                    return;
+                }
+                let body = String::from_utf8_lossy(&message.body).to_string();
                 if let Some(runtime_rumor) = parse_runtime_rumor(&body) {
                     self.apply_group_runtime_rumor(&chat_id, sender_owner, runtime_rumor);
                     return;
                 }
-                let is_outgoing = self
-                    .logged_in
-                    .as_ref()
-                    .map(|logged_in| sender_owner == logged_in.owner_pubkey)
-                    .unwrap_or(false);
-                self.apply_runtime_text_message(
-                    sender_owner,
-                    Some(chat_id),
-                    body,
-                    unix_now().get(),
-                    None,
-                    None,
-                    None,
+                self.push_debug_log(
+                    "group.message.decode.skip",
+                    format!(
+                        "chat_id={chat_id} sender_owner={} bytes={}",
+                        sender_owner.to_hex(),
+                        message.body.len()
+                    ),
                 );
-                if is_outgoing {
-                    self.request_protocol_subscription_refresh();
-                }
             }
         }
     }

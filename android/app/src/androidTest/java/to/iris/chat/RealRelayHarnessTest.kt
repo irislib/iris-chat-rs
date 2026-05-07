@@ -241,6 +241,11 @@ class RealRelayHarnessTest {
             "chat_id" to chat.chatId,
             "message" to message,
             "delivery" to finalized.delivery.name,
+            "outer_event_ids" to finalized.deliveryTrace.outerEventIds.joinToString(","),
+            "target_device_ids" to finalized.deliveryTrace.targetDeviceIds.joinToString(","),
+            "recipient_deliveries" to finalized.recipientDeliveries.joinToString("|") { recipient ->
+                "${recipient.ownerPubkeyHex},${recipient.delivery.name}"
+            },
         )
     }
 
@@ -1013,6 +1018,11 @@ class RealRelayHarnessTest {
             "chat_id" to chat.chatId,
             "message" to message,
             "delivery" to finalized.delivery.name,
+            "outer_event_ids" to finalized.deliveryTrace.outerEventIds.joinToString(","),
+            "target_device_ids" to finalized.deliveryTrace.targetDeviceIds.joinToString(","),
+            "recipient_deliveries" to finalized.recipientDeliveries.joinToString("|") { recipient ->
+                "${recipient.ownerPubkeyHex},${recipient.delivery.name}"
+            },
         )
     }
 
@@ -1197,6 +1207,12 @@ class RealRelayHarnessTest {
                         )
                     }
                     ?.let { return@waitForState it }
+
+                sqliteThreadWithMessage(
+                    chatId = resolvedChatId,
+                    expectedMessage = expectedMessage,
+                    direction = direction,
+                )?.let { return@waitForState it }
 
                 val state = appManager().state.value
                 state.currentChat?.takeIf { chat ->
@@ -2175,7 +2191,8 @@ class RealRelayHarnessTest {
                     message.body == expectedMessage &&
                         messageDirectionMatches(message.isOutgoing, direction)
                 } ?: 0
-        return maxOf(persistedCount, stateCount)
+        val sqliteCount = countSqliteMessages(chatId, expectedMessage, direction)
+        return maxOf(persistedCount, sqliteCount, stateCount)
     }
 
     private fun countPersistedMessages(
@@ -2200,6 +2217,83 @@ class RealRelayHarnessTest {
         }
         return 0
     }
+
+    private fun sqliteThreadWithMessage(
+        chatId: String?,
+        expectedMessage: String,
+        direction: String,
+    ): String? {
+        val dbFile = File(appFilesDir(), CORE_DB_FILENAME)
+        if (!dbFile.exists()) {
+            return null
+        }
+        return runCatching {
+            SQLiteDatabase
+                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+                .use { db ->
+                    val args = mutableListOf(expectedMessage)
+                    val clauses = mutableListOf("body = ?")
+                    if (!chatId.isNullOrBlank()) {
+                        clauses += "chat_id = ?"
+                        args += chatId
+                    }
+                    sqliteDirectionValue(direction)?.let { outgoing ->
+                        clauses += "is_outgoing = ?"
+                        args += outgoing
+                    }
+                    val sql =
+                        """
+                            SELECT chat_id
+                            FROM messages
+                            WHERE ${clauses.joinToString(" AND ")}
+                            ORDER BY created_at_secs DESC, id DESC
+                            LIMIT 1
+                        """.trimIndent()
+                    db.rawQuery(sql, args.toTypedArray()).use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getString(0) else null
+                    }
+                }
+        }.getOrNull()
+    }
+
+    private fun countSqliteMessages(
+        chatId: String,
+        expectedMessage: String,
+        direction: String,
+    ): Int {
+        val dbFile = File(appFilesDir(), CORE_DB_FILENAME)
+        if (!dbFile.exists()) {
+            return 0
+        }
+        return runCatching {
+            SQLiteDatabase
+                .openDatabase(dbFile.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
+                .use { db ->
+                    val args = mutableListOf(chatId, expectedMessage)
+                    val clauses = mutableListOf("chat_id = ?", "body = ?")
+                    sqliteDirectionValue(direction)?.let { outgoing ->
+                        clauses += "is_outgoing = ?"
+                        args += outgoing
+                    }
+                    val sql =
+                        """
+                            SELECT COUNT(*)
+                            FROM messages
+                            WHERE ${clauses.joinToString(" AND ")}
+                        """.trimIndent()
+                    db.rawQuery(sql, args.toTypedArray()).use { cursor ->
+                        if (cursor.moveToFirst()) cursor.getInt(0) else 0
+                    }
+                }
+        }.getOrDefault(0)
+    }
+
+    private fun sqliteDirectionValue(direction: String): String? =
+        when (direction.lowercase()) {
+            "incoming" -> "0"
+            "outgoing" -> "1"
+            else -> null
+        }
 
     private fun persistedHasPeerRoster(
         persisted: JSONObject,
@@ -2432,7 +2526,7 @@ class RealRelayHarnessTest {
         }
 
     private fun summarizeRecentLog(entries: JSONArray?): String =
-        entries.joinObjects(limit = 20) { entry ->
+        entries.joinObjects(limit = 80) { entry ->
             listOf(
                 entry.optString("timestamp_secs"),
                 entry.optString("category"),

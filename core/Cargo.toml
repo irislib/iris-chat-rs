@@ -42,10 +42,10 @@ hmac = "0.12"
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-double-ratchet = { version = "0.0.139", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
-nostr-double-ratchet-nostr = { version = "0.0.139", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-nostr" }
-nostr-double-ratchet-pairwise-codec = { version = "0.0.139", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-pairwise-codec" }
-nostr-double-ratchet-runtime = { version = "0.0.139", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-runtime", features = ["nearby"] }
+nostr-double-ratchet = { version = "0.0.141", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet" }
+nostr-double-ratchet-nostr = { version = "0.0.141", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-nostr" }
+nostr-double-ratchet-pairwise-codec = { version = "0.0.141", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-pairwise-codec" }
+nostr-double-ratchet-runtime = { version = "0.0.141", path = "../../nostr-double-ratchet/rust/crates/nostr-double-ratchet-runtime", features = ["nearby"] }
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 rusqlite = { version = "0.31", features = ["bundled"] }
