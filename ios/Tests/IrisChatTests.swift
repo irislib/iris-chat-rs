@@ -714,18 +714,70 @@ final class IrisChatTests: XCTestCase {
 #else
         let service = "to.iris.chat.tests.\(UUID().uuidString)"
         let account = "stored-account-bundle"
-        let store = KeychainSecretStore(service: service, account: account)
         let expected = StoredAccountBundle(
             ownerNsec: "nsec1owner",
             ownerPubkeyHex: "owner-hex",
             deviceNsec: "nsec1device"
         )
 
-        store.clear()
+        let legacyStore = KeychainSecretStore(service: service, account: account, accessibility: nil)
+        legacyStore.clear()
+        legacyStore.save(expected)
+        XCTAssertEqual(legacyStore.load(), expected)
+
+        let store = KeychainSecretStore(service: service, account: account)
+        XCTAssertEqual(store.load(), expected)
         store.save(expected)
         XCTAssertEqual(store.load(), expected)
+
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecReturnAttributes: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        var item: CFTypeRef?
+        XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, &item), errSecSuccess)
+        let attributes = item as? [String: Any]
+        XCTAssertEqual(
+            attributes?[kSecAttrAccessible as String] as? String,
+            kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
+        )
+
         store.clear()
         XCTAssertNil(store.load())
+#endif
+    }
+
+    func testNotificationDataDirUsesBackgroundReadableProtection() throws {
+#if os(macOS)
+        throw XCTSkip("macOS has no iOS Notification Service Extension data protection")
+#else
+        let fileManager = FileManager.default
+        let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let nestedDir = tempDir.appendingPathComponent("core", isDirectory: true)
+        let nestedFile = nestedDir.appendingPathComponent("state.json")
+        defer { try? fileManager.removeItem(at: tempDir) }
+
+        try fileManager.createDirectory(at: nestedDir, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: nestedFile)
+
+        AppPaths.prepareDataDirForBackgroundNotificationReads(tempDir, fileManager: fileManager)
+
+        let keys: Set<URLResourceKey> = [.fileProtectionKey]
+        let dirProtection = try tempDir.resourceValues(forKeys: keys).fileProtection
+        guard dirProtection != nil else {
+            throw XCTSkip("simulator filesystem does not report iOS file-protection attributes")
+        }
+        XCTAssertEqual(
+            dirProtection,
+            .completeUntilFirstUserAuthentication
+        )
+        XCTAssertEqual(
+            try nestedFile.resourceValues(forKeys: keys).fileProtection,
+            .completeUntilFirstUserAuthentication
+        )
 #endif
     }
 

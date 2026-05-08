@@ -127,15 +127,24 @@ final class KeychainSecretStore: AccountSecretStore {
     private let service: String
     private let account: String
     private let accessGroup: String?
+    private let accessibility: CFString?
+
+#if os(iOS)
+    private static let defaultAccessibility: CFString? = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+#else
+    private static let defaultAccessibility: CFString? = nil
+#endif
 
     init(
         service: String = "to.iris.chat",
         account: String = "stored-account-bundle",
-        accessGroup: String? = nil
+        accessGroup: String? = nil,
+        accessibility: CFString? = KeychainSecretStore.defaultAccessibility
     ) {
         self.service = service
         self.account = account
         self.accessGroup = accessGroup
+        self.accessibility = accessibility
     }
 
     private func baseQuery() -> [CFString: Any] {
@@ -170,11 +179,17 @@ final class KeychainSecretStore: AccountSecretStore {
             return
         }
         let query = baseQuery()
-        let update: [CFString: Any] = [kSecValueData: data]
+        var update: [CFString: Any] = [kSecValueData: data]
+        if let accessibility {
+            update[kSecAttrAccessible] = accessibility
+        }
         let updateStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
         if updateStatus == errSecItemNotFound {
             var insert = query
             insert[kSecValueData] = data
+            if let accessibility {
+                insert[kSecAttrAccessible] = accessibility
+            }
             SecItemAdd(insert as CFDictionary, nil)
         }
     }
@@ -412,6 +427,34 @@ enum AppPaths {
             // device.
         }
     }
+
+    static func prepareDataDirForBackgroundNotificationReads(
+        _ dataDir: URL,
+        fileManager: FileManager
+    ) {
+#if os(iOS)
+        setBackgroundReadableProtection(at: dataDir, fileManager: fileManager)
+        guard let enumerator = fileManager.enumerator(
+            at: dataDir,
+            includingPropertiesForKeys: [.isRegularFileKey, .isDirectoryKey],
+            options: []
+        ) else {
+            return
+        }
+        for case let url as URL in enumerator {
+            setBackgroundReadableProtection(at: url, fileManager: fileManager)
+        }
+#endif
+    }
+
+#if os(iOS)
+    private static func setBackgroundReadableProtection(at url: URL, fileManager: FileManager) {
+        try? fileManager.setAttributes(
+            [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication],
+            ofItemAtPath: url.path
+        )
+    }
+#endif
 }
 
 enum LaunchRecoveryDefaults {
@@ -489,6 +532,7 @@ final class AppManager: ObservableObject {
             try? fileManager.removeItem(at: resolvedDataDir)
         }
         try? fileManager.createDirectory(at: resolvedDataDir, withIntermediateDirectories: true)
+        AppPaths.prepareDataDirForBackgroundNotificationReads(resolvedDataDir, fileManager: fileManager)
 
         LaunchRecoveryDefaults.clear(userDefaults: .standard)
         let resolvedRust = rust ?? LiveRustAppClient(dataDir: resolvedDataDir.path, appVersion: appVersion)
@@ -1398,6 +1442,7 @@ final class AppManager: ObservableObject {
             storedAccountBundle = nil
             return
         }
+        secretStore.save(bundle)
         storedAccountBundle = bundle
         dispatchToRust(
             .restoreAccountBundle(

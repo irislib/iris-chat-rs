@@ -5,6 +5,7 @@
 - Harden mobile push notification payload parsing so APNS/FCM event aliases decrypt the same as canonical event payloads.
 - Suppress generic mobile push placeholders when an encrypted message notification cannot be decrypted into sender/message text.
 - Keep iOS foreground notification handling aligned with the Notification Service Extension so generic "New message" fallbacks are not shown.
+- Keep iOS notification state readable by the Notification Service Extension while Iris is backgrounded or the phone is locked.
 
 ## 0.1.18
 
