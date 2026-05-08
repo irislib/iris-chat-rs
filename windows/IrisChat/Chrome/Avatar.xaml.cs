@@ -14,6 +14,7 @@ public partial class Avatar : UserControl
 {
     private static readonly ConcurrentDictionary<string, ImageSource> ImageCache = new();
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(15) };
+    private const int AvatarDecodePixelWidth = 160;
     private string? _loadingKey;
 
     public static readonly DependencyProperty LabelProperty =
@@ -111,13 +112,16 @@ public partial class Avatar : UserControl
                 return;
             }
 
-            using var ms = new MemoryStream(data);
-            var bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.StreamSource = ms;
-            bmp.EndInit();
-            bmp.Freeze();
+            var bmp = await Task.Run(() => DecodeAvatarImage(data));
+            if (bmp == null)
+            {
+                if (_loadingKey == key)
+                {
+                    ImageHost.Visibility = Visibility.Collapsed;
+                }
+                return;
+            }
+            if (_loadingKey != key) return;
 
             ImageCache[key] = bmp;
             ImageBrush.ImageSource = bmp;
@@ -146,6 +150,26 @@ public partial class Avatar : UserControl
             return await Http.GetByteArrayAsync(url);
         }
         return File.Exists(url) ? await File.ReadAllBytesAsync(url) : null;
+    }
+
+    private static BitmapImage? DecodeAvatarImage(byte[] data)
+    {
+        try
+        {
+            using var ms = new MemoryStream(data);
+            var bmp = new BitmapImage();
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.DecodePixelWidth = AvatarDecodePixelWidth;
+            bmp.StreamSource = ms;
+            bmp.EndInit();
+            bmp.Freeze();
+            return bmp;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string CacheKey(string url) =>

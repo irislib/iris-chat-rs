@@ -74,24 +74,8 @@ fun ChatListScreen(
     nearbyService: IrisNearbyService? = null,
     onNearbyClick: () -> Unit = {},
 ) {
-    var relativeNowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
-    var nearbyTick by remember { mutableStateOf(0) }
     var pendingDeleteChat by remember { mutableStateOf<ChatThreadSnapshot?>(null) }
     val account = appState.account
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(15_000L)
-            relativeNowMillis = System.currentTimeMillis()
-        }
-    }
-
-    LaunchedEffect(nearbyService) {
-        while (nearbyService != null) {
-            delay(1_000L)
-            nearbyTick += 1
-        }
-    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -150,7 +134,6 @@ fun ChatListScreen(
             )
         },
     ) { padding ->
-        val nearbySnapshot = nearbyTick.let { nearbyService?.snapshot }
         LazyColumn(
             modifier =
                 Modifier
@@ -158,27 +141,12 @@ fun ChatListScreen(
                     .padding(padding)
                     .background(MaterialTheme.colorScheme.background),
         ) {
-            if (nearbyService != null && nearbySnapshot != null) {
+            if (nearbyService != null) {
                 item(key = "nearby") {
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        IrisChatListRow(
-                            title = "Nearby",
-                            preview = nearbyPreview(nearbySnapshot),
-                            timeLabel = null,
-                            leadingContent = {
-                                NearbyChatIcon(visible = nearbySnapshot.visible || nearbySnapshot.localNetworkVisible)
-                            },
-                            unreadCount = 0,
-                            lastMessageMine = false,
-                            lastDelivery = null,
-                            onClick = {
-                                onNearbyClick()
-                                nearbyTick += 1
-                            },
-                            modifier = Modifier.testTag("nearbyChatRow"),
-                        )
-                        IrisDivider(modifier = Modifier.padding(start = 70.dp))
-                    }
+                    NearbyChatListItem(
+                        service = nearbyService,
+                        onClick = onNearbyClick,
+                    )
                 }
             }
             if (appState.chatList.isEmpty()) {
@@ -243,7 +211,7 @@ fun ChatListScreen(
                                     } else {
                                         chat.lastMessagePreview ?: subtitle.orEmpty()
                                     },
-                                timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), relativeNowMillis),
+                                timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
                                 imageUrl = avatarUrl,
                                 imageData = avatarData,
                                 unreadCount = chat.unreadCount.toLong(),
@@ -441,6 +409,39 @@ private fun ChatSwipeActionButton(
             fontWeight = FontWeight.SemiBold,
             color = color,
         )
+    }
+}
+
+@Composable
+private fun NearbyChatListItem(
+    service: IrisNearbyService,
+    onClick: () -> Unit,
+) {
+    var tick by remember { mutableStateOf(0) }
+
+    LaunchedEffect(service) {
+        while (true) {
+            delay(1_000L)
+            tick += 1
+        }
+    }
+
+    val snapshot = tick.let { service.snapshot }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        IrisChatListRow(
+            title = "Nearby",
+            preview = nearbyPreview(snapshot),
+            timeLabel = null,
+            leadingContent = {
+                NearbyChatIcon(visible = snapshot.visible || snapshot.localNetworkVisible)
+            },
+            unreadCount = 0,
+            lastMessageMine = false,
+            lastDelivery = null,
+            onClick = onClick,
+            modifier = Modifier.testTag("nearbyChatRow"),
+        )
+        IrisDivider(modifier = Modifier.padding(start = 70.dp))
     }
 }
 

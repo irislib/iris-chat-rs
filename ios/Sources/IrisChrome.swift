@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(PhotosUI)
@@ -394,23 +395,64 @@ private enum IrisAvatarImageSource: Equatable {
 }
 
 private enum IrisAvatarImageCache {
-    private static let lock = NSLock()
-    private static var dataByKey: [String: Data] = [:]
+    private static let cache: NSCache<NSString, PlatformImage> = {
+        let cache = NSCache<NSString, PlatformImage>()
+        cache.countLimit = 160
+        cache.totalCostLimit = 24 * 1024 * 1024
+        return cache
+    }()
 
-    static func data(for key: String) -> Data? {
-        lock.lock()
-        defer { lock.unlock() }
-        return dataByKey[key]
+    static func image(for key: String) -> PlatformImage? {
+        cache.object(forKey: key as NSString)
     }
 
-    static func store(_ data: Data, for key: String) {
-        lock.lock()
-        defer { lock.unlock() }
-        dataByKey[key] = data
-        while dataByKey.count > 128, let firstKey = dataByKey.keys.first {
-            dataByKey.removeValue(forKey: firstKey)
-        }
+    static func store(_ image: PlatformImage, for key: String) {
+        cache.setObject(image, forKey: key as NSString, cost: irisAvatarImageCost(image))
     }
+}
+
+private func makeIrisAvatarImage(data: Data, maxPixelSize: Int) -> PlatformImage? {
+    let sourceOptions: [CFString: Any] = [
+        kCGImageSourceShouldCache: false
+    ]
+    guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
+        return nil
+    }
+
+    let thumbnailOptions: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceThumbnailMaxPixelSize: max(1, maxPixelSize)
+    ]
+    guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
+        return nil
+    }
+
+    #if os(iOS)
+    return PlatformImage(cgImage: cgImage)
+    #elseif os(macOS)
+    return PlatformImage(
+        cgImage: cgImage,
+        size: NSSize(width: cgImage.width, height: cgImage.height)
+    )
+    #else
+    return nil
+    #endif
+}
+
+private func irisAvatarImageCost(_ image: PlatformImage) -> Int {
+    #if os(iOS)
+    let width = max(1, Int(image.size.width * image.scale))
+    let height = max(1, Int(image.size.height * image.scale))
+    return width * height * 4
+    #elseif os(macOS)
+    let width = max(1, Int(image.size.width))
+    let height = max(1, Int(image.size.height))
+    return width * height * 4
+    #else
+    return 1
+    #endif
 }
 
 private func irisAvatarImageSource(
@@ -439,7 +481,7 @@ struct IrisAvatar: View {
     let manager: AppManager?
     let loadedImageIdentifier: String?
 
-    @State private var imageData: Data?
+    @State private var avatarImage: PlatformImage?
 
     init(
         label: String,
@@ -462,7 +504,7 @@ struct IrisAvatar: View {
             preferences: preferences,
             pixelSize: size * 2
         )
-        _imageData = State(initialValue: source.flatMap { IrisAvatarImageCache.data(for: $0.cacheKey) })
+        _avatarImage = State(initialValue: source.flatMap { IrisAvatarImageCache.image(for: $0.cacheKey) })
     }
 
     var body: some View {
@@ -471,8 +513,8 @@ struct IrisAvatar: View {
                 .fill(emphasize ? palette.accent : palette.panelAlt)
                 .overlay(Circle().stroke(palette.border, lineWidth: 1))
 
-            if let imageData, let image = PlatformImage(data: imageData) {
-                Image(platformImage: image)
+            if let avatarImage {
+                Image(platformImage: avatarImage)
                     .resizable()
                     .scaledToFill()
                     .clipShape(Circle())
@@ -506,12 +548,12 @@ struct IrisAvatar: View {
 
     private func loadAvatarImage() async {
         guard let source = imageSource else {
-            imageData = nil
+            avatarImage = nil
             return
         }
         let key = source.cacheKey
-        if let cached = IrisAvatarImageCache.data(for: key) {
-            imageData = cached
+        if let cached = IrisAvatarImageCache.image(for: key) {
+            avatarImage = cached
             return
         }
 
@@ -519,13 +561,13 @@ struct IrisAvatar: View {
         switch source {
         case .hashtree(let nhash):
             guard let manager else {
-                imageData = nil
+                avatarImage = nil
                 return
             }
             loaded = await manager.resolveHashtreePictureBytes(nhash: nhash)
         case .http(let urlString):
             guard let url = URL(string: urlString) else {
-                imageData = nil
+                avatarImage = nil
                 return
             }
             if let response = try? await URLSession.shared.data(from: url) {
@@ -537,11 +579,15 @@ struct IrisAvatar: View {
 
         guard imageSourceKey == key else { return }
         guard let loaded, !loaded.isEmpty else {
-            imageData = nil
+            avatarImage = nil
             return
         }
-        IrisAvatarImageCache.store(loaded, for: key)
-        imageData = loaded
+        guard let image = makeIrisAvatarImage(data: loaded, maxPixelSize: Int(ceil(size * 3))) else {
+            avatarImage = nil
+            return
+        }
+        IrisAvatarImageCache.store(image, for: key)
+        avatarImage = image
     }
 
     private var avatarInitial: some View {

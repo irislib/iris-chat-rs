@@ -869,6 +869,8 @@ private struct DesktopChatSidebar: View {
     }
 
     var body: some View {
+        let relativeNow = Date()
+
         VStack(spacing: 0) {
             sidebarHeader
 
@@ -907,16 +909,14 @@ private struct DesktopChatSidebar: View {
                         .accessibilityIdentifier("desktopNearbyRow")
                     #endif
 
-                    TimelineView(.periodic(from: .now, by: 15)) { timeline in
-                        ForEach(filteredChats, id: \.chatId) { chat in
-                            DesktopSidebarChatRow(
-                                manager: manager,
-                                chat: chat,
-                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: timeline.date),
-                                selected: selectedChatId == chat.chatId
-                            )
-                            .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
-                        }
+                    ForEach(filteredChats, id: \.chatId) { chat in
+                        DesktopSidebarChatRow(
+                            manager: manager,
+                            chat: chat,
+                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
+                            selected: selectedChatId == chat.chatId
+                        )
+                        .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
                     }
                 }
                 .padding(.horizontal, 8)
@@ -1737,8 +1737,10 @@ struct ChatListScreen: View {
     }
 
     var body: some View {
+        let relativeNow = Date()
+
         ScrollView {
-            VStack(spacing: 0) {
+            LazyVStack(spacing: 0) {
 #if os(iOS) || os(macOS)
                 NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
                 if !manager.state.chatList.isEmpty {
@@ -1754,21 +1756,17 @@ struct ChatListScreen: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 20)
                 } else {
-                    TimelineView(.periodic(from: .now, by: 15)) { timeline in
-                        VStack(spacing: 0) {
-                            ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
-                                ChatListRowContainer(
-                                    manager: manager,
-                                    chat: chat,
-                                    timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: timeline.date)
-                                )
-                                .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                    ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
+                        ChatListRowContainer(
+                            manager: manager,
+                            chat: chat,
+                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow)
+                        )
+                        .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
 
-                                if index < manager.state.chatList.count - 1 {
-                                    Divider()
-                                        .overlay(palette.border)
-                                }
-                            }
+                        if index < manager.state.chatList.count - 1 {
+                            Divider()
+                                .overlay(palette.border)
                         }
                     }
                 }
