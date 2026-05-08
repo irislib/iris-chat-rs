@@ -46,7 +46,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -109,6 +111,7 @@ internal fun MessageBubble(
     }
 
     val clipboard = rememberIrisClipboard()
+    val hapticFeedback = LocalHapticFeedback.current
     val parsed = remember(message.body) { parseReplyEncodedMessage(message.body) }
     val showDesktopActionDock = LocalConfiguration.current.screenWidthDp >= 600
     val hoverInteractionSource = remember { MutableInteractionSource() }
@@ -201,9 +204,11 @@ internal fun MessageBubble(
                             .widthIn(max = 300.dp)
                             .clip(bubbleShape)
                             .combinedClickable(
+                                hapticFeedbackEnabled = false,
                                 onClick = {},
                                 onLongClick = {
                                     if (!showDesktopActionDock) {
+                                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
                                         isActionsSheetOpen = true
                                     }
                                 },

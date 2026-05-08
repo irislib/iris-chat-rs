@@ -586,6 +586,7 @@ private struct ChatMessageRow: View {
                     .contentShape(bubbleShape)
                     .onLongPressGesture(minimumDuration: 0.4) {
                         if !IrisLayout.usesDesktopChrome {
+                            PlatformHaptics.messageMenuOpened()
                             showActionsSheet = true
                         }
                     }

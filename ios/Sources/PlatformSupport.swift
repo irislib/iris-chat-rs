@@ -149,6 +149,15 @@ enum PlatformAppSettings {
     }
 }
 
+enum PlatformHaptics {
+    static func messageMenuOpened() {
+        #if os(iOS)
+        let generator = UIImpactFeedbackGenerator(style: .rigid)
+        generator.impactOccurred(intensity: 0.85)
+        #endif
+    }
+}
+
 enum PlatformDeviceLabels {
     static var currentDeviceLabel: String {
         #if os(iOS)
