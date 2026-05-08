@@ -1149,8 +1149,8 @@ private func chatListItemContextMenu(manager: AppManager, chat: ChatThreadSnapsh
     Button {
         manager.dispatch(.setChatUnread(chatId: chat.chatId, unread: chat.unreadCount == 0))
     } label: {
-        Label(
-            chat.unreadCount > 0 ? "Mark read" : "Mark as unread",
+        IrisContextMenuLabel(
+            title: chat.unreadCount > 0 ? "Mark read" : "Mark as unread",
             systemImage: chat.unreadCount > 0 ? "envelope.open.fill" : "envelope.badge.fill"
         )
     }
@@ -1158,8 +1158,8 @@ private func chatListItemContextMenu(manager: AppManager, chat: ChatThreadSnapsh
     Button {
         manager.dispatch(.setChatPinned(chatId: chat.chatId, pinned: !chat.isPinned))
     } label: {
-        Label(
-            chat.isPinned ? "Unpin chat" : "Pin chat",
+        IrisContextMenuLabel(
+            title: chat.isPinned ? "Unpin chat" : "Pin chat",
             systemImage: chat.isPinned ? "pin.slash.fill" : "pin.fill"
         )
     }
@@ -1167,8 +1167,8 @@ private func chatListItemContextMenu(manager: AppManager, chat: ChatThreadSnapsh
     Button {
         manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
     } label: {
-        Label(
-            chat.isMuted ? "Unmute chat" : "Mute chat",
+        IrisContextMenuLabel(
+            title: chat.isMuted ? "Unmute chat" : "Mute chat",
             systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill"
         )
     }
@@ -1177,6 +1177,21 @@ private func chatListItemContextMenu(manager: AppManager, chat: ChatThreadSnapsh
         manager.dispatch(.deleteChat(chatId: chat.chatId))
     } label: {
         Label("Delete", systemImage: "trash.fill")
+    }
+}
+
+private struct IrisContextMenuLabel: View {
+    let title: String
+    let systemImage: String
+
+    var body: some View {
+        Label {
+            Text(title)
+        } icon: {
+            Image(systemName: systemImage)
+                .renderingMode(.template)
+                .foregroundStyle(Color.primary)
+        }
     }
 }
 
