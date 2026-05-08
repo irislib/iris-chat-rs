@@ -463,6 +463,7 @@ impl AppCore {
                 Filter::new()
                     .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
                     .authors(owners.clone())
+                    .identifier(NDR_APP_KEYS_D_TAG)
                     .since(Timestamp::from(
                         now.get()
                             .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
@@ -476,6 +477,7 @@ impl AppCore {
                 Filter::new()
                     .kind(Kind::from(INVITE_EVENT_KIND as u16))
                     .authors(invite_authors.clone())
+                    .custom_tag(SingleLetterTag::lowercase(Alphabet::L), NDR_INVITES_L_TAG)
                     .since(Timestamp::from(
                         now.get()
                             .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
@@ -1568,14 +1570,16 @@ pub(super) fn build_protocol_subscription_filters(plan: &ProtocolSubscriptionPla
         filters.push(
             Filter::new()
                 .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
-                .authors(roster_authors),
+                .authors(roster_authors)
+                .identifier(NDR_APP_KEYS_D_TAG),
         );
     }
     if !invite_authors.is_empty() {
         filters.push(
             Filter::new()
                 .kind(Kind::from(INVITE_EVENT_KIND as u16))
-                .authors(invite_authors.clone()),
+                .authors(invite_authors.clone())
+                .custom_tag(SingleLetterTag::lowercase(Alphabet::L), NDR_INVITES_L_TAG),
         );
         filters.push(
             Filter::new()

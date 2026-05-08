@@ -1598,6 +1598,73 @@ fn appcore_invite_event_wakes_device_queued_direct_send_before_retry_delay() {
 }
 
 #[test]
+fn seen_invite_event_replays_into_protocol_engine_for_queued_send() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut core = logged_in_test_core("seen-invite-replay", &owner, &device);
+    {
+        let engine = core.protocol_engine.as_mut().expect("protocol engine");
+        observe_current_device_appkeys_for_test(engine, &owner, &device);
+        engine
+            .ingest_app_keys_snapshot(
+                peer_owner.public_key(),
+                AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 4)]),
+                4,
+            )
+            .expect("peer appkeys");
+    }
+
+    core.send_direct_message(
+        &peer_owner.public_key().to_hex(),
+        "queued until seen invite replays",
+        UnixSeconds(5),
+        None,
+    );
+    assert!(
+        core.protocol_engine
+            .as_ref()
+            .expect("protocol engine")
+            .debug_snapshot()
+            .pending_outbound_targets
+            .contains(&peer_device.public_key().to_hex()),
+        "send should wait for the peer device invite"
+    );
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(6), &mut rng);
+    let invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(peer_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(
+            peer_owner.public_key().to_bytes(),
+        )),
+        None,
+    )
+    .expect("peer invite");
+    let invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+        .expect("invite event")
+        .sign_with_keys(&peer_device)
+        .expect("signed invite");
+
+    core.remember_event(invite_event.id.to_string());
+    core.handle_relay_event(invite_event);
+
+    let debug = core
+        .protocol_engine
+        .as_ref()
+        .expect("protocol engine")
+        .debug_snapshot();
+    assert!(
+        !debug
+            .pending_outbound_targets
+            .contains(&peer_device.public_key().to_hex()),
+        "seen invite events must still rebuild protocol state and drain queued sends"
+    );
+}
+
+#[test]
 fn appcore_direct_send_keeps_local_sibling_probe_until_local_appkeys_and_invite_arrive() {
     let owner = Keys::generate();
     let fresh_device = Keys::generate();
@@ -4829,8 +4896,28 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
         "app-key filters must be derived from roster authors"
     );
     assert!(
+        has_filter_with_kind_author_tag(
+            &filters,
+            APP_KEYS_EVENT_KIND,
+            owner.public_key(),
+            "#d",
+            NDR_APP_KEYS_D_TAG
+        ),
+        "app-key filters must not fetch unrelated parameterized app data"
+    );
+    assert!(
         has_filter_with_kind_author(&filters, INVITE_EVENT_KIND, invite_author.public_key()),
         "invite filters must be derived from known device authors"
+    );
+    assert!(
+        has_filter_with_kind_author_tag(
+            &filters,
+            INVITE_EVENT_KIND,
+            invite_author.public_key(),
+            "#l",
+            NDR_INVITES_L_TAG
+        ),
+        "invite filters must not fetch unrelated parameterized app data"
     );
     assert!(
         has_filter_with_kind_author(&filters, INVITE_RESPONSE_KIND, invite_author.public_key()),
@@ -5155,6 +5242,42 @@ fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey)
                         .any(|value| value.as_str() == Some(author_hex.as_str()))
                 });
             has_kind && has_author
+        })
+}
+
+fn has_filter_with_kind_author_tag(
+    filters: &[Filter],
+    kind: u32,
+    author: PublicKey,
+    tag_name: &str,
+    tag_value: &str,
+) -> bool {
+    let author_hex = author.to_hex();
+    filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .any(|filter| {
+            let has_kind = filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|value| value.as_u64() == Some(kind as u64))
+                });
+            let has_author = filter
+                .get("authors")
+                .and_then(|authors| authors.as_array())
+                .is_some_and(|authors| {
+                    authors
+                        .iter()
+                        .any(|value| value.as_str() == Some(author_hex.as_str()))
+                });
+            let has_tag = filter
+                .get(tag_name)
+                .and_then(|values| values.as_array())
+                .is_some_and(|values| values.iter().any(|value| value.as_str() == Some(tag_value)));
+            has_kind && has_author && has_tag
         })
 }
 

@@ -27,17 +27,22 @@ impl AppCore {
 
     pub(super) fn handle_relay_event_with_channel(&mut self, event: Event, channel: &str) {
         let event_id = event.id.to_string();
+        let kind = event.kind.as_u16() as u32;
+        let is_app_keys_protocol_event = kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event);
+        let is_invite_protocol_event = is_protocol_invite_event(&event);
+        let is_invite_response_protocol_event = kind == INVITE_RESPONSE_KIND;
         if self.has_seen_event(&event_id) {
             self.add_transport_channel_for_event_id(&event_id, channel);
             self.persist_best_effort();
             self.rebuild_state();
             self.emit_state();
-            return;
+            if !self.should_replay_seen_protocol_event(&event, is_invite_protocol_event) {
+                return;
+            }
         }
         self.event_transport_channels
             .insert(event_id.clone(), channel.to_string());
 
-        let kind = event.kind.as_u16() as u32;
         if self.logged_in.is_none() {
             if self.handle_pending_link_device_response(event) {
                 self.remember_event(event_id);
@@ -46,8 +51,9 @@ impl AppCore {
         }
 
         self.push_debug_log("relay.event", format!("kind_raw={} id={event_id}", kind));
-        let protocol_inputs_changed = matches!(kind, INVITE_EVENT_KIND | INVITE_RESPONSE_KIND)
-            || (kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event));
+        let protocol_inputs_changed = is_app_keys_protocol_event
+            || is_invite_protocol_event
+            || is_invite_response_protocol_event;
 
         if kind == 0 {
             if self.apply_profile_metadata_event(&event) {
@@ -62,7 +68,7 @@ impl AppCore {
         }
 
         match kind {
-            APP_KEYS_EVENT_KIND if is_app_keys_event(&event) => {
+            APP_KEYS_EVENT_KIND if is_app_keys_protocol_event => {
                 self.debug_event_counters.app_keys_events += 1;
                 match self.apply_app_keys_event(&event) {
                     Ok(_) => {
@@ -80,7 +86,7 @@ impl AppCore {
                 }
                 return;
             }
-            INVITE_EVENT_KIND => {
+            INVITE_EVENT_KIND if is_invite_protocol_event => {
                 self.debug_event_counters.invite_events += 1;
                 let retry_results = self
                     .protocol_engine
@@ -99,6 +105,13 @@ impl AppCore {
                         return;
                     }
                 }
+            }
+            INVITE_EVENT_KIND => {
+                self.remember_event(event_id);
+                self.persist_best_effort();
+                self.rebuild_state();
+                self.emit_state();
+                return;
             }
             INVITE_RESPONSE_KIND => {
                 self.debug_event_counters.invite_response_events += 1;
@@ -604,6 +617,31 @@ impl AppCore {
         }
         Ok(true)
     }
+}
+
+impl AppCore {
+    fn should_replay_seen_protocol_event(
+        &self,
+        event: &Event,
+        is_invite_protocol_event: bool,
+    ) -> bool {
+        is_invite_protocol_event
+            && self
+                .current_queued_protocol_targets()
+                .iter()
+                .any(|target| target == &event.pubkey.to_hex())
+    }
+}
+
+fn is_protocol_invite_event(event: &Event) -> bool {
+    event.kind.as_u16() as u32 == INVITE_EVENT_KIND
+        && event.tags.iter().any(|tag| {
+            let values = tag.as_slice();
+            values.first().map(|value| value.as_str()) == Some("d")
+                && values
+                    .get(1)
+                    .is_some_and(|value| value.starts_with(NDR_INVITES_D_TAG_PREFIX))
+        })
 }
 
 #[cfg(test)]

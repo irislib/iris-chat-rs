@@ -5,7 +5,6 @@ const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const LOCAL_SIBLING_ROSTER_PROBE_TTL_SECS: u64 = 120;
-const INVITES_L_TAG: &str = "double-ratchet/invites";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProtocolEnginePersistedState {
@@ -2567,6 +2566,7 @@ impl ProtocolEngine {
                 Filter::new()
                     .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
                     .authors(owner_authors)
+                    .identifier(NDR_APP_KEYS_D_TAG)
                     .since(Timestamp::from(
                         now.get()
                             .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),
@@ -2579,7 +2579,7 @@ impl ProtocolEngine {
                 Filter::new()
                     .kind(Kind::from(INVITE_EVENT_KIND as u16))
                     .authors(invite_authors)
-                    .custom_tag(SingleLetterTag::lowercase(Alphabet::L), INVITES_L_TAG)
+                    .custom_tag(SingleLetterTag::lowercase(Alphabet::L), NDR_INVITES_L_TAG)
                     .since(Timestamp::from(
                         now.get()
                             .saturating_sub(DEVICE_INVITE_DISCOVERY_LOOKBACK_SECS),

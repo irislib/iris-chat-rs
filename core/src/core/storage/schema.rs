@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 8;
+const SCHEMA_VERSION: u32 = 9;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -264,6 +264,12 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             )?;
         }
     }
+    if current < 9 && !column_exists(&tx, "pending_relay_publishes", "target_owner_pubkey_hex")? {
+        tx.execute_batch(
+            "ALTER TABLE pending_relay_publishes
+             ADD COLUMN target_owner_pubkey_hex TEXT;",
+        )?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())
@@ -282,4 +288,60 @@ fn column_exists(
         }
     }
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_v8_pending_relay_publish_target_owner_column() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE pending_relay_publishes (
+                event_id TEXT PRIMARY KEY,
+                owner_pubkey_hex TEXT NOT NULL,
+                label TEXT NOT NULL,
+                event_json TEXT NOT NULL,
+                inner_event_id TEXT,
+                target_device_id TEXT,
+                message_id TEXT,
+                chat_id TEXT,
+                created_at_secs INTEGER NOT NULL,
+                attempt_count INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT
+            );
+            PRAGMA user_version = 8;
+            "#,
+        )
+        .unwrap();
+
+        ensure_schema(&mut conn).unwrap();
+
+        assert_eq!(user_version(&conn), SCHEMA_VERSION);
+        assert!(connection_column_exists(
+            &conn,
+            "pending_relay_publishes",
+            "target_owner_pubkey_hex"
+        ));
+    }
+
+    fn user_version(conn: &Connection) -> u32 {
+        conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .unwrap() as u32
+    }
+
+    fn connection_column_exists(conn: &Connection, table_name: &str, column_name: &str) -> bool {
+        let mut stmt = conn
+            .prepare(&format!("PRAGMA table_info({table_name})"))
+            .unwrap();
+        let rows = stmt.query_map([], |row| row.get::<_, String>(1)).unwrap();
+        for row in rows {
+            if row.unwrap() == column_name {
+                return true;
+            }
+        }
+        false
+    }
 }

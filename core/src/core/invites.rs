@@ -266,6 +266,7 @@ impl AppCore {
         let filter = Filter::new()
             .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
             .author(owner_pubkey)
+            .identifier(NDR_APP_KEYS_D_TAG)
             .limit(10);
         let fetched = self.runtime.block_on(async {
             ensure_session_relays_configured(&client, &relay_urls).await;
