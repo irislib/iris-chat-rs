@@ -59,7 +59,9 @@ final class NotificationService: UNNotificationServiceExtension {
         if !resolution.body.isEmpty {
             bestAttempt.body = resolution.body
         }
-        if !resolution.shouldShow {
+        if resolution.shouldShow {
+            bestAttempt.sound = .default
+        } else {
             // Non-message kinds (typing, reactions, settings) on
             // platforms that can really suppress would never reach
             // here. iOS can't, so clear sound/badge for previews that

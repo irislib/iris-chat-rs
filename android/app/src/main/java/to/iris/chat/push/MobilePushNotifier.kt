@@ -72,7 +72,11 @@ object MobilePushNotifier {
                 CHANNEL_ID,
                 "Messages",
                 NotificationManager.IMPORTANCE_HIGH,
-            )
+            ).apply {
+                enableVibration(true)
+                vibrationPattern = VIBRATION_PATTERN
+                setShowBadge(true)
+            }
         manager.createNotificationChannel(channel)
     }
 
@@ -86,4 +90,5 @@ object MobilePushNotifier {
 
     private const val TAG = "IrisPush"
     const val CHANNEL_ID = "iris_chat_messages"
+    private val VIBRATION_PATTERN = longArrayOf(0, 220, 90, 220)
 }
