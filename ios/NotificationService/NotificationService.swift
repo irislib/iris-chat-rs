@@ -14,6 +14,13 @@ final class NotificationService: UNNotificationServiceExtension {
     private static let appGroupIdentifier = "group.to.iris.chat"
     private static let keychainService = "to.iris.chat"
     private static let keychainAccount = "stored-account-bundle"
+    private static let encryptedEventPayloadKeys = [
+        "event",
+        "outer_event",
+        "outer_event_json",
+        "nostr_event",
+        "nostr_event_json",
+    ]
 
     private var contentHandler: ((UNNotificationContent) -> Void)?
     private var bestAttempt: UNMutableNotificationContent?
@@ -50,6 +57,10 @@ final class NotificationService: UNNotificationServiceExtension {
 
         let hasPreview = !resolution.title.isEmpty || !resolution.body.isEmpty
         if !resolution.shouldShow && !hasPreview {
+            contentHandler(bestAttempt)
+            return
+        }
+        if shouldClearFallback && isGenericFallbackResolution(resolution) {
             contentHandler(bestAttempt)
             return
         }
@@ -104,7 +115,12 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     private func isLikelyEncryptedIrisPush(_ content: UNNotificationContent) -> Bool {
-        eventKind(content.userInfo["event"]) == 1060 || isGenericIrisFallback(content)
+        for key in Self.encryptedEventPayloadKeys {
+            if eventKind(content.userInfo[key]) == 1060 {
+                return true
+            }
+        }
+        return isGenericIrisFallback(content)
     }
 
     private func eventKind(_ value: Any?) -> Int? {
@@ -136,9 +152,24 @@ final class NotificationService: UNNotificationServiceExtension {
     }
 
     private func isGenericIrisFallback(_ content: UNNotificationContent) -> Bool {
-        let title = content.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let body = content.body.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return title == "iris chat" && (body.isEmpty || body == "new activity" || body == "new message")
+        isGenericFallback(title: content.title, body: content.body)
+    }
+
+    private func isGenericFallbackResolution(_ resolution: MobilePushNotificationResolution) -> Bool {
+        isGenericFallback(title: resolution.title, body: resolution.body)
+    }
+
+    private func isGenericFallback(title: String, body: String) -> Bool {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let body = body.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let genericBody = body.isEmpty || body == "new activity" || body == "new message"
+        let genericTitle = title.isEmpty ||
+            title == "iris chat" ||
+            title == "new activity" ||
+            title == "new message" ||
+            title == "someone" ||
+            title.hasPrefix("dm by ")
+        return genericTitle && genericBody
     }
 
     private func clearVisibleFallback(_ content: UNMutableNotificationContent) {

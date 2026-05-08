@@ -3333,32 +3333,54 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
     let message = "compacted apns preview";
     let message_event =
         appcore_direct_message_event_for_test(&mut bob_engine, &alice_keys, message, 200);
-    let payload = serde_json::json!({
-        "aps": {
-            "alert": {
-                "title": "Iris Chat",
-                "body": "New message",
+    for (key, event_payload) in [
+        ("event", compact_event_payload_for_apns_test(&message_event)),
+        (
+            "outer_event",
+            compact_event_payload_for_apns_test(&message_event),
+        ),
+        (
+            "outer_event_json",
+            serde_json::Value::String(
+                serde_json::to_string(&message_event).expect("outer event json"),
+            ),
+        ),
+        (
+            "nostr_event_json",
+            serde_json::Value::String(
+                serde_json::to_string(&message_event).expect("nostr event json"),
+            ),
+        ),
+    ] {
+        let mut payload = serde_json::json!({
+            "aps": {
+                "alert": {
+                    "title": "Iris Chat",
+                    "body": "New message",
+                },
+                "mutable-content": 1,
             },
-            "mutable-content": 1,
-        },
-        "event": compact_event_payload_for_apns_test(&message_event),
-        "title": "New message",
-        "body": "New message",
-    })
-    .to_string();
+            "title": "New message",
+            "body": "New message",
+        });
+        payload[key] = event_payload;
 
-    let resolution = decrypt_mobile_push_notification(
-        data_dir.to_string_lossy().to_string(),
-        bob_keys.public_key().to_hex(),
-        bob_keys
-            .secret_key()
-            .to_bech32()
-            .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
-        payload,
-    );
+        let resolution = decrypt_mobile_push_notification(
+            data_dir.to_string_lossy().to_string(),
+            bob_keys.public_key().to_hex(),
+            bob_keys
+                .secret_key()
+                .to_bech32()
+                .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
+            payload.to_string(),
+        );
 
-    assert!(resolution.should_show);
-    assert_eq!(resolution.body, message);
+        assert!(
+            resolution.should_show,
+            "{key} payload should decrypt to a visible message"
+        );
+        assert_eq!(resolution.body, message, "{key} payload body");
+    }
 }
 
 #[test]
@@ -3516,6 +3538,28 @@ fn mobile_push_fallback_suppresses_opaque_encrypted_events() {
         .expect("outer event");
     let payload = serde_json::json!({
         "event": encrypted_outer_event,
+        "title": "DM by Someone",
+        "body": "New message",
+    })
+    .to_string();
+
+    let resolution = resolve_mobile_push_notification(payload);
+
+    assert!(!resolution.should_show);
+    assert!(resolution.title.is_empty());
+    assert!(resolution.body.is_empty());
+}
+
+#[test]
+fn mobile_push_fallback_suppresses_opaque_encrypted_alias_events_with_string_kind() {
+    let encrypted_outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
+        .sign_with_keys(&Keys::generate())
+        .expect("outer event");
+    let mut event_json =
+        serde_json::to_value(&encrypted_outer_event).expect("outer event json value");
+    event_json["kind"] = serde_json::Value::String(MESSAGE_EVENT_KIND.to_string());
+    let payload = serde_json::json!({
+        "outer_event_json": event_json.to_string(),
         "title": "DM by Someone",
         "body": "New message",
     })

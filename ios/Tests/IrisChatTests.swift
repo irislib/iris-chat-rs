@@ -431,6 +431,30 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testForegroundEncryptedAliasPushWithStringKindIsSuppressed() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let manager = AppManager(
+            rust: MockRustApp(),
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+        let content = UNMutableNotificationContent()
+        content.title = "DM by Someone"
+        content.body = "New message"
+        content.userInfo = [
+            "outer_event_json": #"{"kind":"1060"}"#,
+            "non_json_value": Date(),
+        ]
+
+        let options = await manager.foregroundPushPresentationOptions(content: content)
+
+        XCTAssertTrue(options.isEmpty, "aliased encrypted pushes must not show the APNS fallback")
+    }
+
+    @MainActor
     func testForegroundNonPushWithUnserializablePayloadUsesSystemPresentation() async throws {
         let dataDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

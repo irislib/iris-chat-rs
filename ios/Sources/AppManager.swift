@@ -1731,6 +1731,13 @@ private func chatLinkFragmentComponents(_ url: URL) -> [String] {
 private let foregroundDecryptedPushMarkerKey = "iris_foreground_decrypted_push"
 private let encryptedMobilePushOuterKind = 1060
 private let mobilePushGroupChatPrefix = "group:"
+private let encryptedMobilePushPayloadKeys = [
+    "event",
+    "outer_event",
+    "outer_event_json",
+    "nostr_event",
+    "nostr_event_json",
+]
 
 private func serializedPushPayload(userInfo: [AnyHashable: Any]) -> String? {
     serializedPushPayload(dictionary: pushPayloadDictionary(userInfo: userInfo))
@@ -1768,18 +1775,28 @@ private func serializedPushPayload(dictionary dict: [String: Any]) -> String? {
 }
 
 private func isOpaqueEncryptedPush(userInfo: [AnyHashable: Any]) -> Bool {
-    pushEventKind(userInfo["event"]) == encryptedMobilePushOuterKind
-        || pushEventKind(userInfo["inner_event_json"]) == encryptedMobilePushOuterKind
+    encryptedMobilePushPayloadKeys.contains { key in
+        pushEventKind(userInfo[key]) == encryptedMobilePushOuterKind
+    }
 }
 
 private func hasPushEventPayload(userInfo: [AnyHashable: Any]) -> Bool {
-    userInfo["event"] != nil || userInfo["inner_event_json"] != nil || userInfo["inner_event"] != nil
+    encryptedMobilePushPayloadKeys.contains { userInfo[$0] != nil } ||
+        userInfo["inner_event_json"] != nil ||
+        userInfo["inner_event"] != nil
 }
 
 private func isGenericIrisFallback(content: UNNotificationContent) -> Bool {
     let title = content.title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     let body = content.body.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    return title == "iris chat" && (body.isEmpty || body == "new activity" || body == "new message")
+    let genericBody = body.isEmpty || body == "new activity" || body == "new message"
+    let genericTitle = title.isEmpty ||
+        title == "iris chat" ||
+        title == "new activity" ||
+        title == "new message" ||
+        title == "someone" ||
+        title.hasPrefix("dm by ")
+    return genericTitle && genericBody
 }
 
 private func pushEventKind(_ value: Any?) -> Int? {

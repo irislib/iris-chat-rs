@@ -14,6 +14,21 @@ const MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND: u64 = MESSAGE_EVENT_KIND as u64;
 const MOBILE_PUSH_PRODUCTION_SERVER_URL: &str = "https://notifications.iris.to";
 const MOBILE_PUSH_SANDBOX_SERVER_URL: &str = "https://notifications-sandbox.iris.to";
 const MAX_PENDING_MOBILE_PUSH_EVENTS: usize = 32;
+const MOBILE_PUSH_OUTER_EVENT_PAYLOAD_KEYS: &[&str] = &[
+    "event",
+    "outer_event",
+    "outer_event_json",
+    "nostr_event",
+    "nostr_event_json",
+];
+const MOBILE_PUSH_EVENT_PAYLOAD_KEYS: &[&str] = &[
+    "event",
+    "outer_event",
+    "outer_event_json",
+    "nostr_event",
+    "nostr_event_json",
+    "inner_event_json",
+];
 
 impl AppCore {
     pub(super) fn build_mobile_push_sync_snapshot(&self) -> MobilePushSyncSnapshot {
@@ -108,15 +123,8 @@ impl AppCore {
 fn mobile_push_event_from_payload(raw_payload_json: &str) -> Option<Event> {
     let payload_value: serde_json::Value = serde_json::from_str(raw_payload_json).ok()?;
     let payload_object = payload_value.as_object()?;
-    for key in [
-        "event",
-        "outer_event",
-        "outer_event_json",
-        "nostr_event",
-        "nostr_event_json",
-        "inner_event_json",
-    ] {
-        let Some(value) = payload_object.get(key) else {
+    for key in MOBILE_PUSH_EVENT_PAYLOAD_KEYS {
+        let Some(value) = payload_object.get(*key) else {
             continue;
         };
         let Some(event_json) = payload_event_json(value) else {
@@ -168,14 +176,7 @@ pub(crate) fn decrypt_mobile_push_notification(
         None => return fallback(),
     };
 
-    let outer_event_json = payload_object
-        .get("event")
-        .and_then(payload_event_json)
-        .or_else(|| {
-            payload_object
-                .get("inner_event_json")
-                .and_then(payload_event_json)
-        });
+    let outer_event_json = first_payload_event_json(payload_object, MOBILE_PUSH_EVENT_PAYLOAD_KEYS);
     let Some(outer_event_json) = outer_event_json else {
         return fallback();
     };
@@ -183,7 +184,7 @@ pub(crate) fn decrypt_mobile_push_notification(
     let outer_event: nostr::Event = match serde_json::from_str(&outer_event_json) {
         Ok(event) => event,
         Err(_)
-            if payload_value_event_kind(payload_object.get("event"))
+            if first_payload_event_kind(payload_object, MOBILE_PUSH_EVENT_PAYLOAD_KEYS)
                 == Some(MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND) =>
         {
             return suppressed_resolution();
@@ -684,9 +685,10 @@ pub(crate) fn resolve_mobile_push_notification(
         .or_else(|| event_kind(payload.get("inner_event_json")))
         .or_else(|| event_kind(payload.get("inner_event")));
 
-    if inner_kind.is_none()
-        && event_kind(payload.get("event")) == Some(MOBILE_PUSH_INVITE_RESPONSE_KIND)
-    {
+    let outer_kind =
+        first_normalized_payload_event_kind(&payload, MOBILE_PUSH_OUTER_EVENT_PAYLOAD_KEYS);
+
+    if inner_kind.is_none() && outer_kind == Some(MOBILE_PUSH_INVITE_RESPONSE_KIND) {
         return invite_acceptance_fallback_resolution(payload);
     }
 
@@ -698,9 +700,7 @@ pub(crate) fn resolve_mobile_push_notification(
             payload_json: "{}".to_string(),
         };
     }
-    if inner_kind.is_none()
-        && event_kind(payload.get("event")) == Some(MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND)
-    {
+    if inner_kind.is_none() && outer_kind == Some(MOBILE_PUSH_OUTER_MESSAGE_EVENT_KIND) {
         return MobilePushNotificationResolution {
             should_show: false,
             title: String::new(),
@@ -1011,14 +1011,38 @@ fn payload_event_json(value: &serde_json::Value) -> Option<String> {
     None
 }
 
+fn first_payload_event_json(
+    payload_object: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| payload_object.get(*key))
+        .find_map(payload_event_json)
+}
+
+fn first_payload_event_kind(
+    payload_object: &serde_json::Map<String, serde_json::Value>,
+    keys: &[&str],
+) -> Option<u64> {
+    keys.iter()
+        .filter_map(|key| payload_object.get(*key))
+        .find_map(|value| payload_value_event_kind(Some(value)))
+}
+
 fn payload_value_event_kind(value: Option<&serde_json::Value>) -> Option<u64> {
     let value = value?;
-    if let Some(kind) = value.get("kind").and_then(|kind| kind.as_u64()) {
+    if let Some(kind) = value.get("kind").and_then(json_u64) {
         return Some(kind);
     }
     let raw = value.as_str()?;
     let decoded = serde_json::from_str::<serde_json::Value>(raw).ok()?;
-    decoded.get("kind")?.as_u64()
+    decoded.get("kind").and_then(json_u64)
+}
+
+fn json_u64(value: &serde_json::Value) -> Option<u64> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str()?.trim().parse::<u64>().ok())
 }
 
 fn resolved_title(payload: &BTreeMap<String, String>) -> String {
@@ -1056,7 +1080,14 @@ fn is_generic_sender_title(value: &str) -> bool {
 
 fn event_kind(value: Option<&String>) -> Option<u64> {
     let decoded = serde_json::from_str::<serde_json::Value>(value?).ok()?;
-    decoded.get("kind")?.as_u64()
+    decoded.get("kind").and_then(json_u64)
+}
+
+fn first_normalized_payload_event_kind(
+    payload: &BTreeMap<String, String>,
+    keys: &[&str],
+) -> Option<u64> {
+    keys.iter().find_map(|key| event_kind(payload.get(*key)))
 }
 
 fn event_content(value: Option<&String>) -> Option<String> {

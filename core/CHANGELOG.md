@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.19
+
+- Harden mobile push notification payload parsing so APNS/FCM event aliases decrypt the same as canonical event payloads.
+- Suppress generic mobile push placeholders when an encrypted message notification cannot be decrypted into sender/message text.
+- Keep iOS foreground notification handling aligned with the Notification Service Extension so generic "New message" fallbacks are not shown.
+
 ## 0.1.18
 
 - Keep direct runtime rumor author validation canonical to the authenticated owner pubkey.
