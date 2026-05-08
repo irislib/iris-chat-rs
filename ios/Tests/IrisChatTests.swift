@@ -169,6 +169,19 @@ private enum MockRustAppError: Error {
     case dispatchFailed
 }
 
+final class IrisEmojiPickerSearchTests: XCTestCase {
+    func testSearchMatchesUnicodeEmojiNames() {
+        XCTAssertTrue(irisEmojiMatchesSearch("👍", category: "Hands", query: "thumbs up"))
+        XCTAssertTrue(irisEmojiMatchesSearch("🍕", category: "Food", query: "pizza"))
+        XCTAssertFalse(irisEmojiMatchesSearch("🍕", category: "Food", query: "thumbs up"))
+    }
+
+    func testSearchMatchesCommonAliases() {
+        XCTAssertTrue(irisEmojiMatchesSearch("😂", category: "Smileys", query: "laugh"))
+        XCTAssertTrue(irisEmojiMatchesSearch("❤️", category: "Hearts", query: "love"))
+    }
+}
+
 private func makeBusyState() -> BusyState {
     BusyState(
         creatingAccount: false,

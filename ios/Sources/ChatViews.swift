@@ -478,6 +478,10 @@ private struct ChatMessageRow: View {
         IrisLayout.usesDesktopChrome && isHovering
     }
 
+    private var postReactionSuggestions: [String] {
+        irisPostReactionSuggestionEmojis(reactions)
+    }
+
     private var bubbleShape: ChatMessageBubbleShape {
         ChatMessageBubbleShape(
             isOutgoing: message.isOutgoing,
@@ -624,6 +628,7 @@ private struct ChatMessageRow: View {
                     }
                     .sheet(isPresented: $showReactionPicker) {
                         IrisEmojiPicker(
+                            suggestedEmojis: postReactionSuggestions,
                             onClose: { showReactionPicker = false }
                         ) { emoji in
                             showReactionPicker = false
@@ -1181,6 +1186,103 @@ private struct ChatMessageActionDock: View {
 
 private let quickReactionEmojis: [String] = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"]
 
+func irisPostReactionSuggestionEmojis(_ reactions: [MessageReactionSnapshot]) -> [String] {
+    reactions
+        .filter { reaction in
+            reaction.count > (reaction.reactedByMe ? UInt64(1) : UInt64(0))
+        }
+        .map(\.emoji)
+}
+
+private func irisUniqueEmojis(_ emojis: [String]) -> [String] {
+    var seen = Set<String>()
+    var result: [String] = []
+    for emoji in emojis {
+        let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, seen.insert(trimmed).inserted else {
+            continue
+        }
+        result.append(trimmed)
+    }
+    return result
+}
+
+private func irisReactionQuickChoices(postSuggestions: [String]) -> [String] {
+    Array(irisUniqueEmojis(postSuggestions + IrisRecentEmojiStore.emojis() + quickReactionEmojis).prefix(7))
+}
+
+private enum IrisRecentEmojiStore {
+    private static let key = "iris.recentReactionEmojis"
+    private static let limit = 16
+
+    static func emojis() -> [String] {
+        guard let values = UserDefaults.standard.stringArray(forKey: key) else {
+            return []
+        }
+        return irisUniqueEmojis(values)
+    }
+
+    static func remember(_ emoji: String) {
+        let trimmed = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        let values = [trimmed] + emojis().filter { $0 != trimmed }
+        UserDefaults.standard.set(Array(values.prefix(limit)), forKey: key)
+    }
+}
+
+func irisEmojiMatchesSearch(_ emoji: String, category: String, query: String) -> Bool {
+    let tokens = irisNormalizeEmojiSearchText(query)
+        .split(separator: " ")
+        .map(String.init)
+    guard !tokens.isEmpty else {
+        return true
+    }
+
+    let scalarNames = emoji.unicodeScalars
+        .compactMap { $0.properties.name }
+        .joined(separator: " ")
+    let aliases = irisEmojiSearchAliases[emoji] ?? ""
+    let haystack = irisNormalizeEmojiSearchText("\(emoji) \(category) \(scalarNames) \(aliases)")
+    return tokens.allSatisfy { haystack.contains($0) }
+}
+
+private func irisNormalizeEmojiSearchText(_ value: String) -> String {
+    value
+        .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+        .replacingOccurrences(of: "_", with: " ")
+        .replacingOccurrences(of: "-", with: " ")
+        .lowercased()
+}
+
+private let irisEmojiSearchAliases: [String: String] = [
+    "😂": "laugh laughing lol haha",
+    "🤣": "laugh laughing lol haha rolling",
+    "😊": "smile smiling happy",
+    "🙂": "smile smiling happy",
+    "😍": "love heart eyes",
+    "🥰": "love hearts",
+    "😘": "kiss love",
+    "😢": "sad tear crying",
+    "😭": "sad cry crying",
+    "😠": "angry mad",
+    "🤬": "angry mad swearing",
+    "🙏": "pray praying thanks thank you please",
+    "👏": "clap applause",
+    "🙌": "hooray yay hands",
+    "❤️": "love heart red",
+    "♥️": "love heart red",
+    "🔥": "fire lit hot",
+    "🎉": "party celebrate celebration",
+    "🎊": "party celebrate celebration",
+    "✨": "sparkle sparkles",
+    "✅": "yes check done",
+    "❌": "no cross x",
+    "👀": "eyes look watching",
+    "💯": "hundred perfect",
+]
+
 private struct ChatMessageActionsSheet: View {
     @Environment(\.irisPalette) private var palette
     let message: ChatMessageSnapshot
@@ -1191,6 +1293,10 @@ private struct ChatMessageActionsSheet: View {
     let onCopy: () -> Void
     let onInfo: () -> Void
     let onDelete: () -> Void
+
+    private var postReactionSuggestions: [String] {
+        irisPostReactionSuggestionEmojis(message.reactions)
+    }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -1217,8 +1323,9 @@ private struct ChatMessageActionsSheet: View {
 
     private var quickReactionRow: some View {
         HStack(spacing: 4) {
-            ForEach(quickReactionEmojis, id: \.self) { emoji in
+            ForEach(irisReactionQuickChoices(postSuggestions: postReactionSuggestions), id: \.self) { emoji in
                 Button {
+                    IrisRecentEmojiStore.remember(emoji)
                     onReact(emoji)
                 } label: {
                     Text(emoji)
@@ -1314,15 +1421,19 @@ private struct ChatMessageActionsSheet: View {
 
 private struct IrisEmojiPicker: View {
     @Environment(\.irisPalette) private var palette
+    let suggestedEmojis: [String]
     let onPick: (String) -> Void
     let onClose: (() -> Void)?
 
     @State private var query: String = ""
+    @State private var recentEmojis: [String] = IrisRecentEmojiStore.emojis()
 
     init(
+        suggestedEmojis: [String] = [],
         onClose: (() -> Void)? = nil,
         onPick: @escaping (String) -> Void
     ) {
+        self.suggestedEmojis = suggestedEmojis
         self.onClose = onClose
         self.onPick = onPick
     }
@@ -1350,14 +1461,31 @@ private struct IrisEmojiPicker: View {
 
     private var filteredCategories: [(String, String, [String])] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return Self.categories }
+        guard !q.isEmpty else {
+            var sections: [(String, String, [String])] = []
+            let postEmojis = irisUniqueEmojis(suggestedEmojis)
+            if !postEmojis.isEmpty {
+                sections.append(("On this post", "bubble.left.and.bubble.right.fill", postEmojis))
+            }
+            let recent = irisUniqueEmojis(recentEmojis).filter { !postEmojis.contains($0) }
+            if !recent.isEmpty {
+                sections.append(("Recent", "clock.fill", recent))
+            }
+            return sections + Self.categories
+        }
         return Self.categories.compactMap { name, icon, list in
-            let hits = list.filter { $0.contains(q) || name.localizedCaseInsensitiveContains(q) }
+            let hits = list.filter { irisEmojiMatchesSearch($0, category: name, query: q) }
             return hits.isEmpty ? nil : (name, icon, hits)
         }
     }
 
     private let columns = [GridItem(.adaptive(minimum: 40), spacing: 4)]
+
+    private func pick(_ emoji: String) {
+        IrisRecentEmojiStore.remember(emoji)
+        recentEmojis = IrisRecentEmojiStore.emojis()
+        onPick(emoji)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1389,9 +1517,9 @@ private struct IrisEmojiPicker: View {
                     ForEach(filteredCategories, id: \.0) { name, icon, list in
                         Section {
                             LazyVGrid(columns: columns, spacing: 4) {
-                                ForEach(list, id: \.self) { emoji in
+                                ForEach(Array(list.enumerated()), id: \.offset) { _, emoji in
                                     Button {
-                                        onPick(emoji)
+                                        pick(emoji)
                                     } label: {
                                         Text(emoji)
                                             .font(.system(size: 26))
@@ -1421,6 +1549,9 @@ private struct IrisEmojiPicker: View {
         }
         .frame(minWidth: 280, idealWidth: 320, minHeight: 320, idealHeight: 420)
         .background(palette.background)
+        .onAppear {
+            recentEmojis = IrisRecentEmojiStore.emojis()
+        }
     }
 }
 

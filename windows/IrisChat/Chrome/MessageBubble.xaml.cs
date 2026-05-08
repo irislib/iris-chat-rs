@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -12,6 +13,10 @@ namespace IrisChat.Chrome;
 
 public partial class MessageBubble : UserControl
 {
+    private static readonly string[] DefaultReactionEmojis = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"];
+    private static readonly List<string> RecentReactionEmojis = LoadRecentReactionEmojis();
+    private const int RecentReactionEmojiLimit = 16;
+
     private ChatMessageSnapshot? _message;
 
     public MessageBubble()
@@ -22,6 +27,7 @@ public partial class MessageBubble : UserControl
     public void Bind(ChatMessageSnapshot message, bool showAuthor = false, string? authorLabel = null)
     {
         _message = message;
+        BuildContextMenu(message);
 
         if (showAuthor && !string.IsNullOrEmpty(authorLabel))
         {
@@ -87,6 +93,128 @@ public partial class MessageBubble : UserControl
         {
             AttachmentsList.Visibility = Visibility.Collapsed;
         }
+    }
+
+    private void BuildContextMenu(ChatMessageSnapshot message)
+    {
+        var menu = new ContextMenu();
+        if (message.kind != ChatMessageKind.System)
+        {
+            var react = new MenuItem { Header = "React" };
+            foreach (var emoji in ReactionPickerEmojis(message))
+            {
+                var selected = emoji;
+                var item = new MenuItem { Header = selected };
+                item.Click += (_, _) => ToggleReaction(selected);
+                react.Items.Add(item);
+            }
+            menu.Items.Add(react);
+            menu.Items.Add(new Separator());
+        }
+
+        var copy = new MenuItem { Header = "Copy" };
+        copy.Click += OnCopyText;
+        menu.Items.Add(copy);
+
+        var info = new MenuItem { Header = "Message info" };
+        info.Click += OnShowInfo;
+        menu.Items.Add(info);
+
+        ContextMenu = menu;
+    }
+
+    private static IEnumerable<string> ReactionPickerEmojis(ChatMessageSnapshot message)
+    {
+        var values = new List<string>();
+        if (message.reactions != null)
+        {
+            foreach (var reaction in message.reactions)
+            {
+                var count = Convert.ToUInt64(reaction.count);
+                var mine = reaction.reactedByMe ? 1UL : 0UL;
+                if (count > mine)
+                {
+                    values.Add(reaction.emoji);
+                }
+            }
+        }
+        values.AddRange(RecentReactionEmojis);
+        values.AddRange(DefaultReactionEmojis);
+        return UniqueReactionEmojis(values).Take(7);
+    }
+
+    private static IEnumerable<string> UniqueReactionEmojis(IEnumerable<string> emojis)
+    {
+        var seen = new HashSet<string>();
+        foreach (var emoji in emojis)
+        {
+            var trimmed = emoji.Trim();
+            if (trimmed.Length > 0 && seen.Add(trimmed))
+            {
+                yield return trimmed;
+            }
+        }
+    }
+
+    private static void RememberReactionEmoji(string emoji)
+    {
+        var trimmed = emoji.Trim();
+        if (trimmed.Length == 0) return;
+        RecentReactionEmojis.Remove(trimmed);
+        RecentReactionEmojis.Insert(0, trimmed);
+        if (RecentReactionEmojis.Count > RecentReactionEmojiLimit)
+        {
+            RecentReactionEmojis.RemoveRange(RecentReactionEmojiLimit, RecentReactionEmojis.Count - RecentReactionEmojiLimit);
+        }
+        SaveRecentReactionEmojis();
+    }
+
+    private static List<string> LoadRecentReactionEmojis()
+    {
+        var path = RecentReactionEmojiPath();
+        if (path == null || !File.Exists(path)) return [];
+        try
+        {
+            return UniqueReactionEmojis(File.ReadAllLines(path)).Take(RecentReactionEmojiLimit).ToList();
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    private static void SaveRecentReactionEmojis()
+    {
+        var path = RecentReactionEmojiPath();
+        if (path == null) return;
+        try
+        {
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+            File.WriteAllLines(path, RecentReactionEmojis);
+        }
+        catch
+        {
+            // Recent reactions are a convenience cache.
+        }
+    }
+
+    private static string? RecentReactionEmojiPath()
+    {
+        var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return string.IsNullOrEmpty(appData)
+            ? null
+            : Path.Combine(appData, "IrisChat", "recent-reactions.txt");
+    }
+
+    private void ToggleReaction(string emoji)
+    {
+        if (_message == null) return;
+        RememberReactionEmoji(emoji);
+        App.CurrentManager.ToggleReaction(_message.chatId, _message.id, emoji);
     }
 
     private FrameworkElement BuildAttachmentRow(MessageAttachmentSnapshot att)

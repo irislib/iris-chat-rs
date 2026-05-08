@@ -1,4 +1,5 @@
 use std::rc::Rc;
+use std::sync::{Mutex, OnceLock};
 
 use adw::prelude::*;
 use iris_chat_core::{
@@ -764,8 +765,8 @@ fn build_message_popover(
     column.set_margin_end(6);
 
     let reactions_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-    for emoji in ["👍", "❤️", "😂", "🎉", "😢", "🔥"] {
-        let btn = gtk::Button::with_label(emoji);
+    for emoji in reaction_picker_emojis(message) {
+        let btn = gtk::Button::with_label(&emoji);
         btn.add_css_class("flat");
         btn.add_css_class("circular");
         let manager = manager.clone();
@@ -774,6 +775,7 @@ fn build_message_popover(
         let emoji_owned = emoji.to_string();
         let popover_for_close = popover.clone();
         btn.connect_clicked(move |_| {
+            remember_reaction_emoji(&emoji_owned);
             manager.dispatch(AppAction::ToggleReaction {
                 chat_id: chat_id.clone(),
                 message_id: message_id.clone(),
@@ -855,6 +857,7 @@ fn reactions_row(
         let message_id = message.id.clone();
         let emoji = reaction.emoji.clone();
         chip.connect_clicked(move |_| {
+            remember_reaction_emoji(&emoji);
             manager.dispatch(AppAction::ToggleReaction {
                 chat_id: chat_id.clone(),
                 message_id: message_id.clone(),
@@ -864,6 +867,95 @@ fn reactions_row(
         row.append(&chip);
     }
     row.upcast()
+}
+
+const DEFAULT_REACTION_EMOJIS: [&str; 7] = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"];
+const RECENT_REACTION_EMOJI_LIMIT: usize = 16;
+static RECENT_REACTION_EMOJIS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
+
+fn reaction_picker_emojis(message: &ChatMessageSnapshot) -> Vec<String> {
+    let mut owned = Vec::new();
+    for reaction in &message.reactions {
+        let my_count = if reaction.reacted_by_me { 1 } else { 0 };
+        if reaction.count > my_count {
+            owned.push(reaction.emoji.clone());
+        }
+    }
+    owned.extend(recent_reaction_emojis());
+    owned.extend(
+        DEFAULT_REACTION_EMOJIS
+            .iter()
+            .map(|emoji| (*emoji).to_string()),
+    );
+    unique_reaction_emojis(owned).into_iter().take(7).collect()
+}
+
+fn unique_reaction_emojis(emojis: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut result = Vec::new();
+    for emoji in emojis {
+        let trimmed = emoji.trim();
+        if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
+            result.push(trimmed.to_string());
+        }
+    }
+    result
+}
+
+fn recent_reaction_emojis() -> Vec<String> {
+    RECENT_REACTION_EMOJIS
+        .get_or_init(|| Mutex::new(load_recent_reaction_emojis()))
+        .lock()
+        .map(|items| items.clone())
+        .unwrap_or_default()
+}
+
+fn remember_reaction_emoji(emoji: &str) {
+    let trimmed = emoji.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+    if let Ok(mut items) = RECENT_REACTION_EMOJIS
+        .get_or_init(|| Mutex::new(load_recent_reaction_emojis()))
+        .lock()
+    {
+        items.retain(|item| item != trimmed);
+        items.insert(0, trimmed.to_string());
+        items.truncate(RECENT_REACTION_EMOJI_LIMIT);
+        save_recent_reaction_emojis(&items);
+    }
+}
+
+fn load_recent_reaction_emojis() -> Vec<String> {
+    let Some(path) = recent_reaction_emojis_path() else {
+        return Vec::new();
+    };
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    unique_reaction_emojis(contents.lines().map(str::to_string))
+        .into_iter()
+        .take(RECENT_REACTION_EMOJI_LIMIT)
+        .collect()
+}
+
+fn save_recent_reaction_emojis(emojis: &[String]) {
+    let Some(path) = recent_reaction_emojis_path() else {
+        return;
+    };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(path, emojis.join("\n"));
+}
+
+fn recent_reaction_emojis_path() -> Option<std::path::PathBuf> {
+    let config_home = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".config"))
+        })?;
+    Some(config_home.join("iris-chat").join("recent-reactions.txt"))
 }
 
 fn day_chip(label: &str) -> gtk::Widget {

@@ -48,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
@@ -77,8 +78,11 @@ import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisEmojiPickerSheet
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.formatMessageClock
+import to.iris.chat.ui.components.irisReactionQuickChoices
 import to.iris.chat.ui.components.isSameTimelineDay
+import to.iris.chat.ui.components.loadRecentReactionEmojis
 import to.iris.chat.ui.components.messageBubbleShape
+import to.iris.chat.ui.components.rememberRecentReactionEmoji
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 import androidx.compose.foundation.layout.heightIn
@@ -111,8 +115,14 @@ internal fun MessageBubble(
     }
 
     val clipboard = rememberIrisClipboard()
+    val context = LocalContext.current.applicationContext
     val hapticFeedback = LocalHapticFeedback.current
     val parsed = remember(message.body) { parseReplyEncodedMessage(message.body) }
+    val postReactionSuggestions = remember(reactions) { postReactionSuggestionEmojis(reactions) }
+    fun pickReaction(emoji: String) {
+        rememberRecentReactionEmoji(context, emoji)
+        onReact(emoji)
+    }
     val showDesktopActionDock = LocalConfiguration.current.screenWidthDp >= 600
     val hoverInteractionSource = remember { MutableInteractionSource() }
     val isHovering by hoverInteractionSource.collectIsHoveredAsState()
@@ -136,8 +146,9 @@ internal fun MessageBubble(
             onDismiss = { isActionsSheetOpen = false },
             onReact = { emoji ->
                 isActionsSheetOpen = false
-                onReact(emoji)
+                pickReaction(emoji)
             },
+            postReactionSuggestions = postReactionSuggestions,
             onShowFullReactionPicker = {
                 isActionsSheetOpen = false
                 isReactionPickerOpen = true
@@ -163,9 +174,10 @@ internal fun MessageBubble(
     if (isReactionPickerOpen) {
         IrisEmojiPickerSheet(
             onDismiss = { isReactionPickerOpen = false },
+            suggestedEmojis = postReactionSuggestions,
             onPick = { emoji ->
                 isReactionPickerOpen = false
-                onReact(emoji)
+                pickReaction(emoji)
             },
         )
     }
@@ -192,7 +204,8 @@ internal fun MessageBubble(
             ) {
                 if (showActionDock && message.isOutgoing) {
                     MessageActionDock(
-                        onReact = onReact,
+                        postReactionSuggestions = postReactionSuggestions,
+                        onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
                         onInfo = { isInfoOpen = true },
                         onDelete = onDelete,
@@ -309,7 +322,8 @@ internal fun MessageBubble(
                 }
                 if (showActionDock && !message.isOutgoing) {
                     MessageActionDock(
-                        onReact = onReact,
+                        postReactionSuggestions = postReactionSuggestions,
+                        onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
                         onInfo = { isInfoOpen = true },
                         onDelete = onDelete,
@@ -358,6 +372,7 @@ private fun SystemMessageChip(message: ChatMessageSnapshot) {
 
 @Composable
 private fun MessageActionDock(
+    postReactionSuggestions: List<String>,
     onReact: (String) -> Unit,
     onReply: () -> Unit,
     onInfo: () -> Unit,
@@ -384,6 +399,7 @@ private fun MessageActionDock(
                 ReactionPickerMenu(
                     expanded = reactionPickerOpen,
                     onDismiss = { reactionPickerOpen = false },
+                    postReactionSuggestions = postReactionSuggestions,
                     onEmoji = { emoji ->
                         reactionPickerOpen = false
                         onReact(emoji)
@@ -421,16 +437,24 @@ private fun MessageActionDock(
 private fun ReactionPickerMenu(
     expanded: Boolean,
     onDismiss: () -> Unit,
+    postReactionSuggestions: List<String>,
     onEmoji: (String) -> Unit,
 ) {
     if (!expanded) return
     IrisEmojiPickerSheet(
         onDismiss = onDismiss,
+        suggestedEmojis = postReactionSuggestions,
         onPick = onEmoji,
     )
 }
 
-private val QuickReactionEmojis = listOf("❤️", "👍", "😂", "😮", "😢", "🙏", "🔥")
+internal fun postReactionSuggestionEmojis(reactions: List<MessageReactionSnapshot>): List<String> =
+    reactions
+        .filter { reaction ->
+            val count = reaction.count.toString().toLongOrNull() ?: 0L
+            count > if (reaction.reactedByMe) 1L else 0L
+        }
+        .map { it.emoji }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -440,6 +464,7 @@ private fun MessageActionsSheet(
     reactions: List<MessageReactionSnapshot>,
     onDismiss: () -> Unit,
     onReact: (String) -> Unit,
+    postReactionSuggestions: List<String>,
     onShowFullReactionPicker: () -> Unit,
     onReply: () -> Unit,
     onCopy: () -> Unit,
@@ -461,6 +486,7 @@ private fun MessageActionsSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             QuickReactionRow(
+                postReactionSuggestions = postReactionSuggestions,
                 onPick = onReact,
                 onMore = onShowFullReactionPicker,
             )
@@ -494,9 +520,15 @@ private fun MessageActionsSheet(
 
 @Composable
 private fun QuickReactionRow(
+    postReactionSuggestions: List<String>,
     onPick: (String) -> Unit,
     onMore: () -> Unit,
 ) {
+    val context = LocalContext.current.applicationContext
+    val recentEmojis = remember { loadRecentReactionEmojis(context) }
+    val emojis = remember(postReactionSuggestions, recentEmojis) {
+        irisReactionQuickChoices(postReactionSuggestions, recentEmojis)
+    }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = IrisTheme.palette.panel,
@@ -507,7 +539,7 @@ private fun QuickReactionRow(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            QuickReactionEmojis.forEach { emoji ->
+            emojis.forEach { emoji ->
                 QuickReactionButton(emoji = emoji, onClick = { onPick(emoji) })
             }
             Box(
