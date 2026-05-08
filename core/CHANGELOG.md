@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.18
+
+- Accept encrypted direct messages whose verified inner rumor is authored by a known device key for the authenticated owner.
+- Require parsed runtime rumors to carry a verified inner event id and use that id as the app message id.
+
 ## 0.1.17
 
 - Switch AppCore to the protocol engine path and remove legacy NDR runtime state migration.

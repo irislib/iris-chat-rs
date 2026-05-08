@@ -364,7 +364,7 @@ impl AppCore {
         let is_outgoing = local_owner.is_some_and(|local_owner| sender_owner == local_owner);
         let created_at_secs = runtime_rumor.created_at_secs;
         let expires_at_secs = message_expiration_from_tags(runtime_rumor.tags.iter());
-        let message_id = runtime_rumor.id.clone();
+        let inner_event_id = runtime_rumor.id.clone();
         match runtime_rumor.kind {
             CHAT_MESSAGE_KIND => {
                 self.apply_runtime_text_message(
@@ -373,8 +373,8 @@ impl AppCore {
                     runtime_rumor.content,
                     created_at_secs,
                     expires_at_secs,
-                    message_id.clone(),
-                    message_id,
+                    Some(inner_event_id.clone()),
+                    Some(inner_event_id),
                 );
             }
             REACTION_KIND => {

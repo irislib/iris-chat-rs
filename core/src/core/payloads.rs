@@ -120,7 +120,7 @@ pub(super) fn direct_self_sync_chat_id(
 }
 
 pub(super) struct RuntimeRumor {
-    pub(super) id: Option<String>,
+    pub(super) id: String,
     pub(super) pubkey: PublicKey,
     pub(super) kind: u32,
     pub(super) content: String,
@@ -132,8 +132,9 @@ pub(super) fn parse_runtime_rumor(content: &str) -> Option<RuntimeRumor> {
     if let Ok(mut event) = serde_json::from_str::<UnsignedEvent>(content) {
         event.ensure_id();
         event.verify_id().ok()?;
+        let id = event.id.as_ref()?.to_string();
         return Some(RuntimeRumor {
-            id: event.id.as_ref().map(ToString::to_string),
+            id,
             pubkey: event.pubkey,
             kind: event.kind.as_u16() as u32,
             content: event.content.clone(),

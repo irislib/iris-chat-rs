@@ -1223,7 +1223,11 @@ impl AppCore {
             );
             return;
         };
-        if runtime_rumor.pubkey != effective_sender_owner {
+        if runtime_rumor.pubkey != effective_sender_owner
+            && !self
+                .direct_owner_for_known_device_pubkey(runtime_rumor.pubkey)
+                .is_some_and(|owner| owner == effective_sender_owner)
+        {
             self.push_debug_log(
                 "runtime_rumor.sender_mismatch",
                 format!(
@@ -1252,7 +1256,7 @@ impl AppCore {
             runtime_rumor.tags.iter(),
         );
         let is_outgoing = effective_sender_owner == local_owner;
-        let message_id = runtime_rumor.id.or_else(|| outer_event_id.clone());
+        let inner_event_id = runtime_rumor.id.clone();
 
         match kind {
             CHAT_MESSAGE_KIND => {
@@ -1262,13 +1266,11 @@ impl AppCore {
                     runtime_rumor.content,
                     created_at_secs,
                     expires_at_secs,
-                    message_id.clone(),
+                    Some(inner_event_id.clone()),
                     outer_event_id.clone(),
                 );
                 if !is_outgoing && self.preferences.send_read_receipts {
-                    if let Some(receipt_id) = message_id {
-                        self.send_receipt(&chat_id, "delivered", vec![receipt_id]);
-                    }
+                    self.send_receipt(&chat_id, "delivered", vec![inner_event_id]);
                 }
             }
             REACTION_KIND => {

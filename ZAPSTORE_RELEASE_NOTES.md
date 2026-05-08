@@ -1,5 +1,5 @@
-# Iris Chat 3.1.0
+# Iris Chat 3.1.1
 
-- Reworks encrypted chat delivery around the AppCore protocol engine.
-- Improves linked-device and group chat recovery.
-- Verifies encrypted message ids and authors before saving messages.
+- Fixes encrypted message delivery between the mobile app and chat.iris.to.
+- Accepts messages sent from a contact's linked device while keeping sender checks strict.
+- Uses verified encrypted message ids when saving messages.
