@@ -15,25 +15,52 @@ type ImageLoadCallback = Box<dyn FnOnce(&[u8]) + 'static>;
 
 thread_local! {
     static WAITERS: RefCell<HashMap<String, Vec<ImageLoadCallback>>> = RefCell::new(HashMap::new());
+    static TEXTURES: RefCell<HashMap<String, gdk::Texture>> = RefCell::new(HashMap::new());
 }
 
 pub fn fetch_into_picture(picture: &gtk::Picture, url: &str) {
+    if let Some(texture) = cached_texture(url) {
+        picture.set_paintable(Some(&texture));
+        return;
+    }
+
     let pic = picture.clone();
+    let url_owned = url.to_string();
     fetch_bytes(url, move |bytes| {
         let glib_bytes = glib::Bytes::from(bytes);
         if let Ok(texture) = gdk::Texture::from_bytes(&glib_bytes) {
+            cache_texture(&url_owned, &texture);
             pic.set_paintable(Some(&texture));
         }
     });
 }
 
 pub fn fetch_into_avatar(avatar: &adw::Avatar, url: &str) {
+    if let Some(texture) = cached_texture(url) {
+        avatar.set_custom_image(Some(&texture));
+        return;
+    }
+
     let av = avatar.clone();
+    let url_owned = url.to_string();
     fetch_bytes(url, move |bytes| {
         let glib_bytes = glib::Bytes::from(bytes);
         if let Ok(texture) = gdk::Texture::from_bytes(&glib_bytes) {
+            cache_texture(&url_owned, &texture);
             av.set_custom_image(Some(&texture));
         }
+    });
+}
+
+fn cached_texture(url: &str) -> Option<gdk::Texture> {
+    TEXTURES.with(|textures| textures.borrow().get(url).cloned())
+}
+
+fn cache_texture(url: &str, texture: &gdk::Texture) {
+    TEXTURES.with(|textures| {
+        textures
+            .borrow_mut()
+            .insert(url.to_string(), texture.clone());
     });
 }
 

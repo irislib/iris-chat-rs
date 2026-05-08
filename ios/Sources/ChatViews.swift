@@ -1,5 +1,11 @@
 import Foundation
+import ImageIO
 import SwiftUI
+#if os(iOS)
+import UIKit
+#elseif os(macOS)
+import AppKit
+#endif
 
 struct ChatScreen: View {
     @Environment(\.irisPalette) private var palette
@@ -145,26 +151,30 @@ struct ChatScreen: View {
                                     sentTypingIndicator = false
                                 }
                                 .onPreferenceChange(ChatTimelineViewportMaxYPreferenceKey.self) { value in
-                                    timelineViewportMaxY = value
                                     let nearBottom = chatTimelineIsNearBottom(
                                         viewportMaxY: value,
                                         bottomMaxY: timelineBottomMaxY
                                     )
-                                    isNearBottom = nearBottom
-                                    if chat.messages.count == renderedMessageCount {
-                                        shouldFollowLatest = nearBottom
+                                    if !chatTimelineGeometryMatches(timelineViewportMaxY, value) {
+                                        timelineViewportMaxY = value
                                     }
+                                    updateTimelineFollowState(
+                                        nearBottom: nearBottom,
+                                        messageCount: chat.messages.count
+                                    )
                                 }
                                 .onPreferenceChange(ChatTimelineBottomMaxYPreferenceKey.self) { value in
-                                    timelineBottomMaxY = value
                                     let nearBottom = chatTimelineIsNearBottom(
                                         viewportMaxY: timelineViewportMaxY,
                                         bottomMaxY: value
                                     )
-                                    isNearBottom = nearBottom
-                                    if chat.messages.count == renderedMessageCount {
-                                        shouldFollowLatest = nearBottom
+                                    if !chatTimelineGeometryMatches(timelineBottomMaxY, value) {
+                                        timelineBottomMaxY = value
                                     }
+                                    updateTimelineFollowState(
+                                        nearBottom: nearBottom,
+                                        messageCount: chat.messages.count
+                                    )
                                 }
                                 .task(id: chat.messages.last?.id) {
                                     guard !chat.messages.isEmpty else {
@@ -366,6 +376,15 @@ struct ChatScreen: View {
         }
     }
 
+    private func updateTimelineFollowState(nearBottom: Bool, messageCount: Int) {
+        if isNearBottom != nearBottom {
+            isNearBottom = nearBottom
+        }
+        if messageCount == renderedMessageCount, shouldFollowLatest != nearBottom {
+            shouldFollowLatest = nearBottom
+        }
+    }
+
     private func messageInfoContext(for selection: MessageInfoSelection) -> (message: ChatMessageSnapshot, chat: CurrentChatSnapshot?) {
         let currentChat = manager.state.currentChat?.chatId == selection.chatId ? manager.state.currentChat : nil
         let message = currentChat?.messages.first { $0.id == selection.messageId } ?? selection.snapshot
@@ -448,6 +467,16 @@ private func chatTimelineIsNearBottom(viewportMaxY: CGFloat, bottomMaxY: CGFloat
         return true
     }
     return bottomMaxY <= viewportMaxY + 24
+}
+
+private func chatTimelineGeometryMatches(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool {
+    if lhs == rhs {
+        return true
+    }
+    guard lhs.isFinite, rhs.isFinite else {
+        return false
+    }
+    return abs(lhs - rhs) < 0.5
 }
 
 private struct ChatMessageRow: View {
@@ -1749,6 +1778,81 @@ private func chatAttachmentCategory(for attachment: MessageAttachmentSnapshot) -
     return chatAttachmentCategory(from: attachment.filename)
 }
 
+private enum ChatAttachmentPreviewImageCache {
+    private static let cache: NSCache<NSString, PlatformImage> = {
+        let cache = NSCache<NSString, PlatformImage>()
+        cache.countLimit = 120
+        cache.totalCostLimit = 48 * 1024 * 1024
+        return cache
+    }()
+
+    static func image(for key: String) -> PlatformImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    static func store(_ image: PlatformImage, for key: String) {
+        cache.setObject(image, forKey: key as NSString, cost: imagePreviewCost(image))
+    }
+}
+
+private func makeChatAttachmentPreviewImage(data: Data, filename: String) -> PlatformImage? {
+    guard !isAnimatedImage(data: data, filename: filename) else {
+        return nil
+    }
+
+    let sourceOptions: [CFString: Any] = [
+        kCGImageSourceShouldCache: false
+    ]
+    guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions as CFDictionary) else {
+        return nil
+    }
+
+    let maxPixelSize = 512
+    let thumbnailOptions: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
+    ]
+    let fullImageOptions: [CFString: Any] = [
+        kCGImageSourceShouldCacheImmediately: true
+    ]
+    guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+        source,
+        0,
+        thumbnailOptions as CFDictionary
+    ) ?? CGImageSourceCreateImageAtIndex(source, 0, fullImageOptions as CFDictionary) else {
+        return nil
+    }
+
+    #if os(iOS)
+    return PlatformImage(cgImage: cgImage)
+    #elseif os(macOS)
+    return PlatformImage(
+        cgImage: cgImage,
+        size: NSSize(width: cgImage.width, height: cgImage.height)
+    )
+    #else
+    return nil
+    #endif
+}
+
+private func imagePreviewCost(_ image: PlatformImage) -> Int {
+    #if os(iOS)
+    let width = max(1, Int(image.size.width * image.scale))
+    let height = max(1, Int(image.size.height * image.scale))
+    let pixels = width * height
+    return pixels * 4
+    #elseif os(macOS)
+    let width = max(1, Int(image.size.width))
+    let height = max(1, Int(image.size.height))
+    let pixels = width * height
+    return pixels * 4
+    #else
+    return 1
+    #endif
+}
+
 private struct ChatAttachmentView: View {
     @Environment(\.irisPalette) private var palette
 
@@ -1759,16 +1863,10 @@ private struct ChatAttachmentView: View {
     let onOpenImage: (Data, String) -> Void
 
     @State private var localImageData: Data?
+    @State private var localPreviewImage: PlatformImage?
     @State private var isLoadingImage = false
     @State private var failedImageLoad = false
     @State private var isOpeningAttachment = false
-
-    private var localImage: PlatformImage? {
-        guard let localImageData, !isAnimatedImage(data: localImageData, filename: attachment.filename) else {
-            return nil
-        }
-        return PlatformImage(data: localImageData)
-    }
 
     var body: some View {
         if attachment.isImage {
@@ -1788,8 +1886,8 @@ private struct ChatAttachmentView: View {
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
                         .frame(width: 220, height: 150)
-                    if let localImage {
-                        Image(platformImage: localImage)
+                    if let localPreviewImage {
+                        Image(platformImage: localPreviewImage)
                             .resizable()
                             .scaledToFill()
                             .frame(width: 220, height: 150)
@@ -1870,15 +1968,23 @@ private struct ChatAttachmentView: View {
         }
         isLoadingImage = true
         failedImageLoad = false
+        if let cached = ChatAttachmentPreviewImageCache.image(for: attachment.htreeUrl) {
+            localPreviewImage = cached
+        }
         guard let data = await downloadAttachment(attachment) else {
             isLoadingImage = false
             failedImageLoad = true
             return
         }
-        if !isAnimatedImage(data: data, filename: attachment.filename), PlatformImage(data: data) == nil {
-            isLoadingImage = false
-            failedImageLoad = true
-            return
+        let isAnimated = isAnimatedImage(data: data, filename: attachment.filename)
+        if !isAnimated, localPreviewImage == nil {
+            guard let preview = makeChatAttachmentPreviewImage(data: data, filename: attachment.filename) else {
+                isLoadingImage = false
+                failedImageLoad = true
+                return
+            }
+            ChatAttachmentPreviewImageCache.store(preview, for: attachment.htreeUrl)
+            localPreviewImage = preview
         }
         localImageData = data
         isLoadingImage = false

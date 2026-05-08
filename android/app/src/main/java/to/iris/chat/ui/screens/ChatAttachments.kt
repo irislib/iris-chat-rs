@@ -2,11 +2,13 @@ package to.iris.chat.ui.screens
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
 import android.util.Log
+import android.util.LruCache
 import android.webkit.MimeTypeMap
 import android.webkit.WebView
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -70,7 +72,9 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import java.io.File
 import java.util.UUID
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.rememberIrisClipboard
@@ -259,6 +263,9 @@ internal fun AttachmentChip(
     val clipboard = rememberIrisClipboard()
     val scope = rememberCoroutineScope()
     var localImageData by remember(attachment.htreeUrl) { mutableStateOf<ByteArray?>(null) }
+    var localPreviewBitmap by remember(attachment.htreeUrl) {
+        mutableStateOf(ChatAttachmentPreviewBitmapCache.get(attachment.htreeUrl))
+    }
     var imageLoadFailed by remember(attachment.htreeUrl) { mutableStateOf(false) }
     var imageLoading by remember(attachment.htreeUrl) { mutableStateOf(false) }
     var attachmentOpening by remember(attachment.htreeUrl) { mutableStateOf(false) }
@@ -277,11 +284,23 @@ internal fun AttachmentChip(
         }
         imageLoading = true
         imageLoadFailed = false
+        if (localPreviewBitmap == null) {
+            localPreviewBitmap = ChatAttachmentPreviewBitmapCache.get(attachment.htreeUrl)
+        }
         val data = downloadAttachment(attachment)
         imageLoading = false
         if (data == null) {
             imageLoadFailed = true
             return null
+        }
+        if (!isAnimatedImage(data, attachment.filename) && localPreviewBitmap == null) {
+            val preview = decodeChatAttachmentPreviewBitmap(data)
+            if (preview == null) {
+                imageLoadFailed = true
+                return null
+            }
+            ChatAttachmentPreviewBitmapCache.put(attachment.htreeUrl, preview)
+            localPreviewBitmap = preview
         }
         localImageData = data
         return data
@@ -293,11 +312,6 @@ internal fun AttachmentChip(
         }
         val isAnimated = remember(localImageData, attachment.filename) {
             localImageData?.let { data -> isAnimatedImage(data, attachment.filename) } ?: isLikelyGif(attachment.filename)
-        }
-        val bitmap = remember(localImageData) {
-            localImageData
-                ?.takeUnless { data -> isAnimatedImage(data, attachment.filename) }
-                ?.let { data -> BitmapFactory.decodeByteArray(data, 0, data.size) }
         }
         Box(
             modifier =
@@ -319,9 +333,9 @@ internal fun AttachmentChip(
                     },
             contentAlignment = Alignment.Center,
         ) {
-            if (bitmap != null) {
+            if (localPreviewBitmap != null) {
                 Image(
-                    bitmap = bitmap.asImageBitmap(),
+                    bitmap = localPreviewBitmap!!.asImageBitmap(),
                     contentDescription = attachment.filename,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = ContentScale.Crop,
@@ -414,6 +428,56 @@ internal fun AttachmentChip(
             )
         }
     }
+}
+
+private object ChatAttachmentPreviewBitmapCache {
+    private const val MaxCacheKb = 48 * 1024
+
+    private val cache =
+        object : LruCache<String, Bitmap>(MaxCacheKb) {
+            override fun sizeOf(
+                key: String,
+                value: Bitmap,
+            ): Int = (value.byteCount / 1024).coerceAtLeast(1)
+        }
+
+    fun get(key: String): Bitmap? = cache.get(key)
+
+    fun put(
+        key: String,
+        bitmap: Bitmap,
+    ) {
+        cache.put(key, bitmap)
+    }
+}
+
+private suspend fun decodeChatAttachmentPreviewBitmap(data: ByteArray): Bitmap? =
+    withContext(Dispatchers.Default) {
+        val bounds =
+            BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+        BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+            return@withContext null
+        }
+        val options =
+            BitmapFactory.Options().apply {
+                inSampleSize = chatAttachmentPreviewSampleSize(bounds.outWidth, bounds.outHeight)
+            }
+        BitmapFactory.decodeByteArray(data, 0, data.size, options)
+    }
+
+private fun chatAttachmentPreviewSampleSize(
+    width: Int,
+    height: Int,
+): Int {
+    val maxPreviewPixels = 512
+    var sampleSize = 1
+    while (width / (sampleSize * 2) >= maxPreviewPixels || height / (sampleSize * 2) >= maxPreviewPixels) {
+        sampleSize *= 2
+    }
+    return sampleSize
 }
 
 private fun openDownloadedAttachment(
