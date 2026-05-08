@@ -5564,51 +5564,6 @@ fn incoming_direct_message_from_known_peer_device_routes_to_owner_thread() {
 }
 
 #[test]
-fn incoming_direct_message_from_known_peer_device_allows_device_authored_rumor() {
-    let owner = Keys::generate();
-    let local_device = Keys::generate();
-    let peer_owner = Keys::generate();
-    let peer_device = Keys::generate();
-    let mut core = logged_in_test_core("remote-device-authored-rumor", &owner, &local_device);
-    let peer_app_keys = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
-    core.app_keys.insert(
-        peer_owner.public_key().to_hex(),
-        known_app_keys_from_ndr(peer_owner.public_key(), &peer_app_keys, 1),
-    );
-    let peer_owner_chat_id = peer_owner.public_key().to_hex();
-    let peer_device_chat_id = peer_device.public_key().to_hex();
-    core.ensure_thread_record(&peer_owner_chat_id, 1);
-    let (content, inner_id) = runtime_rumor_json(
-        peer_device.public_key(),
-        CHAT_MESSAGE_KIND,
-        "web device authored message",
-        1_777_159_504,
-        Vec::new(),
-    );
-
-    core.apply_decrypted_runtime_message_with_metadata(
-        peer_owner.public_key(),
-        Some(peer_device.public_key()),
-        None,
-        content,
-        Some("d".repeat(64)),
-    );
-
-    let thread = core
-        .threads
-        .get(&peer_owner_chat_id)
-        .expect("peer owner thread");
-    assert_eq!(thread.messages.len(), 1);
-    assert_eq!(thread.messages[0].id, inner_id);
-    assert_eq!(thread.messages[0].body, "web device authored message");
-    assert!(!thread.messages[0].is_outgoing);
-    assert!(
-        !core.threads.contains_key(&peer_device_chat_id),
-        "known peer device-authored rumors must stay on the owner thread"
-    );
-}
-
-#[test]
 fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thread() {
     let owner = Keys::generate();
     let local_device = Keys::generate();

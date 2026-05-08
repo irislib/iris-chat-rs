@@ -1223,11 +1223,7 @@ impl AppCore {
             );
             return;
         };
-        if runtime_rumor.pubkey != effective_sender_owner
-            && !self
-                .direct_owner_for_known_device_pubkey(runtime_rumor.pubkey)
-                .is_some_and(|owner| owner == effective_sender_owner)
-        {
+        if runtime_rumor.pubkey != effective_sender_owner {
             self.push_debug_log(
                 "runtime_rumor.sender_mismatch",
                 format!(

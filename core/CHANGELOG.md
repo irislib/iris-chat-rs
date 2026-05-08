@@ -2,7 +2,7 @@
 
 ## 0.1.18
 
-- Accept encrypted direct messages whose verified inner rumor is authored by a known device key for the authenticated owner.
+- Keep direct runtime rumor author validation canonical to the authenticated owner pubkey.
 - Require parsed runtime rumors to carry a verified inner event id and use that id as the app message id.
 
 ## 0.1.17
