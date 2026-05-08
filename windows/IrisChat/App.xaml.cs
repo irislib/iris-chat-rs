@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Windows;
@@ -9,6 +10,8 @@ namespace IrisChat;
 
 public partial class App : Application
 {
+    private SingleInstanceService? _singleInstance;
+    private MainWindow? _window;
     public AppManager Manager { get; private set; } = null!;
 
     private readonly record struct PlatformPalette(
@@ -55,6 +58,13 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        _singleInstance = SingleInstanceService.ClaimOrSignal(e.Args);
+        if (_singleInstance is null)
+        {
+            Shutdown();
+            return;
+        }
+
         base.OnStartup(e);
 
         // Make the bundled native DLL discoverable to P/Invoke regardless of
@@ -73,21 +83,52 @@ public partial class App : Application
 
         Manager = new AppManager(dataDir);
         ApplyPlatformPalette();
-        var startMinimized = e.Args.Any(arg =>
-            string.Equals(arg, PlatformStartupAtLogin.BackgroundLaunchArgument, StringComparison.OrdinalIgnoreCase));
+        var startMinimized = IsBackgroundLaunch(e.Args);
         var window = new MainWindow(startMinimized);
+        _window = window;
         MainWindow = window;
+        _singleInstance.Start(args => Dispatcher.Invoke(() => HandleLaunchArgs(args)));
         window.Show();
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        _singleInstance?.Dispose();
         Manager?.Shutdown();
         base.OnExit(e);
     }
 
     public static AppManager CurrentManager =>
         ((App)Current).Manager;
+
+    private void HandleLaunchArgs(IEnumerable<string> args)
+    {
+        if (!IsBackgroundLaunch(args))
+        {
+            ShowMainWindow();
+        }
+    }
+
+    private void ShowMainWindow()
+    {
+        if (_window is null)
+        {
+            return;
+        }
+        if (!_window.IsVisible)
+        {
+            _window.Show();
+        }
+        if (_window.WindowState == WindowState.Minimized)
+        {
+            _window.WindowState = WindowState.Normal;
+        }
+        _window.Activate();
+    }
+
+    private static bool IsBackgroundLaunch(IEnumerable<string> args) =>
+        args.Any(arg =>
+            string.Equals(arg, PlatformStartupAtLogin.BackgroundLaunchArgument, StringComparison.OrdinalIgnoreCase));
 
     private static void ApplyPlatformPalette()
     {

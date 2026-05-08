@@ -31,6 +31,8 @@
   </array>
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.social-networking</string>
+  <key>LSMultipleInstancesProhibited</key>
+  <true/>
   <key>NSBluetoothAlwaysUsageDescription</key>
   <string>Find nearby people.</string>
   <key>NSBluetoothPeripheralUsageDescription</key>

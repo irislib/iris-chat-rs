@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct IrisChatMacApp: App {
     @StateObject private var manager = AppManager()
+    @NSApplicationDelegateAdaptor(IrisChatAppDelegate.self) private var appDelegate
     @Environment(\.scenePhase) private var scenePhase
     private let startInBackground = CommandLine.arguments.contains(PlatformStartupAtLogin.backgroundLaunchArgument)
 
@@ -12,6 +13,7 @@ struct IrisChatMacApp: App {
             RootView(manager: manager)
                 .frame(minWidth: 980, minHeight: 640)
                 .onAppear {
+                    appDelegate.configure(manager: manager, startInBackground: startInBackground)
                     if startInBackground {
                         NSApplication.shared.hide(nil)
                     }
