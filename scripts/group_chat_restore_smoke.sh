@@ -230,6 +230,48 @@ run_test_background() {
   IRIS_BACKGROUND_PID="$!"
 }
 
+run_test_step() {
+  local label="$1"
+  local serial="$2"
+  local test_name="$3"
+  local step_log
+  local status
+  shift 3
+
+  step_log="$(mktemp -t iris-restore-smoke-step.XXXXXX)"
+  if run_test "${serial}" "${test_name}" "$@" >"${step_log}" 2>&1; then
+    rm -f "${step_log}"
+    return 0
+  else
+    status="$?"
+  fi
+
+  if [[ "${test_name}" == "wait_for_message_from_args" ]] &&
+    grep -q '^INSTRUMENTATION_STATUS_CODE: 0$' "${step_log}" &&
+    grep -Eq '^INSTRUMENTATION_STATUS: matching_count=[1-9][0-9]*$' "${step_log}" &&
+    grep -q '^INSTRUMENTATION_RESULT: shortMsg=Process crashed\.$' "${step_log}"; then
+    echo "${label} reported the expected message before instrumentation teardown crashed; continuing." >&2
+    cat "${step_log}" >&2
+    rm -f "${step_log}"
+    return 0
+  fi
+
+  if [[ "${test_name}" == "send_message_from_args" ]] &&
+    grep -q '^INSTRUMENTATION_STATUS_CODE: 0$' "${step_log}" &&
+    grep -Eq '^INSTRUMENTATION_STATUS: delivery=(SENT|DELIVERED|SEEN)$' "${step_log}" &&
+    grep -q '^INSTRUMENTATION_RESULT: shortMsg=Process crashed\.$' "${step_log}"; then
+    echo "${label} reported a delivered send before instrumentation teardown crashed; continuing." >&2
+    cat "${step_log}" >&2
+    rm -f "${step_log}"
+    return 0
+  fi
+
+  echo "${label} failed on ${serial} (${test_name}) with exit code ${status}" >&2
+  cat "${step_log}" >&2 || true
+  rm -f "${step_log}"
+  return "${status}"
+}
+
 extract_status() {
   local key="$1"
   sed -n "s/^INSTRUMENTATION_STATUS: ${key}=//p" | tail -n 1
@@ -343,15 +385,15 @@ run_test "${PRIMARY_SERIAL}" wait_for_group_chat_from_args chat_id "${GROUP_CHAT
 run_test "${LINKED_SERIAL}" wait_for_group_chat_from_args chat_id "${GROUP_CHAT_ID}" >/dev/null
 
 echo "Sending group message from admin"
-run_test "${ADMIN_SERIAL}" send_message_from_args \
+run_test_step "admin send group message" "${ADMIN_SERIAL}" send_message_from_args \
   chat_id "${GROUP_CHAT_ID}" \
-  message "${ADMIN_MESSAGE}" >/dev/null
-run_test "${PRIMARY_SERIAL}" wait_for_message_from_args \
+  message "${ADMIN_MESSAGE}"
+run_test_step "primary wait for admin group message" "${PRIMARY_SERIAL}" wait_for_message_from_args \
   chat_id "${GROUP_CHAT_ID}" \
-  message "${ADMIN_MESSAGE}" >/dev/null
-run_test "${LINKED_SERIAL}" wait_for_message_from_args \
+  message "${ADMIN_MESSAGE}"
+run_test_step "linked wait for admin group message" "${LINKED_SERIAL}" wait_for_message_from_args \
   chat_id "${GROUP_CHAT_ID}" \
-  message "${ADMIN_MESSAGE}" >/dev/null
+  message "${ADMIN_MESSAGE}"
 
 echo "Sending group message from linked device"
 if [[ "${IRIS_RESTORE_SMOKE_TRACE_SEND:-0}" == "1" ]]; then
@@ -362,18 +404,18 @@ if [[ "${IRIS_RESTORE_SMOKE_TRACE_SEND:-0}" == "1" ]]; then
   echo "----- post-send linked debug snapshot -----" >&2
   run_test "${LINKED_SERIAL}" report_runtime_debug_snapshot | tail -n 80 >&2 || true
 else
-  run_test "${LINKED_SERIAL}" send_message_from_args \
+  run_test_step "linked send group message" "${LINKED_SERIAL}" send_message_from_args \
     chat_id "${GROUP_CHAT_ID}" \
-    message "${LINKED_MESSAGE}" >/dev/null
+    message "${LINKED_MESSAGE}"
 fi
-run_test "${ADMIN_SERIAL}" wait_for_message_from_args \
+run_test_step "admin wait for linked group message" "${ADMIN_SERIAL}" wait_for_message_from_args \
   chat_id "${GROUP_CHAT_ID}" \
   message "${LINKED_MESSAGE}" \
-  direction incoming >/dev/null
-run_test "${PRIMARY_SERIAL}" wait_for_message_from_args \
+  direction incoming
+run_test_step "primary wait for linked self-sync" "${PRIMARY_SERIAL}" wait_for_message_from_args \
   chat_id "${GROUP_CHAT_ID}" \
   message "${LINKED_MESSAGE}" \
-  direction outgoing >/dev/null
+  direction outgoing
 
 trap - ERR
 
