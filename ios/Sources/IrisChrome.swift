@@ -914,14 +914,13 @@ struct IrisChatRow: View {
                     }
                 }
 
-                if unreadCount > 0 {
-                    Text("\(unreadCount)")
-                        .font(.system(.caption, design: .rounded, weight: .bold))
-                        .foregroundStyle(palette.onAccent)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 5)
-                        .background(Capsule(style: .continuous).fill(palette.accent))
-                }
+                Text(unreadCount > 99 ? "99+" : "\(max(unreadCount, 1))")
+                    .font(.system(.caption, design: .rounded, weight: .bold))
+                    .foregroundStyle(unreadCount > 0 ? palette.onAccent : Color.clear)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(Capsule(style: .continuous).fill(unreadCount > 0 ? palette.accent : Color.clear))
+                    .accessibilityHidden(unreadCount == 0)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)

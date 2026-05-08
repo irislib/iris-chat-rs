@@ -1118,14 +1118,13 @@ private struct DesktopSidebarChatRow: View {
 
                         Spacer(minLength: 6)
 
-                        if chat.unreadCount > 0 {
-                            Text(chat.unreadCount > 99 ? "99+" : "\(chat.unreadCount)")
-                                .font(.system(size: 11, weight: .bold, design: .rounded))
-                                .foregroundStyle(palette.onAccent)
-                                .padding(.horizontal, 7)
-                                .frame(minHeight: 20)
-                                .background(Capsule().fill(palette.accent))
-                        }
+                        Text(chat.unreadCount > 99 ? "99+" : "\(max(chat.unreadCount, 1))")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .foregroundStyle(chat.unreadCount > 0 ? palette.onAccent : Color.clear)
+                            .padding(.horizontal, 7)
+                            .frame(minHeight: 20)
+                            .background(Capsule().fill(chat.unreadCount > 0 ? palette.accent : Color.clear))
+                            .accessibilityHidden(chat.unreadCount == 0)
                     }
                 }
             }
