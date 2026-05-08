@@ -1571,6 +1571,7 @@ fn thread_json(thread: &ChatThreadSnapshot) -> Value {
         "last_message_at_secs": thread.last_message_at_secs,
         "unread_count": thread.unread_count,
         "muted": thread.is_muted,
+        "pinned": thread.is_pinned,
     })
 }
 

@@ -165,6 +165,13 @@ impl AppCore {
         }
         self.preferences.muted_chat_ids.sort();
         self.preferences.muted_chat_ids.dedup();
+        for pinned in &mut self.preferences.pinned_chat_ids {
+            if pinned == from_chat_id {
+                *pinned = to_chat_id.to_string();
+            }
+        }
+        self.preferences.pinned_chat_ids.sort();
+        self.preferences.pinned_chat_ids.dedup();
         if let Some(floor) = self.typing_floor_secs.remove(from_chat_id) {
             self.typing_floor_secs
                 .entry(to_chat_id.to_string())
@@ -1009,6 +1016,9 @@ impl AppCore {
         self.chat_message_ttl_seconds.remove(&normalized);
         self.preferences
             .muted_chat_ids
+            .retain(|chat_id| chat_id != &normalized);
+        self.preferences
+            .pinned_chat_ids
             .retain(|chat_id| chat_id != &normalized);
         self.mark_mobile_push_dirty();
         self.typing_indicators

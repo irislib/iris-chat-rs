@@ -34,16 +34,26 @@
                                    FontSize="15"
                                    FontWeight="SemiBold"
                                    TextTrimming="CharacterEllipsis" />
-                        <TextBlock x:Name="MutedBellText"
-                                   Grid.Column="1"
-                                   Text="&#xE7ED;"
-                                   FontFamily="Segoe MDL2 Assets"
-                                   Foreground="{StaticResource TextMuted}"
-                                   FontSize="12"
-                                   Margin="5,0,0,0"
-                                   VerticalAlignment="Center"
-                                   ToolTip="muted"
-                                   Visibility="Collapsed" />
+                        <StackPanel Grid.Column="1" Orientation="Horizontal">
+                            <TextBlock x:Name="MutedBellText"
+                                       Text="&#xE7ED;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       Foreground="{StaticResource TextMuted}"
+                                       FontSize="12"
+                                       Margin="5,0,0,0"
+                                       VerticalAlignment="Center"
+                                       ToolTip="muted"
+                                       Visibility="Collapsed" />
+                            <TextBlock x:Name="PinnedText"
+                                       Text="&#xE718;"
+                                       FontFamily="Segoe MDL2 Assets"
+                                       Foreground="{StaticResource TextMuted}"
+                                       FontSize="12"
+                                       Margin="5,0,0,0"
+                                       VerticalAlignment="Center"
+                                       ToolTip="pinned"
+                                       Visibility="Collapsed" />
+                        </StackPanel>
                     </Grid>
                     <TextBlock x:Name="TimeText"
                                Grid.Column="1"

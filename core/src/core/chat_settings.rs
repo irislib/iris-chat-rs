@@ -94,7 +94,7 @@ impl AppCore {
     }
 
     pub(super) fn set_chat_muted(&mut self, chat_id: &str, muted: bool) {
-        let Some(normalized_chat_id) = self.normalize_muted_chat_id(chat_id) else {
+        let Some(normalized_chat_id) = self.normalize_local_chat_setting_id(chat_id) else {
             return;
         };
 
@@ -128,7 +128,7 @@ impl AppCore {
     }
 
     pub(super) fn is_chat_muted(&self, chat_id: &str) -> bool {
-        self.normalize_muted_chat_id(chat_id)
+        self.normalize_local_chat_setting_id(chat_id)
             .is_some_and(|normalized| {
                 self.preferences
                     .muted_chat_ids
@@ -137,7 +137,50 @@ impl AppCore {
             })
     }
 
-    fn normalize_muted_chat_id(&self, chat_id: &str) -> Option<String> {
+    pub(super) fn set_chat_pinned(&mut self, chat_id: &str, pinned: bool) {
+        let Some(normalized_chat_id) = self.normalize_local_chat_setting_id(chat_id) else {
+            return;
+        };
+
+        let mut pinned_chat_ids = self.preferences.pinned_chat_ids.clone();
+        pinned_chat_ids.sort();
+        pinned_chat_ids.dedup();
+        let had_pinned = pinned_chat_ids
+            .iter()
+            .any(|existing| existing == &normalized_chat_id);
+
+        if pinned == had_pinned {
+            if pinned_chat_ids != self.preferences.pinned_chat_ids {
+                self.preferences.pinned_chat_ids = pinned_chat_ids;
+                self.persist_best_effort();
+            }
+            return;
+        }
+
+        if pinned {
+            pinned_chat_ids.push(normalized_chat_id.clone());
+            pinned_chat_ids.sort();
+            pinned_chat_ids.dedup();
+        } else {
+            pinned_chat_ids.retain(|existing| existing != &normalized_chat_id);
+        }
+        self.preferences.pinned_chat_ids = pinned_chat_ids;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn is_chat_pinned(&self, chat_id: &str) -> bool {
+        self.normalize_local_chat_setting_id(chat_id)
+            .is_some_and(|normalized| {
+                self.preferences
+                    .pinned_chat_ids
+                    .iter()
+                    .any(|chat_id| chat_id == &normalized)
+            })
+    }
+
+    fn normalize_local_chat_setting_id(&self, chat_id: &str) -> Option<String> {
         let trimmed = chat_id.trim();
         if trimmed.is_empty() {
             return None;

@@ -109,17 +109,140 @@ fn row_for(
         muted.set_tooltip_text(Some("muted"));
         row.add_suffix(&muted);
     }
+    if chat.is_pinned {
+        let pinned = gtk::Image::from_icon_name("view-pin-symbolic");
+        pinned.add_css_class("dim-label");
+        pinned.set_tooltip_text(Some("pinned"));
+        row.add_suffix(&pinned);
+    }
     row.add_suffix(&suffix);
 
-    let manager = manager.clone();
+    let activate_manager = manager.clone();
     let chat_id = chat.chat_id.clone();
     row.connect_activated(move |_| {
-        manager.dispatch(AppAction::OpenChat {
+        activate_manager.dispatch(AppAction::OpenChat {
             chat_id: chat_id.clone(),
         });
     });
 
+    attach_context_menu(&row, chat, manager.clone());
+
     row
+}
+
+fn attach_context_menu(row: &adw::ActionRow, chat: &ChatThreadSnapshot, manager: Rc<AppManager>) {
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(3);
+    let chat = chat.clone();
+    gesture.connect_pressed(move |gesture, _, x, y| {
+        let Some(widget) = gesture.widget() else {
+            return;
+        };
+        let popover = chat_context_popover(&chat, &manager);
+        popover.set_parent(&widget);
+        popover.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover.popup();
+    });
+    row.add_controller(gesture);
+}
+
+fn chat_context_popover(chat: &ChatThreadSnapshot, manager: &Rc<AppManager>) -> gtk::Popover {
+    let popover = gtk::Popover::new();
+    popover.set_has_arrow(false);
+    popover.set_autohide(true);
+
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    column.set_margin_top(6);
+    column.set_margin_bottom(6);
+    column.set_margin_start(6);
+    column.set_margin_end(6);
+
+    let read_label = if chat.unread_count > 0 {
+        "Mark read"
+    } else {
+        "Mark as unread"
+    };
+    column.append(&context_button(read_label, {
+        let manager = manager.clone();
+        let chat_id = chat.chat_id.clone();
+        let unread = chat.unread_count == 0;
+        move || {
+            manager.dispatch(AppAction::SetChatUnread {
+                chat_id: chat_id.clone(),
+                unread,
+            });
+        }
+    }));
+
+    column.append(&context_button(
+        if chat.is_pinned {
+            "Unpin chat"
+        } else {
+            "Pin chat"
+        },
+        {
+            let manager = manager.clone();
+            let chat_id = chat.chat_id.clone();
+            let pinned = !chat.is_pinned;
+            move || {
+                manager.dispatch(AppAction::SetChatPinned {
+                    chat_id: chat_id.clone(),
+                    pinned,
+                });
+            }
+        },
+    ));
+
+    column.append(&context_button(
+        if chat.is_muted {
+            "Unmute chat"
+        } else {
+            "Mute chat"
+        },
+        {
+            let manager = manager.clone();
+            let chat_id = chat.chat_id.clone();
+            let muted = !chat.is_muted;
+            move || {
+                manager.dispatch(AppAction::SetChatMuted {
+                    chat_id: chat_id.clone(),
+                    muted,
+                });
+            }
+        },
+    ));
+
+    column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+    let delete = context_button("Delete", {
+        let manager = manager.clone();
+        let chat_id = chat.chat_id.clone();
+        move || {
+            manager.dispatch(AppAction::DeleteChat {
+                chat_id: chat_id.clone(),
+            });
+        }
+    });
+    delete.add_css_class("destructive-action");
+    column.append(&delete);
+
+    popover.set_child(Some(&column));
+    popover
+}
+
+fn context_button(label: &str, action: impl Fn() + 'static) -> gtk::Button {
+    let button = gtk::Button::with_label(label);
+    button.add_css_class("flat");
+    button.set_halign(gtk::Align::Fill);
+    button.connect_clicked(move |button| {
+        action();
+        if let Some(popover) = button
+            .ancestor(gtk::Popover::static_type())
+            .and_then(|widget| widget.downcast::<gtk::Popover>().ok())
+        {
+            popover.popdown();
+        }
+    });
+    button
 }
 
 fn escape(s: &str) -> String {

@@ -19,6 +19,7 @@ source "$ROOT/scripts/release_common.sh"
 load_release_env "$ROOT"
 resolve_shared_build_metadata "$ROOT"
 
+REPO_BASENAME="$(basename "$ROOT")"
 LINUX_DIR="$ROOT/linux"
 DIST_DIR="$ROOT/dist/linux"
 IMAGE="${IRIS_LINUX_BUILD_IMAGE:-iris-chat-linux-dev:latest}"
@@ -84,18 +85,19 @@ docker run \
   --name "$CONTAINER_NAME" \
   --rm="$([[ "$KEEP_CONTAINER" -eq 1 ]] && printf false || printf true)" \
   -v "$ROOT/..:/workspace:cached" \
-  -w /workspace/iris-chat-rs/linux \
+  -w "/workspace/$REPO_BASENAME/linux" \
   -e ARTIFACT_BASENAME="$ARTIFACT_BASENAME" \
   -e IRIS_APP_VERSION_NAME="$IRIS_APP_VERSION_NAME" \
   -e IRIS_APP_VERSION_CODE="$IRIS_APP_VERSION_CODE" \
   -e IRIS_BUILD_GIT_SHA="$IRIS_BUILD_GIT_SHA" \
   -e IRIS_BUILD_TIMESTAMP_UTC="$IRIS_BUILD_TIMESTAMP_UTC" \
   -e IRIS_LINUX_DEB_VERSION="$DEB_VERSION" \
+  -e IRIS_REPO_BASENAME="$REPO_BASENAME" \
   --entrypoint /bin/bash \
   "$IMAGE" -lc '
     set -Eeuo pipefail
 
-    cd /workspace/iris-chat-rs/linux
+    cd "/workspace/$IRIS_REPO_BASENAME/linux"
 
     if ! dpkg -s libclang-dev >/dev/null 2>&1; then
       apt-get update >/dev/null
@@ -109,7 +111,7 @@ docker run \
       cargo install cargo-deb --locked
     fi
 
-    OUT=/workspace/iris-chat-rs/dist/linux
+    OUT="/workspace/$IRIS_REPO_BASENAME/dist/linux"
     mkdir -p "$OUT"
 
     BIN_PATH=target/release/iris-chat

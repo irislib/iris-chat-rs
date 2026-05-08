@@ -1,6 +1,28 @@
 use super::*;
 
 impl AppCore {
+    pub(super) fn set_chat_unread(&mut self, chat_id: &str, unread: bool) {
+        let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
+            return;
+        };
+        let Some(thread) = self.threads.get_mut(&normalized_chat_id) else {
+            return;
+        };
+
+        let next_unread = if unread {
+            thread.unread_count.max(1)
+        } else {
+            0
+        };
+        if thread.unread_count == next_unread {
+            return;
+        }
+        thread.unread_count = next_unread;
+        self.persist_best_effort();
+        self.rebuild_state();
+        self.emit_state();
+    }
+
     pub(super) fn mark_messages_seen(&mut self, chat_id: &str, message_ids: &[String]) {
         if message_ids.is_empty() {
             return;

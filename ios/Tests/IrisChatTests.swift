@@ -95,6 +95,7 @@ private final class MockRustApp: RustAppClient {
             imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
             imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
             mutedChatIds: [],
+            pinnedChatIds: [],
             mobilePushServerUrl: ""
         ),
         toast: nil
@@ -219,6 +220,7 @@ private func makeAppState(
         imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
         imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
         mutedChatIds: [],
+        pinnedChatIds: [],
         mobilePushServerUrl: ""
     ),
     toast: String? = nil
@@ -277,7 +279,8 @@ private func makeChatThread(
         lastMessageDelivery: .received,
         unreadCount: unreadCount,
         isTyping: false,
-        isMuted: false
+        isMuted: false,
+        isPinned: false
     )
 }
 
@@ -648,6 +651,7 @@ final class IrisChatTests: XCTestCase {
                     imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
                     imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
                     mutedChatIds: [],
+                    pinnedChatIds: [],
                     mobilePushServerUrl: ""
                 )
             )
@@ -677,6 +681,7 @@ final class IrisChatTests: XCTestCase {
                 imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
                 imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
                 mutedChatIds: [],
+                pinnedChatIds: [],
                 mobilePushServerUrl: ""
             )
         )))

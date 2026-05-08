@@ -59,6 +59,14 @@ pub enum AppAction {
         chat_id: String,
         muted: bool,
     },
+    SetChatPinned {
+        chat_id: String,
+        pinned: bool,
+    },
+    SetChatUnread {
+        chat_id: String,
+        unread: bool,
+    },
     SendAttachment {
         chat_id: String,
         file_path: String,

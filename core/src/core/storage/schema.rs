@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 9;
+const SCHEMA_VERSION: u32 = 10;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS preferences (
     image_proxy_key_hex TEXT NOT NULL,
     image_proxy_salt_hex TEXT NOT NULL,
     mobile_push_server_url TEXT NOT NULL,
-    muted_chat_ids_json TEXT NOT NULL DEFAULT '[]'
+    muted_chat_ids_json TEXT NOT NULL DEFAULT '[]',
+    pinned_chat_ids_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS owner_profiles (
@@ -270,6 +271,12 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
              ADD COLUMN target_owner_pubkey_hex TEXT;",
         )?;
     }
+    if current < 10 && !column_exists(&tx, "preferences", "pinned_chat_ids_json")? {
+        tx.execute_batch(
+            "ALTER TABLE preferences
+             ADD COLUMN pinned_chat_ids_json TEXT NOT NULL DEFAULT '[]';",
+        )?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())
@@ -324,6 +331,43 @@ mod tests {
             &conn,
             "pending_relay_publishes",
             "target_owner_pubkey_hex"
+        ));
+    }
+
+    #[test]
+    fn migrates_v9_preferences_pinned_chat_ids_column() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE preferences (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                send_typing_indicators INTEGER NOT NULL,
+                send_read_receipts INTEGER NOT NULL,
+                desktop_notifications_enabled INTEGER NOT NULL,
+                invite_acceptance_notifications_enabled INTEGER NOT NULL DEFAULT 1,
+                startup_at_login_enabled INTEGER NOT NULL,
+                nearby_bluetooth_enabled INTEGER NOT NULL DEFAULT 0,
+                nearby_lan_enabled INTEGER NOT NULL DEFAULT 0,
+                nostr_relay_urls_json TEXT NOT NULL,
+                image_proxy_enabled INTEGER NOT NULL,
+                image_proxy_url TEXT NOT NULL,
+                image_proxy_key_hex TEXT NOT NULL,
+                image_proxy_salt_hex TEXT NOT NULL,
+                mobile_push_server_url TEXT NOT NULL,
+                muted_chat_ids_json TEXT NOT NULL DEFAULT '[]'
+            );
+            PRAGMA user_version = 9;
+            "#,
+        )
+        .unwrap();
+
+        ensure_schema(&mut conn).unwrap();
+
+        assert_eq!(user_version(&conn), SCHEMA_VERSION);
+        assert!(connection_column_exists(
+            &conn,
+            "preferences",
+            "pinned_chat_ids_json"
         ));
     }
 

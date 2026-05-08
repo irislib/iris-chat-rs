@@ -1080,6 +1080,13 @@ private struct DesktopSidebarChatRow: View {
                                     .foregroundStyle(palette.muted)
                                     .accessibilityLabel("muted")
                             }
+
+                            if chat.isPinned {
+                                Image(systemName: "pin.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(palette.muted)
+                                    .accessibilityLabel("pinned")
+                            }
                         }
                         .layoutPriority(1)
 
@@ -1121,6 +1128,45 @@ private struct DesktopSidebarChatRow: View {
             )
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            chatListItemContextMenu(manager: manager, chat: chat)
+        }
+    }
+}
+
+@ViewBuilder
+private func chatListItemContextMenu(manager: AppManager, chat: ChatThreadSnapshot) -> some View {
+    Button {
+        manager.dispatch(.setChatUnread(chatId: chat.chatId, unread: chat.unreadCount == 0))
+    } label: {
+        Label(
+            chat.unreadCount > 0 ? "Mark read" : "Mark as unread",
+            systemImage: chat.unreadCount > 0 ? "envelope.open.fill" : "envelope.badge.fill"
+        )
+    }
+
+    Button {
+        manager.dispatch(.setChatPinned(chatId: chat.chatId, pinned: !chat.isPinned))
+    } label: {
+        Label(
+            chat.isPinned ? "Unpin chat" : "Pin chat",
+            systemImage: chat.isPinned ? "pin.slash.fill" : "pin.fill"
+        )
+    }
+
+    Button {
+        manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
+    } label: {
+        Label(
+            chat.isMuted ? "Unmute chat" : "Mute chat",
+            systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill"
+        )
+    }
+
+    Button(role: .destructive) {
+        manager.dispatch(.deleteChat(chatId: chat.chatId))
+    } label: {
+        Label("Delete", systemImage: "trash.fill")
     }
 }
 
@@ -1765,6 +1811,10 @@ private struct ChatListRowContainer: View {
                 manager.dispatch(.deleteChat(chatId: chat.chatId))
             }
         )
+#elseif os(macOS)
+        row.contextMenu {
+            chatListItemContextMenu(manager: manager, chat: chat)
+        }
 #else
         row
 #endif

@@ -1,5 +1,6 @@
 # Iris Chat 2026.5.8
 
+- Desktop chat lists have right-click actions for read/unread, pin, mute, and delete.
 - Message alerts show the sender and message text instead of "New message".
 - Keeps placeholder message alerts silent when the app cannot decrypt a preview.
 - Lets iOS decrypt message alerts while the app is backgrounded or the phone is locked.

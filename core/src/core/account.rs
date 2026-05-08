@@ -566,6 +566,9 @@ impl AppCore {
             self.preferences.muted_chat_ids = persisted.preferences.muted_chat_ids.clone();
             self.preferences.muted_chat_ids.sort();
             self.preferences.muted_chat_ids.dedup();
+            self.preferences.pinned_chat_ids = persisted.preferences.pinned_chat_ids.clone();
+            self.preferences.pinned_chat_ids.sort();
+            self.preferences.pinned_chat_ids.dedup();
             self.seen_event_order = persisted
                 .seen_event_ids
                 .iter()

@@ -56,6 +56,7 @@ pub struct PreferencesSnapshot {
     pub image_proxy_key_hex: String,
     pub image_proxy_salt_hex: String,
     pub muted_chat_ids: Vec<String>,
+    pub pinned_chat_ids: Vec<String>,
     /// User-configurable notification server URL. Empty string means
     /// "use the platform default" (notifications.iris.to in release,
     /// notifications-sandbox.iris.to in debug). When non-empty, the
@@ -80,6 +81,7 @@ impl Default for PreferencesSnapshot {
             image_proxy_key_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_KEY_HEX.to_string(),
             image_proxy_salt_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
             muted_chat_ids: Vec::new(),
+            pinned_chat_ids: Vec::new(),
             mobile_push_server_url: String::new(),
         }
     }
@@ -251,6 +253,7 @@ pub struct ChatThreadSnapshot {
     pub unread_count: u64,
     pub is_typing: bool,
     pub is_muted: bool,
+    pub is_pinned: bool,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

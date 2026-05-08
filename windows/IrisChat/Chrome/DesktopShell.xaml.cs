@@ -1,6 +1,5 @@
 using System;
 using System.ComponentModel;
-using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using IrisChat.Bindings;
@@ -62,7 +61,7 @@ public partial class DesktopShell : UserControl
         var activeChatId = _activeScreen is Screen.Chat c ? c.chatId : null;
         ChatRows.Items.Clear();
         ChatRows.Items.Add(BuildNearbyRow());
-        foreach (var chat in chats.OrderByDescending(c => c.lastMessageAtSecs ?? 0))
+        foreach (var chat in chats)
         {
             var row = new ChatRow { Chat = chat, IsActive = chat.chatId == activeChatId };
             row.Activated += chosen =>
@@ -70,6 +69,7 @@ public partial class DesktopShell : UserControl
                 _showingNearby = false;
                 _manager.OpenChat(chosen.chatId);
             };
+            row.ContextMenu = BuildChatContextMenu(chat);
             ChatRows.Items.Add(row);
         }
 
@@ -171,6 +171,33 @@ public partial class DesktopShell : UserControl
         };
         button.Click += OnNearby;
         return button;
+    }
+
+    private ContextMenu BuildChatContextMenu(ChatThreadSnapshot chat)
+    {
+        var menu = new ContextMenu();
+        menu.Items.Add(MenuItem(
+            chat.unreadCount > 0 ? "Mark read" : "Mark as unread",
+            () => _manager.SetChatUnread(chat.chatId, chat.unreadCount == 0)
+        ));
+        menu.Items.Add(MenuItem(
+            chat.isPinned ? "Unpin chat" : "Pin chat",
+            () => _manager.SetChatPinned(chat.chatId, !chat.isPinned)
+        ));
+        menu.Items.Add(MenuItem(
+            chat.isMuted ? "Unmute chat" : "Mute chat",
+            () => _manager.SetChatMuted(chat.chatId, !chat.isMuted)
+        ));
+        menu.Items.Add(new Separator());
+        menu.Items.Add(MenuItem("Delete", () => _manager.DeleteChat(chat.chatId)));
+        return menu;
+    }
+
+    private static MenuItem MenuItem(string header, Action action)
+    {
+        var item = new MenuItem { Header = header };
+        item.Click += (_, _) => action();
+        return item;
     }
 
     private static string NearbySummary(DesktopNearbyPeerSnapshot[] peers)

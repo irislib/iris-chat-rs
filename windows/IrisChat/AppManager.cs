@@ -202,6 +202,12 @@ public sealed class AppManager : INotifyPropertyChanged
     public void SetChatMuted(string chatId, bool muted) =>
         DispatchToRust(new AppAction.SetChatMuted(chatId, muted));
 
+    public void SetChatPinned(string chatId, bool pinned) =>
+        DispatchToRust(new AppAction.SetChatPinned(chatId, pinned));
+
+    public void SetChatUnread(string chatId, bool unread) =>
+        DispatchToRust(new AppAction.SetChatUnread(chatId, unread));
+
     public void ToggleReaction(string chatId, string messageId, string emoji) =>
         DispatchToRust(new AppAction.ToggleReaction(chatId, messageId, emoji));
 

@@ -62,7 +62,13 @@ impl AppCore {
 
         self.prune_expired_typing_indicators();
         let mut threads: Vec<&ThreadRecord> = self.threads.values().collect();
-        threads.sort_by_key(|thread| std::cmp::Reverse(thread.updated_at_secs));
+        threads.sort_by(|left, right| {
+            let left_pinned = self.is_chat_pinned(&left.chat_id);
+            let right_pinned = self.is_chat_pinned(&right.chat_id);
+            right_pinned
+                .cmp(&left_pinned)
+                .then_with(|| right.updated_at_secs.cmp(&left.updated_at_secs))
+        });
 
         self.state.chat_list = threads
             .iter()
@@ -71,6 +77,7 @@ impl AppCore {
                 let thread_kind = chat_kind_for_id(&thread.chat_id);
                 let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
                 let is_muted = self.is_chat_muted(&thread.chat_id);
+                let is_pinned = self.is_chat_pinned(&thread.chat_id);
                 let display_name = group_snapshot
                     .as_ref()
                     .map(|group| group.name.clone())
@@ -108,6 +115,7 @@ impl AppCore {
                     unread_count: thread.unread_count,
                     is_typing: self.thread_has_typing_indicator(&thread.chat_id),
                     is_muted,
+                    is_pinned,
                 }
             })
             .collect();

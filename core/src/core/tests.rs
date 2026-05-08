@@ -7219,6 +7219,7 @@ fn delete_chat_removes_thread_and_navigates_back() {
         },
     );
     core.chat_message_ttl_seconds.insert(chat_id.clone(), 3600);
+    core.preferences.pinned_chat_ids.push(chat_id.clone());
     core.active_chat_id = Some(chat_id.clone());
     core.screen_stack = vec![Screen::Chat {
         chat_id: chat_id.clone(),
@@ -7232,6 +7233,14 @@ fn delete_chat_removes_thread_and_navigates_back() {
     assert!(
         !core.chat_message_ttl_seconds.contains_key(&chat_id),
         "ttl cleared"
+    );
+    assert!(
+        !core
+            .preferences
+            .pinned_chat_ids
+            .iter()
+            .any(|pinned| pinned == &chat_id),
+        "pinned state cleared"
     );
     assert!(core.active_chat_id.is_none(), "active chat cleared");
     assert!(
@@ -7248,6 +7257,111 @@ fn delete_chat_removes_thread_and_navigates_back() {
             .iter()
             .any(|chat| chat.chat_id == chat_id),
         "chat_list snapshot reflects removal"
+    );
+}
+
+#[test]
+fn pinning_chat_moves_it_above_newer_unpinned_chats_and_persists() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("pin-chat", &owner, &device);
+    let older_chat_id = Keys::generate().public_key().to_hex();
+    let newer_chat_id = Keys::generate().public_key().to_hex();
+    core.threads.insert(
+        older_chat_id.clone(),
+        ThreadRecord {
+            chat_id: older_chat_id.clone(),
+            unread_count: 0,
+            updated_at_secs: 10,
+            messages: vec![test_chat_message(
+                &older_chat_id,
+                "older",
+                "older",
+                10,
+                false,
+            )],
+        },
+    );
+    core.threads.insert(
+        newer_chat_id.clone(),
+        ThreadRecord {
+            chat_id: newer_chat_id.clone(),
+            unread_count: 0,
+            updated_at_secs: 20,
+            messages: vec![test_chat_message(
+                &newer_chat_id,
+                "newer",
+                "newer",
+                20,
+                false,
+            )],
+        },
+    );
+    core.rebuild_state();
+    assert_eq!(core.state.chat_list[0].chat_id, newer_chat_id);
+
+    core.handle_action(AppAction::SetChatPinned {
+        chat_id: older_chat_id.clone(),
+        pinned: true,
+    });
+
+    assert_eq!(core.state.chat_list[0].chat_id, older_chat_id);
+    assert!(core.state.chat_list[0].is_pinned);
+    assert_eq!(core.state.chat_list[1].chat_id, newer_chat_id);
+    assert!(!core.state.chat_list[1].is_pinned);
+    let loaded = core
+        .load_persisted()
+        .expect("load persisted")
+        .expect("state persisted");
+    assert_eq!(loaded.preferences.pinned_chat_ids, vec![older_chat_id]);
+}
+
+#[test]
+fn set_chat_unread_toggles_local_unread_count() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("set-chat-unread", &owner, &device);
+    let chat_id = Keys::generate().public_key().to_hex();
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 0,
+            updated_at_secs: 10,
+            messages: vec![test_chat_message(&chat_id, "m1", "hello", 10, false)],
+        },
+    );
+
+    core.handle_action(AppAction::SetChatUnread {
+        chat_id: chat_id.clone(),
+        unread: true,
+    });
+
+    assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 1);
+    assert_eq!(
+        core.state
+            .chat_list
+            .iter()
+            .find(|chat| chat.chat_id == chat_id)
+            .expect("chat snapshot")
+            .unread_count,
+        1
+    );
+
+    core.handle_action(AppAction::SetChatUnread {
+        chat_id: chat_id.clone(),
+        unread: false,
+    });
+
+    assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 0);
+    assert_eq!(
+        core.state
+            .chat_list
+            .iter()
+            .find(|chat| chat.chat_id == chat_id)
+            .expect("chat snapshot")
+            .unread_count,
+        0
     );
 }
 
@@ -7564,6 +7678,36 @@ fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String
     )) as Arc<dyn StorageAdapter>;
     install_test_protocol_engine(&mut core, owner, device, storage, None, None);
     core
+}
+
+fn test_chat_message(
+    chat_id: &str,
+    id: &str,
+    body: &str,
+    created_at_secs: u64,
+    is_outgoing: bool,
+) -> ChatMessageSnapshot {
+    ChatMessageSnapshot {
+        id: id.to_string(),
+        chat_id: chat_id.to_string(),
+        kind: ChatMessageKind::User,
+        author: chat_id.to_string(),
+        body: body.to_string(),
+        attachments: Vec::new(),
+        reactions: Vec::new(),
+        reactors: Vec::new(),
+        is_outgoing,
+        created_at_secs,
+        expires_at_secs: None,
+        delivery: if is_outgoing {
+            DeliveryState::Sent
+        } else {
+            DeliveryState::Received
+        },
+        recipient_deliveries: Vec::new(),
+        delivery_trace: Default::default(),
+        source_event_id: None,
+    }
 }
 
 fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
