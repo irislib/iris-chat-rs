@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.17
+
+- Switch AppCore to the protocol engine path and remove legacy NDR runtime state migration.
+- Use verified Nostr rumor event ids for group message identity and fanout dedupe.
+- Update to `nostr-double-ratchet` 0.0.142 with unsigned inner event id and author hardening.
+
 ## 0.1.16
 
 - Republish 0.1.15 bundle as 3.0.17 because TestFlight rejected the 3.0.16 upload (cfBundleVersion 31600 was already on file from an earlier partial upload).
