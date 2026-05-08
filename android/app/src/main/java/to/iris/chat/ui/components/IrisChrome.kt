@@ -48,11 +48,14 @@ import androidx.compose.material.icons.rounded.Group
 import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.IosShare
 import androidx.compose.material.icons.rounded.Key
+import androidx.compose.material.icons.rounded.MarkEmailRead
+import androidx.compose.material.icons.rounded.MarkEmailUnread
 import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsOff
 import androidx.compose.material.icons.rounded.PersonRemove
+import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Schedule
@@ -462,6 +465,7 @@ fun IrisInlineAction(
 fun IrisChatListRow(
     title: String,
     isMuted: Boolean = false,
+    isPinned: Boolean = false,
     preview: String?,
     timeLabel: String?,
     imageUrl: String? = null,
@@ -510,6 +514,14 @@ fun IrisChatListRow(
                         Icon(
                             imageVector = IrisIcons.NotificationsOff,
                             contentDescription = "muted",
+                            modifier = Modifier.size(14.dp),
+                            tint = palette.muted,
+                        )
+                    }
+                    if (isPinned) {
+                        Icon(
+                            imageVector = IrisIcons.Pin,
+                            contentDescription = "pinned",
                             modifier = Modifier.size(14.dp),
                             tint = palette.muted,
                         )
@@ -683,6 +695,9 @@ object IrisIcons {
     val Attach = Icons.Rounded.AttachFile
     val Copy = Icons.Rounded.ContentCopy
     val DeleteForever = Icons.Rounded.DeleteForever
+    val MarkRead = Icons.Rounded.MarkEmailRead
+    val MarkUnread = Icons.Rounded.MarkEmailUnread
+    val Pin = Icons.Rounded.PushPin
     val Devices = Icons.Rounded.Devices
     val Edit = Icons.Rounded.Edit
     val File = Icons.AutoMirrored.Rounded.InsertDriveFile

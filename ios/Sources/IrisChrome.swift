@@ -774,6 +774,7 @@ struct IrisChatRow: View {
 
     let title: String
     let isMuted: Bool
+    let isPinned: Bool
     let preview: String
     let subtitle: String?
     let timeLabel: String?
@@ -786,6 +787,7 @@ struct IrisChatRow: View {
     init(
         title: String,
         isMuted: Bool = false,
+        isPinned: Bool = false,
         preview: String,
         subtitle: String?,
         timeLabel: String?,
@@ -797,6 +799,7 @@ struct IrisChatRow: View {
     ) {
         self.title = title
         self.isMuted = isMuted
+        self.isPinned = isPinned
         self.preview = preview
         self.subtitle = subtitle
         self.timeLabel = timeLabel
@@ -831,6 +834,13 @@ struct IrisChatRow: View {
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(palette.muted)
                                     .accessibilityLabel("muted")
+                            }
+
+                            if isPinned {
+                                Image(systemName: "pin.fill")
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(palette.muted)
+                                    .accessibilityLabel("pinned")
                             }
                         }
                         .layoutPriority(1)

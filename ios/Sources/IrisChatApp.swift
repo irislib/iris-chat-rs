@@ -28,6 +28,8 @@ struct IrisChatApp: App {
                 .irisOnChange(of: scenePhase) { phase in
                     if phase == .active {
                         manager.appForegrounded()
+                    } else if phase == .inactive {
+                        manager.appInactive()
                     } else if phase == .background {
                         manager.appBackgrounded()
                     }

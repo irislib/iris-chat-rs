@@ -216,6 +216,16 @@ fun ChatListScreen(
                     Column(modifier = Modifier.fillMaxWidth()) {
                         SwipeableChatListRow(
                             chat = chat,
+                            onToggleUnread = {
+                                appManager.dispatch(
+                                    AppAction.SetChatUnread(chat.chatId, chat.unreadCount == 0uL),
+                                )
+                            },
+                            onTogglePin = {
+                                appManager.dispatch(
+                                    AppAction.SetChatPinned(chat.chatId, !chat.isPinned),
+                                )
+                            },
                             onToggleMute = {
                                 appManager.dispatch(
                                     AppAction.SetChatMuted(chat.chatId, !chat.isMuted),
@@ -226,6 +236,7 @@ fun ChatListScreen(
                             IrisChatListRow(
                                 title = chat.displayName,
                                 isMuted = chat.isMuted,
+                                isPinned = chat.isPinned,
                                 preview =
                                     if (chat.isTyping) {
                                         "Typing"
@@ -284,6 +295,8 @@ fun ChatListScreen(
 @Composable
 private fun SwipeableChatListRow(
     chat: ChatThreadSnapshot,
+    onToggleUnread: () -> Unit,
+    onTogglePin: () -> Unit,
     onToggleMute: () -> Unit,
     onDeleteRequest: () -> Unit,
     content: @Composable () -> Unit,
@@ -300,15 +313,45 @@ private fun SwipeableChatListRow(
     )
     val dragState =
         rememberDraggableState { delta ->
-            targetOffsetPx = (targetOffsetPx + delta).coerceIn(-rowOffsetDistancePx, 0f)
+            targetOffsetPx = (targetOffsetPx + delta).coerceIn(-rowOffsetDistancePx, rowOffsetDistancePx)
         }
 
     LaunchedEffect(rowOffsetDistancePx) {
-        targetOffsetPx = targetOffsetPx.coerceIn(-rowOffsetDistancePx, 0f)
+        targetOffsetPx = targetOffsetPx.coerceIn(-rowOffsetDistancePx, rowOffsetDistancePx)
     }
 
     Box(modifier = Modifier.fillMaxWidth()) {
-        if (rowOffsetPx < -1f || targetOffsetPx < -1f) {
+        if (rowOffsetPx > 1f || targetOffsetPx > 1f) {
+            Row(
+                modifier =
+                    Modifier
+                        .matchParentSize()
+                        .background(IrisTheme.palette.panelAlt)
+                        .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ChatSwipeActionButton(
+                    label = if (chat.unreadCount > 0uL) "Read" else "Unread",
+                    icon = if (chat.unreadCount > 0uL) IrisIcons.MarkRead else IrisIcons.MarkUnread,
+                    color = IrisTheme.palette.accent,
+                    onClick = {
+                        onToggleUnread()
+                        targetOffsetPx = 0f
+                    },
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                ChatSwipeActionButton(
+                    label = if (chat.isPinned) "Unpin" else "Pin",
+                    icon = IrisIcons.Pin,
+                    color = IrisTheme.palette.accentAlt,
+                    onClick = {
+                        onTogglePin()
+                        targetOffsetPx = 0f
+                    },
+                )
+            }
+        } else if (rowOffsetPx < -1f || targetOffsetPx < -1f) {
             Row(
                 modifier =
                     Modifier
@@ -352,14 +395,15 @@ private fun SwipeableChatListRow(
                     Modifier.draggable(
                         state = dragState,
                         orientation = Orientation.Horizontal,
-                        startDragImmediately = targetOffsetPx < 0f,
+                        startDragImmediately = targetOffsetPx != 0f,
                         onDragStarted = { isDragging = true },
                         onDragStopped = { velocity ->
                             isDragging = false
                             targetOffsetPx =
                                 when {
+                                    velocity > flingThresholdPx -> rowOffsetDistancePx
                                     velocity < -flingThresholdPx -> -rowOffsetDistancePx
-                                    velocity > flingThresholdPx -> 0f
+                                    targetOffsetPx > rowOffsetDistancePx * 0.45f -> rowOffsetDistancePx
                                     targetOffsetPx < -rowOffsetDistancePx * 0.45f -> -rowOffsetDistancePx
                                     else -> 0f
                                 }

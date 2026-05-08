@@ -311,6 +311,7 @@ struct RootView: View {
             OfflineStatusBanner(
                 networkStatus: manager.state.networkStatus,
                 nearbyService: manager.nearbyIris,
+                appSceneIsActive: manager.appSceneIsActive,
                 foregroundedAt: manager.lastForegroundedAt,
                 onTap: {
                     manager.dispatch(.pushScreen(screen: .settings))
@@ -559,6 +560,7 @@ private struct OfflineStatusBanner: View {
 
     let networkStatus: NetworkStatusSnapshot?
     @ObservedObject var nearbyService: IrisNearbyService
+    let appSceneIsActive: Bool
     let foregroundedAt: Date
     let onTap: () -> Void
 
@@ -589,7 +591,8 @@ private struct OfflineStatusBanner: View {
     }
 
     private func bannerText(at date: Date) -> String? {
-        guard let status = networkStatus,
+        guard appSceneIsActive,
+              let status = networkStatus,
               !status.relayUrls.isEmpty,
               status.connectedRelayCount == 0,
               let offlineSince = status.allRelaysOfflineSinceSecs,
@@ -1735,39 +1738,42 @@ struct ChatListScreen: View {
 
     var body: some View {
         ScrollView {
+            VStack(spacing: 0) {
 #if os(iOS) || os(macOS)
-            NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
-            if !manager.state.chatList.isEmpty {
-                Divider()
-                    .overlay(palette.border)
-            }
+                NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
+                if !manager.state.chatList.isEmpty {
+                    Divider()
+                        .overlay(palette.border)
+                }
 #endif
 
-            if manager.state.chatList.isEmpty {
-                Text("No chats yet")
-                    .font(.system(.body, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.muted)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 20)
-            } else {
-                TimelineView(.periodic(from: .now, by: 15)) { timeline in
-                    VStack(spacing: 0) {
-                        ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
-                            ChatListRowContainer(
-                                manager: manager,
-                                chat: chat,
-                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: timeline.date)
-                            )
-                            .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                if manager.state.chatList.isEmpty {
+                    Text("No chats yet")
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                } else {
+                    TimelineView(.periodic(from: .now, by: 15)) { timeline in
+                        VStack(spacing: 0) {
+                            ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
+                                ChatListRowContainer(
+                                    manager: manager,
+                                    chat: chat,
+                                    timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: timeline.date)
+                                )
+                                .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
 
-                            if index < manager.state.chatList.count - 1 {
-                                Divider()
-                                    .overlay(palette.border)
+                                if index < manager.state.chatList.count - 1 {
+                                    Divider()
+                                        .overlay(palette.border)
+                                }
                             }
                         }
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .top)
         }
         .background(palette.background)
     }
@@ -1804,6 +1810,12 @@ private struct ChatListRowContainer: View {
         SwipeableChatListRow(
             chat: chat,
             row: row,
+            onToggleUnread: {
+                manager.dispatch(.setChatUnread(chatId: chat.chatId, unread: chat.unreadCount == 0))
+            },
+            onTogglePin: {
+                manager.dispatch(.setChatPinned(chatId: chat.chatId, pinned: !chat.isPinned))
+            },
             onToggleMute: {
                 manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
             },
@@ -1824,6 +1836,7 @@ private struct ChatListRowContainer: View {
         IrisChatRow(
             title: chat.displayName,
             isMuted: chat.isMuted,
+            isPinned: chat.isPinned,
             preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
             subtitle: nil,
             timeLabel: timeLabel,
@@ -1844,6 +1857,8 @@ private struct SwipeableChatListRow<Row: View>: View {
 
     let chat: ChatThreadSnapshot
     let row: Row
+    let onToggleUnread: () -> Void
+    let onTogglePin: () -> Void
     let onToggleMute: () -> Void
     let onDelete: () -> Void
 
@@ -1870,8 +1885,13 @@ private struct SwipeableChatListRow<Row: View>: View {
     }
 
     var body: some View {
-        ZStack(alignment: .trailing) {
-            actions
+        ZStack {
+            leadingActions
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .allowsHitTesting(currentOffset > 1)
+                .accessibilityHidden(currentOffset <= 1)
+
+            trailingActions
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .allowsHitTesting(currentOffset < -1)
                 .accessibilityHidden(currentOffset >= -1)
@@ -1882,6 +1902,12 @@ private struct SwipeableChatListRow<Row: View>: View {
                 .highPriorityGesture(rowDragGesture)
                 .accessibilityAction(named: chat.isMuted ? "Unmute" : "Mute") {
                     onToggleMute()
+                }
+                .accessibilityAction(named: chat.unreadCount > 0 ? "Mark read" : "Mark as unread") {
+                    onToggleUnread()
+                }
+                .accessibilityAction(named: chat.isPinned ? "Unpin" : "Pin") {
+                    onTogglePin()
                 }
                 .accessibilityAction(named: "Delete") {
                     showingDeleteConfirmation = true
@@ -1904,7 +1930,29 @@ private struct SwipeableChatListRow<Row: View>: View {
         }
     }
 
-    private var actions: some View {
+    private var leadingActions: some View {
+        HStack(spacing: 0) {
+            swipeButton(
+                title: chat.unreadCount > 0 ? "Read" : "Unread",
+                systemImage: chat.unreadCount > 0 ? "envelope.open.fill" : "envelope.badge.fill",
+                tint: palette.accent
+            ) {
+                onToggleUnread()
+                setRestingOffset(0, animated: true)
+            }
+            swipeButton(
+                title: chat.isPinned ? "Unpin" : "Pin",
+                systemImage: chat.isPinned ? "pin.slash.fill" : "pin.fill",
+                tint: palette.accentAlt
+            ) {
+                onTogglePin()
+                setRestingOffset(0, animated: true)
+            }
+        }
+        .frame(width: actionWidth)
+    }
+
+    private var trailingActions: some View {
         HStack(spacing: 0) {
             swipeButton(
                 title: chat.isMuted ? "Unmute" : "Mute",
@@ -1979,9 +2027,19 @@ private struct SwipeableChatListRow<Row: View>: View {
         let projectedOffset = clampedOffset(restingOffset + value.translation.width)
         let predictedOffset = clampedOffset(restingOffset + value.predictedEndTranslation.width)
 
+        if restingOffset > actionWidth / 2 {
+            let shouldClose = projectedOffset < actionWidth - revealThreshold || predictedOffset < actionWidth / 2
+            return shouldClose ? 0 : actionWidth
+        }
+
         if restingOffset < -actionWidth / 2 {
             let shouldClose = projectedOffset > -actionWidth + revealThreshold || predictedOffset > -actionWidth / 2
             return shouldClose ? 0 : -actionWidth
+        }
+
+        let shouldRevealLeading = projectedOffset > revealThreshold || predictedOffset > actionWidth / 2
+        if shouldRevealLeading {
+            return actionWidth
         }
 
         let shouldReveal = projectedOffset < -revealThreshold || predictedOffset < -actionWidth / 2
@@ -2021,7 +2079,7 @@ private struct SwipeableChatListRow<Row: View>: View {
     }
 
     private func clampedOffset(_ offset: CGFloat) -> CGFloat {
-        min(0, max(-actionWidth, offset))
+        min(actionWidth, max(-actionWidth, offset))
     }
 }
 #endif
