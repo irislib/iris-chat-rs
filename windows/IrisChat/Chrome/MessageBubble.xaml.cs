@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -15,7 +16,9 @@ public partial class MessageBubble : UserControl
 {
     private static readonly string[] DefaultReactionEmojis = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"];
     private static readonly List<string> RecentReactionEmojis = LoadRecentReactionEmojis();
+    private static readonly ConcurrentDictionary<string, ImageSource> AttachmentImageCache = new();
     private const int RecentReactionEmojiLimit = 16;
+    private const int AttachmentPreviewDecodeWidth = 640;
 
     private ChatMessageSnapshot? _message;
 
@@ -271,22 +274,56 @@ public partial class MessageBubble : UserControl
     private static async Task LoadImageAsync(MessageAttachmentSnapshot att, System.Windows.Controls.Image control)
     {
         if (Application.Current is not App app || app.Manager == null) return;
-        var data = await app.Manager.DownloadAttachmentAsync(att);
+
+        var cacheKey = string.IsNullOrWhiteSpace(att.htreeUrl) ? $"{att.nhash}:{att.filename}" : att.htreeUrl;
+        if (AttachmentImageCache.TryGetValue(cacheKey, out var cached))
+        {
+            SetImageSource(control, cached);
+            return;
+        }
+
+        var data = await app.Manager.DownloadAttachmentAsync(att).ConfigureAwait(false);
         if (data == null) return;
+
+        var decoded = await Task.Run(() => DecodeAttachmentPreview(data)).ConfigureAwait(false);
+        if (decoded == null) return;
+
+        AttachmentImageCache[cacheKey] = decoded;
+        SetImageSource(control, decoded);
+    }
+
+    private static BitmapImage? DecodeAttachmentPreview(byte[] data)
+    {
         try
         {
             using var ms = new System.IO.MemoryStream(data);
             var bmp = new BitmapImage();
             bmp.BeginInit();
             bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.DecodePixelWidth = AttachmentPreviewDecodeWidth;
             bmp.StreamSource = ms;
             bmp.EndInit();
             bmp.Freeze();
-            control.Source = bmp;
+            return bmp;
         }
         catch
         {
-            // ignore decode errors
+            return null;
+        }
+    }
+
+    private static void SetImageSource(System.Windows.Controls.Image control, ImageSource source)
+    {
+        if (control.Dispatcher.CheckAccess())
+        {
+            control.Source = source;
+        }
+        else
+        {
+            _ = control.Dispatcher.InvokeAsync(() =>
+            {
+                control.Source = source;
+            });
         }
     }
 
