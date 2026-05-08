@@ -8,6 +8,8 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.os.Build
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -75,6 +77,7 @@ object MobilePushNotifier {
             ).apply {
                 enableVibration(true)
                 vibrationPattern = VIBRATION_PATTERN
+                setSound(DEFAULT_SOUND_URI, ALERT_AUDIO_ATTRIBUTES)
                 setShowBadge(true)
             }
         manager.createNotificationChannel(channel)
@@ -89,6 +92,12 @@ object MobilePushNotifier {
     }
 
     private const val TAG = "IrisPush"
-    const val CHANNEL_ID = "iris_chat_messages"
+    const val CHANNEL_ID = "iris_chat_message_alerts"
     private val VIBRATION_PATTERN = longArrayOf(0, 220, 90, 220)
+    private val DEFAULT_SOUND_URI = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+    private val ALERT_AUDIO_ATTRIBUTES =
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build()
 }
