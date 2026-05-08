@@ -83,11 +83,18 @@ struct RootView: View {
                 BackgroundFill()
 
                 if usesDesktopChatShell {
-                    DesktopChatShell(
-                        manager: manager,
-                        directChatInfoChatId: $directChatInfoChatId,
-                        onOpenNearby: openNearbyIris
-                    )
+                    VStack(spacing: 0) {
+#if os(macOS)
+                        if manager.updateAvailable {
+                            DesktopUpdateStripe(manager: manager)
+                        }
+#endif
+                        DesktopChatShell(
+                            manager: manager,
+                            directChatInfoChatId: $directChatInfoChatId,
+                            onOpenNearby: openNearbyIris
+                        )
+                    }
                 } else if case .welcome = manager.activeScreen {
                     WelcomeScreen(manager: manager)
                 } else {
@@ -1172,6 +1179,50 @@ private func chatListItemContextMenu(manager: AppManager, chat: ChatThreadSnapsh
         Label("Delete", systemImage: "trash.fill")
     }
 }
+
+#if os(macOS)
+private struct DesktopUpdateStripe: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "arrow.down.circle.fill")
+                .foregroundStyle(palette.accent)
+
+            Text(manager.updateVersion.isEmpty ? "Update available" : "\(manager.updateVersion) available")
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+                .lineLimit(1)
+
+            Spacer(minLength: 12)
+
+            Toggle("Install automatically", isOn: $manager.autoInstallUpdates)
+                .toggleStyle(.checkbox)
+                .font(.system(.caption, design: .rounded, weight: .medium))
+                .accessibilityIdentifier("desktopUpdateAutoInstallToggle")
+
+            Button {
+                manager.installUpdate()
+            } label: {
+                Label(manager.updateInstalling ? "Installing" : "Install", systemImage: "square.and.arrow.down.fill")
+            }
+            .buttonStyle(IrisSecondaryButtonStyle())
+            .disabled(!manager.updateInstallEnabled)
+            .accessibilityIdentifier("desktopInstallUpdateButton")
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 42)
+        .background(palette.panelAlt)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(palette.border)
+                .frame(height: 1)
+        }
+        .accessibilityIdentifier("desktopUpdateStripe")
+    }
+}
+#endif
 
 private struct IdentifiedString: Identifiable, Hashable {
     let value: String
@@ -3655,6 +3706,12 @@ struct SettingsScreen: View {
                         .accessibilityIdentifier("myProfileExportDeviceKeyButton")
                     }
 
+#if os(macOS)
+                    IrisSectionCard {
+                        DesktopUpdateSettingsSection(manager: manager)
+                    }
+#endif
+
                     IrisSectionCard {
                         CardHeader(
                             title: "About",
@@ -3855,6 +3912,67 @@ private struct NearbySettingsRows: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .accessibilityIdentifier(accessibilityID)
+        }
+    }
+}
+#endif
+
+#if os(macOS)
+private struct DesktopUpdateSettingsSection: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            CardHeader(title: "Updates")
+
+            HStack(spacing: 10) {
+                Image(systemName: "info.circle.fill")
+                    .foregroundStyle(palette.accent)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Current version")
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                    Text(manager.buildSummaryText())
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .accessibilityIdentifier("desktopCurrentVersionValue")
+                }
+                Spacer()
+            }
+
+            Toggle("Check automatically", isOn: $manager.autoCheckUpdates)
+                .accessibilityIdentifier("desktopAutoCheckUpdatesToggle")
+
+            Toggle("Install automatically", isOn: $manager.autoInstallUpdates)
+                .accessibilityIdentifier("desktopAutoInstallUpdatesToggle")
+
+            HStack(spacing: 10) {
+                Button {
+                    manager.checkForUpdates()
+                } label: {
+                    Label(manager.updateChecking ? "Checking" : "Check for updates", systemImage: "arrow.clockwise")
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .disabled(manager.updateChecking || manager.updateInstalling)
+                .accessibilityIdentifier("desktopCheckForUpdatesButton")
+
+                Button {
+                    manager.installUpdate()
+                } label: {
+                    Label(manager.updateInstalling ? "Installing" : "Install update", systemImage: "square.and.arrow.down.fill")
+                }
+                .buttonStyle(IrisPrimaryButtonStyle())
+                .disabled(!manager.updateInstallEnabled)
+                .accessibilityIdentifier("desktopInstallUpdateSettingsButton")
+            }
+
+            if !manager.updateStatus.isEmpty {
+                Text(manager.updateStatus)
+                    .font(.system(.caption, design: .rounded, weight: .medium))
+                    .foregroundStyle(palette.muted)
+                    .accessibilityIdentifier("desktopUpdateStatusText")
+            }
         }
     }
 }

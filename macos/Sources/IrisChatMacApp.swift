@@ -14,6 +14,7 @@ struct IrisChatMacApp: App {
                 .frame(minWidth: 980, minHeight: 640)
                 .onAppear {
                     appDelegate.configure(manager: manager, startInBackground: startInBackground)
+                    manager.startDesktopUpdateChecks()
                     if startInBackground {
                         NSApplication.shared.hide(nil)
                     }

@@ -1,4 +1,7 @@
 import Foundation
+#if os(macOS)
+import AppKit
+#endif
 #if os(iOS)
 import Intents
 #endif
@@ -6,6 +9,12 @@ import Security
 import SwiftUI
 #if os(iOS) || os(macOS)
 import UserNotifications
+#endif
+
+#if os(macOS)
+private let defaultIrisUpdateManifestUrl = URL(
+    string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/release.json"
+)!
 #endif
 
 struct StoredAccountBundle: Codable, Equatable {
@@ -488,12 +497,36 @@ final class AppManager: ObservableObject {
     @Published private(set) var lastForegroundedAt = Date()
     @Published private(set) var appSceneIsActive = true
     @Published var toastMessage: String?
+#if os(macOS)
+    @Published private(set) var updateChecking = false
+    @Published private(set) var updateInstalling = false
+    @Published private(set) var updateAvailable = false
+    @Published private(set) var updateVersion = ""
+    @Published private(set) var updateStatus = ""
+    @Published var autoCheckUpdates = UserDefaults.standard.object(forKey: "updates.autoCheck") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(autoCheckUpdates, forKey: "updates.autoCheck")
+        }
+    }
+    @Published var autoInstallUpdates = UserDefaults.standard.bool(forKey: "updates.autoInstall") {
+        didSet {
+            UserDefaults.standard.set(autoInstallUpdates, forKey: "updates.autoInstall")
+            if autoInstallUpdates, updateInstallEnabled {
+                installUpdate()
+            }
+        }
+    }
+#endif
 
     private let rust: RustAppClient
     private let secretStore: AccountSecretStore
     private let desktopNotifications: DesktopNotificationPosting
     private let dataDir: URL
     private let fileManager: FileManager
+#if os(macOS)
+    private let currentAppVersion: String
+    private let updateManifestUrl: URL
+#endif
 #if os(macOS)
     let nearbyBitchat = MacBitchatNearbyService()
 #endif
@@ -510,6 +543,11 @@ final class AppManager: ObservableObject {
     private var storedAccountBundle: StoredAccountBundle?
     private var nearbySettingsWasOpened = false
     private lazy var reconciler = UpdateBridge(owner: self)
+#if os(macOS)
+    private var startupUpdateCheckDone = false
+    private var updateAssetUrl: URL?
+    private var updateTask: Task<Void, Never>?
+#endif
 
     init(
         rust: RustAppClient? = nil,
@@ -547,6 +585,12 @@ final class AppManager: ObservableObject {
         self.desktopNotifications = desktopNotifications ?? SystemDesktopNotificationPoster()
 #endif
         self.dataDir = resolvedDataDir
+#if os(macOS)
+        self.currentAppVersion = appVersion
+        self.updateManifestUrl = environment["IRIS_UPDATE_MANIFEST_URL"]
+            .flatMap(URL.init(string:))
+            ?? defaultIrisUpdateManifestUrl
+#endif
         self.state = initialState
         self.lastRevApplied = initialState.rev
 
@@ -996,6 +1040,9 @@ final class AppManager: ObservableObject {
         appSceneIsActive = true
         backgroundSuspendPrepared = false
         dispatchToRust(.appForegrounded)
+#if os(macOS)
+        startDesktopUpdateChecks()
+#endif
 #if os(iOS) || os(macOS)
         if nearbySettingsWasOpened {
             nearbySettingsWasOpened = false
@@ -1378,6 +1425,143 @@ final class AppManager: ObservableObject {
         isTrustedTestBuild()
     }
 
+#if os(macOS)
+    var updateInstallEnabled: Bool {
+        updateAvailable && updateAssetUrl != nil && !updateChecking && !updateInstalling
+    }
+
+    func startDesktopUpdateChecks() {
+        guard autoCheckUpdates, !startupUpdateCheckDone else {
+            return
+        }
+        startupUpdateCheckDone = true
+        checkForUpdates(manual: false)
+    }
+
+    func checkForUpdates(manual: Bool = true) {
+        guard !updateChecking else {
+            return
+        }
+        updateTask?.cancel()
+        updateChecking = true
+        if manual {
+            updateStatus = "Checking for updates"
+        }
+        updateTask = Task { [weak self] in
+            guard let self else {
+                return
+            }
+            do {
+                let check = try await self.fetchUpdateCheck()
+                await MainActor.run {
+                    self.applyUpdateCheck(check, manual: manual)
+                }
+            } catch {
+                await MainActor.run {
+                    self.updateChecking = false
+                    if manual {
+                        self.updateStatus = error.localizedDescription
+                    }
+                }
+            }
+        }
+    }
+
+    func installUpdate() {
+        guard let updateAssetUrl else {
+            updateStatus = "No macOS update found"
+            return
+        }
+        guard !updateInstalling else {
+            return
+        }
+        updateInstalling = true
+        updateStatus = "Downloading \(updateVersion)"
+        Task { [weak self] in
+            guard let self else {
+                return
+            }
+            do {
+                let savedUrl = try await self.downloadUpdateAsset(from: updateAssetUrl)
+                try await MainActor.run {
+                    try self.installDownloadedUpdate(savedUrl)
+                }
+            } catch {
+                await MainActor.run {
+                    self.updateInstalling = false
+                    self.updateStatus = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func fetchUpdateCheck() async throws -> IrisUpdateCheck {
+        let manifestUrl = updateManifestUrl
+        let data = try await loadIrisUpdateData(from: manifestUrl)
+        let manifest = try JSONDecoder().decode(IrisReleaseManifest.self, from: data)
+        let asset = manifest.preferredMacAsset()
+        let assetUrl = asset.flatMap { URL(string: $0.path, relativeTo: manifestUrl)?.absoluteURL }
+        return IrisUpdateCheck(
+            manifest: manifest,
+            asset: asset,
+            assetUrl: assetUrl,
+            isNewer: irisVersionIsNewer(manifest.tag, than: currentAppVersion)
+        )
+    }
+
+    private func applyUpdateCheck(_ check: IrisUpdateCheck, manual: Bool) {
+        updateChecking = false
+        updateAvailable = check.isNewer
+        updateVersion = check.manifest.tag
+        updateAssetUrl = check.isNewer ? check.assetUrl : nil
+        if check.isNewer {
+            updateStatus = check.assetUrl == nil ? "Update \(check.manifest.tag) found without a macOS app" : "Update \(check.manifest.tag) available"
+            if autoInstallUpdates, check.assetUrl != nil {
+                installUpdate()
+            }
+        } else if manual {
+            updateStatus = "Up to date"
+        } else {
+            updateStatus = ""
+        }
+    }
+
+    private func downloadUpdateAsset(from assetUrl: URL) async throws -> URL {
+        let downloadedUrl: URL
+        if assetUrl.isFileURL {
+            downloadedUrl = FileManager.default.temporaryDirectory
+                .appendingPathComponent("iris-chat-update-download-\(UUID().uuidString)")
+            try FileManager.default.copyItem(at: assetUrl, to: downloadedUrl)
+        } else {
+            (downloadedUrl, _) = try await URLSession.shared.download(from: assetUrl)
+        }
+        return try moveIrisDownloadedUpdate(downloadedUrl, from: assetUrl)
+    }
+
+    private func installDownloadedUpdate(_ archiveUrl: URL) throws {
+        updateStatus = "Installing \(updateVersion)"
+        if archiveUrl.lastPathComponent.hasSuffix(".app.tar.gz") {
+            let unpackDir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("IrisChatUpdate-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: unpackDir, withIntermediateDirectories: true)
+            try runIrisUpdateProcess("/usr/bin/tar", arguments: ["-xzf", archiveUrl.path, "-C", unpackDir.path])
+            guard let newApp = findIrisAppBundle(in: unpackDir) else {
+                throw IrisUpdateError.missingAppBundle
+            }
+            let script = try irisUpdateInstallScript()
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/sh")
+            process.arguments = [script.path, Bundle.main.bundleURL.path, newApp.path]
+            try process.run()
+            NSApp.terminate(nil)
+        } else {
+            NSWorkspace.shared.activateFileViewerSelecting([archiveUrl])
+            updateInstalling = false
+            updateStatus = "Downloaded \(archiveUrl.lastPathComponent)"
+        }
+    }
+#endif
+
     func logout() {
         // Logout ownership stays in Rust. The shell clears native secrets and local files only.
 #if os(iOS)
@@ -1735,6 +1919,127 @@ final class AppManager: ObservableObject {
         }
     }
 }
+
+#if os(macOS)
+private struct IrisReleaseManifest: Decodable {
+    let tag: String
+    let assets: [IrisReleaseAsset]
+
+    func preferredMacAsset() -> IrisReleaseAsset? {
+        assets.first { $0.name.hasSuffix("-macos-arm64.app.tar.gz") }
+            ?? assets.first { $0.name.hasSuffix("-macos-arm64.dmg") }
+    }
+}
+
+private struct IrisReleaseAsset: Decodable {
+    let name: String
+    let path: String
+}
+
+private struct IrisUpdateCheck {
+    let manifest: IrisReleaseManifest
+    let asset: IrisReleaseAsset?
+    let assetUrl: URL?
+    let isNewer: Bool
+}
+
+private enum IrisUpdateError: LocalizedError {
+    case missingAppBundle
+
+    var errorDescription: String? {
+        switch self {
+        case .missingAppBundle:
+            return "Downloaded update did not contain Iris Chat.app."
+        }
+    }
+}
+
+private func loadIrisUpdateData(from url: URL) async throws -> Data {
+    if url.isFileURL {
+        return try Data(contentsOf: url)
+    }
+    let (data, _) = try await URLSession.shared.data(from: url)
+    return data
+}
+
+private func moveIrisDownloadedUpdate(_ downloadedUrl: URL, from assetUrl: URL) throws -> URL {
+    let fileName = assetUrl.lastPathComponent.isEmpty ? "iris-chat-update" : assetUrl.lastPathComponent
+    let destination = FileManager.default.temporaryDirectory
+        .appendingPathComponent("IrisChatDownloads", isDirectory: true)
+        .appendingPathComponent(fileName)
+    try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+    if FileManager.default.fileExists(atPath: destination.path) {
+        try FileManager.default.removeItem(at: destination)
+    }
+    try FileManager.default.moveItem(at: downloadedUrl, to: destination)
+    return destination
+}
+
+private func irisVersionIsNewer(_ candidate: String, than current: String) -> Bool {
+    let left = irisVersionParts(candidate)
+    let right = irisVersionParts(current)
+    for index in 0..<max(left.count, right.count) {
+        let leftValue = index < left.count ? left[index] : 0
+        let rightValue = index < right.count ? right[index] : 0
+        if leftValue != rightValue {
+            return leftValue > rightValue
+        }
+    }
+    return false
+}
+
+private func irisVersionParts(_ value: String) -> [Int] {
+    value
+        .trimmingCharacters(in: CharacterSet(charactersIn: "vV "))
+        .split { !$0.isNumber }
+        .map { Int($0) ?? 0 }
+}
+
+private func runIrisUpdateProcess(_ executable: String, arguments: [String]) throws {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: executable)
+    process.arguments = arguments
+    try process.run()
+    process.waitUntilExit()
+    if process.terminationStatus != 0 {
+        throw CocoaError(.executableLoad)
+    }
+}
+
+private func findIrisAppBundle(in directory: URL) -> URL? {
+    guard let enumerator = FileManager.default.enumerator(
+        at: directory,
+        includingPropertiesForKeys: [.isDirectoryKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        return nil
+    }
+    for case let url as URL in enumerator where url.pathExtension == "app" {
+        if url.lastPathComponent == "Iris Chat.app" || url.lastPathComponent == "IrisChatMac.app" {
+            return url
+        }
+    }
+    return nil
+}
+
+private func irisUpdateInstallScript() throws -> URL {
+    let script = FileManager.default.temporaryDirectory
+        .appendingPathComponent("iris-chat-install-update-\(UUID().uuidString).sh")
+    let contents = """
+    #!/bin/sh
+    set -eu
+    current_app="$1"
+    new_app="$2"
+    sleep 1
+    rm -rf "$current_app"
+    ditto "$new_app" "$current_app"
+    open "$current_app"
+    """
+    try contents.write(to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+    return script
+}
+#endif
 
 private func isInviteChatLink(_ url: URL) -> Bool {
     if url.pathComponents.dropFirst().first?.lowercased() == "invite",

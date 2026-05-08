@@ -26,12 +26,22 @@ public sealed class AppManager : INotifyPropertyChanged
     private readonly WindowsCredentialStore _secretStore;
     private readonly IDesktopNotificationPoster _notifier;
     private readonly HashtreeAttachmentCache _cache;
+    private readonly UpdateService _updateService = new();
     private readonly string _dataDir;
     private readonly string _nearbyFirstOpenPath;
     private readonly FfiDesktopNearby _nearby;
     private readonly Dispatcher _ui;
     private readonly object _toastLock = new();
     private string? _activeToast;
+    private Uri? _updateAssetUrl;
+    private bool _startupUpdateCheckDone;
+    private bool _updateChecking;
+    private bool _updateInstalling;
+    private bool _updateAvailable;
+    private bool _autoCheckUpdates = UpdateService.LoadAutoCheckUpdates();
+    private bool _autoInstallUpdates = UpdateService.LoadAutoInstallUpdates();
+    private string _updateVersion = "";
+    private string _updateStatus = "";
 
     private AppState _state;
     private DesktopNearbySnapshot _nearbySnapshot;
@@ -57,6 +67,7 @@ public sealed class AppManager : INotifyPropertyChanged
         SyncStartupAtLoginPreference();
 
         TryRestorePersistedSession();
+        StartDesktopUpdateChecks();
     }
 
     // ────────────────────────────── projection ────────────────────────────────
@@ -83,6 +94,91 @@ public sealed class AppManager : INotifyPropertyChanged
     public DesktopNearbySnapshot NearbySnapshot => _nearbySnapshot;
 
     public HashtreeAttachmentCache AttachmentCache => _cache;
+    public bool UpdateChecking
+    {
+        get => _updateChecking;
+        private set
+        {
+            if (SetField(ref _updateChecking, value))
+            {
+                Notify(nameof(UpdateInstallEnabled));
+            }
+        }
+    }
+
+    public bool UpdateInstalling
+    {
+        get => _updateInstalling;
+        private set
+        {
+            if (SetField(ref _updateInstalling, value))
+            {
+                Notify(nameof(UpdateInstallEnabled));
+            }
+        }
+    }
+
+    public bool UpdateAvailable
+    {
+        get => _updateAvailable;
+        private set
+        {
+            if (SetField(ref _updateAvailable, value))
+            {
+                Notify(nameof(UpdateInstallEnabled));
+                Notify(nameof(UpdateStripeText));
+            }
+        }
+    }
+
+    public string UpdateVersion
+    {
+        get => _updateVersion;
+        private set
+        {
+            if (SetField(ref _updateVersion, value))
+            {
+                Notify(nameof(UpdateStripeText));
+            }
+        }
+    }
+
+    public string UpdateStatus
+    {
+        get => _updateStatus;
+        private set => SetField(ref _updateStatus, value);
+    }
+
+    public bool AutoCheckUpdates
+    {
+        get => _autoCheckUpdates;
+        set
+        {
+            if (!SetField(ref _autoCheckUpdates, value)) return;
+            UpdateService.SaveAutoCheckUpdates(value);
+            if (value) StartDesktopUpdateChecks();
+        }
+    }
+
+    public bool AutoInstallUpdates
+    {
+        get => _autoInstallUpdates;
+        set
+        {
+            if (!SetField(ref _autoInstallUpdates, value)) return;
+            UpdateService.SaveAutoInstallUpdates(value);
+            if (value && UpdateInstallEnabled)
+            {
+                _ = InstallUpdateAsync();
+            }
+        }
+    }
+
+    public bool UpdateInstallEnabled => UpdateAvailable && _updateAssetUrl is not null && !UpdateChecking && !UpdateInstalling;
+
+    public string UpdateStripeText => string.IsNullOrWhiteSpace(UpdateVersion)
+        ? "Update available"
+        : $"{UpdateVersion} available";
 
     // ───────────────────────────── navigation ─────────────────────────────────
 
@@ -147,7 +243,11 @@ public sealed class AppManager : INotifyPropertyChanged
         try { _ffi.Shutdown(); } catch { }
     }
 
-    public void AppForegrounded() => DispatchToRust(new AppAction.AppForegrounded(), showToastOnFailure: false);
+    public void AppForegrounded()
+    {
+        DispatchToRust(new AppAction.AppForegrounded(), showToastOnFailure: false);
+        StartDesktopUpdateChecks();
+    }
 
     // ───────────────────────── linked devices ─────────────────────────────────
 
@@ -412,10 +512,91 @@ public sealed class AppManager : INotifyPropertyChanged
     public void ResetImageProxySettings() =>
         DispatchToRust(new AppAction.ResetImageProxySettings());
 
+    // ───────────────────────────── updates ───────────────────────────────────
+
+    public void StartDesktopUpdateChecks()
+    {
+        if (!AutoCheckUpdates || _startupUpdateCheckDone) return;
+        _startupUpdateCheckDone = true;
+        _ = CheckForUpdatesAsync(manual: false);
+    }
+
+    public async Task CheckForUpdatesAsync(bool manual = true)
+    {
+        if (UpdateChecking) return;
+        UpdateChecking = true;
+        if (manual)
+        {
+            UpdateStatus = "Checking for updates";
+        }
+
+        try
+        {
+            var result = await _updateService.CheckAsync(AppVersion()).ConfigureAwait(true);
+            _updateAssetUrl = result.Available ? result.AssetUrl : null;
+            UpdateAvailable = result.Available;
+            UpdateVersion = result.Tag;
+            Notify(nameof(UpdateInstallEnabled));
+
+            if (result.Available)
+            {
+                UpdateStatus = result.Message;
+                if (AutoInstallUpdates && result.AssetUrl is not null)
+                {
+                    await InstallUpdateAsync().ConfigureAwait(true);
+                }
+            }
+            else if (manual)
+            {
+                UpdateStatus = result.Message;
+            }
+            else
+            {
+                UpdateStatus = "";
+            }
+        }
+        catch (Exception error)
+        {
+            if (manual)
+            {
+                UpdateStatus = error.Message;
+            }
+        }
+        finally
+        {
+            UpdateChecking = false;
+        }
+    }
+
+    public async Task InstallUpdateAsync()
+    {
+        if (_updateAssetUrl is null || UpdateInstalling) return;
+        UpdateInstalling = true;
+        UpdateStatus = $"Downloading {UpdateVersion}";
+        try
+        {
+            var path = await _updateService.DownloadAsync(_updateAssetUrl).ConfigureAwait(true);
+            UpdateStatus = $"Downloaded {Path.GetFileName(path)}";
+            if (!UpdateService.SkipOpen)
+            {
+                _ = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+            }
+        }
+        catch (Exception error)
+        {
+            UpdateStatus = error.Message;
+        }
+        finally
+        {
+            UpdateInstalling = false;
+        }
+    }
+
     // ────────────────────── support / build metadata ─────────────────────────
 
     public string SupportBundleJson() => _ffi.ExportSupportBundleJson();
     public string BuildSummary() => Native.BuildSummary();
+    public string AppVersion() => BuildSummary().Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
     public string RelaySetIdText() => Native.RelaySetId();
     public bool TrustedTestBuildEnabled() => Native.IsTrustedTestBuild();
     public string? ExportOwnerNsec() => _secretStore.Load()?.OwnerNsec;
@@ -608,6 +789,14 @@ public sealed class AppManager : INotifyPropertyChanged
 
     private void Notify([CallerMemberName] string? name = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+
+    private bool SetField<T>(ref T field, T value, [CallerMemberName] string? name = null)
+    {
+        if (EqualityComparer<T>.Default.Equals(field, value)) return false;
+        field = value;
+        Notify(name);
+        return true;
+    }
 
     private sealed class Reconciler : AppReconciler
     {

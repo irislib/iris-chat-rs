@@ -21,7 +21,7 @@ MACOS_APP_NAME="${IRIS_MACOS_APP_NAME:-Iris Chat.app}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-test|macos-app|macos-notarize|macos-dmg>
+usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-test|macos-app|macos-notarize|macos-dmg|macos-updater-archive>
 
 Signing & notarization (login-keychain mode, recommended):
   MACOS_SIGNING_IDENTITY  e.g. "Developer ID Application: Your Name (TEAMID)"
@@ -359,6 +359,15 @@ has_macos_notary_credentials() {
   }
 }
 
+macos_release_tag() {
+  local tag="${IRIS_RELEASE_TAG:-}"
+  if [[ -z "$tag" ]]; then
+    resolve_shared_build_metadata "$ROOT"
+    tag="v${IRIS_APP_VERSION_NAME}"
+  fi
+  printf '%s\n' "${tag:-vdev}"
+}
+
 run_macos_notarize() {
   local app="$MACOS_DIST_DIR/$MACOS_APP_NAME"
   if [[ ! -d "$app" ]]; then
@@ -398,12 +407,8 @@ run_macos_dmg() {
     fi
   fi
 
-  local tag="${IRIS_RELEASE_TAG:-}"
-  if [[ -z "$tag" ]]; then
-    resolve_shared_build_metadata "$ROOT"
-    tag="v${IRIS_APP_VERSION_NAME}"
-  fi
-  tag="${tag:-vdev}"
+  local tag
+  tag="$(macos_release_tag)"
 
   local dmg="$MACOS_DIST_DIR/iris-chat-${tag}-macos-arm64.dmg"
   rm -f "$dmg"
@@ -432,6 +437,26 @@ run_macos_dmg() {
   printf '%s\n' "$dmg"
 }
 
+run_macos_updater_archive() {
+  local app="$MACOS_DIST_DIR/$MACOS_APP_NAME"
+  if [[ "${IRIS_MACOS_FORCE_REBUILD_APP:-true}" == "true" || "${IRIS_MACOS_FORCE_REBUILD_APP:-true}" == "1" || ! -d "$app" ]]; then
+    run_macos_app >/dev/null
+  fi
+
+  if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]] && has_macos_notary_credentials; then
+    if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
+      run_macos_notarize >/dev/null
+    fi
+  fi
+
+  local tag archive
+  tag="$(macos_release_tag)"
+  archive="$MACOS_DIST_DIR/iris-chat-${tag}-macos-arm64.app.tar.gz"
+  rm -f "$archive"
+  tar -czf "$archive" -C "$MACOS_DIST_DIR" "$MACOS_APP_NAME"
+  printf '%s\n' "$archive"
+}
+
 case "${1:-}" in
   macos-gen-swift) run_macos_gen_swift ;;
   macos-rust) run_macos_rust ;;
@@ -442,6 +467,7 @@ case "${1:-}" in
   macos-app) run_macos_app ;;
   macos-notarize) run_macos_notarize ;;
   macos-dmg) run_macos_dmg ;;
+  macos-updater-archive) run_macos_updater_archive ;;
   -h|--help|help) usage ;;
   *) usage >&2; exit 2 ;;
 esac

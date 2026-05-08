@@ -430,6 +430,10 @@ run_dotnet() {
   vm="$(detect_vm_name)"
   local config_quoted
   config_quoted="$(ps_quote "$DOTNET_CONFIG")"
+  local version_quoted
+  version_quoted="$(ps_quote "${IRIS_APP_VERSION_NAME:-0.1.0}")"
+  local informational_quoted
+  informational_quoted="$(ps_quote "${IRIS_APP_VERSION_NAME:-0.1.0}+${IRIS_BUILD_GIT_SHA:-unknown}")"
   local guest_repo
   guest_repo="$(guest_repo_expr)"
 
@@ -439,8 +443,10 @@ $(path_setup_block)
 $(dotnet_publish_dir_block)
 Set-Location $guest_repo
 \$config = ${config_quoted}
+\$version = ${version_quoted}
+\$informationalVersion = ${informational_quoted}
 \$proj = Join-Path $guest_repo 'windows\\IrisChat\\IrisChat.csproj'
-dotnet publish \$proj -c \$config -r win-x64 --self-contained true -p:WindowsPackageType=None
+dotnet publish \$proj -c \$config -r win-x64 --self-contained true -p:WindowsPackageType=None "-p:Version=\$version" "-p:AssemblyVersion=\$version" "-p:FileVersion=\$version" "-p:InformationalVersion=\$informationalVersion"
 if (\$LASTEXITCODE -ne 0) { throw "dotnet publish failed (\$LASTEXITCODE)" }
 \$publishDir = Get-IrisDotnetPublishDir $guest_repo \$config
 if (-not (Test-Path \$publishDir)) { throw "Missing \$publishDir after dotnet publish." }

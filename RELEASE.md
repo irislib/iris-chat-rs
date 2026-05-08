@@ -5,7 +5,7 @@ This repo has repeatable release entrypoints for every platform:
 - All-in-one local release + hashtree publish: `./scripts/release` (`--publish` to push)
 - Android: `./scripts/android-release`
 - iOS: `./scripts/ios-release`
-- macOS: `./scripts/macos-build macos-dmg`
+- macOS: `./scripts/macos-build macos-dmg` and `./scripts/macos-build macos-updater-archive`
 - Windows (x86_64 NSIS installer): `./scripts/windows-build windows-installer`
 - Linux (x86_64 tarball + .deb via Docker): `./scripts/linux-release`
 - Shared release inputs: copy `release.env.example` to `release.env`
@@ -13,8 +13,12 @@ This repo has repeatable release entrypoints for every platform:
 `./scripts/release` builds whatever the current host can build, stages a
 hashtree release tree under `dist/release/<tag>/`, and with `--publish` runs
 `htree add` + `htree release publish releases/iris-chat-rs <tag> <cid>`, which
-also repoints the mutable `latest` release. A publish with the full CLI archive
-set also updates the Homebrew tap at `homebrew-iris.git`, unless
+also repoints the mutable `latest` release. The macOS desktop updater uses the
+published `iris-chat-<tag>-macos-arm64.app.tar.gz` asset from that latest
+manifest and falls back to the DMG for manual installs. Windows update checks
+use the same latest manifest and open the published setup `.exe`. A publish
+with the full CLI archive set also updates the Homebrew tap at
+`homebrew-iris.git`, unless
 `--skip-homebrew-tap` is passed. Partial builds with `--only` or `--skip` are
 for local/staged artifacts and are rejected by `--publish` when they exclude a
 required latest platform. By default, latest requires macOS, Windows, Android,

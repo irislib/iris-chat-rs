@@ -7,3 +7,4 @@
 - Fixes nearby Wi-Fi presence between Apple devices.
 - Enables sound and vibration for mobile message alerts.
 - Adds Homebrew install support for the `iris` command line app.
+- Restores desktop update controls and automatic installs.

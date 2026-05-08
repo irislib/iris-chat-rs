@@ -331,14 +331,22 @@ build_macos() {
     return 0
   fi
   IRIS_RELEASE_TAG="$TAG" "$ROOT/scripts/macos-build" macos-dmg >/dev/null
-  local dmg
+  IRIS_RELEASE_TAG="$TAG" IRIS_MACOS_FORCE_REBUILD_APP=0 "$ROOT/scripts/macos-build" macos-updater-archive >/dev/null
+  local dmg updater
   dmg="$(ls -1t "$ROOT/dist/macos/iris-chat-${TAG}-macos-arm64.dmg" 2>/dev/null | head -n 1)"
+  updater="$(ls -1t "$ROOT/dist/macos/iris-chat-${TAG}-macos-arm64.app.tar.gz" 2>/dev/null | head -n 1)"
   if [[ -z "${dmg:-}" || ! -f "$dmg" ]]; then
     note_skipped "macos: dmg was not produced"
     return 0
   fi
+  if [[ -z "${updater:-}" || ! -f "$updater" ]]; then
+    note_skipped "macos: updater archive was not produced"
+    return 0
+  fi
   ASSET_PATHS+=("$dmg")
   note_built "macOS Apple Silicon DMG: $(basename "$dmg")"
+  ASSET_PATHS+=("$updater")
+  note_built "macOS Apple Silicon updater archive: $(basename "$updater")"
 }
 
 # ---------- Windows ----------
@@ -557,6 +565,7 @@ find_staged_asset() {
 download_asset_description() {
   local name="$1"
   case "$name" in
+    iris-chat-*-macos-arm64.app.tar.gz) printf '%s\n' "macOS Apple Silicon updater archive" ;;
     iris-chat-*-macos-arm64.dmg) printf '%s\n' "macOS Apple Silicon disk image" ;;
     iris-chat-*-windows-x64-setup.exe) printf '%s\n' "Windows x64 installer" ;;
     iris-chat-*-windows-x64.zip) printf '%s\n' "Windows x64 portable zip" ;;

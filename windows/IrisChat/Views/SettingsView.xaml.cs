@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.IO;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
@@ -50,6 +51,8 @@ public partial class SettingsView : UserControl
         NotificationsToggle.IsChecked = prefs.desktopNotificationsEnabled;
         StartupToggle.IsChecked = prefs.startupAtLoginEnabled;
         NearbyLanToggle.IsChecked = prefs.nearbyLanEnabled;
+        AutoCheckUpdatesToggle.IsChecked = App.CurrentManager.AutoCheckUpdates;
+        AutoInstallUpdatesToggle.IsChecked = App.CurrentManager.AutoInstallUpdates;
         StartupToggle.Visibility = PlatformStartupAtLogin.IsSupported ? Visibility.Visible : Visibility.Collapsed;
         _suppressToggleDispatch = false;
 
@@ -68,6 +71,11 @@ public partial class SettingsView : UserControl
         {
             NetworkText.Text = string.Empty;
         }
+
+        UpdateVersionText.Text = $"Current version {App.CurrentManager.AppVersion()}";
+        UpdateStatusText.Text = App.CurrentManager.UpdateStatus;
+        CheckUpdatesButton.IsEnabled = !App.CurrentManager.UpdateChecking && !App.CurrentManager.UpdateInstalling;
+        InstallUpdateButton.IsEnabled = App.CurrentManager.UpdateInstallEnabled;
     }
 
     private void RebuildRelays(PreferencesSnapshot prefs)
@@ -145,6 +153,40 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetNearbyLanEnabled(NearbyLanToggle.IsChecked == true);
+    }
+
+    private void OnAutoCheckUpdatesChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.AutoCheckUpdates = AutoCheckUpdatesToggle.IsChecked == true;
+    }
+
+    private void OnAutoInstallUpdatesChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.AutoInstallUpdates = AutoInstallUpdatesToggle.IsChecked == true;
+    }
+
+    private async void OnCheckUpdates(object sender, RoutedEventArgs e)
+    {
+        await RunUpdateAction(() => App.CurrentManager.CheckForUpdatesAsync());
+    }
+
+    private async void OnInstallUpdate(object sender, RoutedEventArgs e)
+    {
+        await RunUpdateAction(() => App.CurrentManager.InstallUpdateAsync());
+    }
+
+    private async Task RunUpdateAction(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        finally
+        {
+            Refresh();
+        }
     }
 
     private void OnSaveProfile(object sender, RoutedEventArgs e)
