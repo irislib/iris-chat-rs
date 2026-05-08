@@ -29,6 +29,7 @@ DRY_RUN=0
 PUBLISH_ZAPSTORE=0
 PUBLISH_CARGO_CRATE=""
 TESTFLIGHT_MODE=""
+SKIP_HOMEBREW_TAP=0
 RELEASE_GATE=1
 RELEASE_GATE_ARGS=()
 RELEASE_TREE=""
@@ -37,6 +38,9 @@ ONLY_RAW=""
 SKIP_RAW=""
 ALLOW_PARTIAL_LATEST=0
 REQUIRED_LATEST_STEPS_RAW="${IRIS_RELEASE_REQUIRED_LATEST_STEPS:-macos,windows,android,linux,cli}"
+HOMEBREW_TAP_REPO="${IRIS_HOMEBREW_TAP_REPO:-homebrew-iris}"
+HOMEBREW_TAP_NAME="${IRIS_HOMEBREW_TAP_NAME:-sirius/iris}"
+HOMEBREW_TAP_PUSH_URL="${IRIS_HOMEBREW_TAP_PUSH_URL:-}"
 
 usage() {
   cat <<'EOF'
@@ -51,6 +55,11 @@ Options:
   --publish-zapstore       Also publish the signed Android APK to Zapstore
   --publish-cargo-crate    Publish the iris-chat Rust crate if this version is new
   --skip-cargo-crate       Do not publish the iris-chat Rust crate
+  --skip-homebrew-tap      Do not update the Homebrew tap during --publish
+  --homebrew-tap-repo <n>  htree tap repo name (default: homebrew-iris)
+  --homebrew-tap-name <n>  brew tap name shown to users (default: sirius/iris)
+  --homebrew-tap-push-url <url>
+                           Override Homebrew tap publish destination
   --testflight             Upload iOS and attach internal + public TestFlight groups
   --testflight-internal    Upload iOS and attach internal TestFlight groups
   --testflight-public      Upload iOS and submit/attach public TestFlight groups
@@ -74,6 +83,10 @@ Environment:
                             Required steps for --publish latest (default: macos,windows,android,linux,cli)
   IRIS_RELEASE_GATE_ARGS    Extra/default args for scripts/test-release-gate
   IRIS_RELEASE_TESTFLIGHT   both, internal, public, or 0
+  IRIS_RELEASE_SKIP_HOMEBREW_TAP
+  IRIS_HOMEBREW_TAP_REPO    Default Homebrew tap repo (default: homebrew-iris)
+  IRIS_HOMEBREW_TAP_NAME    Default brew tap name (default: sirius/iris)
+  IRIS_HOMEBREW_TAP_PUSH_URL
 EOF
 }
 
@@ -84,6 +97,10 @@ while [[ $# -gt 0 ]]; do
     --publish-zapstore) PUBLISH_ZAPSTORE=1 ;;
     --publish-cargo-crate) PUBLISH_CARGO_CRATE=1 ;;
     --skip-cargo-crate) PUBLISH_CARGO_CRATE=0 ;;
+    --skip-homebrew-tap) SKIP_HOMEBREW_TAP=1 ;;
+    --homebrew-tap-repo) HOMEBREW_TAP_REPO="$2"; shift ;;
+    --homebrew-tap-name) HOMEBREW_TAP_NAME="$2"; shift ;;
+    --homebrew-tap-push-url) HOMEBREW_TAP_PUSH_URL="$2"; shift ;;
     --testflight) TESTFLIGHT_MODE="both" ;;
     --testflight-internal) TESTFLIGHT_MODE="internal" ;;
     --testflight-public) TESTFLIGHT_MODE="public" ;;
@@ -112,6 +129,10 @@ done
 
 if bool_is_true "${IRIS_RELEASE_ALLOW_PARTIAL_LATEST:-false}"; then
   ALLOW_PARTIAL_LATEST=1
+fi
+
+if bool_is_true "${IRIS_RELEASE_SKIP_HOMEBREW_TAP:-false}"; then
+  SKIP_HOMEBREW_TAP=1
 fi
 
 if [[ "${#RELEASE_GATE_ARGS[@]}" -eq 0 && -n "${IRIS_RELEASE_GATE_ARGS:-}" ]]; then
@@ -429,6 +450,75 @@ release_gateway_base_url() {
     "$RELEASE_OWNER_NPUB" \
     "$(release_tree_url_path)" \
     "$TAG"
+}
+
+homebrew_tap_required_archives=(
+  "iris-aarch64-apple-darwin.tar.gz"
+  "iris-x86_64-apple-darwin.tar.gz"
+  "iris-x86_64-unknown-linux-gnu.tar.gz"
+)
+
+missing_homebrew_tap_archives() {
+  local name
+  for name in "${homebrew_tap_required_archives[@]}"; do
+    [[ -f "$STAGE_DIR/assets/$name" ]] || printf '%s\n' "$name"
+  done
+}
+
+assert_homebrew_tap_assets_complete() {
+  [[ "$PUBLISH" -eq 1 ]] || return 0
+  [[ "$SKIP_HOMEBREW_TAP" -eq 0 ]] || return 0
+  [[ "$ALLOW_PARTIAL_LATEST" -eq 0 ]] || return 0
+  required_step_disabled_by_scope cli && return 0
+
+  local missing=()
+  local name
+  while IFS= read -r name; do
+    [[ -n "$name" ]] && missing+=("$name")
+  done < <(missing_homebrew_tap_archives)
+
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    echo "Refusing to publish with an incomplete Homebrew CLI archive set." >&2
+    echo "Missing: ${missing[*]}" >&2
+    echo "Build a complete CLI release or pass --skip-homebrew-tap." >&2
+    exit 1
+  fi
+}
+
+publish_homebrew_tap() {
+  if [[ "$PUBLISH" -ne 1 ]]; then
+    echo "Homebrew tap: skipped"
+    return 0
+  fi
+  if [[ "$SKIP_HOMEBREW_TAP" -eq 1 ]]; then
+    echo "Homebrew tap: skipped"
+    return 0
+  fi
+
+  local missing=()
+  local name
+  while IFS= read -r name; do
+    [[ -n "$name" ]] && missing+=("$name")
+  done < <(missing_homebrew_tap_archives)
+  if [[ "${#missing[@]}" -gt 0 ]]; then
+    echo "Homebrew tap: skipped; missing ${missing[*]}"
+    return 0
+  fi
+
+  echo
+  echo "Publishing Homebrew tap..."
+  local args=(
+    --version "$TAG"
+    --release-base-url "$(release_gateway_base_url)/assets"
+    --assets-dir "$STAGE_DIR/assets"
+    --tap-repo "$HOMEBREW_TAP_REPO"
+    --tap-name "$HOMEBREW_TAP_NAME"
+    --npub "$RELEASE_OWNER_NPUB"
+  )
+  if [[ -n "$HOMEBREW_TAP_PUSH_URL" ]]; then
+    args+=(--push-url "$HOMEBREW_TAP_PUSH_URL")
+  fi
+  "$ROOT/packaging/homebrew/publish_tap.sh" "${args[@]}"
 }
 
 USED_NOTE_ASSETS=()
@@ -981,6 +1071,7 @@ echo "Git sha:         $IRIS_BUILD_GIT_SHA"
 echo "Gate:            $([[ "$RELEASE_GATE" -eq 1 ]] && printf '%s' "${RELEASE_GATE_ARGS[*]}" || printf skipped)"
 echo "Cargo crate:     $([[ "$PUBLISH_CARGO_CRATE" -eq 1 ]] && printf publish || printf skip)"
 echo "TestFlight:      $TESTFLIGHT_MODE"
+echo "Homebrew tap:    $([[ "$PUBLISH" -eq 1 && "$SKIP_HOMEBREW_TAP" -eq 0 ]] && printf '%s' "$HOMEBREW_TAP_REPO" || printf skip)"
 echo "Latest requires: ${REQUIRED_LATEST_STEPS[*]}"
 [[ "$DRY_RUN" -eq 1 ]] && echo "(dry-run; no commands executed)"
 
@@ -1089,6 +1180,7 @@ echo
 echo "Staged $TAG at: $STAGE_DIR"
 ls -la "$STAGE_DIR/assets"
 
+assert_homebrew_tap_assets_complete
 publish_cargo_crate
 publish_testflight
 
@@ -1112,6 +1204,7 @@ if [[ "$PUBLISH" -eq 1 ]]; then
   fi
   htree release publish "$RELEASE_TREE" "$TAG" "$cid"
   echo "Published $TAG to $RELEASE_TREE (cid: $cid)"
+  publish_homebrew_tap
 fi
 
 if [[ "$PUBLISH_ZAPSTORE" -eq 1 ]]; then

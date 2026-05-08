@@ -89,6 +89,7 @@ run_step() {
 echo "iris chat release gate (${MODE})"
 
 run_step "release publish guard" "${ROOT_DIR}/scripts/test_release_publish_guard"
+run_step "Homebrew tap packaging" "${ROOT_DIR}/scripts/test_homebrew_tap"
 
 run_step "fast local tests" "${ROOT_DIR}/scripts/test_fast.sh"
 

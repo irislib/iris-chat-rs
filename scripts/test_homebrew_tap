@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TMPDIR="$(mktemp -d)"
+
+cleanup() {
+  rm -rf "$TMPDIR"
+}
+trap cleanup EXIT
+
+make_iris_archive() {
+  local target="$1"
+  local assets_dir="$2"
+  local stage_dir package_dir
+
+  stage_dir="$(mktemp -d)"
+  package_dir="$stage_dir/iris"
+  mkdir -p "$package_dir"
+
+  printf '#!/bin/sh\nprintf "iris %s\\n"\n' "$target" > "$package_dir/iris"
+  printf '#!/bin/sh\ninstall -m 755 iris "${1:-$HOME/.local/bin}/"\n' > "$package_dir/install.sh"
+  printf 'iris command line app\n' > "$package_dir/README.txt"
+  chmod +x "$package_dir/iris" "$package_dir/install.sh"
+
+  (
+    cd "$stage_dir"
+    tar -czf "$assets_dir/iris-${target}.tar.gz" iris
+  )
+  rm -rf "$stage_dir"
+}
+
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    shasum -a 256 "$1" | awk '{print $1}'
+  fi
+}
+
+ASSETS_DIR="$TMPDIR/assets"
+SEED_WORK="$TMPDIR/seed-work"
+SEED_BARE="$TMPDIR/seed.git"
+TAP_BARE="$TMPDIR/tap.git"
+TAP_WORK="$TMPDIR/tap-work"
+PUBLISH_REMOTE="$TMPDIR/publish-remote.git"
+PUBLISH_WORK="$TMPDIR/publish-work"
+RELEASE_BASE_URL="https://example.invalid/iris/v9.8.7/assets"
+
+mkdir -p "$ASSETS_DIR" "$SEED_WORK/Formula"
+for target in \
+  aarch64-apple-darwin \
+  x86_64-apple-darwin \
+  x86_64-unknown-linux-gnu
+do
+  make_iris_archive "$target" "$ASSETS_DIR"
+done
+
+cat > "$SEED_WORK/Formula/htree.rb" <<'EOF'
+class Htree < Formula
+  desc "Existing formula"
+  homepage "https://example.invalid/htree"
+  version "1.2.3"
+
+  def install
+    bin.install "htree"
+  end
+end
+EOF
+
+git -C "$SEED_WORK" init -q -b master >/dev/null
+git -C "$SEED_WORK" add Formula/htree.rb >/dev/null
+git -C "$SEED_WORK" -c user.name='Test User' -c user.email='test@example.com' \
+  commit -m "Seed htree formula" >/dev/null
+git clone -q --bare "$SEED_WORK" "$SEED_BARE" >/dev/null
+
+"$ROOT_DIR/packaging/homebrew/create_tap.sh" \
+  --version v9.8.7 \
+  --release-base-url "$RELEASE_BASE_URL" \
+  --assets-dir "$ASSETS_DIR" \
+  --output-dir "$TAP_BARE" \
+  --seed-repo "$SEED_BARE" >/dev/null
+
+git clone -q "$TAP_BARE" "$TAP_WORK" >/dev/null
+test -f "$TAP_WORK/Formula/iris.rb"
+test -f "$TAP_WORK/Formula/htree.rb"
+grep -F 'class Iris < Formula' "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "version \"9.8.7\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "url \"${RELEASE_BASE_URL}/iris-aarch64-apple-darwin.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "url \"${RELEASE_BASE_URL}/iris-x86_64-apple-darwin.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "url \"${RELEASE_BASE_URL}/iris-x86_64-unknown-linux-gnu.tar.gz\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-aarch64-apple-darwin.tar.gz")\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F 'bin.install "iris/iris" => "iris"' "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F 'Linux ARM64 Homebrew install is not available yet' "$TAP_WORK/Formula/iris.rb" >/dev/null
+grep -F 'class Htree < Formula' "$TAP_WORK/Formula/htree.rb" >/dev/null
+if command -v ruby >/dev/null 2>&1; then
+  ruby -c "$TAP_WORK/Formula/iris.rb" >/dev/null
+fi
+
+git init -q --bare "$PUBLISH_REMOTE" >/dev/null
+"$ROOT_DIR/packaging/homebrew/publish_tap.sh" \
+  --version v9.8.7 \
+  --release-base-url "$RELEASE_BASE_URL" \
+  --assets-dir "$ASSETS_DIR" \
+  --seed-repo "$SEED_BARE" \
+  --push-url "$PUBLISH_REMOTE" \
+  --tap-repo homebrew-iris >/dev/null
+
+git clone -q "$PUBLISH_REMOTE" "$PUBLISH_WORK" >/dev/null
+test -f "$PUBLISH_WORK/Formula/iris.rb"
+test -f "$PUBLISH_WORK/Formula/htree.rb"
+grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-x86_64-unknown-linux-gnu.tar.gz")\"" \
+  "$PUBLISH_WORK/Formula/iris.rb" >/dev/null
+
+echo "test_homebrew_tap passed"

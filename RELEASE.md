@@ -13,10 +13,12 @@ This repo has repeatable release entrypoints for every platform:
 `./scripts/release` builds whatever the current host can build, stages a
 hashtree release tree under `dist/release/<tag>/`, and with `--publish` runs
 `htree add` + `htree release publish releases/iris-chat-rs <tag> <cid>`, which
-also repoints the mutable `latest` release. Partial builds with `--only` or
-`--skip` are for local/staged artifacts and are rejected by `--publish` when
-they exclude a required latest platform. By default, latest requires macOS,
-Windows, Android, Linux, and CLI artifacts; override with
+also repoints the mutable `latest` release. A publish with the full CLI archive
+set also updates the Homebrew tap at `homebrew-iris.git`, unless
+`--skip-homebrew-tap` is passed. Partial builds with `--only` or `--skip` are
+for local/staged artifacts and are rejected by `--publish` when they exclude a
+required latest platform. By default, latest requires macOS, Windows, Android,
+Linux, and CLI artifacts; override with
 `IRIS_RELEASE_REQUIRED_LATEST_STEPS` only when the official platform set
 changes. `--allow-partial-latest` exists only for an intentional emergency
 override. Pass `--dry-run` to see the plan first.
@@ -165,6 +167,25 @@ The generated project takes its version/build from `MARKETING_VERSION` and
 with explicit release values instead of rewriting plist files in place.
 
 ## Step By Step
+
+### Command line Homebrew tap
+
+The release script publishes the CLI formula from the staged release assets:
+
+```bash
+brew tap sirius/iris https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/homebrew-iris.git
+brew install iris
+```
+
+The tap requires these release files:
+
+- `iris-aarch64-apple-darwin.tar.gz`
+- `iris-x86_64-apple-darwin.tar.gz`
+- `iris-x86_64-unknown-linux-gnu.tar.gz`
+
+Override the tap destination with `IRIS_HOMEBREW_TAP_REPO`,
+`IRIS_HOMEBREW_TAP_NAME`, or `IRIS_HOMEBREW_TAP_PUSH_URL`. If intentionally
+using a shared tap, seed from the existing tap so other formulas are preserved.
 
 ### Android closed test or release
 

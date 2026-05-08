@@ -54,6 +54,7 @@ info:
     @echo "  just qa"
     @echo "  just test"
     @echo "  just release-gate"
+    @echo "  just test-homebrew-tap"
     @echo "  just test-android"
     @echo "  just test-ios"
     @echo "  just test-macos"
@@ -194,6 +195,9 @@ test:
 
 release-gate:
     ./scripts/test-release-gate
+
+test-homebrew-tap:
+    ./scripts/test_homebrew_tap
 
 test-android:
     ./scripts/test-android

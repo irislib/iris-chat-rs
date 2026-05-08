@@ -2,6 +2,7 @@
 
 ## 0.1.19
 
+- Add Homebrew tap packaging for the `iris` CLI and wire tap updates into the htree release publish path.
 - Add desktop chat-list context actions for read/unread, pin, mute, and delete.
 - Harden mobile push notification payload parsing so APNS/FCM event aliases decrypt the same as canonical event payloads.
 - Suppress generic mobile push placeholders when an encrypted message notification cannot be decrypted into sender/message text.

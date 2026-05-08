@@ -102,7 +102,14 @@ internal and public TestFlight unless skipped.
 
 ## Command Line
 
-Install the Iris command line app with a prebuilt macOS/Linux binary:
+Install the Iris command line app with Homebrew:
+
+```bash
+brew tap sirius/iris https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/homebrew-iris.git
+brew install iris
+```
+
+Or install a prebuilt macOS/Linux binary directly:
 
 ```bash
 curl -fsSL https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/install.sh | sh
