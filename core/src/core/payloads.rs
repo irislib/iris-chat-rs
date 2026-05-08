@@ -14,32 +14,6 @@ pub(super) fn parse_group_id_from_chat_id(chat_id: &str) -> Option<String> {
         .map(|group_id| group_id.to_string())
 }
 
-const APP_GROUP_MESSAGE_PAYLOAD_VERSION: u8 = 1;
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub(super) struct AppGroupMessagePayload {
-    pub(super) version: u8,
-    pub(super) body: String,
-    pub(super) message_id: String,
-}
-
-pub(super) fn encode_app_group_message_payload(
-    body: &str,
-    message_id: &str,
-) -> anyhow::Result<Vec<u8>> {
-    Ok(serde_json::to_vec(&AppGroupMessagePayload {
-        version: APP_GROUP_MESSAGE_PAYLOAD_VERSION,
-        body: body.to_string(),
-        message_id: message_id.to_string(),
-    })?)
-}
-
-pub(super) fn decode_app_group_message_payload(payload: &[u8]) -> Option<AppGroupMessagePayload> {
-    let decoded = serde_json::from_slice::<AppGroupMessagePayload>(payload).ok()?;
-    (decoded.version == APP_GROUP_MESSAGE_PAYLOAD_VERSION && !decoded.message_id.is_empty())
-        .then_some(decoded)
-}
-
 pub(super) fn normalize_group_id(value: &str) -> Option<String> {
     if let Some(group_id) = parse_group_id_from_chat_id(value) {
         if !group_id.trim().is_empty() {
@@ -147,47 +121,37 @@ pub(super) fn direct_self_sync_chat_id(
 
 pub(super) struct RuntimeRumor {
     pub(super) id: Option<String>,
+    pub(super) pubkey: PublicKey,
     pub(super) kind: u32,
     pub(super) content: String,
     pub(super) created_at_secs: u64,
     pub(super) tags: Vec<nostr::Tag>,
 }
 
-#[derive(Deserialize)]
-struct LooseRuntimeRumor {
-    #[serde(default)]
-    id: Option<String>,
-    kind: u32,
-    content: String,
-    created_at: u64,
-    #[serde(default)]
-    tags: Vec<Vec<String>>,
-}
-
 pub(super) fn parse_runtime_rumor(content: &str) -> Option<RuntimeRumor> {
-    if let Ok(event) = serde_json::from_str::<UnsignedEvent>(content) {
+    if let Ok(mut event) = serde_json::from_str::<UnsignedEvent>(content) {
+        event.ensure_id();
+        event.verify_id().ok()?;
         return Some(RuntimeRumor {
             id: event.id.as_ref().map(ToString::to_string),
+            pubkey: event.pubkey,
             kind: event.kind.as_u16() as u32,
             content: event.content.clone(),
             created_at_secs: event.created_at.as_secs(),
             tags: event.tags.iter().cloned().collect(),
         });
     }
+    None
+}
 
-    let loose = serde_json::from_str::<LooseRuntimeRumor>(content).ok()?;
-    let tags = loose
-        .tags
-        .iter()
-        .filter_map(|tag| nostr::Tag::parse(tag.iter().map(String::as_str)).ok())
-        .collect();
-    Some(RuntimeRumor {
-        id: loose.id,
-        kind: loose.kind,
-        content: loose.content,
-        created_at_secs: loose.created_at,
-        tags,
-    })
+pub(super) fn looks_like_runtime_rumor(content: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+        return false;
+    };
+    value.get("kind").is_some()
+        && value.get("content").is_some()
+        && value.get("created_at").is_some()
+        && value.get("pubkey").is_some()
 }
 
 pub(super) fn chat_settings_ttl_seconds(content: &str) -> Option<u64> {

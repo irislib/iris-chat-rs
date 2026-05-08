@@ -676,25 +676,6 @@ impl AppCore {
         )) as Arc<dyn StorageAdapter>;
         let protocol_engine_storage = storage.clone();
         self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
-        match import_legacy_ndr_storage(storage.as_ref(), owner_pubkey) {
-            Ok(summary) => {
-                if summary.imported > 0 || summary.replaced_empty > 0 {
-                    self.push_debug_log(
-                        "session.legacy_ndr_import",
-                        format!(
-                            "imported={} replaced_empty={} skipped_existing={} skipped_invalid={}",
-                            summary.imported,
-                            summary.replaced_empty,
-                            summary.skipped_existing,
-                            summary.skipped_invalid
-                        ),
-                    );
-                }
-            }
-            Err(error) => {
-                self.push_debug_log("session.legacy_ndr_import", format!("ignored={error}"));
-            }
-        }
         let device_id = device_pubkey.to_hex();
         let local_invite =
             load_or_create_local_invite(storage.as_ref(), device_pubkey, &device_id, owner_pubkey)?;

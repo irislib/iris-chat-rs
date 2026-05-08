@@ -1,5 +1,4 @@
 use super::*;
-use rand::RngCore;
 
 const OPEN_CHAT_MESSAGES_PER_PAGE: usize = 80;
 
@@ -416,8 +415,38 @@ impl AppCore {
             self.state.toast = Some("Invalid group id.".to_string());
             return;
         };
-        let message_id = self.allocate_group_message_id();
-        let payload = match encode_app_group_message_payload(text, &message_id) {
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            self.state.toast = Some("Create or restore a profile first.".to_string());
+            return;
+        };
+        let mut tags = Vec::new();
+        if let Ok(group_tag) = nostr::Tag::parse(["l", group_id.as_str()]) {
+            tags.push(group_tag);
+        }
+        if let Some(expires_at_secs) = expires_at_secs {
+            let expiration = expires_at_secs.to_string();
+            if let Ok(expiration_tag) = nostr::Tag::parse(["expiration", expiration.as_str()]) {
+                tags.push(expiration_tag);
+            }
+        }
+        let mut rumor = UnsignedEvent::new(
+            owner_pubkey,
+            Timestamp::from_secs(now.get()),
+            Kind::Custom(CHAT_MESSAGE_KIND as u16),
+            tags,
+            text.to_string(),
+        );
+        rumor.ensure_id();
+        let message_id = rumor
+            .id
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| self.allocate_message_id());
+        let payload = match serde_json::to_vec(&rumor) {
             Ok(payload) => payload,
             Err(error) => {
                 self.state.toast = Some(error.to_string());
@@ -1165,6 +1194,17 @@ impl AppCore {
         );
 
         let Some(runtime_rumor) = parse_runtime_rumor(&content) else {
+            if looks_like_runtime_rumor(&content) {
+                self.push_debug_log(
+                    "runtime_rumor.decode.skip",
+                    format!(
+                        "sender_owner={} bytes={}",
+                        effective_sender_owner.to_hex(),
+                        content.len()
+                    ),
+                );
+                return;
+            }
             let chat_id = self.logged_in.as_ref().and_then(|logged_in| {
                 direct_self_sync_chat_id(
                     effective_sender_owner,
@@ -1183,6 +1223,17 @@ impl AppCore {
             );
             return;
         };
+        if runtime_rumor.pubkey != effective_sender_owner {
+            self.push_debug_log(
+                "runtime_rumor.sender_mismatch",
+                format!(
+                    "sender_owner={} rumor_pubkey={}",
+                    effective_sender_owner.to_hex(),
+                    runtime_rumor.pubkey.to_hex()
+                ),
+            );
+            return;
+        }
 
         let kind = runtime_rumor.kind;
         let created_at_secs = runtime_rumor.created_at_secs;
@@ -1405,12 +1456,6 @@ impl AppCore {
         id.to_string()
     }
 
-    pub(super) fn allocate_group_message_id(&mut self) -> String {
-        let mut bytes = [0_u8; 32];
-        OsRng.fill_bytes(&mut bytes);
-        lower_hex(&bytes)
-    }
-
     fn initial_recipient_deliveries(
         &self,
         chat_id: &str,
@@ -1533,16 +1578,6 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
         return;
     }
     values.push(value.to_string());
-}
-
-fn lower_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(HEX[(byte >> 4) as usize] as char);
-        encoded.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    encoded
 }
 
 fn message_order(message: &ChatMessageSnapshot) -> (u64, u64, &str) {

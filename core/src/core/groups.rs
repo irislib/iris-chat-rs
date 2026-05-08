@@ -318,35 +318,20 @@ impl AppCore {
                 let chat_id = group_chat_id(&message.group_id);
                 let sender_owner = PublicKey::from_slice(&message.sender_owner.to_bytes())
                     .expect("owner pubkey bytes must be valid");
-                if let Some(payload) = decode_app_group_message_payload(&message.body) {
-                    let is_outgoing = self
-                        .logged_in
-                        .as_ref()
-                        .map(|logged_in| sender_owner == logged_in.owner_pubkey)
-                        .unwrap_or(false);
-                    self.apply_runtime_text_message(
-                        sender_owner,
-                        Some(chat_id),
-                        payload.body,
-                        unix_now().get(),
-                        None,
-                        Some(payload.message_id.clone()),
-                        None,
-                    );
-                    if is_outgoing {
-                        self.request_protocol_subscription_refresh();
-                    }
-                    return;
-                }
                 let body = String::from_utf8_lossy(&message.body).to_string();
                 if let Some(runtime_rumor) = parse_runtime_rumor(&body) {
                     self.apply_group_runtime_rumor(&chat_id, sender_owner, runtime_rumor);
                     return;
                 }
+                let reason = if looks_like_runtime_rumor(&body) {
+                    "invalid_runtime_rumor"
+                } else {
+                    "not_runtime_rumor"
+                };
                 self.push_debug_log(
                     "group.message.decode.skip",
                     format!(
-                        "chat_id={chat_id} sender_owner={} bytes={}",
+                        "chat_id={chat_id} sender_owner={} bytes={} reason={reason}",
                         sender_owner.to_hex(),
                         message.body.len()
                     ),
@@ -361,6 +346,17 @@ impl AppCore {
         sender_owner: PublicKey,
         runtime_rumor: RuntimeRumor,
     ) {
+        if runtime_rumor.pubkey != sender_owner {
+            self.push_debug_log(
+                "group.runtime_rumor.sender_mismatch",
+                format!(
+                    "chat_id={chat_id} sender_owner={} rumor_pubkey={}",
+                    sender_owner.to_hex(),
+                    runtime_rumor.pubkey.to_hex()
+                ),
+            );
+            return;
+        }
         let local_owner = self
             .logged_in
             .as_ref()

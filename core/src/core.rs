@@ -119,9 +119,7 @@ use profile_helpers::*;
 use protocol_engine::*;
 use protocol_filters::*;
 use publish_helpers::*;
-use storage::{
-    import_legacy_ndr_storage, open_database, AppStore, DataDirLock, SqliteStorageAdapter,
-};
+use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
 
 pub struct AppCore {
     update_tx: Sender<AppUpdate>,

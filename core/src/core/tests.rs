@@ -65,6 +65,68 @@ fn protocol_plan_for_test(
     }
 }
 
+fn runtime_rumor_json(
+    author: PublicKey,
+    kind: u32,
+    content: &str,
+    created_at_secs: u64,
+    tags: Vec<Vec<String>>,
+) -> (String, String) {
+    let tags = tags
+        .into_iter()
+        .map(|tag| nostr::Tag::parse(tag).expect("runtime rumor tag"))
+        .collect::<Vec<_>>();
+    let mut rumor = UnsignedEvent::new(
+        author,
+        Timestamp::from_secs(created_at_secs),
+        Kind::Custom(kind as u16),
+        tags,
+        content.to_string(),
+    );
+    rumor.ensure_id();
+    let id = rumor.id.as_ref().expect("runtime rumor id").to_string();
+    (
+        serde_json::to_string(&rumor).expect("runtime rumor json"),
+        id,
+    )
+}
+
+fn appcore_direct_message_event_for_test(
+    receiver_engine: &mut ProtocolEngine,
+    sender_keys: &Keys,
+    body: &str,
+    created_at_secs: u64,
+) -> Event {
+    let invite = receiver_engine
+        .local_invite_for_test()
+        .expect("receiver local invite");
+    let (mut sender_session, response) = invite
+        .accept_with_owner(
+            sender_keys.public_key(),
+            sender_keys.secret_key().to_secret_bytes(),
+            Some(sender_keys.public_key().to_hex()),
+            Some(sender_keys.public_key()),
+        )
+        .expect("sender accepts receiver invite");
+    let response_event = invite_response_event(&response).expect("invite response event");
+    receiver_engine
+        .observe_invite_response_event(&response_event)
+        .expect("receiver observes invite response");
+
+    let (content, _) = runtime_rumor_json(
+        sender_keys.public_key(),
+        CHAT_MESSAGE_KIND,
+        body,
+        created_at_secs,
+        Vec::new(),
+    );
+    let plan = sender_session
+        .plan_send(content.as_bytes(), NdrUnixSeconds(created_at_secs))
+        .expect("sender plans message");
+    let sent = sender_session.apply_send(plan);
+    message_event(&sent.envelope).expect("message event")
+}
+
 #[test]
 fn restoring_invalid_secret_key_shows_normie_error() {
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
@@ -3181,68 +3243,21 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     let bob_keys = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let data_dir = temp_dir.path().to_path_buf();
-    let bob_shared_conn = crate::core::storage::open_database(&data_dir).expect("bob db");
     let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
-        bob_shared_conn.clone(),
+        crate::core::storage::open_database(&data_dir).expect("bob db"),
         bob_keys.public_key().to_hex(),
         bob_keys.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
-
-    let mut invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("invite");
-    invite.owner_public_key = Some(alice_keys.public_key());
-
-    let alice = NdrRuntime::new(
-        alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    alice.init().expect("alice init");
-
-    let bob = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        Some(bob_storage.clone()),
-        None,
-    );
-    bob.init().expect("bob init");
-    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
-    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
-
-    let user_record_key = "v2/runtime-state";
-    let before = bob_storage
-        .get(&user_record_key)
-        .expect("read stored ratchet before notification")
-        .expect("stored ratchet before notification");
-
+    let mut bob_engine =
+        test_protocol_engine_with_storage(&bob_keys, &bob_keys, bob_storage.clone());
     let message = "closed-app preview stays read-only";
-    alice
-        .send_text(bob_keys.public_key(), message.to_string(), None)
-        .expect("alice sends");
-    let bob_message_authors = bob.get_all_message_push_author_pubkeys();
-    let published_events = drain_signed_events(&alice, &alice_keys);
-    let message_event = published_events
-        .iter()
-        .find(|event| {
-            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
-                && bob_message_authors.contains(&event.pubkey)
-        })
-        .cloned()
-        .unwrap_or_else(|| {
-            panic!(
-                "message event for Bob; published={}",
-                serde_json::to_string(&published_events).unwrap_or_default()
-            )
-        });
+    let message_event =
+        appcore_direct_message_event_for_test(&mut bob_engine, &alice_keys, message, 200);
+    let state_key = "appcore/protocol-engine-state-v1";
+    let before = bob_storage
+        .get(state_key)
+        .expect("read stored appcore state before notification")
+        .expect("stored appcore state before notification");
     let payload = serde_json::json!({
         "event": serde_json::to_string(&message_event).expect("outer event json"),
         "title": "New message",
@@ -3280,12 +3295,12 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     assert_eq!(apns_resolution.body, message);
 
     let after = bob_storage
-        .get(&user_record_key)
-        .expect("read stored ratchet after notification")
-        .expect("stored ratchet after notification");
+        .get(state_key)
+        .expect("read stored appcore state after notification")
+        .expect("stored appcore state after notification");
     assert_eq!(
         before, after,
-        "notification preview must not advance persisted ratchet state"
+        "notification preview must not advance persisted protocol state"
     );
 
     let bob_restarted_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
@@ -3293,22 +3308,14 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
         bob_keys.public_key().to_hex(),
         bob_keys.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
-    let bob_restarted = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        Some(bob_restarted_storage),
-        None,
-    );
-    bob_restarted.init().expect("bob restarted init");
-    deliver_event_to_runtime(&bob_restarted, message_event);
-    assert!(
-        drain_text_messages(&bob_restarted)
-            .iter()
-            .any(|body| body == message),
-        "foreground runtime must still decrypt the relay event after notification preview"
-    );
+    let mut bob_restarted =
+        test_protocol_engine_with_storage(&bob_keys, &bob_keys, bob_restarted_storage);
+    let decrypted = bob_restarted
+        .process_direct_message_event(&message_event)
+        .expect("foreground protocol decrypt")
+        .expect("foreground decrypted message");
+    let runtime_rumor = parse_runtime_rumor(&decrypted.content).expect("runtime rumor");
+    assert_eq!(runtime_rumor.content, message);
 }
 
 #[test]
@@ -3322,49 +3329,10 @@ fn mobile_push_decrypts_compacted_apns_event_payload() {
         bob_keys.public_key().to_hex(),
         bob_keys.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
-
-    let mut invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("invite");
-    invite.owner_public_key = Some(alice_keys.public_key());
-
-    let alice = NdrRuntime::new(
-        alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    alice.init().expect("alice init");
-
-    let bob = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        Some(bob_storage),
-        None,
-    );
-    bob.init().expect("bob init");
-    accept_invite_and_deliver(&bob, &bob_keys, &invite, alice_keys.public_key(), &alice);
-    complete_first_contact(&bob, &bob_keys, alice_keys.public_key(), &alice);
-
+    let mut bob_engine = test_protocol_engine_with_storage(&bob_keys, &bob_keys, bob_storage);
     let message = "compacted apns preview";
-    alice
-        .send_text(bob_keys.public_key(), message.to_string(), None)
-        .expect("alice sends");
-    let bob_message_authors = bob.get_all_message_push_author_pubkeys();
-    let message_event = drain_signed_events(&alice, &alice_keys)
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
-                && bob_message_authors.contains(&event.pubkey)
-        })
-        .expect("message event for Bob");
+    let message_event =
+        appcore_direct_message_event_for_test(&mut bob_engine, &alice_keys, message, 200);
     let payload = serde_json::json!({
         "aps": {
             "alert": {
@@ -3399,55 +3367,11 @@ fn mobile_push_payload_ingest_feeds_full_event_into_runtime() {
     let bob_keys = Keys::generate();
     let bob_storage =
         Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
-
-    let mut invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("invite");
-    invite.owner_public_key = Some(alice_keys.public_key());
-
-    let alice = NdrRuntime::new(
-        alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(invite.clone()),
-    );
-    alice.init().expect("alice init");
-
-    let bob_runtime = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        Some(Arc::clone(&bob_storage)),
-        None,
-    );
-    bob_runtime.init().expect("bob init");
-    accept_invite_and_deliver(
-        &bob_runtime,
-        &bob_keys,
-        &invite,
-        alice_keys.public_key(),
-        &alice,
-    );
-    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
-
+    let mut bob_engine =
+        test_protocol_engine_with_storage(&bob_keys, &bob_keys, Arc::clone(&bob_storage));
     let message = "push-only event";
-    alice
-        .send_text(bob_keys.public_key(), message.to_string(), None)
-        .expect("alice sends");
-    let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
-    let message_event = drain_signed_events(&alice, &alice_keys)
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
-                && bob_message_authors.contains(&event.pubkey)
-        })
-        .expect("message event for Bob");
+    let message_event =
+        appcore_direct_message_event_for_test(&mut bob_engine, &alice_keys, message, 200);
     let payload = serde_json::json!({
         "event": message_event.clone(),
         "title": "New message",
@@ -3708,160 +3632,6 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
 }
 
 #[test]
-fn mobile_push_preview_survives_foreground_batch_ratchet_race() {
-    let alice_keys = Keys::generate();
-    let bob_keys = Keys::generate();
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let data_dir = temp_dir.path().to_path_buf();
-    let bob_shared_conn = crate::core::storage::open_database(&data_dir).expect("bob db");
-    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
-        bob_shared_conn.clone(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key().to_hex(),
-    )) as Arc<dyn StorageAdapter>;
-
-    let mut alice_invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("alice invite");
-    alice_invite.owner_public_key = Some(alice_keys.public_key());
-
-    let alice = NdrRuntime::new(
-        alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(alice_invite.clone()),
-    );
-    alice.init().expect("alice init");
-
-    let bob_runtime = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        Some(bob_storage.clone()),
-        None,
-    );
-    bob_runtime.init().expect("bob init");
-    accept_invite_and_deliver(
-        &bob_runtime,
-        &bob_keys,
-        &alice_invite,
-        alice_keys.public_key(),
-        &alice,
-    );
-    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
-    let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
-    let user_record_key = "v2/runtime-state";
-    let legacy_runtime_before = bob_storage
-        .get(&user_record_key)
-        .expect("read bob ratchet before message")
-        .expect("bob ratchet before message");
-
-    let mut core = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        data_dir.to_string_lossy().to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-    let bob_local_invite = Invite::create_new(
-        bob_keys.public_key(),
-        Some(bob_keys.public_key().to_hex()),
-        None,
-    )
-    .expect("bob local invite");
-    core.logged_in = Some(LoggedInState {
-        owner_pubkey: bob_keys.public_key(),
-        owner_keys: Some(bob_keys.clone()),
-        device_keys: bob_keys.clone(),
-        client: Client::new(bob_keys.clone()),
-        relay_urls: Vec::new(),
-        local_invite: bob_local_invite,
-        authorization_state: LocalAuthorizationState::Authorized,
-    });
-    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
-        core.app_store.shared(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key().to_hex(),
-    )) as Arc<dyn StorageAdapter>;
-    install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, storage, None, None);
-    let protocol_state_before = runtime_state_json(&core, &bob_keys, &bob_keys).to_string();
-    core.owner_profiles.insert(
-        alice_keys.public_key().to_hex(),
-        OwnerProfileRecord {
-            name: Some("alice".to_string()),
-            display_name: Some("Alice".to_string()),
-            picture: None,
-            updated_at_secs: 1,
-        },
-    );
-
-    let message = "foreground batch preview";
-    alice
-        .send_text(bob_keys.public_key(), message.to_string(), None)
-        .expect("alice sends");
-    let published_events = drain_signed_events(&alice, &alice_keys);
-    let message_event = published_events
-        .iter()
-        .find(|event| {
-            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
-                && bob_message_authors.contains(&event.pubkey)
-        })
-        .cloned()
-        .unwrap_or_else(|| {
-            panic!(
-                "message event for Bob; published={}",
-                serde_json::to_string(&published_events).unwrap_or_default()
-            )
-        });
-    let payload = serde_json::json!({
-        "event": message_event,
-        "title": "Iris Chat",
-        "body": "New activity",
-    })
-    .to_string();
-
-    core.enter_batch();
-    core.handle_relay_event(message_event);
-    assert!(
-        core.batch_dirty_persist,
-        "full state save should still be deferred inside the core batch"
-    );
-    let protocol_state_after = runtime_state_json(&core, &bob_keys, &bob_keys).to_string();
-    assert_ne!(
-        protocol_state_before, protocol_state_after,
-        "foreground AppCore protocol engine should consume the relay event before the push handler runs"
-    );
-    let legacy_runtime_after = bob_storage
-        .get(&user_record_key)
-        .expect("read bob ratchet after message")
-        .expect("bob ratchet after message");
-    assert_eq!(
-        legacy_runtime_before, legacy_runtime_after,
-        "foreground AppCore handling must not mutate legacy runtime storage"
-    );
-
-    let resolution = decrypt_mobile_push_notification(
-        data_dir.to_string_lossy().to_string(),
-        bob_keys.public_key().to_hex(),
-        bob_keys
-            .secret_key()
-            .to_bech32()
-            .unwrap_or_else(|_| bob_keys.secret_key().to_secret_hex()),
-        payload,
-    );
-    core.exit_batch();
-
-    assert!(resolution.should_show);
-    assert_eq!(resolution.title, "Alice");
-    assert_eq!(resolution.body, message);
-}
-
-#[test]
 fn appcore_persists_pending_group_sender_key_outer_when_no_group_message_emits() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -3897,50 +3667,6 @@ fn appcore_defers_decrypted_delivery_ack_until_app_state_is_persisted() {
     let bob_keys = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let data_dir = temp_dir.path().to_path_buf();
-    let bob_shared_conn = crate::core::storage::open_database(&data_dir).expect("bob db");
-    let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
-        bob_shared_conn.clone(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key().to_hex(),
-    )) as Arc<dyn StorageAdapter>;
-
-    let mut alice_invite = Invite::create_new(
-        alice_keys.public_key(),
-        Some(alice_keys.public_key().to_hex()),
-        Some(1),
-    )
-    .expect("alice invite");
-    alice_invite.owner_public_key = Some(alice_keys.public_key());
-
-    let alice = NdrRuntime::new(
-        alice_keys.public_key(),
-        alice_keys.secret_key().to_secret_bytes(),
-        alice_keys.public_key().to_hex(),
-        alice_keys.public_key(),
-        None,
-        Some(alice_invite.clone()),
-    );
-    alice.init().expect("alice init");
-
-    let bob_runtime = NdrRuntime::new(
-        bob_keys.public_key(),
-        bob_keys.secret_key().to_secret_bytes(),
-        bob_keys.public_key().to_hex(),
-        bob_keys.public_key(),
-        Some(bob_storage.clone()),
-        None,
-    );
-    bob_runtime.init().expect("bob init");
-    accept_invite_and_deliver(
-        &bob_runtime,
-        &bob_keys,
-        &alice_invite,
-        alice_keys.public_key(),
-        &alice,
-    );
-    complete_first_contact(&bob_runtime, &bob_keys, alice_keys.public_key(), &alice);
-    let bob_message_authors = bob_runtime.get_all_message_push_author_pubkeys();
-
     let mut core = AppCore::new(
         flume::unbounded().0,
         flume::unbounded().0,
@@ -3970,16 +3696,12 @@ fn appcore_defers_decrypted_delivery_ack_until_app_state_is_persisted() {
     install_test_protocol_engine(&mut core, &bob_keys, &bob_keys, storage, None, None);
 
     let message = "ack after app persist";
-    alice
-        .send_text(bob_keys.public_key(), message.to_string(), None)
-        .expect("alice sends");
-    let message_event = drain_signed_events(&alice, &alice_keys)
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() == MESSAGE_EVENT_KIND as u16
-                && bob_message_authors.contains(&event.pubkey)
-        })
-        .expect("message event for Bob");
+    let message_event = appcore_direct_message_event_for_test(
+        core.protocol_engine.as_mut().expect("protocol engine"),
+        &alice_keys,
+        message,
+        200,
+    );
 
     core.enter_batch();
     core.handle_relay_event(message_event);
@@ -5659,18 +5381,15 @@ fn web_runtime_message_duplicates_dedupe_by_inner_rumor_id() {
     let device = Keys::generate();
     let sender = Keys::generate();
     let mut core = logged_in_test_core("web-runtime-dedupe", &owner, &device);
-    let inner_id = "a".repeat(64);
     let first_outer_id = "b".repeat(64);
     let second_outer_id = "c".repeat(64);
-    let content = serde_json::json!({
-        "content": "ok",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_493u64,
-        "tags": [],
-        "pubkey": "0".repeat(64),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "ok",
+        1_777_159_493,
+        Vec::new(),
+    );
 
     core.apply_decrypted_runtime_message(
         sender.public_key(),
@@ -5692,35 +5411,29 @@ fn web_runtime_message_duplicates_dedupe_by_inner_rumor_id() {
 }
 
 #[test]
-fn remote_runtime_rumor_pubkey_and_p_tags_do_not_choose_direct_chat() {
+fn remote_runtime_rumor_pubkey_must_match_authenticated_sender() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender = Keys::generate();
     let forged_peer = Keys::generate();
     let mut core = logged_in_test_core("runtime-forged-remote-route", &owner, &device);
-    let inner_id = "1".repeat(64);
-    let content = serde_json::json!({
-        "content": "route must stay on authenticated sender",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_493u64,
-        "tags": [["p", forged_peer.public_key().to_hex()], ["recipient-owner", forged_peer.public_key().to_hex()]],
-        "pubkey": forged_peer.public_key().to_hex(),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        forged_peer.public_key(),
+        CHAT_MESSAGE_KIND,
+        "forged",
+        1_777_159_493,
+        vec![vec!["p".to_string(), forged_peer.public_key().to_hex()]],
+    );
 
     core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("2".repeat(64)));
 
     let sender_chat_id = sender.public_key().to_hex();
     let forged_chat_id = forged_peer.public_key().to_hex();
-    assert!(core
+    assert!(!core
         .threads
         .get(&sender_chat_id)
-        .is_some_and(|thread| thread.messages.iter().any(|message| message.id == inner_id)));
-    assert!(
-        !core.threads.contains_key(&forged_chat_id),
-        "remote plaintext p/pubkey hints must not create or select a forged peer chat"
-    );
+        .is_some_and(|thread| { thread.messages.iter().any(|message| message.id == inner_id) }));
+    assert!(!core.threads.contains_key(&forged_chat_id));
 }
 
 #[test]
@@ -5731,16 +5444,13 @@ fn self_sync_runtime_metadata_overrides_malicious_inner_p_tag() {
     let real_peer = Keys::generate();
     let forged_peer = Keys::generate();
     let mut core = logged_in_test_core("runtime-forged-self-sync-route", &owner, &device);
-    let inner_id = "3".repeat(64);
-    let content = serde_json::json!({
-        "content": "self sync route comes from runtime metadata",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_500u64,
-        "tags": [["p", forged_peer.public_key().to_hex()]],
-        "pubkey": forged_peer.public_key().to_hex(),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "self sync route comes from runtime metadata",
+        1_777_159_500,
+        vec![vec!["p".to_string(), forged_peer.public_key().to_hex()]],
+    );
 
     core.apply_decrypted_runtime_message_with_metadata(
         owner.public_key(),
@@ -5779,16 +5489,13 @@ fn self_synced_direct_message_from_device_claim_routes_to_peer_owner() {
     );
     let peer_chat_id = peer.public_key().to_hex();
     let primary_device_chat_id = primary_device.public_key().to_hex();
-    let inner_id = "8".repeat(64);
-    let content = serde_json::json!({
-        "content": "sent from primary device",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_501u64,
-        "tags": [["p", peer_chat_id]],
-        "pubkey": owner.public_key().to_hex(),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "sent from primary device",
+        1_777_159_501,
+        vec![vec!["p".to_string(), peer_chat_id.clone()]],
+    );
 
     core.apply_decrypted_runtime_message_with_metadata(
         primary_device.public_key(),
@@ -5826,16 +5533,13 @@ fn incoming_direct_message_from_known_peer_device_routes_to_owner_thread() {
     let peer_owner_chat_id = peer_owner.public_key().to_hex();
     let peer_device_chat_id = peer_device.public_key().to_hex();
     core.ensure_thread_record(&peer_owner_chat_id, 1);
-    let inner_id = "a".repeat(64);
-    let content = serde_json::json!({
-        "content": "sent from peer device",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_502u64,
-        "tags": [],
-        "pubkey": peer_owner.public_key().to_hex(),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        peer_owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "sent from peer device",
+        1_777_159_502,
+        Vec::new(),
+    );
 
     core.apply_decrypted_runtime_message_with_metadata(
         peer_device.public_key(),
@@ -5907,16 +5611,13 @@ fn incoming_direct_message_from_tracked_claimed_peer_device_routes_to_owner_thre
         None,
     );
 
-    let inner_id = "c".repeat(64);
-    let content = serde_json::json!({
-        "content": "sent before app keys backfill",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_503u64,
-        "tags": [],
-        "pubkey": peer_owner.public_key().to_hex(),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        peer_owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "sent before app keys backfill",
+        1_777_159_503,
+        Vec::new(),
+    );
 
     core.apply_decrypted_runtime_message_with_metadata(
         peer_device.public_key(),
@@ -5956,15 +5657,16 @@ fn receipt_runtime_rumor_uses_authenticated_sender_chat_not_malicious_tags() {
         None,
         DeliveryState::Sent,
     );
-    let content = serde_json::json!({
-        "content": "seen",
-        "kind": RECEIPT_KIND,
-        "created_at": 1_777_159_493u64,
-        "tags": [["e", message_id], ["p", forged_peer.public_key().to_hex()]],
-        "pubkey": forged_peer.public_key().to_hex(),
-        "id": "6".repeat(64),
-    })
-    .to_string();
+    let (content, _) = runtime_rumor_json(
+        sender.public_key(),
+        RECEIPT_KIND,
+        "seen",
+        1_777_159_493,
+        vec![
+            vec!["e".to_string(), message_id.clone()],
+            vec!["p".to_string(), forged_peer.public_key().to_hex()],
+        ],
+    );
 
     core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("7".repeat(64)));
 
@@ -5992,16 +5694,16 @@ fn self_synced_direct_message_is_rendered_as_outgoing_on_linked_device() {
     let peer = Keys::generate();
     let mut core = logged_in_test_core("self-sync-missing-outgoing", &owner, &device);
     let chat_id = peer.public_key().to_hex();
-    let inner_id = "d".repeat(64);
-    let content = serde_json::json!({
-        "content": "sent from sibling",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_500u64,
-        "tags": [["p", chat_id], ["ms", "1777159500123"]],
-        "pubkey": owner.public_key().to_hex(),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "sent from sibling",
+        1_777_159_500,
+        vec![
+            vec!["p".to_string(), chat_id.clone()],
+            vec!["ms".to_string(), "1777159500123".to_string()],
+        ],
+    );
 
     core.apply_decrypted_runtime_message(
         owner.public_key(),
@@ -6027,16 +5729,16 @@ fn retry_batch_self_synced_direct_message_updates_open_chat_projection() {
     let peer = Keys::generate();
     let mut core = logged_in_test_core("retry-self-sync-open-chat", &owner, &device);
     let chat_id = peer.public_key().to_hex();
-    let inner_id = "b".repeat(64);
-    let content = serde_json::json!({
-        "content": "sent while open",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_500u64,
-        "tags": [["p", chat_id], ["ms", "1777159500123"]],
-        "pubkey": owner.public_key().to_hex(),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "sent while open",
+        1_777_159_500,
+        vec![
+            vec!["p".to_string(), chat_id.clone()],
+            vec!["ms".to_string(), "1777159500123".to_string()],
+        ],
+    );
 
     core.open_chat(&chat_id);
     assert!(core
@@ -6083,7 +5785,16 @@ fn self_synced_direct_message_updates_existing_local_outgoing_without_duplicate(
     let peer = Keys::generate();
     let mut core = logged_in_test_core("self-sync-existing-outgoing", &owner, &device);
     let chat_id = peer.public_key().to_hex();
-    let inner_id = "f".repeat(64);
+    let (content, inner_id) = runtime_rumor_json(
+        owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "sent from this device",
+        1_777_159_500,
+        vec![
+            vec!["p".to_string(), chat_id.clone()],
+            vec!["ms".to_string(), "1777159500123".to_string()],
+        ],
+    );
     core.push_outgoing_message_with_id(
         inner_id.clone(),
         &chat_id,
@@ -6092,15 +5803,6 @@ fn self_synced_direct_message_updates_existing_local_outgoing_without_duplicate(
         None,
         DeliveryState::Pending,
     );
-    let content = serde_json::json!({
-        "content": "sent from this device",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_500u64,
-        "tags": [["p", chat_id], ["ms", "1777159500123"]],
-        "pubkey": owner.public_key().to_hex(),
-        "id": inner_id,
-    })
-    .to_string();
 
     core.apply_decrypted_runtime_message(
         owner.public_key(),
@@ -6127,15 +5829,16 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
         .sign_with_keys(&sender)
         .expect("outer event");
     let outer_event_id = outer_event.id.to_string();
-    let content = serde_json::json!({
-        "content": "typing",
-        "kind": TYPING_KIND,
-        "created_at": 1_777_159_483u64,
-        "tags": [["ms", "1777159483368"], ["expiration", "1777159543"]],
-        "pubkey": "0".repeat(64),
-        "id": "d".repeat(64),
-    })
-    .to_string();
+    let (content, _) = runtime_rumor_json(
+        sender.public_key(),
+        TYPING_KIND,
+        "typing",
+        1_777_159_483,
+        vec![
+            vec!["ms".to_string(), "1777159483368".to_string()],
+            vec!["expiration".to_string(), "1777159543".to_string()],
+        ],
+    );
 
     core.apply_decrypted_runtime_message(
         sender.public_key(),
@@ -6183,15 +5886,13 @@ fn web_runtime_typing_stop_clears_indicator() {
     let chat_id = sender.public_key().to_hex();
     let sender_hex = sender.public_key().to_hex();
     core.set_typing_indicator(chat_id.clone(), sender_hex.clone(), 1);
-    let content = serde_json::json!({
-        "content": "typing",
-        "kind": TYPING_KIND,
-        "created_at": 1_777_159_484u64,
-        "tags": [["expiration", "1"]],
-        "pubkey": "0".repeat(64),
-        "id": "a".repeat(64),
-    })
-    .to_string();
+    let (content, _) = runtime_rumor_json(
+        sender.public_key(),
+        TYPING_KIND,
+        "typing",
+        1_777_159_484,
+        vec![vec!["expiration".to_string(), "1".to_string()]],
+    );
 
     core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("b".repeat(64)));
 
@@ -6485,15 +6186,13 @@ fn web_runtime_control_rumors_do_not_create_chat_messages() {
     for (index, (kind, body, tags)) in controls.into_iter().enumerate() {
         let mut core =
             logged_in_test_core(&format!("web-runtime-control-{index}"), &owner, &device);
-        let content = serde_json::json!({
-            "content": body,
-            "kind": kind,
-            "created_at": 1_777_159_483u64 + index as u64,
-            "tags": tags,
-            "pubkey": "0".repeat(64),
-            "id": format!("{:064x}", index + 10),
-        })
-        .to_string();
+        let (content, _) = runtime_rumor_json(
+            sender.public_key(),
+            kind,
+            body,
+            1_777_159_483 + index as u64,
+            tags,
+        );
 
         core.apply_decrypted_runtime_message(
             sender.public_key(),
@@ -6519,15 +6218,13 @@ fn web_runtime_chat_settings_create_system_notice() {
     let device = Keys::generate();
     let sender = Keys::generate();
     let mut core = logged_in_test_core("web-runtime-chat-settings", &owner, &device);
-    let content = serde_json::json!({
-        "content": "60",
-        "kind": CHAT_SETTINGS_KIND,
-        "created_at": 1_777_159_483u64,
-        "tags": [],
-        "pubkey": "0".repeat(64),
-        "id": "f".repeat(64),
-    })
-    .to_string();
+    let (content, _) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_SETTINGS_KIND,
+        "60",
+        1_777_159_483,
+        Vec::new(),
+    );
 
     core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("1".repeat(64)));
 
@@ -6546,19 +6243,18 @@ fn web_runtime_chat_settings_update_and_clear_ttl() {
     let sender = Keys::generate();
     let mut core = logged_in_test_core("web-runtime-chat-settings-ttl", &owner, &device);
     let chat_id = sender.public_key().to_hex();
-    let set_content = serde_json::json!({
-        "content": serde_json::json!({
+    let (set_content, _) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_SETTINGS_KIND,
+        &serde_json::json!({
             "type": "chat-settings",
             "v": 1,
             "messageTtlSeconds": 3600u64,
-        }).to_string(),
-        "kind": CHAT_SETTINGS_KIND,
-        "created_at": 1_777_159_483u64,
-        "tags": [],
-        "pubkey": "0".repeat(64),
-        "id": "a".repeat(64),
-    })
-    .to_string();
+        })
+        .to_string(),
+        1_777_159_483,
+        Vec::new(),
+    );
 
     core.apply_decrypted_runtime_message(
         sender.public_key(),
@@ -6581,15 +6277,13 @@ fn web_runtime_chat_settings_update_and_clear_ttl() {
         .body
         .contains("1 hour"));
 
-    let clear_content = serde_json::json!({
-        "content": "0",
-        "kind": CHAT_SETTINGS_KIND,
-        "created_at": 1_777_159_484u64,
-        "tags": [],
-        "pubkey": "0".repeat(64),
-        "id": "c".repeat(64),
-    })
-    .to_string();
+    let (clear_content, _) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_SETTINGS_KIND,
+        "0",
+        1_777_159_484,
+        Vec::new(),
+    );
     core.apply_decrypted_runtime_message(
         sender.public_key(),
         None,
@@ -6617,16 +6311,13 @@ fn web_runtime_chat_message_expiration_tag_is_persisted() {
     let device = Keys::generate();
     let sender = Keys::generate();
     let mut core = logged_in_test_core("web-runtime-expiring-message", &owner, &device);
-    let inner_id = "e".repeat(64);
-    let content = serde_json::json!({
-        "content": "secret",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_483u64,
-        "tags": [["expiration", "1777159543"]],
-        "pubkey": "0".repeat(64),
-        "id": inner_id,
-    })
-    .to_string();
+    let (content, inner_id) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "secret",
+        1_777_159_483,
+        vec![vec!["expiration".to_string(), "1777159543".to_string()]],
+    );
 
     core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("f".repeat(64)));
 
@@ -6642,23 +6333,19 @@ fn web_runtime_chat_message_expiration_tag_is_persisted() {
 }
 
 #[test]
-fn prerelease_app_plaintext_controls_settings_reactions_and_expiration_flow() {
+fn runtime_controls_settings_reactions_and_expiration_flow() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender = Keys::generate();
-    let mut core = logged_in_test_core("prerelease-app-plaintext-flow", &owner, &device);
+    let mut core = logged_in_test_core("runtime-controls-flow", &owner, &device);
     let chat_id = sender.public_key().to_hex();
-    let message_id = "1".repeat(64);
-
-    let message_content = serde_json::json!({
-        "content": "pre-release app message",
-        "kind": CHAT_MESSAGE_KIND,
-        "created_at": 1_777_159_483u64,
-        "tags": [["expiration", "1777159543"]],
-        "pubkey": "0".repeat(64),
-        "id": message_id,
-    })
-    .to_string();
+    let (message_content, message_id) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "runtime message",
+        1_777_159_483,
+        vec![vec!["expiration".to_string(), "1777159543".to_string()]],
+    );
     core.apply_decrypted_runtime_message(
         sender.public_key(),
         None,
@@ -6668,7 +6355,7 @@ fn prerelease_app_plaintext_controls_settings_reactions_and_expiration_flow() {
 
     let thread = core.threads.get(&chat_id).expect("thread after message");
     assert_eq!(thread.messages.len(), 1);
-    assert_eq!(thread.messages[0].body, "pre-release app message");
+    assert_eq!(thread.messages[0].body, "runtime message");
     assert_eq!(thread.messages[0].expires_at_secs, Some(1_777_159_543));
 
     core.apply_typing_event(
@@ -6690,19 +6377,18 @@ fn prerelease_app_plaintext_controls_settings_reactions_and_expiration_flow() {
     assert_eq!(reacted.reactions.len(), 1);
     assert_eq!(reacted.reactions[0].emoji, "+");
 
-    let settings_content = serde_json::json!({
-        "content": serde_json::json!({
+    let (settings_content, _) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_SETTINGS_KIND,
+        &serde_json::json!({
             "type": "chat-settings",
             "v": 1,
             "messageTtlSeconds": 3600u64,
-        }).to_string(),
-        "kind": CHAT_SETTINGS_KIND,
-        "created_at": 1_777_159_485u64,
-        "tags": [],
-        "pubkey": "0".repeat(64),
-        "id": "3".repeat(64),
-    })
-    .to_string();
+        })
+        .to_string(),
+        1_777_159_485,
+        Vec::new(),
+    );
     core.apply_decrypted_runtime_message(
         sender.public_key(),
         None,
@@ -6773,13 +6459,14 @@ fn group_runtime_chat_message_is_persisted() {
     core.preferences.send_read_receipts = false;
     let group_id = "group-runtime-message".to_string();
     let chat_id = group_chat_id(&group_id);
-    let payload = serde_json::json!({
-        "version": 1,
-        "body": "group secret",
-        "message_id": "group-secret-id",
-    })
-    .to_string()
-    .into_bytes();
+    let (payload, rumor_id) = runtime_rumor_json(
+        sender_owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "group secret",
+        1_777_159_483,
+        vec![vec!["l".to_string(), group_id.clone()]],
+    );
+    let payload = payload.into_bytes();
 
     core.apply_group_decrypted_event(GroupIncomingEvent::Message(
         nostr_double_ratchet::GroupReceivedMessage {
@@ -6794,12 +6481,12 @@ fn group_runtime_chat_message_is_persisted() {
     let thread = core.threads.get(&chat_id).expect("group thread");
     assert_eq!(thread.messages.len(), 1);
     assert_eq!(thread.messages[0].body, "group secret");
-    assert_eq!(thread.messages[0].id, "group-secret-id");
+    assert_eq!(thread.messages[0].id, rumor_id);
     assert_eq!(thread.messages[0].expires_at_secs, None);
 }
 
 #[test]
-fn app_group_message_payload_id_dedupes_pairwise_fanout_copies() {
+fn group_rumor_id_dedupes_pairwise_fanout_copies() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender_owner = Keys::generate();
@@ -6808,13 +6495,14 @@ fn app_group_message_payload_id_dedupes_pairwise_fanout_copies() {
     core.preferences.send_read_receipts = false;
     let group_id = "group-pairwise-dedupe".to_string();
     let chat_id = group_chat_id(&group_id);
-    let payload = serde_json::json!({
-        "version": 1,
-        "body": "deduped group body",
-        "message_id": "group-message-id",
-    })
-    .to_string()
-    .into_bytes();
+    let (payload, rumor_id) = runtime_rumor_json(
+        sender_owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "deduped group body",
+        1_777_159_483,
+        vec![vec!["l".to_string(), group_id.clone()]],
+    );
+    let payload = payload.into_bytes();
 
     for _ in 0..2 {
         core.apply_group_decrypted_event(GroupIncomingEvent::Message(
@@ -6835,25 +6523,42 @@ fn app_group_message_payload_id_dedupes_pairwise_fanout_copies() {
         .filter(|message| message.body == "deduped group body")
         .collect::<Vec<_>>();
     assert_eq!(matching.len(), 1);
-    assert_eq!(matching[0].id, "group-message-id");
+    assert_eq!(matching[0].id, rumor_id);
 }
 
 #[test]
-fn group_message_wire_ids_do_not_use_local_counters() {
+fn group_runtime_rumor_pubkey_must_match_authenticated_sender() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let mut core = logged_in_test_core("group-wire-message-id", &owner, &device);
-    core.next_message_id = 2;
+    let sender_owner = Keys::generate();
+    let sender_device = Keys::generate();
+    let forged_owner = Keys::generate();
+    let mut core = logged_in_test_core("group-runtime-forged-author", &owner, &device);
+    core.preferences.send_read_receipts = false;
+    let group_id = "group-forged-author".to_string();
+    let chat_id = group_chat_id(&group_id);
+    let (payload, rumor_id) = runtime_rumor_json(
+        forged_owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "forged group body",
+        1_777_159_483,
+        vec![vec!["l".to_string(), group_id.clone()]],
+    );
 
-    let first = core.allocate_group_message_id();
-    let second = core.allocate_group_message_id();
+    core.apply_group_decrypted_event(GroupIncomingEvent::Message(
+        nostr_double_ratchet::GroupReceivedMessage {
+            group_id,
+            sender_owner: ndr_owner_pubkey(sender_owner.public_key()),
+            sender_device: Some(ndr_device_pubkey(sender_device.public_key())),
+            body: payload.into_bytes(),
+            revision: 1,
+        },
+    ));
 
-    assert_ne!(first, "2");
-    assert_ne!(second, "3");
-    assert_ne!(first, second);
-    assert_eq!(core.next_message_id, 2);
-    assert!(first.len() == 64 && first.chars().all(|ch| ch.is_ascii_hexdigit()));
-    assert!(second.len() == 64 && second.chars().all(|ch| ch.is_ascii_hexdigit()));
+    assert!(!core
+        .threads
+        .get(&chat_id)
+        .is_some_and(|thread| thread.messages.iter().any(|message| message.id == rumor_id)));
 }
 
 #[test]
@@ -7823,8 +7528,7 @@ fn runtime_state_json(core: &AppCore, owner: &Keys, device: &Keys) -> serde_json
     let value = storage
         .get("appcore/protocol-engine-state-v1")
         .expect("read appcore protocol state")
-        .or_else(|| storage.get("v2/runtime-state").expect("read runtime state"))
-        .expect("protocol state exists");
+        .expect("appcore protocol state exists");
     serde_json::from_str(&value).expect("runtime state json")
 }
 

@@ -1,7 +1,6 @@
 use super::*;
 
 const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
-const LEGACY_RUNTIME_STATE_KEY: &str = "v2/runtime-state";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
@@ -32,46 +31,6 @@ struct ProtocolEnginePersistedState {
     subscription_generation: u64,
     #[serde(default)]
     last_backfill_attempt_secs: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct LegacyRuntimePersistedState {
-    core: SessionManagerSnapshot,
-    #[serde(default)]
-    group_manager: Option<GroupManagerSnapshot>,
-    #[serde(default)]
-    pending_group_sender_key_messages:
-        Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
-    #[serde(default)]
-    pending_group_pairwise_payloads: Vec<LegacyPendingGroupPairwisePayload>,
-    #[serde(default)]
-    pending_group_fanouts: Vec<LegacyPendingGroupFanout>,
-    #[serde(default)]
-    pending_pairwise_message_events: Vec<LegacyPendingPairwiseMessageEvent>,
-    #[serde(default)]
-    latest_app_keys_created_at: BTreeMap<String, u64>,
-}
-
-#[derive(Debug, Deserialize)]
-struct LegacyPendingPairwiseMessageEvent {
-    event: Event,
-    created_at_ms: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct LegacyPendingGroupPairwisePayload {
-    sender_owner: NdrOwnerPubkey,
-    sender_device: Option<NdrDevicePubkey>,
-    payload: Vec<u8>,
-    created_at_ms: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct LegacyPendingGroupFanout {
-    group_id: String,
-    fanout: GroupPendingFanout,
-    inner_event_id: Option<String>,
-    created_at_ms: u64,
 }
 
 #[allow(dead_code)]
@@ -433,7 +392,7 @@ impl ProtocolEngine {
                         last_backfill_attempt_secs: state.last_backfill_attempt_secs,
                     }
                 }
-                _ => Self::from_legacy_or_seed(
+                _ => Self::from_seed(
                     storage,
                     owner_pubkey,
                     local_owner,
@@ -443,7 +402,7 @@ impl ProtocolEngine {
                     seed_group_manager,
                 )?,
             },
-            None => Self::from_legacy_or_seed(
+            None => Self::from_seed(
                 storage,
                 owner_pubkey,
                 local_owner,
@@ -464,103 +423,6 @@ impl ProtocolEngine {
         engine.prune_untracked_pending_inbound();
         engine.persist()?;
         Ok(engine)
-    }
-
-    fn from_legacy_or_seed(
-        storage: Arc<dyn StorageAdapter>,
-        owner_pubkey: PublicKey,
-        local_owner: NdrOwnerPubkey,
-        local_device: NdrDevicePubkey,
-        device_secret: [u8; 32],
-        seed_session_manager: SessionManagerSnapshot,
-        seed_group_manager: GroupManagerSnapshot,
-    ) -> anyhow::Result<Self> {
-        if let Some(raw) = storage.get(LEGACY_RUNTIME_STATE_KEY)? {
-            if let Ok(legacy) = serde_json::from_str::<LegacyRuntimePersistedState>(&raw) {
-                if let Ok(session_manager) =
-                    SessionManager::from_snapshot(legacy.core, device_secret)
-                {
-                    let group_manager = legacy
-                        .group_manager
-                        .map(NostrGroupManager::from_snapshot)
-                        .transpose()?
-                        .unwrap_or_else(|| NostrGroupManager::new(local_owner));
-                    let pending_inbound = legacy
-                        .pending_pairwise_message_events
-                        .into_iter()
-                        .map(|pending| {
-                            let created_at_secs = pending.created_at_ms / 1_000;
-                            ProtocolPendingInbound {
-                                event: pending.event,
-                                created_at_secs,
-                                next_retry_at_secs: created_at_secs,
-                                event_id: String::new(),
-                                envelope: None,
-                                sender_message_pubkey_hex: None,
-                                resolved_owner_pubkey_hex: None,
-                                claimed_owner_pubkey_hex: None,
-                                metadata_verified: false,
-                            }
-                        })
-                        .collect();
-                    let pending_group_pairwise_payloads = legacy
-                        .pending_group_pairwise_payloads
-                        .into_iter()
-                        .map(|pending| {
-                            let created_at_secs = pending.created_at_ms / 1_000;
-                            ProtocolPendingGroupPairwisePayload {
-                                sender_owner: pending.sender_owner,
-                                sender_device: pending.sender_device,
-                                payload: pending.payload,
-                                created_at_secs,
-                                next_retry_at_secs: created_at_secs,
-                            }
-                        })
-                        .collect();
-                    let pending_group_fanouts = legacy
-                        .pending_group_fanouts
-                        .into_iter()
-                        .map(|pending| {
-                            let created_at_secs = pending.created_at_ms / 1_000;
-                            ProtocolPendingGroupFanout {
-                                group_id: pending.group_id,
-                                fanout: pending.fanout,
-                                inner_event_id: pending.inner_event_id,
-                                created_at_secs,
-                                next_retry_at_secs: created_at_secs,
-                            }
-                        })
-                        .collect();
-                    return Ok(Self {
-                        owner_pubkey,
-                        local_owner,
-                        local_device,
-                        storage,
-                        session_manager,
-                        group_manager,
-                        latest_app_keys_created_at: legacy.latest_app_keys_created_at,
-                        pending_outbound: Vec::new(),
-                        pending_inbound,
-                        pending_group_fanouts,
-                        pending_group_pairwise_payloads,
-                        pending_group_sender_key_messages: legacy.pending_group_sender_key_messages,
-                        pending_decrypted_deliveries: Vec::new(),
-                        subscription_generation: 0,
-                        last_backfill_attempt_secs: 0,
-                    });
-                }
-            }
-        }
-
-        Self::from_seed(
-            storage,
-            owner_pubkey,
-            local_owner,
-            local_device,
-            device_secret,
-            seed_session_manager,
-            seed_group_manager,
-        )
     }
 
     fn from_seed(
