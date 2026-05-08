@@ -708,7 +708,7 @@ private fun DirectChatAdvancedCard(
                 tint = IrisTheme.palette.accent,
             )
             Text(
-                text = "Advanced",
+                text = "Debug",
                 modifier = Modifier.weight(1f),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,

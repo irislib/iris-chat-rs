@@ -1300,7 +1300,7 @@ private struct DirectChatAdvancedCard: View {
                 HStack(spacing: 9) {
                     Image(systemName: "wrench.and.screwdriver.fill")
                         .foregroundStyle(palette.accent)
-                    Text("Advanced")
+                    Text("Debug")
                         .font(.system(.headline, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.textPrimary)
                 }
