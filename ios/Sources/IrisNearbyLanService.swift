@@ -1,6 +1,5 @@
 import Foundation
 import Network
-import Darwin
 
 final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     private static let serviceType = "_iris-chat._tcp"
@@ -37,7 +36,6 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     private var netService: NetService?
     private var connections: [String: ConnectionSlot] = [:]
     private var endpointIDs: Set<String> = []
-    private var privateLocalHost: NWEndpoint.Host?
     private var enabled = false
 
     init(
@@ -56,14 +54,9 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     func start() {
         queue.async { [weak self] in
             guard let self, !self.enabled else { return }
-            guard let localHost = Self.privateLocalHost() else {
-                self.updateStatus("Local network unavailable")
-                return
-            }
-            self.privateLocalHost = localHost
             self.enabled = true
             self.updateStatus("Starting")
-            self.startListener(localHost: localHost)
+            self.startListener()
             self.startBrowser()
         }
     }
@@ -78,7 +71,6 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
             self.listener = nil
             self.browser = nil
             self.netService = nil
-            self.privateLocalHost = nil
             self.endpointIDs.removeAll()
             for slot in self.connections.values {
                 slot.connection.cancel()
@@ -133,11 +125,9 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
         }
     }
 
-    private func startListener(localHost: NWEndpoint.Host) {
+    private func startListener() {
         do {
-            let port = Self.randomPrivatePort()
-            let parameters = tcpParameters(localHost: localHost, localPort: port)
-            let listener = try NWListener(using: parameters)
+            let listener = try NWListener(using: tcpParameters(), on: .any)
             listener.newConnectionHandler = { [weak self] connection in
                 guard let self else {
                     connection.cancel()
@@ -153,6 +143,10 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
                 guard let self else { return }
                 switch state {
                 case .ready:
+                    guard let port = listener.port else {
+                        self.updateStatus("Local network failed")
+                        return
+                    }
                     self.publishService(port: port.rawValue)
                     self.updateStatus(self.connections.isEmpty ? "Visible" : "Connected")
                 case .failed(let error):
@@ -178,7 +172,7 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
             name: peerID,
             port: Int32(port)
         )
-        service.includesPeerToPeer = true
+        service.includesPeerToPeer = false
         service.delegate = self
         service.schedule(in: .main, forMode: .common)
         netService = service
@@ -223,7 +217,7 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
         guard endpointIDs.insert(endpointID).inserted else {
             return
         }
-        let connection = NWConnection(to: endpoint, using: tcpParameters(localHost: privateLocalHost))
+        let connection = NWConnection(to: endpoint, using: tcpParameters())
         add(connection, endpointID: endpointID)
     }
 
@@ -311,24 +305,11 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
             text.contains("-65570")
     }
 
-    private func tcpParameters(
-        localHost: NWEndpoint.Host? = nil,
-        localPort: NWEndpoint.Port? = nil
-    ) -> NWParameters {
+    private func tcpParameters() -> NWParameters {
         let parameters = NWParameters.tcp
-        parameters.includePeerToPeer = true
+        parameters.includePeerToPeer = false
         parameters.prohibitedInterfaceTypes = [.cellular]
-        if let localHost {
-            parameters.requiredLocalEndpoint = .hostPort(
-                host: localHost,
-                port: localPort ?? NWEndpoint.Port(rawValue: 0)!
-            )
-        }
         return parameters
-    }
-
-    private static func randomPrivatePort() -> NWEndpoint.Port {
-        NWEndpoint.Port(rawValue: UInt16.random(in: 49_152...65_535))!
     }
 
     private func isOwnService(_ endpoint: NWEndpoint) -> Bool {
@@ -368,59 +349,6 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
             (first == 192 && second == 168)
     }
 
-    private static func privateLocalHost() -> NWEndpoint.Host? {
-        var interfaces: UnsafeMutablePointer<ifaddrs>?
-        guard getifaddrs(&interfaces) == 0, let firstInterface = interfaces else {
-            return nil
-        }
-        defer { freeifaddrs(interfaces) }
-
-        var fallback: String?
-        var cursor: UnsafeMutablePointer<ifaddrs>? = firstInterface
-        while let interface = cursor {
-            cursor = interface.pointee.ifa_next
-
-            let flags = interface.pointee.ifa_flags
-            guard (flags & UInt32(IFF_UP)) != 0,
-                  (flags & UInt32(IFF_LOOPBACK)) == 0,
-                  let address = interface.pointee.ifa_addr else {
-                continue
-            }
-
-            let family = Int32(address.pointee.sa_family)
-            guard family == AF_INET || family == AF_INET6 else {
-                continue
-            }
-
-            var hostBuffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
-            let result = getnameinfo(
-                address,
-                socklen_t(address.pointee.sa_len),
-                &hostBuffer,
-                socklen_t(hostBuffer.count),
-                nil,
-                0,
-                NI_NUMERICHOST
-            )
-            guard result == 0 else { continue }
-
-            let host = String(cString: hostBuffer)
-            let normalized = host.lowercased()
-            guard isPrivateHost(normalized),
-                  normalized != "::1",
-                  !normalized.hasPrefix("127.") else {
-                continue
-            }
-            if family == AF_INET && !normalized.hasPrefix("169.254.") {
-                return NWEndpoint.Host(host)
-            }
-            if fallback == nil {
-                fallback = host
-            }
-        }
-
-        return fallback.map { NWEndpoint.Host($0) }
-    }
 }
 
 private struct IrisNearbyLanFrameAssembler {

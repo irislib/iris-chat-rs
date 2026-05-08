@@ -136,6 +136,7 @@ class RealRelayHarnessTest {
             "nearby_peer_owner_hex" to (peer.ownerPubkeyHex ?: ""),
             "nearby_peer_profile_event_id" to (peer.profileEventId ?: ""),
         )
+        holdNearbyIfRequested()
     }
 
     @Test
@@ -173,6 +174,7 @@ class RealRelayHarnessTest {
             "nearby_peer_owner_hex" to (peer.ownerPubkeyHex ?: ""),
             "nearby_peer_profile_event_id" to (peer.profileEventId ?: ""),
         )
+        holdNearbyIfRequested()
     }
 
     @Test
@@ -2286,6 +2288,13 @@ class RealRelayHarnessTest {
                     }
                 }
         }.getOrDefault(0)
+    }
+
+    private fun holdNearbyIfRequested() {
+        val holdMs = (optionalArg("hold_ms")?.toLongOrNull() ?: 0L).coerceIn(0L, 60_000L)
+        if (holdMs <= 0L) return
+        reportStatus("nearby_hold_ms" to holdMs.toString())
+        SystemClock.sleep(holdMs)
     }
 
     private fun sqliteDirectionValue(direction: String): String? =

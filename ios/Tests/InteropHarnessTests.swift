@@ -260,6 +260,7 @@ final class InteropHarnessTests: XCTestCase {
             status("nearby_peer_name", peer.name)
             status("nearby_peer_owner_hex", peer.ownerPubkeyHex ?? "")
             status("nearby_peer_profile_event_id", peer.profileEventID ?? "")
+            try await holdNearbyIfRequested(env: env)
         case "wait_for_lan_nearby_peer_profile_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(
@@ -283,6 +284,7 @@ final class InteropHarnessTests: XCTestCase {
             status("nearby_peer_name", peer.name)
             status("nearby_peer_owner_hex", peer.ownerPubkeyHex ?? "")
             status("nearby_peer_profile_event_id", peer.profileEventID ?? "")
+            try await holdNearbyIfRequested(env: env)
         case "report_runtime_debug_snapshot":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             reportRuntimeDebugSnapshot(manager: manager, dataDir: dataDir)
@@ -1967,6 +1969,13 @@ final class InteropHarnessTests: XCTestCase {
             env["IRIS_IOS_HARNESS_TIMEOUT_MS"].flatMap { Double($0).map { $0 / 1_000 } } ??
             20
         return min(max(requestedSeconds, 1), 180)
+    }
+
+    private func holdNearbyIfRequested(env: [String: String]) async throws {
+        let holdMs = min(max(Int(env["IRIS_IOS_HARNESS_HOLD_MS"] ?? "") ?? 0, 0), 60_000)
+        guard holdMs > 0 else { return }
+        status("nearby_hold_ms", String(holdMs))
+        try await Task.sleep(nanoseconds: UInt64(holdMs) * 1_000_000)
     }
 
     private func status(_ key: String, _ value: String) {

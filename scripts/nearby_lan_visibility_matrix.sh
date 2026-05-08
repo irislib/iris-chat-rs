@@ -21,6 +21,7 @@ ON_DEVICE=0
 CLEAR_STATE=1
 REBUILD=1
 TIMEOUT_MS="${IRIS_LAN_TIMEOUT_MS:-60000}"
+HOLD_MS="${IRIS_LAN_HOLD_MS:-15000}"
 
 ANDROID_SERIAL="${IRIS_LAN_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 IOS_UDID="${IRIS_LAN_IOS_UDID:-${IOS_UDID:-}}"
@@ -51,11 +52,12 @@ Options:
   --no-clear               Keep existing harness state
   --no-rebuild             Reuse existing Android/iOS/macOS test builds
   --timeout-ms <ms>        Peer wait timeout. Default: ${TIMEOUT_MS}
+  --hold-ms <ms>           Keep LAN visible after success. Default: ${HOLD_MS}
   -h, --help               Show this help
 
 Environment:
   IRIS_LAN_ANDROID_SERIAL, IRIS_LAN_IOS_UDID, IRIS_LAN_IOS_SIMULATOR,
-  IRIS_LAN_TIMEOUT_MS
+  IRIS_LAN_TIMEOUT_MS, IRIS_LAN_HOLD_MS
 EOF
 }
 
@@ -103,6 +105,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --timeout-ms)
       TIMEOUT_MS="$2"
+      shift 2
+      ;;
+    --hold-ms)
+      HOLD_MS="$2"
       shift 2
       ;;
     -h|--help|help)
@@ -395,15 +401,15 @@ run_lan_wait() {
   case "${type}" in
     android)
       run_android_test "${id}" wait_for_lan_nearby_peer_profile_from_args \
-        peer_input "${peer_input}" timeout_ms "${TIMEOUT_MS}"
+        peer_input "${peer_input}" timeout_ms "${TIMEOUT_MS}" hold_ms "${HOLD_MS}"
       ;;
     ios)
       run_ios_test "${id}" "${run_id}" wait_for_lan_nearby_peer_profile_from_args \
-        peer_input "${peer_input}" timeout_ms "${TIMEOUT_MS}"
+        peer_input "${peer_input}" timeout_ms "${TIMEOUT_MS}" hold_ms "${HOLD_MS}"
       ;;
     macos)
       run_macos_test "${run_id}" wait_for_lan_nearby_peer_profile_from_args \
-        peer_input "${peer_input}" timeout_ms "${TIMEOUT_MS}"
+        peer_input "${peer_input}" timeout_ms "${TIMEOUT_MS}" hold_ms "${HOLD_MS}"
       ;;
   esac
 }
