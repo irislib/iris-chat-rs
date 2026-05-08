@@ -161,7 +161,7 @@ archive_app() {
     -configuration Release \
     -destination generic/platform=iOS \
     -archivePath "$IOS_ARCHIVE_PATH" \
-    MARKETING_VERSION="$IRIS_APP_VERSION_NAME" \
+    MARKETING_VERSION="$(apple_marketing_version "$IRIS_APP_VERSION_NAME")" \
     CURRENT_PROJECT_VERSION="$IRIS_APP_VERSION_CODE" \
     DEVELOPMENT_TEAM="$IOS_DEVELOPMENT_TEAM" \
     CODE_SIGN_STYLE="$IOS_CODE_SIGN_STYLE" \

@@ -53,18 +53,30 @@ git_commit_timestamp_utc() {
 
 semantic_version_code() {
   local version="$1"
-  local core major minor patch
+  local core major minor patch build
 
   core="${version%%[-+]*}"
-  if [[ ! "$core" =~ ^([0-9]+)(\.([0-9]+))?(\.([0-9]+))?$ ]]; then
+  if [[ ! "$core" =~ ^([0-9]+)(\.([0-9]+))?(\.([0-9]+))?(\.([0-9]+))?$ ]]; then
     return 1
   fi
 
   major="${BASH_REMATCH[1]}"
   minor="${BASH_REMATCH[3]:-0}"
   patch="${BASH_REMATCH[5]:-0}"
+  build="${BASH_REMATCH[7]:-0}"
 
-  printf '%d\n' "$((10#$major * 10000 + 10#$minor * 1000 + 10#$patch * 100))"
+  printf '%d\n' "$((10#$major * 10000 + 10#$minor * 1000 + 10#$patch * 100 + 10#$build))"
+}
+
+# Apple's CFBundleShortVersionString accepts at most three integer components.
+# The optional fourth ".build" segment we use to keep zapstore versions unique
+# has to be stripped before handing the version to Xcode.
+apple_marketing_version() {
+  local version="$1"
+  local core
+  core="${version%%[-+]*}"
+  IFS=. read -r a b c _rest <<< "$core"
+  printf '%s.%s.%s\n' "${a:-0}" "${b:-0}" "${c:-0}"
 }
 
 resolve_shared_build_metadata() {
