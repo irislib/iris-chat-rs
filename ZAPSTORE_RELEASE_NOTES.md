@@ -6,3 +6,4 @@
 - Lets iOS decrypt message alerts while the app is backgrounded or the phone is locked.
 - Fixes nearby Wi-Fi presence between Apple devices.
 - Enables sound and vibration for mobile message alerts.
+- Adds Homebrew install support for the `iris` command line app.
