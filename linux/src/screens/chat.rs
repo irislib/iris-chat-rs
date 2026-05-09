@@ -785,6 +785,33 @@ fn build_message_popover(
         });
         reactions_row.append(&btn);
     }
+    let more = gtk::Button::from_icon_name("list-add-symbolic");
+    more.add_css_class("flat");
+    more.add_css_class("circular");
+    more.set_tooltip_text(Some("More emoji"));
+    let chooser = gtk::EmojiChooser::new();
+    chooser.set_parent(&more);
+    {
+        let manager = manager.clone();
+        let chat_id = message.chat_id.clone();
+        let message_id = message.id.clone();
+        let popover_for_close = popover.clone();
+        chooser.connect_emoji_picked(move |chooser, emoji_text| {
+            remember_reaction_emoji(emoji_text);
+            manager.dispatch(AppAction::ToggleReaction {
+                chat_id: chat_id.clone(),
+                message_id: message_id.clone(),
+                emoji: emoji_text.to_string(),
+            });
+            chooser.popdown();
+            popover_for_close.popdown();
+        });
+    }
+    {
+        let chooser_for_click = chooser.clone();
+        more.connect_clicked(move |_| chooser_for_click.popup());
+    }
+    reactions_row.append(&more);
     column.append(&reactions_row);
 
     let copy = gtk::Button::with_label("Copy text");
@@ -1279,6 +1306,27 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     entry.set_hexpand(true);
     entry.set_height_request(40);
     row.append(&entry);
+
+    let emoji_btn = gtk::Button::from_icon_name("face-smile-symbolic");
+    emoji_btn.add_css_class("flat");
+    emoji_btn.add_css_class("circular");
+    emoji_btn.set_tooltip_text(Some("Insert emoji"));
+    let emoji_chooser = gtk::EmojiChooser::new();
+    emoji_chooser.set_parent(&emoji_btn);
+    {
+        let entry_for_emoji = entry.clone();
+        emoji_chooser.connect_emoji_picked(move |_, emoji_text| {
+            let mut position = entry_for_emoji.position();
+            entry_for_emoji.insert_text(emoji_text, &mut position);
+            entry_for_emoji.set_position(position);
+            entry_for_emoji.grab_focus_without_selecting();
+        });
+    }
+    {
+        let chooser_for_click = emoji_chooser.clone();
+        emoji_btn.connect_clicked(move |_| chooser_for_click.popup());
+    }
+    row.append(&emoji_btn);
 
     if manager.should_focus_composer(&chat.chat_id) {
         let entry_for_focus = entry.clone();

@@ -1449,7 +1449,7 @@ private struct ChatMessageActionsSheet: View {
     }
 }
 
-private struct IrisEmojiPicker: View {
+struct IrisEmojiPicker: View {
     @Environment(\.irisPalette) private var palette
     let suggestedEmojis: [String]
     let onPick: (String) -> Void

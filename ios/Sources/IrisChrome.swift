@@ -1263,40 +1263,6 @@ private func droppedFileURL(from item: NSSecureCoding?) -> URL? {
     return nil
 }
 
-private struct IrisEmojiPicker: View {
-    @Environment(\.irisPalette) private var palette
-    let onSelect: (String) -> Void
-
-    private let columns = Array(repeating: GridItem(.fixed(34), spacing: 6), count: 8)
-
-    var body: some View {
-        LazyVGrid(columns: columns, spacing: 6) {
-            ForEach(IrisComposerEmojiChoices, id: \.self) { emoji in
-                Button {
-                    onSelect(emoji)
-                } label: {
-                    Text(emoji)
-                        .font(.system(size: 21))
-                        .frame(width: 34, height: 34)
-                }
-                .buttonStyle(.irisPlain)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(palette.panel.opacity(0.001))
-                )
-            }
-        }
-        .padding(10)
-        .background(palette.background)
-    }
-}
-
-private let IrisComposerEmojiChoices = [
-    "😀", "😂", "😊", "😍", "🥰", "😎", "🤔", "😭",
-    "❤️", "🔥", "✨", "🙏", "👍", "👀", "🎉", "💜",
-    "🌞", "🌙", "⭐️", "🍓", "☕️", "🌊", "🚀", "✅"
-]
-
 private enum IrisAttachmentCategory: String {
     case image = "Image"
     case video = "Video"
