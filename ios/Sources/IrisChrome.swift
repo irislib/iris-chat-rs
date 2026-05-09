@@ -2,9 +2,50 @@ import Foundation
 import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
+#if canImport(AppKit)
+import AppKit
+#endif
 #if canImport(PhotosUI)
 import PhotosUI
 #endif
+
+/// Shows a pointing-hand cursor while hovered. No-op outside macOS.
+private struct IrisHoverPointerModifier: ViewModifier {
+    func body(content: Content) -> some View {
+#if canImport(AppKit)
+        content.onHover { hovering in
+            if hovering {
+                NSCursor.pointingHand.push()
+            } else {
+                NSCursor.pop()
+            }
+        }
+#else
+        content
+#endif
+    }
+}
+
+extension View {
+    /// Shows a pointing-hand cursor while hovered. Inert on iOS.
+    func irisHoverPointer() -> some View {
+        modifier(IrisHoverPointerModifier())
+    }
+}
+
+/// `.plain` look-alike that adds a pointing-hand cursor on macOS hover.
+/// Use everywhere instead of the system `.plain` style.
+struct IrisPlainButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.7 : 1)
+            .irisHoverPointer()
+    }
+}
+
+extension ButtonStyle where Self == IrisPlainButtonStyle {
+    static var irisPlain: IrisPlainButtonStyle { IrisPlainButtonStyle() }
+}
 
 enum IrisLayout {
     #if canImport(AppKit)
@@ -219,7 +260,7 @@ struct IrisTopBar: View {
                         }
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
                 .accessibilityLabel("Back")
                 .accessibilityIdentifier("navigationBackButton")
             } else {
@@ -232,7 +273,7 @@ struct IrisTopBar: View {
                     Button(action: onTitleTap) {
                         titleContent
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.irisPlain)
                     .accessibilityIdentifier("chatHeaderTitleButton")
                 } else {
                     titleContent
@@ -628,6 +669,7 @@ struct IrisPrimaryButtonStyle: ButtonStyle {
             )
             .scaleEffect(configuration.isPressed ? 0.985 : 1)
             .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+            .irisHoverPointer()
     }
 }
 
@@ -661,6 +703,7 @@ struct IrisSecondaryButtonStyle: ButtonStyle {
                 }
             )
             .opacity(configuration.isPressed ? 0.9 : 1)
+            .irisHoverPointer()
     }
 }
 
@@ -777,7 +820,7 @@ struct IrisModalCloseButton: View {
                 .frame(width: hitSize, height: hitSize)
                 .contentShape(Circle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
         .accessibilityLabel(accessibilityLabel)
     }
 
@@ -926,7 +969,7 @@ struct IrisChatRow: View {
             .padding(.vertical, 14)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
     }
 }
 
@@ -1020,7 +1063,7 @@ struct IrisComposerBar: View {
                         .foregroundStyle((isSending || isUploading) ? palette.muted.opacity(0.54) : palette.textPrimary)
                         .frame(width: 42, height: 46)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
                 .disabled(isSending || isUploading)
                 .accessibilityIdentifier("chatAttachButton")
 
@@ -1033,7 +1076,7 @@ struct IrisComposerBar: View {
                             .foregroundStyle(isSending || isUploading ? palette.muted.opacity(0.54) : palette.textPrimary)
                             .frame(width: 42, height: 46)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.irisPlain)
                     .disabled(isSending || isUploading)
                     .popover(isPresented: $showingEmojiPicker, arrowEdge: .bottom) {
                         IrisEmojiPicker { emoji in
@@ -1236,7 +1279,7 @@ private struct IrisEmojiPicker: View {
                         .font(.system(size: 21))
                         .frame(width: 34, height: 34)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
                 .background(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .fill(palette.panel.opacity(0.001))
@@ -1344,7 +1387,7 @@ private struct IrisSelectedAttachmentChip: View {
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(enabled ? palette.muted : palette.muted.opacity(0.45))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .disabled(!enabled)
             .accessibilityIdentifier("chatSelectedAttachmentRemove")
         }
@@ -1380,6 +1423,7 @@ private struct IrisPrimaryCircleButtonStyle: ButtonStyle {
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.14), value: configuration.isPressed)
+            .irisHoverPointer()
     }
 }
 

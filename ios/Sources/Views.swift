@@ -240,7 +240,7 @@ struct RootView: View {
                     loadedImageIdentifier: "chatListProfileAvatarImage"
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .accessibilityIdentifier("chatListProfileButton")
         )
     }
@@ -479,7 +479,7 @@ private struct ShareTargetSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
     }
 
     private func preselectSuggestedChat() {
@@ -593,7 +593,7 @@ private struct OfflineStatusBanner: View {
                 .animation(.easeInOut(duration: 0.22), value: text)
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
         .accessibilityLabel("Open settings")
     }
 
@@ -814,13 +814,13 @@ private struct DesktopPaneTopBar: View {
                         .foregroundStyle(palette.textPrimary)
                         .frame(width: 34, height: 34)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
                 .accessibilityIdentifier("desktopPaneBackButton")
             }
 
             if let onTitleTap {
                 Button(action: onTitleTap) { titleStack }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.irisPlain)
                     .accessibilityIdentifier("chatHeaderTitleButton")
             } else {
                 titleStack
@@ -947,7 +947,7 @@ private struct DesktopChatSidebar: View {
                             manager: manager
                         )
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.irisPlain)
                     .accessibilityIdentifier("chatListProfileButton")
                     if hasHttpPicture(account.pictureUrl) || hasHashtreePicture(account.pictureUrl) {
                         Color.clear
@@ -971,7 +971,7 @@ private struct DesktopChatSidebar: View {
                     .frame(width: 40, height: 40)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .accessibilityIdentifier("desktopSettingsButton")
         }
         .padding(.horizontal, 18)
@@ -1021,7 +1021,7 @@ private struct DesktopSidebarActionRow: View {
             .contentShape(Rectangle())
             .background(rowBackground)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
     }
 
     private var rowBackground: some View {
@@ -1136,7 +1136,7 @@ private struct DesktopSidebarChatRow: View {
                     .fill(selected ? palette.panelAlt : Color.clear)
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
         .contextMenu {
             chatListItemContextMenu(manager: manager, chat: chat)
         }
@@ -1297,7 +1297,7 @@ private struct DirectChatInfoSheet: View {
                             .foregroundStyle(palette.textPrimary)
                             .padding(.vertical, 8)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.irisPlain)
                         .accessibilityIdentifier("directChatMuteButton")
 
                         IrisSectionCard {
@@ -1323,7 +1323,7 @@ private struct DirectChatInfoSheet: View {
                                         .padding(.vertical, 10)
                                         .contentShape(Rectangle())
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.irisPlain)
                                 }
                             }
                         }
@@ -1349,7 +1349,7 @@ private struct DirectChatInfoSheet: View {
                             .foregroundStyle(.red)
                             .padding(.vertical, 8)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.irisPlain)
                         .accessibilityIdentifier("directChatDeleteButton")
                     } else {
                         ProgressView()
@@ -1854,7 +1854,7 @@ private struct NewChatCircleButton: View {
                 .frame(width: 36, height: 36)
                 .background(Circle().fill(palette.accent))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
         .accessibilityLabel("New chat")
         .accessibilityIdentifier("chatListNewChatButton")
     }
@@ -2056,7 +2056,7 @@ private struct SwipeableChatListRow<Row: View>: View {
             .background(tint)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
     }
 
     private var rowDragGesture: some Gesture {
@@ -2317,7 +2317,7 @@ private struct NearbyIrisScreen: View {
                                     .frame(maxWidth: 78)
                             }
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.irisPlain)
                         .disabled(peer.ownerPubkeyHex == nil)
                         .accessibilityIdentifier("nearbyPeer-\(String(peer.id.prefix(12)))")
                     }
@@ -2518,7 +2518,7 @@ struct NewChatScreen: View {
                     )
             )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
         .accessibilityIdentifier("newChatNewGroupButton")
     }
 
@@ -2962,7 +2962,7 @@ struct NewGroupScreen: View {
                     }
                     .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
 
                 if index < filteredKnownChats.count - 1 {
                     Divider().overlay(palette.border)
@@ -3120,7 +3120,7 @@ struct GroupDetailsScreen: View {
                                 .padding(.vertical, 10)
                                 .contentShape(Rectangle())
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.irisPlain)
                         }
                     }
                 }
@@ -3137,7 +3137,7 @@ struct GroupDetailsScreen: View {
                         .foregroundStyle(palette.textPrimary)
                         .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.irisPlain)
                     .accessibilityIdentifier("groupDetailsMuteButton")
                 }
 
@@ -3252,7 +3252,7 @@ struct GroupDetailsScreen: View {
                                     }
                                     .contentShape(Rectangle())
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(.irisPlain)
                                 .accessibilityIdentifier("groupDetailsKnownUser-\(String(chat.chatId.prefix(12)))")
                                 .disabled(manager.state.busy.updatingGroup)
 
@@ -4228,7 +4228,7 @@ private struct NostrRelaySettingsSection: View {
                 } label: {
                     Image(systemName: "pencil")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
                 .accessibilityLabel("Edit server")
 
                 Button(role: .destructive) {
@@ -4236,7 +4236,7 @@ private struct NostrRelaySettingsSection: View {
                 } label: {
                     Image(systemName: "trash")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
                 .accessibilityLabel("Delete server")
             }
         }
@@ -4445,7 +4445,7 @@ private struct ProfileEditorCard: View {
                     loadedImageIdentifier: "myProfileAvatarImage"
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .accessibilityLabel("Open profile picture")
             .accessibilityIdentifier("myProfilePictureButton")
         } else {
@@ -4773,7 +4773,7 @@ private struct SelectedMemberChip: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .accessibilityIdentifier("memberChipRemove")
         }
         .foregroundStyle(palette.textPrimary)

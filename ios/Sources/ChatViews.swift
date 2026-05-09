@@ -228,7 +228,7 @@ struct ChatScreen: View {
                                     }
                                     .padding(.trailing, 18)
                                     .padding(.bottom, 18)
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.irisPlain)
                                     .shadow(color: .black.opacity(0.16), radius: 16, y: 10)
                                     .accessibilityIdentifier("chatJumpToBottom")
                                 }
@@ -975,7 +975,7 @@ private struct MessageInfoValueRow: View {
                         .font(.system(size: 13, weight: .semibold))
                         .frame(width: 28, height: 28)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
                 .foregroundStyle(palette.muted)
                 .accessibilityLabel("Copy")
             }
@@ -1180,7 +1180,7 @@ private struct ChatMessageActionDock: View {
                     .font(.system(size: 12, weight: .semibold))
                     .frame(width: 26, height: 24)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageReactButton")
             dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
             Menu {
@@ -1191,7 +1191,7 @@ private struct ChatMessageActionDock: View {
                     .font(.system(size: 13, weight: .bold))
                     .frame(width: 26, height: 24)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageMoreButton")
         }
         .foregroundStyle(palette.muted)
@@ -1208,7 +1208,7 @@ private struct ChatMessageActionDock: View {
                 .font(.system(size: 12, weight: .semibold))
                 .frame(width: 26, height: 24)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
         .accessibilityIdentifier(identifier)
     }
 }
@@ -1362,7 +1362,7 @@ private struct ChatMessageActionsSheet: View {
                         .frame(maxWidth: .infinity)
                         .frame(height: 40)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.irisPlain)
             }
             Button(action: onShowFullReactionPicker) {
                 Image(systemName: "plus.circle")
@@ -1371,7 +1371,7 @@ private struct ChatMessageActionsSheet: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 40)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageReactButton")
         }
         .padding(.horizontal, 6)
@@ -1444,7 +1444,7 @@ private struct ChatMessageActionsSheet: View {
             .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.irisPlain)
     }
 }
 
@@ -1554,7 +1554,7 @@ private struct IrisEmojiPicker: View {
                                             .font(.system(size: 26))
                                             .frame(width: 36, height: 36)
                                     }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(.irisPlain)
                                 }
                             }
                             .padding(.horizontal, 10)
@@ -1666,7 +1666,7 @@ private struct IrisReplyComposerStrip: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(palette.muted)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
         }
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 16)
         .padding(.vertical, 8)
@@ -1907,7 +1907,7 @@ private struct ChatAttachmentView: View {
                     }
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .accessibilityLabel(attachment.filename)
             .task(id: attachment.htreeUrl) {
                 await loadImageIfNeeded()
@@ -1950,7 +1950,7 @@ private struct ChatAttachmentView: View {
                         .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
                 )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.irisPlain)
             .disabled(isOpeningAttachment)
             .contextMenu {
                 Button("Copy link") {
@@ -2047,7 +2047,7 @@ private struct IrisImageViewer: View {
                             .foregroundStyle(.white.opacity(0.9))
                             .padding(18)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.irisPlain)
                     .accessibilityLabel("Share image")
                 }
                 Spacer()
