@@ -167,6 +167,9 @@ const IRIS_UPDATE_REFERENCE: &str =
 
 async fn run_update_check() -> String {
     let current = iris_chat_core::app_version();
+    if is_dev_placeholder_version(&current) {
+        return "Up to date".to_string();
+    }
     let result = gtk::gio::spawn_blocking(move || {
         std::process::Command::new("htree")
             .args([
@@ -202,6 +205,20 @@ async fn run_update_check() -> String {
         Ok(Err(_)) => "htree not found — install hashtree-cli".to_string(),
         Err(_) => "Update check cancelled".to_string(),
     }
+}
+
+/// Releases are tagged "YYYY.M.D[.N]". Dev builds fall back to the crate's
+/// own semver (currently 0.1.x), which would otherwise look "older" than
+/// every release and surface a misleading update prompt.
+fn is_dev_placeholder_version(value: &str) -> bool {
+    let major = value
+        .trim()
+        .trim_start_matches(['v', 'V'])
+        .split(|c: char| !c.is_ascii_digit())
+        .find(|s| !s.is_empty())
+        .and_then(|s| s.parse::<u32>().ok())
+        .unwrap_or(0);
+    major < 2000
 }
 
 fn support_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {

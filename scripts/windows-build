@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 #
-# Windows build harness driven from macOS through a Parallels VM.
+# Windows build harness driven from macOS over SSH to win11-dev.
 #
 # Mirrors the iOS/Android pattern: the host runs the script, and the actual
-# Rust + .NET toolchain runs inside a Windows VM. The script auto-detects a
-# running Windows VM (or accepts IRIS_WINDOWS_VM_NAME) and uses prlctl to
-# stream encoded PowerShell into the guest.
+# Rust + .NET toolchain runs on the Windows VM. The Windows VM is the
+# `win11-dev` host reachable over the Nostr VPN mesh (see ~/.claude/CLAUDE.md);
+# we tar-pipe the working tree over SSH and run base64-encoded PowerShell
+# remotely.
 #
-# Build target: x86_64-pc-windows-msvc (production). ARM Win11 VMs run x64
-# binaries via Microsoft's emulation layer, which is fine for dev-loop.
+# Build target: x86_64-pc-windows-msvc (production). The win11-dev VM is
+# x86_64, so this matches without emulation.
 
 set -Eeuo pipefail
 
@@ -31,23 +32,22 @@ usage() {
 usage: ./scripts/windows-build <command>
 
 commands:
-  windows-doctor     Probe the Parallels VM for required toolchain pieces
-  windows-setup      Install normal Windows build tools in the VM
-  windows-sync       Robocopy the repo from the Mac shared mount into the guest
-  windows-rust       Build the Rust cdylib inside the VM (x86_64-pc-windows-msvc)
-  windows-gen-cs     Generate C# bindings inside the VM via uniffi-bindgen-cs
+  windows-doctor     Probe win11-dev for required toolchain pieces
+  windows-setup      Install normal Windows build tools on win11-dev
+  windows-sync       Tar-over-SSH the repo from the host into win11-dev
+  windows-rust       Build the Rust cdylib on win11-dev (x86_64-pc-windows-msvc)
+  windows-gen-cs     Generate C# bindings on win11-dev via uniffi-bindgen-cs
   windows-dotnet     Run dotnet publish for the WPF C# app
   windows-build      Full pipeline: sync, rust, bindings, dotnet publish
   windows-installer  Build a Release publish + NSIS x86_64 setup .exe
   windows-zip        Zip the latest Release publish directory into dist/windows
-  windows-run        Launch the freshly built .exe inside the VM
+  windows-run        Launch the freshly built .exe on win11-dev
 
 env knobs:
-  IRIS_WINDOWS_VM_NAME           explicit Parallels VM name (default: auto-detect)
-  IRIS_WINDOWS_SHARED_REPO_PATH  Windows path to the shared Mac repo
-                                 (default: C:\Mac\Home\<rel-from-home>)
-  IRIS_WINDOWS_TARGET            Rust target triple (default: x86_64-pc-windows-msvc)
-  IRIS_WINDOWS_LLVM_BIN          LLVM bin dir for ring/sha2 cc-rs builds
+  IRIS_WINDOWS_SSH_HOST           SSH host running Windows (default: win11-dev)
+  IRIS_WINDOWS_GUEST_REPO_PATH    Repo path on win11-dev (default: C:\src\iris-chat-rs)
+  IRIS_WINDOWS_TARGET             Rust target triple (default: x86_64-pc-windows-msvc)
+  IRIS_WINDOWS_LLVM_BIN           LLVM bin dir for ring/sha2 cc-rs builds
   IRIS_WINDOWS_BINDGEN_CS_GIT_REF Tag/branch of NordSec/uniffi-bindgen-cs
   IRIS_WINDOWS_RUST_PROFILE       debug|release (default: debug)
   IRIS_WINDOWS_DOTNET_CONFIG      Debug|Release (default: Debug)
@@ -61,87 +61,34 @@ err() {
 
 require_macos() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
-    err "windows-build only runs on macOS (drives Parallels via prlctl)."
-    exit 1
-  fi
-  if ! command -v prlctl >/dev/null 2>&1; then
-    err "prlctl not found. Install Parallels Desktop or check PATH."
+    err "windows-build is intended to run on macOS (drives win11-dev over SSH)."
     exit 1
   fi
 }
 
+# Returns the SSH host running Windows. We no longer auto-detect Parallels VMs;
+# the build is run against `win11-dev` (or whatever IRIS_WINDOWS_SSH_HOST points
+# at) — see ~/.claude/CLAUDE.md.
 detect_vm_name() {
-  if [[ -n "${IRIS_WINDOWS_VM_NAME:-}" ]]; then
-    printf '%s\n' "$IRIS_WINDOWS_VM_NAME"
-    return 0
-  fi
-
-  local candidates
-  candidates="$(
-    prlctl list -a 2>/dev/null \
-      | awk '
-        /^\{[0-9a-f-]+\}/ {
-          uuid=$1
-          status=$2
-          name=""
-          for (i = 4; i <= NF; i++) name = (name ? name " " : "") $i
-          if ((status == "running" || status == "suspended") && tolower(name) ~ /windows/) {
-            print name
-          }
-        }'
-  )"
-
-  local count
-  count="$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
-  if [[ "$count" != "1" ]]; then
-    err "Could not auto-detect a unique running Windows VM."
-    err "Found candidates:"
-    printf '%s\n' "$candidates" >&2
-    err "Set IRIS_WINDOWS_VM_NAME=<name> and retry."
-    exit 1
-  fi
-
-  printf '%s\n' "$candidates" | sed '/^$/d'
+  printf '%s\n' "${IRIS_WINDOWS_SSH_HOST:-win11-dev}"
 }
 
+# Returns the working-tree path inside win11-dev. This is no longer a "shared
+# folder" — it's a regular directory the script keeps in sync with `tar | ssh`.
+# Kept under this name so the rest of the script doesn't change.
 detect_shared_repo_path() {
-  if [[ -n "${IRIS_WINDOWS_SHARED_REPO_PATH:-}" ]]; then
-    printf '%s\n' "$IRIS_WINDOWS_SHARED_REPO_PATH"
-    return 0
-  fi
-  if [[ "$ROOT" != "$HOME"/* ]]; then
-    err "Repo is outside \$HOME ($ROOT); set IRIS_WINDOWS_SHARED_REPO_PATH explicitly."
-    exit 1
-  fi
-  local rel
-  rel="${ROOT#"$HOME"/}"
-  rel="${rel//\//\\}"
-  printf 'C:\\Mac\\Home\\%s\n' "$rel"
+  printf '%s\n' "${IRIS_WINDOWS_GUEST_REPO_PATH:-C:\\src\\iris-chat-rs}"
 }
 
-# Write a PowerShell script under target/ and run it through the Parallels
-# shared folder. Large EncodedCommand payloads can stall prlctl on this VM.
+# Run a PowerShell script on the SSH host. We base64-encode (UTF-16LE) the
+# script so it survives ssh + cmd.exe + powershell parsing without any
+# quoting headaches, regardless of size.
 ps_run() {
-  local vm="$1"
+  local vm="$1"  # SSH host name
   local script="$2"
-  local shared_repo
-  shared_repo="$(detect_shared_repo_path)"
-  local ps_tmp_dir
-  ps_tmp_dir="$ROOT/target/windows-build-ps"
-  mkdir -p "$ps_tmp_dir"
-  local host_script
-  host_script="$(mktemp "$ps_tmp_dir/prlctl.XXXXXX")"
-  mv "$host_script" "$host_script.ps1"
-  host_script="$host_script.ps1"
-  printf '%s\n' "$script" >"$host_script"
-  local rel_script
-  rel_script="${host_script#"$ROOT"/}"
-  rel_script="${rel_script//\//\\}"
-  local guest_script="${shared_repo}\\${rel_script}"
-  prlctl exec "$vm" --current-user powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$guest_script"
-  local status=$?
-  rm -f "$host_script"
-  return "$status"
+  local encoded
+  encoded="$(printf '%s' "$script" | iconv -t UTF-16LE | base64)"
+  ssh "$vm" powershell.exe -NoProfile -EncodedCommand "$encoded"
 }
 
 # Same, but used when the caller wants to capture stdout. Identical body now;
@@ -161,7 +108,10 @@ ps_quote() {
 }
 
 guest_repo_expr() {
-  printf "%s" "(Join-Path \$env:USERPROFILE 'src\\iris-chat-rs')"
+  # PowerShell single-quoted literal of detect_shared_repo_path().
+  local repo
+  repo="$(detect_shared_repo_path)"
+  ps_quote "$repo"
 }
 
 path_setup_block() {
@@ -275,66 +225,60 @@ run_sync() {
   require_macos
   local vm
   vm="$(detect_vm_name)"
-  local shared_repo
-  shared_repo="$(detect_shared_repo_path)"
-  # Sibling path-dep repo. Mirror the same relative layout inside the VM.
-  # Note: $shared_repo uses \ separators (a Windows path), so use shell parameter
-  # expansion rather than dirname to derive the parent directory.
-  local shared_ndr="${shared_repo%\\*}\\nostr-double-ratchet"
+  local guest_repo
+  guest_repo="$(detect_shared_repo_path)"
+  local guest_repo_unix="${guest_repo//\\//}"
+  local guest_parent_unix="${guest_repo_unix%/*}"
+  local guest_ndr_unix="${guest_parent_unix}/nostr-double-ratchet"
+  local host_ndr="${ROOT%/*}/nostr-double-ratchet"
 
-  ps_run "$vm" "$(cat <<PS
-\$ErrorActionPreference = 'Continue'
-\$sharedRepo = $(ps_quote "$shared_repo")
-\$sharedNdr = $(ps_quote "$shared_ndr")
-\$guestRepo = Join-Path \$env:USERPROFILE 'src\\iris-chat-rs'
-\$guestNdr = Join-Path \$env:USERPROFILE 'src\\nostr-double-ratchet'
-\$guestRoot = Split-Path \$guestRepo
-New-Item -ItemType Directory -Force -Path \$guestRoot | Out-Null
+  if [[ ! -d "$host_ndr" ]]; then
+    err "Sibling repo $host_ndr not found on the host (Cargo.toml needs ../nostr-double-ratchet)."
+    exit 1
+  fi
 
-\$skipRelDirs = @(
-  'target',
-  'core\\target',
-  'dist',
-  '.git',
-  'node_modules',
-  '.relay-venv',
-  '.gradle',
-  '.kotlin',
-  '.idea',
-  'ios\\Bindings',
-  'ios\\.build',
-  'ios\\Frameworks',
-  'macos\\.build',
-  'macos\\Frameworks',
-  'android\\build',
-  'android\\app\\build',
-  'android\\.gradle',
-  'windows\\IrisChat\\bin',
-  'windows\\IrisChat\\obj',
-  'windows\\IrisChat\\Bindings',
-  'windows\\IrisChat\\Frameworks'
-)
-\$skipDirs = @()
-foreach (\$relDir in \$skipRelDirs) {
-  \$skipDirs += (Join-Path \$sharedRepo \$relDir)
-  \$skipDirs += (Join-Path \$guestRepo \$relDir)
-}
-robocopy \$sharedRepo \$guestRepo /MIR /NFL /NDL /NJH /NJS /NC /NS /NP /XD @skipDirs /XF .DS_Store | Out-Null
-\$rc = \$LASTEXITCODE
-if (\$rc -ge 8) { throw "robocopy iris-chat-rs failed with code \$rc" }
+  # Make sure both destination dirs exist on the remote.
+  ps_run "$vm" "
+\$ErrorActionPreference = 'Stop'
+New-Item -ItemType Directory -Force -Path '$guest_repo' | Out-Null
+New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
+"
 
-if (Test-Path \$sharedNdr) {
-  robocopy \$sharedNdr \$guestNdr /MIR /NFL /NDL /NJH /NJS /NC /NS /NP /XD target .git node_modules /XF .DS_Store | Out-Null
-  \$rc = \$LASTEXITCODE
-  if (\$rc -ge 8) { throw "robocopy nostr-double-ratchet failed with code \$rc" }
-  Write-Output "Synced sibling repo to \$guestNdr"
-} else {
-  throw "Sibling repo \$sharedNdr not found on the host (Cargo.toml needs ../../nostr-double-ratchet)."
-}
+  # Push iris-chat-rs working tree.
+  tar \
+    --exclude=./target \
+    --exclude=./core/target \
+    --exclude=./dist \
+    --exclude=./.git \
+    --exclude=./node_modules \
+    --exclude=./.relay-venv \
+    --exclude=./.gradle \
+    --exclude=./.kotlin \
+    --exclude=./.idea \
+    --exclude=./ios/Bindings \
+    --exclude=./ios/.build \
+    --exclude=./ios/Frameworks \
+    --exclude=./macos/.build \
+    --exclude=./macos/Frameworks \
+    --exclude=./android/build \
+    --exclude=./android/app/build \
+    --exclude=./android/.gradle \
+    --exclude=./windows/IrisChat/bin \
+    --exclude=./windows/IrisChat/obj \
+    --exclude=./windows/IrisChat/Bindings \
+    --exclude=./windows/IrisChat/Frameworks \
+    -cf - -C "$ROOT" . \
+    | ssh "$vm" tar -xf - -C "$guest_repo_unix"
 
-Write-Output "Synced repo to \$guestRepo"
-PS
-)"
+  # Push sibling nostr-double-ratchet repo.
+  tar \
+    --exclude=./target \
+    --exclude=./.git \
+    --exclude=./node_modules \
+    -cf - -C "$host_ndr" . \
+    | ssh "$vm" "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$guest_ndr_unix' | Out-Null\" && tar -xf - -C \"$guest_ndr_unix\""
+
+  echo "Synced repo to $guest_repo and sibling to ${guest_ndr_unix//\//\\}"
 }
 
 run_rust() {

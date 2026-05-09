@@ -98,6 +98,14 @@ public sealed class UpdateService
 
     private static bool VersionIsNewer(string candidate, string current)
     {
+        // Dev builds inherit AssemblyVersion=1.0.0.0 (or other pre-year-style
+        // placeholders) because release builds set Version via dotnet publish.
+        // Releases use "YYYY.M.D[.N]" so anything with a major below 2000 is a
+        // local build that should never be told a release is newer.
+        if (IsDevPlaceholderVersion(current))
+        {
+            return false;
+        }
         var left = VersionParts(candidate);
         var right = VersionParts(current);
         var count = Math.Max(left.Count, right.Count);
@@ -111,6 +119,12 @@ public sealed class UpdateService
             }
         }
         return false;
+    }
+
+    private static bool IsDevPlaceholderVersion(string current)
+    {
+        var parts = VersionParts(current);
+        return parts.Count == 0 || parts[0] < 2000;
     }
 
     private static List<int> VersionParts(string value) =>

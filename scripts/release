@@ -352,11 +352,12 @@ build_macos() {
 # ---------- Windows ----------
 build_windows() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
-    note_skipped "windows: only wired for the macOS + Parallels workflow"
+    note_skipped "windows: only wired for macOS hosts driving win11-dev over SSH"
     return 0
   fi
-  if ! command -v prlctl >/dev/null 2>&1; then
-    note_skipped "windows: prlctl not found"
+  local ssh_host="${IRIS_WINDOWS_SSH_HOST:-win11-dev}"
+  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_host" whoami >/dev/null 2>&1; then
+    note_skipped "windows: ssh $ssh_host unreachable (bring the VM up over the Nostr VPN mesh, or set IRIS_WINDOWS_SSH_HOST)"
     return 0
   fi
 
