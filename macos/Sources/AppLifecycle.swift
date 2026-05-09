@@ -24,18 +24,30 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    // Redirect the yellow minimize button to NSApp.hide so the window folds
-    // into the existing dock icon instead of spawning a second thumbnail
-    // next to the trash. applicationShouldHandleReopen brings it back when
-    // the user clicks the dock.
+    // Redirect the yellow minimize and red close buttons to NSApp.hide so the
+    // window folds into the existing dock icon instead of spawning a second
+    // thumbnail or destroying the WindowGroup window outright.
+    // applicationShouldHandleReopen brings it back when the user clicks the
+    // dock. Without this, closing the window leaves the app running with no
+    // way to surface a window again from the dock icon.
     @objc private func repurposeMiniaturizeButton(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        guard let button = window.standardWindowButton(.miniaturizeButton) else { return }
-        button.target = NSApp
-        button.action = #selector(NSApplication.hide(_:))
+        for kind in [NSWindow.ButtonType.miniaturizeButton, .closeButton] {
+            guard let button = window.standardWindowButton(kind) else { continue }
+            button.target = NSApp
+            button.action = #selector(NSApplication.hide(_:))
+        }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if mainWindow() == nil {
+            // The window has actually been destroyed (Cmd+W, or some path
+            // we haven't redirected to hide). Letting AppKit run its default
+            // reopen behavior nudges SwiftUI's WindowGroup into recreating a
+            // fresh window from the group; trying to show NSApp.windows.first
+            // here would be a no-op.
+            return true
+        }
         showMainWindow()
         return false
     }
