@@ -244,25 +244,24 @@ New-Item -ItemType Directory -Force -Path '$guest_repo' | Out-Null
 New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
 "
 
-  # Push iris-chat-rs working tree.
+  # Push iris-chat-rs working tree. Skip the other-platform directories
+  # entirely — they're not needed to build for Windows and shipping a few
+  # GB of iOS/macOS Frameworks across the SSH tunnel routinely timed out.
   tar \
     --exclude=./target \
     --exclude=./core/target \
     --exclude=./dist \
+    --exclude=./build \
     --exclude=./.git \
     --exclude=./node_modules \
     --exclude=./.relay-venv \
     --exclude=./.gradle \
     --exclude=./.kotlin \
     --exclude=./.idea \
-    --exclude=./ios/Bindings \
-    --exclude=./ios/.build \
-    --exclude=./ios/Frameworks \
-    --exclude=./macos/.build \
-    --exclude=./macos/Frameworks \
-    --exclude=./android/build \
-    --exclude=./android/app/build \
-    --exclude=./android/.gradle \
+    --exclude=./ios \
+    --exclude=./macos \
+    --exclude=./android \
+    --exclude=./linux \
     --exclude=./windows/IrisChat/bin \
     --exclude=./windows/IrisChat/obj \
     --exclude=./windows/IrisChat/Bindings \
