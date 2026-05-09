@@ -603,7 +603,7 @@ private fun ExistingMemberRow(
         Icon(
             imageVector = if (selected) IrisIcons.Devices else IrisIcons.NewChat,
             contentDescription = null,
-            tint = if (selected) IrisTheme.palette.accent else IrisTheme.palette.muted,
+            tint = if (selected) MaterialTheme.colorScheme.onSurface else IrisTheme.palette.muted,
             modifier = Modifier.size(20.dp),
         )
     }

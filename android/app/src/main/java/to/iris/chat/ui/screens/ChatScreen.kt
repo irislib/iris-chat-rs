@@ -712,7 +712,7 @@ private fun DirectChatAdvancedCard(
             Icon(
                 imageVector = IrisIcons.Devices,
                 contentDescription = null,
-                tint = IrisTheme.palette.accent,
+                tint = MaterialTheme.colorScheme.onSurface,
             )
             Text(
                 text = "Debug",
@@ -829,7 +829,7 @@ internal fun DisappearingMessagesCard(
                         Icon(
                             imageVector = Icons.Rounded.Check,
                             contentDescription = "Selected",
-                            tint = IrisTheme.palette.accent,
+                            tint = MaterialTheme.colorScheme.onSurface,
                         )
                     }
                 }

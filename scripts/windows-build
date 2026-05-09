@@ -270,13 +270,16 @@ New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
     -cf - -C "$ROOT" . \
     | ssh "$vm" tar -xf - -C "$guest_repo_unix"
 
-  # Push sibling nostr-double-ratchet repo.
+  # Push sibling nostr-double-ratchet repo. Two ssh calls because the
+  # remote login shell is PowerShell 5.1, which doesn't accept `&&` as a
+  # statement separator.
+  ssh "$vm" "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$guest_ndr_unix' | Out-Null\""
   tar \
     --exclude=./target \
     --exclude=./.git \
     --exclude=./node_modules \
     -cf - -C "$host_ndr" . \
-    | ssh "$vm" "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$guest_ndr_unix' | Out-Null\" && tar -xf - -C \"$guest_ndr_unix\""
+    | ssh "$vm" tar -xf - -C "$guest_ndr_unix"
 
   echo "Synced repo to $guest_repo and sibling to ${guest_ndr_unix//\//\\}"
 }

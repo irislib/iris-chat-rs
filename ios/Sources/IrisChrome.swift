@@ -1021,10 +1021,6 @@ struct IrisComposerBar: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            Color.clear
-                .frame(width: 0, height: 0)
-                .accessibilityIdentifier("chatComposerBar")
-
             if !attachments.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
@@ -1106,12 +1102,12 @@ struct IrisComposerBar: View {
             }
         }
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 16 : IrisLayout.contentHorizontalPadding)
-        .padding(.top, 10)
-        .padding(.bottom, 12)
+        .padding(.vertical, 10)
         .background(
             Rectangle()
                 .fill(palette.toolbar)
         )
+        .accessibilityIdentifier("chatComposerBar")
         .overlay {
             if isDropTargeted {
                 RoundedRectangle(cornerRadius: IrisLayout.inputCornerRadius + 8, style: .continuous)

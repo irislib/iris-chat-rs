@@ -458,7 +458,7 @@ fun GroupDetailsScreen(
                                 Icon(
                                     imageVector = IrisIcons.NewGroup,
                                     contentDescription = null,
-                                    tint = IrisTheme.palette.accent,
+                                    tint = MaterialTheme.colorScheme.onSurface,
                                 )
                             }
                         }
