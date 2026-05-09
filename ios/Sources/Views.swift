@@ -3973,14 +3973,16 @@ private struct DesktopUpdateSettingsSection: View {
                 .disabled(manager.updateChecking || manager.updateInstalling)
                 .accessibilityIdentifier("desktopCheckForUpdatesButton")
 
-                Button {
-                    manager.installUpdate()
-                } label: {
-                    Label(manager.updateInstalling ? "Installing" : "Install update", systemImage: "square.and.arrow.down.fill")
+                if manager.updateAvailable {
+                    Button {
+                        manager.installUpdate()
+                    } label: {
+                        Label(manager.updateInstalling ? "Installing" : "Install update", systemImage: "square.and.arrow.down.fill")
+                    }
+                    .buttonStyle(IrisPrimaryButtonStyle())
+                    .disabled(!manager.updateInstallEnabled)
+                    .accessibilityIdentifier("desktopInstallUpdateSettingsButton")
                 }
-                .buttonStyle(IrisPrimaryButtonStyle())
-                .disabled(!manager.updateInstallEnabled)
-                .accessibilityIdentifier("desktopInstallUpdateSettingsButton")
             }
 
             if !manager.updateStatus.isEmpty {
