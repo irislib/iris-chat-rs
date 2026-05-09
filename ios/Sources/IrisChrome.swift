@@ -1107,6 +1107,7 @@ struct IrisComposerBar: View {
             Rectangle()
                 .fill(palette.toolbar)
         )
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatComposerBar")
         .overlay {
             if isDropTargeted {
