@@ -25,6 +25,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -104,6 +106,7 @@ internal fun ComposerBar(
     isSending: Boolean,
     isUploading: Boolean,
     modifier: Modifier = Modifier,
+    focusRequester: FocusRequester? = null,
     onDraftChange: (String) -> Unit,
     onAttach: () -> Unit,
     onRemoveAttachment: (PickedAttachment) -> Unit,
@@ -253,7 +256,7 @@ internal fun ComposerBar(
                             )
                         },
                         modifier =
-                            Modifier
+                            (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                                 .fillMaxWidth()
                                 .testTag("chatMessageInput"),
                         minLines = 1,

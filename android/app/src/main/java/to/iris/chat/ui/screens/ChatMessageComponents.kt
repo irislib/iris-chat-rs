@@ -1,9 +1,12 @@
 package to.iris.chat.ui.screens
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
@@ -13,7 +16,9 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -40,17 +45,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.IntOffset
+import kotlinx.coroutines.launch
+import kotlin.math.abs
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
@@ -187,16 +199,103 @@ internal fun MessageBubble(
             isFirstInCluster = isFirstInCluster,
             isLastInCluster = isLastInCluster,
         )
-    Row(
+    val swipeOffsetX = remember(message.id) { Animatable(0f) }
+    val density = LocalDensity.current
+    val swipeThresholdPx = with(density) { 60.dp.toPx() }
+    val swipeMaxOffsetPx = with(density) { 90.dp.toPx() }
+    val swipeScope = rememberCoroutineScope()
+    var swipeFedHaptic by remember(message.id) { mutableStateOf(false) }
+    val swipeRevealForward =
+        ((swipeOffsetX.value / swipeThresholdPx).coerceIn(0f, 1f))
+    val swipeRevealBackward =
+        ((-swipeOffsetX.value / swipeThresholdPx).coerceIn(0f, 1f))
+
+    Box(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .hoverable(hoverInteractionSource),
-        horizontalArrangement = if (message.isOutgoing) Arrangement.End else Arrangement.Start,
     ) {
+        Row(
+            modifier =
+                Modifier
+                    .align(Alignment.Center)
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.AutoMirrored.Rounded.Reply,
+                contentDescription = null,
+                tint = IrisTheme.palette.muted,
+                modifier =
+                    Modifier
+                        .size(20.dp)
+                        .alpha(swipeRevealForward),
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            Icon(
+                imageVector = Icons.Rounded.Info,
+                contentDescription = null,
+                tint = IrisTheme.palette.muted,
+                modifier =
+                    Modifier
+                        .size(20.dp)
+                        .alpha(swipeRevealBackward),
+            )
+        }
         Column(
             horizontalAlignment = if (message.isOutgoing) Alignment.End else Alignment.Start,
             verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier =
+                Modifier
+                    .align(if (message.isOutgoing) Alignment.CenterEnd else Alignment.CenterStart)
+                    .offset { IntOffset(swipeOffsetX.value.toInt(), 0) }
+                    .pointerInput(message.id) {
+                        detectHorizontalDragGestures(
+                            onDragStart = { swipeFedHaptic = false },
+                            onDragEnd = {
+                                val finalOffset = swipeOffsetX.value
+                                if (finalOffset >= swipeThresholdPx) {
+                                    onReply()
+                                } else if (finalOffset <= -swipeThresholdPx) {
+                                    isInfoOpen = true
+                                }
+                                swipeScope.launch {
+                                    swipeOffsetX.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = spring(
+                                            stiffness = 350f,
+                                            dampingRatio = 0.74f,
+                                        ),
+                                    )
+                                }
+                                swipeFedHaptic = false
+                            },
+                            onDragCancel = {
+                                swipeScope.launch { swipeOffsetX.animateTo(0f) }
+                                swipeFedHaptic = false
+                            },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                val target =
+                                    (swipeOffsetX.value + dragAmount).coerceIn(
+                                        -swipeMaxOffsetPx,
+                                        swipeMaxOffsetPx,
+                                    )
+                                swipeScope.launch { swipeOffsetX.snapTo(target) }
+                                val crossed = abs(target) >= swipeThresholdPx
+                                if (crossed && !swipeFedHaptic) {
+                                    hapticFeedback.performHapticFeedback(
+                                        HapticFeedbackType.LongPress,
+                                    )
+                                    swipeFedHaptic = true
+                                } else if (!crossed) {
+                                    swipeFedHaptic = false
+                                }
+                            },
+                        )
+                    },
         ) {
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),

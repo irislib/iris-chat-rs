@@ -46,6 +46,8 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -128,6 +130,7 @@ fun ChatScreen(
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
     var directChatInfoOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
+    val composerFocusRequester = remember { FocusRequester() }
     val backUnreadCount by remember(chatId) {
         derivedStateOf {
             chatListSnapshots
@@ -378,7 +381,10 @@ fun ChatScreen(
                                 isFirstInCluster = isFirstInCluster,
                                 isLastInCluster = isLastInCluster,
                                 reactions = message.reactions,
-                                onReply = { replyTarget = message },
+                                onReply = {
+                                    replyTarget = message
+                                    composerFocusRequester.requestFocus()
+                                },
                                 onReact = { emoji ->
                                     appManager.dispatch(
                                         AppAction.ToggleReaction(
@@ -434,6 +440,7 @@ fun ChatScreen(
                     selectedAttachments = selectedAttachments,
                     isSending = busy.sendingMessage,
                     isUploading = busy.uploadingAttachment,
+                    focusRequester = composerFocusRequester,
                     modifier = Modifier.onGloballyPositioned { coordinates ->
                         composerBounds = coordinates.boundsInParent()
                     },
