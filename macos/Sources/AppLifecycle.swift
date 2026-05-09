@@ -16,6 +16,23 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
         if !singleInstance.claimOrNotifyCurrentLaunch() {
             NSApp.terminate(nil)
         }
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(repurposeMiniaturizeButton(_:)),
+            name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+    }
+
+    // Redirect the yellow minimize button to NSApp.hide so the window folds
+    // into the existing dock icon instead of spawning a second thumbnail
+    // next to the trash. applicationShouldHandleReopen brings it back when
+    // the user clicks the dock.
+    @objc private func repurposeMiniaturizeButton(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        guard let button = window.standardWindowButton(.miniaturizeButton) else { return }
+        button.target = NSApp
+        button.action = #selector(NSApplication.hide(_:))
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
