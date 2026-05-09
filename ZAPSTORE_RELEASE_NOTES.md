@@ -1,12 +1,10 @@
-# Iris Chat 2026.5.8.3
+# Iris Chat 2026.5.9
 
-- Desktop chat lists have right-click actions for read/unread, pin, mute, and delete.
-- Message alerts show the sender and message text instead of "New message".
-- Keeps placeholder message alerts silent when the app cannot decrypt a preview.
-- Lets iOS decrypt message alerts while the app is backgrounded or the phone is locked.
-- Fixes nearby Wi-Fi presence between Apple devices.
-- Enables sound and vibration for mobile message alerts.
-- Adds Homebrew install support for the `iris` command line app.
-- Restores desktop update controls and automatic installs.
-- Uses the regular text color for desktop chat list right-click menu icons.
-- Stops chat list rows from reflowing when the unread badge appears or disappears.
+- Fixes the macOS app not opening from the dock after launching at login.
+- Swipe message bubbles to reply or open message info on iOS and Android.
+- Rich emoji picker with categories, search, and recents in the composer on macOS, Linux, and Windows.
+- iOS share extension shows the chat list inline so you can pick a chat without opening Iris first.
+- Tightens desktop chrome: reply strip stays at composer height, ESC dismisses an active reply, icons get a polish pass.
+- Adds a pointing-hand cursor for clickable elements on macOS.
+- Stops dev builds from claiming an update is available against the published release.
+- Tightens iOS and macOS composer spacing so the input hugs the message timeline.
