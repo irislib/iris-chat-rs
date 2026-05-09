@@ -110,6 +110,61 @@ private final class ShareSuggestionDonor {
         interaction.donate(completion: nil)
     }
 }
+
+private struct ShareSuggestionEntry: Codable {
+    let chatId: String
+    let displayName: String
+    let subtitle: String?
+    let pictureUrl: String?
+    let isGroup: Bool
+    let lastMessageAtSecs: UInt64?
+}
+
+private final class ShareSuggestionsExporter {
+    private let appGroupIdentifier: String
+    private let fileManager: FileManager
+    private let queue = DispatchQueue(label: "to.iris.chat.share-suggestions", qos: .utility)
+    private var lastWritten: Data?
+
+    init(appGroupIdentifier: String, fileManager: FileManager = .default) {
+        self.appGroupIdentifier = appGroupIdentifier
+        self.fileManager = fileManager
+    }
+
+    func export(chats: [ChatThreadSnapshot]) {
+        let entries = chats
+            .sorted { ($0.lastMessageAtSecs ?? 0) > ($1.lastMessageAtSecs ?? 0) }
+            .prefix(20)
+            .map { chat in
+                ShareSuggestionEntry(
+                    chatId: chat.chatId,
+                    displayName: chat.displayName,
+                    subtitle: chat.subtitle,
+                    pictureUrl: chat.pictureUrl,
+                    isGroup: chat.kind == .group,
+                    lastMessageAtSecs: chat.lastMessageAtSecs
+                )
+            }
+        guard let data = try? JSONEncoder().encode(Array(entries)) else {
+            return
+        }
+        if data == lastWritten {
+            return
+        }
+        lastWritten = data
+        let groupId = appGroupIdentifier
+        let fm = fileManager
+        queue.async {
+            guard let dir = fm.containerURL(
+                forSecurityApplicationGroupIdentifier: groupId
+            ) else {
+                return
+            }
+            let url = dir.appendingPathComponent("share-suggestions.json")
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+}
 #endif
 
 private struct ClientDebugLogEntry {
@@ -536,6 +591,9 @@ final class AppManager: ObservableObject {
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
     private let shareSuggestionDonor = ShareSuggestionDonor()
+    private let shareSuggestionsExporter = ShareSuggestionsExporter(
+        appGroupIdentifier: AppPaths.appGroupIdentifier
+    )
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
@@ -600,6 +658,7 @@ final class AppManager: ObservableObject {
         }
 #if os(iOS)
         shareSuggestionDonor.syncRecentChats(initialState.chatList)
+        shareSuggestionsExporter.export(chats: initialState.chatList)
 #endif
 
 #if os(iOS) || os(macOS)
@@ -727,7 +786,11 @@ final class AppManager: ObservableObject {
               !shareID.isEmpty else {
             return false
         }
-        loadPendingShare(id: shareID)
+        let autoSend = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+            .queryItems?
+            .first { $0.name == "send" }?
+            .value == "1"
+        loadPendingShare(id: shareID, autoSend: autoSend)
         return true
     }
 
@@ -785,7 +848,7 @@ final class AppManager: ObservableObject {
         return result
     }
 
-    private func loadPendingShare(id: String) {
+    private func loadPendingShare(id: String, autoSend: Bool = false) {
 #if os(iOS) || os(macOS)
         guard let dir = fileManager
             .containerURL(forSecurityApplicationGroupIdentifier: AppPaths.appGroupIdentifier)?
@@ -800,11 +863,17 @@ final class AppManager: ObservableObject {
             pendingShare = share
             try? fileManager.removeItem(at: url)
             dispatchToRust(.updateScreenStack(stack: []))
+            if autoSend,
+               let chatId = share.suggestedChatId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !chatId.isEmpty {
+                sendPendingShare(to: chatId)
+            }
         } catch {
             showToast("Sharing unavailable")
         }
 #else
         _ = id
+        _ = autoSend
 #endif
     }
 
@@ -1615,6 +1684,7 @@ final class AppManager: ObservableObject {
 #endif
 #if os(iOS)
             shareSuggestionDonor.syncRecentChats(nextState.chatList)
+            shareSuggestionsExporter.export(chats: nextState.chatList)
             mobilePushRuntime.sync(state: nextState, ownerNsec: storedAccountBundle?.ownerNsec)
 #endif
             bootstrapInFlight = false
