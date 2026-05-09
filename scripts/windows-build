@@ -247,7 +247,9 @@ New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
   # Push iris-chat-rs working tree. Skip the other-platform directories
   # entirely — they're not needed to build for Windows and shipping a few
   # GB of iOS/macOS Frameworks across the SSH tunnel routinely timed out.
-  tar \
+  # COPYFILE_DISABLE=1 keeps macOS bsdtar from emitting AppleDouble `._*`
+  # sidecars; XAML's MSBuild compiler treats them as XML and chokes.
+  COPYFILE_DISABLE=1 tar \
     --exclude=./target \
     --exclude=./core/target \
     --exclude=./dist \
@@ -266,6 +268,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
     --exclude=./windows/IrisChat/obj \
     --exclude=./windows/IrisChat/Bindings \
     --exclude=./windows/IrisChat/Frameworks \
+    --exclude='._*' \
     -cf - -C "$ROOT" . \
     | ssh "$vm" tar -xf - -C "$guest_repo_unix"
 
@@ -273,10 +276,11 @@ New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
   # remote login shell is PowerShell 5.1, which doesn't accept `&&` as a
   # statement separator.
   ssh "$vm" "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$guest_ndr_unix' | Out-Null\""
-  tar \
+  COPYFILE_DISABLE=1 tar \
     --exclude=./target \
     --exclude=./.git \
     --exclude=./node_modules \
+    --exclude='._*' \
     -cf - -C "$host_ndr" . \
     | ssh "$vm" tar -xf - -C "$guest_ndr_unix"
 
