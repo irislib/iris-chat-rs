@@ -1165,13 +1165,12 @@ COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || printf '%s' "$IRIS_BUILD_
 {
   echo "# Iris Chat $TAG"
   echo
-  echo "Built from commit \`$COMMIT\`."
-  echo
   write_download_sections
+  echo
+  echo "## Release Build"
+  echo
+  echo "- Built from commit \`$COMMIT\`."
   if [[ "${#BUILT_LINES[@]}" -gt 0 ]]; then
-    echo
-    echo "## Build summary"
-    echo
     for line in "${BUILT_LINES[@]}"; do
       echo "- $line"
     done
