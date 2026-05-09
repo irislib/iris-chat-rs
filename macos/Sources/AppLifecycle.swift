@@ -58,16 +58,26 @@ final class IrisChatAppDelegate: NSObject, NSApplicationDelegate {
 
     private func showMainWindow() {
         NSApp.unhide(nil)
-        NSApp.activate()
-        if let window = NSApp.windows.first(where: { $0.title == "Iris Chat" }) ?? NSApp.windows.first {
+        NSApp.activate(ignoringOtherApps: true)
+        if let window = mainWindow() {
+            if window.isMiniaturized {
+                window.deminiaturize(nil)
+            }
             window.makeKeyAndOrderFront(nil)
         }
     }
 
     private func hideMainWindowSoon() {
-        DispatchQueue.main.async {
-            NSApp.windows.first(where: { $0.title == "Iris Chat" })?.orderOut(nil)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let window = self.mainWindow() else { return }
+            window.orderOut(nil)
         }
+    }
+
+    private func mainWindow() -> NSWindow? {
+        NSApp.windows.first(where: { $0.title == "Iris Chat" })
+            ?? NSApp.windows.first(where: { $0.canBecomeKey })
+            ?? NSApp.windows.first
     }
 
     private static var launchArgumentsContainDeepLink: Bool {

@@ -15,9 +15,6 @@ struct IrisChatMacApp: App {
                 .onAppear {
                     appDelegate.configure(manager: manager, startInBackground: startInBackground)
                     manager.startDesktopUpdateChecks()
-                    if startInBackground {
-                        NSApplication.shared.hide(nil)
-                    }
                 }
                 .onOpenURL { url in
                     _ = manager.handleShareURL(url)
