@@ -16,6 +16,13 @@ public partial class MessageBubble : UserControl
 {
     private static readonly string[] DefaultReactionEmojis = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"];
     private static readonly List<string> RecentReactionEmojis = LoadRecentReactionEmojis();
+
+    /// Snapshot of the recent-reactions cache so other chrome (composer
+    /// emoji picker) can show the same "Recent" list without owning state.
+    public static IReadOnlyList<string> RecentReactionEmojiSnapshot() =>
+        RecentReactionEmojis.ToArray();
+
+    public static void RememberEmojiUsage(string emoji) => RememberReactionEmoji(emoji);
     private static readonly ConcurrentDictionary<string, ImageSource> AttachmentImageCache = new();
     private const int RecentReactionEmojiLimit = 16;
     private const int AttachmentPreviewDecodeWidth = 640;
@@ -111,6 +118,10 @@ public partial class MessageBubble : UserControl
                 item.Click += (_, _) => ToggleReaction(selected);
                 react.Items.Add(item);
             }
+            react.Items.Add(new Separator());
+            var more = new MenuItem { Header = "More emoji…" };
+            more.Click += (_, _) => OpenReactionPicker();
+            react.Items.Add(more);
             menu.Items.Add(react);
             menu.Items.Add(new Separator());
         }
@@ -124,6 +135,38 @@ public partial class MessageBubble : UserControl
         menu.Items.Add(info);
 
         ContextMenu = menu;
+    }
+
+    private void OpenReactionPicker()
+    {
+        if (_message == null) return;
+        var picker = new EmojiPicker
+        {
+            RecentEmojis = RecentReactionEmojiSnapshot(),
+        };
+        var popup = new System.Windows.Controls.Primitives.Popup
+        {
+            PlacementTarget = Bubble,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Top,
+            StaysOpen = false,
+            AllowsTransparency = true,
+            PopupAnimation = System.Windows.Controls.Primitives.PopupAnimation.Fade,
+        };
+        var border = new Border
+        {
+            Background = (Brush)FindResource("Background"),
+            BorderBrush = (Brush)FindResource("Border"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Child = picker,
+        };
+        popup.Child = border;
+        picker.EmojiPicked += emoji =>
+        {
+            ToggleReaction(emoji);
+            popup.IsOpen = false;
+        };
+        popup.IsOpen = true;
     }
 
     private static IEnumerable<string> ReactionPickerEmojis(ChatMessageSnapshot message)

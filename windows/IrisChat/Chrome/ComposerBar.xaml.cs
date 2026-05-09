@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 
 namespace IrisChat.Chrome;
@@ -71,6 +72,53 @@ public partial class ComposerBar : UserControl
     private void OnSend(object sender, RoutedEventArgs e) => Submit();
 
     private void OnAttach(object sender, RoutedEventArgs e) => AttachRequested?.Invoke();
+
+    private Popup? _emojiPopup;
+
+    private void OnEmoji(object sender, RoutedEventArgs e)
+    {
+        if (_emojiPopup != null && _emojiPopup.IsOpen)
+        {
+            _emojiPopup.IsOpen = false;
+            return;
+        }
+        var picker = new EmojiPicker
+        {
+            RecentEmojis = MessageBubble.RecentReactionEmojiSnapshot(),
+        };
+        var popup = new Popup
+        {
+            PlacementTarget = EmojiButton,
+            Placement = PlacementMode.Top,
+            StaysOpen = false,
+            AllowsTransparency = true,
+            PopupAnimation = PopupAnimation.Fade,
+        };
+        var border = new Border
+        {
+            Background = (System.Windows.Media.Brush)FindResource("Background"),
+            BorderBrush = (System.Windows.Media.Brush)FindResource("Border"),
+            BorderThickness = new Thickness(1),
+            CornerRadius = new CornerRadius(10),
+            Child = picker,
+        };
+        popup.Child = border;
+        picker.EmojiPicked += emoji =>
+        {
+            InsertAtCaret(emoji);
+            popup.IsOpen = false;
+            FocusInput();
+        };
+        _emojiPopup = popup;
+        popup.IsOpen = true;
+    }
+
+    private void InsertAtCaret(string text)
+    {
+        var caret = Input.CaretIndex;
+        Input.Text = (Input.Text ?? string.Empty).Insert(caret, text);
+        Input.CaretIndex = caret + text.Length;
+    }
 
     private void OnRemoveAttachment(object sender, RoutedEventArgs e)
     {

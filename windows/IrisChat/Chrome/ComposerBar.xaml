@@ -57,6 +57,7 @@
             <Grid>
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
@@ -64,21 +65,30 @@
                 <Button x:Name="AttachButton"
                         Grid.Column="0"
                         Style="{StaticResource IconButton}"
-                        Margin="0,0,6,0"
+                        Margin="0,0,4,0"
                         ToolTip="Send file"
                         Click="OnAttach">
                     <TextBlock Text="📎" FontSize="20" Foreground="{StaticResource TextMuted}" />
                 </Button>
 
+                <Button x:Name="EmojiButton"
+                        Grid.Column="1"
+                        Style="{StaticResource IconButton}"
+                        Margin="0,0,6,0"
+                        ToolTip="Insert emoji"
+                        Click="OnEmoji">
+                    <TextBlock Text="😊" FontSize="18" Foreground="{StaticResource TextMuted}" />
+                </Button>
+
                 <TextBox x:Name="Input"
-                         Grid.Column="1"
+                         Grid.Column="2"
                          AcceptsReturn="False"
                          KeyDown="OnInputKeyDown"
                          TextChanged="OnInputTextChanged"
                          FontSize="14" />
 
                 <Button x:Name="SendButton"
-                        Grid.Column="2"
+                        Grid.Column="3"
                         Style="{StaticResource PrimaryButton}"
                         Margin="8,0,0,0"
                         Padding="16,8"
