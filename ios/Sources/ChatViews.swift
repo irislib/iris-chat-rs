@@ -303,6 +303,7 @@ struct ChatScreen: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .modifier(EscDismissesReply(replyTarget: $replyTarget))
         .overlay {
             if let imageViewerItem {
                 IrisImageViewer(item: imageViewerItem) {
@@ -1640,6 +1641,24 @@ private struct ReactionRow: View {
     }
 }
 
+private struct EscDismissesReply: ViewModifier {
+    @Binding var replyTarget: ChatMessageSnapshot?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17.0, macOS 14.0, *) {
+            content.onKeyPress(.escape) {
+                if replyTarget != nil {
+                    replyTarget = nil
+                    return .handled
+                }
+                return .ignored
+            }
+        } else {
+            content
+        }
+    }
+}
+
 private struct IrisReplyComposerStrip: View {
     @Environment(\.irisPalette) private var palette
     let message: ChatMessageSnapshot
@@ -1647,14 +1666,14 @@ private struct IrisReplyComposerStrip: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Rectangle()
+            Capsule()
                 .fill(palette.accent)
-                .frame(width: 3)
-                .clipShape(Capsule())
-            VStack(alignment: .leading, spacing: 2) {
+                .frame(width: 3, height: 32)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(message.author)
                     .font(.system(.caption, design: .rounded, weight: .bold))
                     .foregroundStyle(palette.textPrimary)
+                    .lineLimit(1)
                 Text(replySnippet(for: message))
                     .font(.system(.caption, design: .rounded, weight: .medium))
                     .foregroundStyle(palette.muted)
@@ -1669,8 +1688,9 @@ private struct IrisReplyComposerStrip: View {
             .buttonStyle(.irisPlain)
         }
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 16)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
         .background(palette.toolbar)
+        .fixedSize(horizontal: false, vertical: true)
         .accessibilityIdentifier("chatReplyComposer")
     }
 }

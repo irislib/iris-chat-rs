@@ -1202,7 +1202,8 @@ private struct DesktopUpdateStripe: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "arrow.down.circle.fill")
-                .foregroundStyle(palette.accent)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(palette.muted)
 
             Text(manager.updateVersion.isEmpty ? "Update available" : "\(manager.updateVersion) available")
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
@@ -1214,19 +1215,20 @@ private struct DesktopUpdateStripe: View {
             Toggle("Install automatically", isOn: $manager.autoInstallUpdates)
                 .toggleStyle(.checkbox)
                 .font(.system(.caption, design: .rounded, weight: .medium))
+                .foregroundStyle(palette.muted)
                 .accessibilityIdentifier("desktopUpdateAutoInstallToggle")
 
             Button {
                 manager.installUpdate()
             } label: {
-                Label(manager.updateInstalling ? "Installing" : "Install", systemImage: "square.and.arrow.down.fill")
+                Text(manager.updateInstalling ? "Installing…" : "Install")
             }
-            .buttonStyle(IrisSecondaryButtonStyle())
+            .buttonStyle(IrisSecondaryButtonStyle(compact: true))
             .disabled(!manager.updateInstallEnabled)
             .accessibilityIdentifier("desktopInstallUpdateButton")
         }
         .padding(.horizontal, 16)
-        .frame(minHeight: 42)
+        .padding(.vertical, 6)
         .background(palette.panelAlt)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -1317,7 +1319,7 @@ private struct DirectChatInfoSheet: View {
                                             if chat.messageTtlSeconds == ttlSeconds {
                                                 Image(systemName: "checkmark")
                                                     .font(.system(size: 14, weight: .semibold))
-                                                    .foregroundStyle(palette.accent)
+                                                    .foregroundStyle(palette.textPrimary)
                                             }
                                         }
                                         .padding(.vertical, 10)
@@ -1413,7 +1415,7 @@ private struct DirectChatAdvancedCard: View {
             } label: {
                 HStack(spacing: 9) {
                     Image(systemName: "wrench.and.screwdriver.fill")
-                        .foregroundStyle(palette.accent)
+                        .foregroundStyle(palette.textPrimary)
                     Text("Debug")
                         .font(.system(.headline, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.textPrimary)
@@ -2498,7 +2500,7 @@ struct NewChatScreen: View {
                 Image(systemName: "person.3.fill")
                     .font(.system(.body, weight: .semibold))
                     .frame(width: 22)
-                    .foregroundStyle(palette.accent)
+                    .foregroundStyle(palette.textPrimary)
                 Text("Create group")
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
@@ -3114,7 +3116,7 @@ struct GroupDetailsScreen: View {
                                     if currentTtl == ttlSeconds {
                                         Image(systemName: "checkmark")
                                             .font(.system(size: 14, weight: .semibold))
-                                            .foregroundStyle(palette.accent)
+                                            .foregroundStyle(palette.textPrimary)
                                     }
                                 }
                                 .padding(.vertical, 10)
@@ -3248,7 +3250,7 @@ struct GroupDetailsScreen: View {
                                         }
                                         Spacer()
                                         Image(systemName: "plus.circle")
-                                            .foregroundStyle(palette.accent)
+                                            .foregroundStyle(palette.textPrimary)
                                     }
                                     .contentShape(Rectangle())
                                 }
@@ -3733,7 +3735,7 @@ struct SettingsScreen: View {
                         )
                         HStack(spacing: 10) {
                             Image(systemName: "info.circle.fill")
-                                .foregroundStyle(palette.accent)
+                                .foregroundStyle(palette.textPrimary)
                             VStack(alignment: .leading, spacing: 3) {
                                 Text("Version")
                                     .font(.system(.headline, design: .rounded, weight: .semibold))
@@ -3749,7 +3751,7 @@ struct SettingsScreen: View {
                         Link(destination: irisSourceURL) {
                             HStack(spacing: 10) {
                                 Image(systemName: "chevron.left.forwardslash.chevron.right")
-                                    .foregroundStyle(palette.accent)
+                                    .foregroundStyle(palette.textPrimary)
                                 VStack(alignment: .leading, spacing: 3) {
                                     Text("Source code")
                                         .font(.system(.headline, design: .rounded, weight: .semibold))
@@ -3942,7 +3944,7 @@ private struct DesktopUpdateSettingsSection: View {
 
             HStack(spacing: 10) {
                 Image(systemName: "info.circle.fill")
-                    .foregroundStyle(palette.accent)
+                    .foregroundStyle(palette.textPrimary)
                 VStack(alignment: .leading, spacing: 3) {
                     Text("Current version")
                         .font(.system(.headline, design: .rounded, weight: .semibold))
