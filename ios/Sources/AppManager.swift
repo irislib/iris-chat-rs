@@ -2046,6 +2046,13 @@ private func moveIrisDownloadedUpdate(_ downloadedUrl: URL, from assetUrl: URL) 
 }
 
 private func irisVersionIsNewer(_ candidate: String, than current: String) -> Bool {
+    // Dev builds use the Xcode placeholder "0.1.0" because MARKETING_VERSION
+    // is only set during release builds. Treat that (and anything with a
+    // major version below the year-style release scheme) as a local build
+    // that always supersedes whatever the manifest says.
+    if irisIsDevPlaceholderVersion(current) {
+        return false
+    }
     let left = irisVersionParts(candidate)
     let right = irisVersionParts(current)
     for index in 0..<max(left.count, right.count) {
@@ -2056,6 +2063,14 @@ private func irisVersionIsNewer(_ candidate: String, than current: String) -> Bo
         }
     }
     return false
+}
+
+private func irisIsDevPlaceholderVersion(_ value: String) -> Bool {
+    let parts = irisVersionParts(value)
+    // Releases are tagged YYYY.M.D[.N] (year as major). Anything with a
+    // major below 2000 is the Xcode template default or a hand-built dev
+    // version — treat it as ahead of every release so the banner stays off.
+    return (parts.first ?? 0) < 2000
 }
 
 private func irisVersionParts(_ value: String) -> [Int] {
