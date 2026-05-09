@@ -101,6 +101,40 @@ ensure_dist_dir() {
   mkdir -p "$DIST_DIR"
 }
 
+# Copy a built artifact off the win11-dev VM. With Parallels we shared
+# C:\src\iris-chat-rs as a host folder so the artifact appeared on macOS
+# automatically; over SSH we have to fetch it ourselves.
+#
+# Returns 0 if the artifact ends up on disk locally — the remote PS often
+# sets a stray $LASTEXITCODE on its way to a successful Compress-Archive,
+# so we judge by what came back, not what ssh reported.
+fetch_artifact_from_vm() {
+  local vm="$1" remote_win="$2" local_path="$3"
+  local remote_unix="${remote_win//\\//}"
+  mkdir -p "$(dirname "$local_path")"
+  rm -f "$local_path"
+  if scp -q "${vm}:${remote_unix}" "$local_path" && [[ -s "$local_path" ]]; then
+    return 0
+  fi
+  echo "windows-build: failed to fetch ${remote_win} from ${vm}" >&2
+  return 1
+}
+
+# Run a PowerShell step on the VM, then fetch its primary artifact back.
+# We rescue a non-zero ssh exit when scp can still pull the file — Powershell
+# 5.1 over OpenSSH occasionally bubbles up benign $LASTEXITCODE from upstream
+# tools (msbuild progress, Compress-Archive's CLIXML stream) even when the
+# script's own work has finished cleanly.
+run_remote_step_and_fetch() {
+  local vm="$1" remote_win="$2" local_path="$3" script="$4"
+  local rc=0
+  ps_run "$vm" "$script" || rc=$?
+  if fetch_artifact_from_vm "$vm" "$remote_win" "$local_path"; then
+    return 0
+  fi
+  return "${rc:-1}"
+}
+
 ps_quote() {
   # Single-quote a string for PowerShell, escaping embedded single quotes.
   local value="$1"
@@ -506,7 +540,10 @@ run_zip() {
   ensure_dist_dir
   mkdir -p "$DIST_DIR/windows"
 
-  ps_run "$vm" "$(cat <<PS
+  run_remote_step_and_fetch "$vm" \
+    "${shared_repo}\\dist\\windows\\${out_basename}.zip" \
+    "$DIST_DIR/windows/${out_basename}.zip" \
+    "$(cat <<PS
 \$ErrorActionPreference = 'Continue'
 $(dotnet_publish_dir_block)
 \$config = ${config_quoted}
@@ -517,8 +554,11 @@ New-Item -ItemType Directory -Force -Path \$sharedDist | Out-Null
 \$zipName = ${zip_quoted}
 \$zipPath = Join-Path \$sharedDist \$zipName
 if (Test-Path \$zipPath) { Remove-Item \$zipPath -Force }
+\$ProgressPreference = 'SilentlyContinue'
 Compress-Archive -Path (Join-Path \$publishDir '*') -DestinationPath \$zipPath -CompressionLevel Optimal
+if (-not (Test-Path \$zipPath)) { throw "Compress-Archive did not produce \$zipPath" }
 Write-Output ("Built {0}" -f \$zipPath)
+exit 0
 PS
 )"
 }
@@ -553,7 +593,10 @@ run_installer() {
   ensure_dist_dir
   mkdir -p "$DIST_DIR/windows"
 
-  ps_run "$vm" "$(cat <<PS
+  run_remote_step_and_fetch "$vm" \
+    "${shared_repo}\\dist\\windows\\${installer_basename}.exe" \
+    "$DIST_DIR/windows/${installer_basename}.exe" \
+    "$(cat <<PS
 \$ErrorActionPreference = 'Continue'
 $(path_setup_block)
 $(dotnet_publish_dir_block)
@@ -602,7 +645,9 @@ if (Test-Path \$iconPath) { \$nsiArgs += ('/DIRIS_ICON_PATH=' + \$iconPath) }
 if (\$LASTEXITCODE -ne 0) { throw ("makensis failed (exit {0})" -f \$LASTEXITCODE) }
 
 Remove-Item \$workDir -Recurse -Force
+if (-not (Test-Path \$outPath)) { throw "makensis did not produce \$outPath" }
 Write-Output ("Built {0}" -f \$outPath)
+exit 0
 PS
 )"
 }
