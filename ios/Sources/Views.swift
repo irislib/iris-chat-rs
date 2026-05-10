@@ -255,6 +255,11 @@ struct RootView: View {
                 )
             }
             .buttonStyle(.irisPlain)
+            // Chat-list rows pad to 16pt; the top bar pads to 8pt to
+            // align with the chat-screen composer. The extra 8pt here
+            // moves the chat-list header avatar to the same 16pt
+            // gutter as the row avatars below it.
+            .padding(.leading, 8)
             .accessibilityIdentifier("chatListProfileButton")
         )
     }
@@ -265,6 +270,7 @@ struct RootView: View {
                 NewChatCircleButton {
                     manager.dispatch(.pushScreen(screen: .newChat))
                 }
+                .padding(.trailing, 8)
             )
         }
 
