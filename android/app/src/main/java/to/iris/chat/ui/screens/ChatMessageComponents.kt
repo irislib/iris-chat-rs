@@ -118,6 +118,7 @@ internal fun MessageBubble(
     onReply: () -> Unit,
     onReact: (String) -> Unit,
     onDelete: () -> Unit,
+    onScrollToQuote: () -> Unit,
     downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
     onOpenImage: (ByteArray, String) -> Unit,
     chat: CurrentChatSnapshot? = null,
@@ -351,7 +352,7 @@ internal fun MessageBubble(
                             )
                         }
                         parsed.reply?.let { reply ->
-                            ReplyPreview(reply = reply, isOutgoing = message.isOutgoing)
+                            ReplyPreview(reply = reply, isOutgoing = message.isOutgoing, onTap = onScrollToQuote)
                         }
                         if (parsed.body.isNotBlank()) {
                             LinkedMessageText(
@@ -794,9 +795,8 @@ private fun ActionDockIconButton(
 private fun ReplyPreview(
     reply: ReplyPreviewData,
     isOutgoing: Boolean,
+    onTap: () -> Unit,
 ) {
-    var expanded by remember(reply) { mutableStateOf(false) }
-    val likelyTruncates = reply.body.contains('\n') || reply.body.length > 220
     val collapsedLineLimit = 4
     Surface(
         color =
@@ -806,12 +806,7 @@ private fun ReplyPreview(
                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
             },
         shape = RoundedCornerShape(10.dp),
-        modifier =
-            if (likelyTruncates) {
-                Modifier.clickable { expanded = !expanded }
-            } else {
-                Modifier
-            },
+        modifier = Modifier.clickable { onTap() },
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
@@ -836,16 +831,9 @@ private fun ReplyPreview(
                 Text(
                     text = reply.body,
                     style = MaterialTheme.typography.labelSmall,
-                    maxLines = if (expanded) Int.MAX_VALUE else collapsedLineLimit,
+                    maxLines = collapsedLineLimit,
                     overflow = TextOverflow.Ellipsis,
                 )
-                if (likelyTruncates) {
-                    Text(
-                        text = if (expanded) "Tap to collapse" else "Tap to expand",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                    )
-                }
             }
         }
     }
@@ -921,12 +909,12 @@ internal fun TypingIndicatorBubble(
     }
 }
 
-private data class ReplyPreviewData(
+internal data class ReplyPreviewData(
     val author: String,
     val body: String,
 )
 
-private data class ParsedReplyMessage(
+internal data class ParsedReplyMessage(
     val reply: ReplyPreviewData?,
     val body: String,
 )
@@ -941,7 +929,7 @@ internal fun replyEncodedMessage(
     return "$ReplyMessagePrefix${reply.author}: ${replySnippet(reply)}\n\n$text"
 }
 
-private fun parseReplyEncodedMessage(text: String): ParsedReplyMessage {
+internal fun parseReplyEncodedMessage(text: String): ParsedReplyMessage {
     if (!text.startsWith(ReplyMessagePrefix)) {
         return ParsedReplyMessage(reply = null, body = text)
     }

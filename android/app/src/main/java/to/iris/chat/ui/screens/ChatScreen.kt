@@ -405,6 +405,22 @@ fun ChatScreen(
                                         replyTarget = null
                                     }
                                 },
+                                onScrollToQuote = {
+                                    val parsedReply = parseReplyEncodedMessage(message.body).reply
+                                    if (parsedReply != null) {
+                                        val target = chat.messages.indexOfLast { candidate ->
+                                            candidate.author == parsedReply.author &&
+                                                replySnippet(candidate) == parsedReply.body &&
+                                                candidate.createdAtSecs <= message.createdAtSecs &&
+                                                candidate.id != message.id
+                                        }
+                                        if (target >= 0) {
+                                            coroutineScope.launch {
+                                                listState.animateScrollToItem(target)
+                                            }
+                                        }
+                                    }
+                                },
                                 downloadAttachment = { attachment ->
                                     appManager.downloadAttachment(attachment)
                                 },

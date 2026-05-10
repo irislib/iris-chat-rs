@@ -95,6 +95,14 @@ struct ChatScreen: View {
                                                             replyTarget = nil
                                                         }
                                                     },
+                                                    onScrollToQuote: { reply in
+                                                        scrollToQuotedMessage(
+                                                            from: message,
+                                                            reply: reply,
+                                                            in: chat.messages,
+                                                            proxy: proxy
+                                                        )
+                                                    },
                                                     downloadAttachment: { attachment in
                                                         await manager.downloadAttachment(attachment)
                                                     },
@@ -378,6 +386,35 @@ struct ChatScreen: View {
         }
     }
 
+    // The wire format for a quoted reply only carries author + a snippet
+    // (max 96 chars, newlines flattened). To find the message the snippet
+    // came from, walk backwards from the replying message and match the
+    // same author whose own snippet matches. Disambiguates on the most
+    // recent matching message, which is the natural reading order.
+    private func scrollToQuotedMessage(
+        from replyingMessage: ChatMessageSnapshot,
+        reply: ReplyPreview,
+        in messages: [ChatMessageSnapshot],
+        proxy: ScrollViewProxy
+    ) {
+        guard let currentIdx = messages.firstIndex(where: { $0.id == replyingMessage.id }) else { return }
+        let target = reply.body
+        for i in stride(from: currentIdx - 1, through: 0, by: -1) {
+            let candidate = messages[i]
+            guard candidate.author == reply.author else { continue }
+            let candidateSnippet = replySnippet(for: candidate)
+            if candidateSnippet == target {
+                withAnimation(.easeOut(duration: 0.25)) {
+                    proxy.scrollTo(candidate.id, anchor: .center)
+                }
+                #if os(iOS)
+                PlatformHaptics.messageMenuOpened()
+                #endif
+                return
+            }
+        }
+    }
+
     private func updateTimelineFollowState(nearBottom: Bool, messageCount: Int) {
         if isNearBottom != nearBottom {
             isNearBottom = nearBottom
@@ -493,6 +530,7 @@ private struct ChatMessageRow: View {
     let onReact: (String) -> Void
     let onInfo: () -> Void
     let onDelete: () -> Void
+    let onScrollToQuote: (ReplyPreview) -> Void
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
     let onOpenImage: (Data, String) -> Void
@@ -572,7 +610,11 @@ private struct ChatMessageRow: View {
 
                     VStack(alignment: .trailing, spacing: 8) {
                         if let reply = bodyParts.reply {
-                            ReplyPreviewView(reply: reply, isOutgoing: message.isOutgoing)
+                            ReplyPreviewView(
+                                reply: reply,
+                                isOutgoing: message.isOutgoing,
+                                onTap: { onScrollToQuote(reply) }
+                            )
                         }
                         if !bodyParts.body.isEmpty {
                             Text(
@@ -1719,18 +1761,12 @@ private struct ReplyPreviewView: View {
     @Environment(\.irisPalette) private var palette
     let reply: ReplyPreview
     let isOutgoing: Bool
-
-    @State private var expanded = false
+    let onTap: () -> Void
 
     private let collapsedLineLimit = 4
-    // Show "Tap to expand" only when the body is plausibly longer than the
-    // collapsed view. Cheap heuristic — multi-line OR > a few hundred chars.
-    private var likelyTruncates: Bool {
-        reply.body.contains("\n") || reply.body.count > 220
-    }
 
     var body: some View {
-        Button(action: toggleIfNeeded) {
+        Button(action: onTap) {
             HStack(spacing: 8) {
                 Rectangle()
                     .fill(isOutgoing ? palette.onBubbleMine.opacity(0.6) : palette.accent)
@@ -1741,15 +1777,9 @@ private struct ReplyPreviewView: View {
                         .font(.system(.caption, design: .rounded, weight: .bold))
                     Text(reply.body)
                         .font(.system(.caption, design: .rounded, weight: .medium))
-                        .lineLimit(expanded ? nil : collapsedLineLimit)
+                        .lineLimit(collapsedLineLimit)
                         .multilineTextAlignment(.leading)
                         .opacity(0.82)
-                    if likelyTruncates {
-                        Text(expanded ? "Tap to collapse" : "Tap to expand")
-                            .font(.system(.caption2, design: .rounded, weight: .semibold))
-                            .opacity(0.6)
-                            .accessibilityIdentifier("chatReplyPreviewToggle")
-                    }
                 }
             }
             .padding(.horizontal, 10)
@@ -1760,12 +1790,8 @@ private struct ReplyPreviewView: View {
             )
         }
         .buttonStyle(.irisPlain)
-        .accessibilityHint(likelyTruncates ? (expanded ? "Tap to collapse the quoted reply" : "Tap to expand the quoted reply") : "")
-    }
-
-    private func toggleIfNeeded() {
-        guard likelyTruncates else { return }
-        withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
+        .accessibilityHint("Tap to scroll to the quoted message")
+        .accessibilityIdentifier("chatReplyPreview")
     }
 }
 
