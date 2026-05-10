@@ -234,28 +234,32 @@ fun ChatScreen(
         }
     }
 
-    // Repin to bottom when the last bubble grows below the viewport while
-    // we should be following the latest. Catches the cases the message-count
-    // / last-id LaunchedEffect above misses: a reaction landing on the last
-    // message, an attachment image lazy-loading taller than its placeholder,
-    // a quote preview rendering after first layout. Without this, the user
-    // opens a chat, the initial scroll-to-bottom fires, then late layout
-    // shifts push the latest bubble up out of view.
+    // Repin to the bottom when the LAST bubble's height grows (a reaction
+    // landed, an attachment image lazy-loaded taller than its placeholder,
+    // a quote preview rendered) while we were already following the latest.
+    // We watch `last.size` rather than `lastBottom > viewportEnd` because
+    // the latter also turns true the moment the user scrolls up, which
+    // would force-snap them back down — exactly the bug iOS just fixed.
+    // `last.size` only changes when the last bubble actually resizes.
     LaunchedEffect(listState, chatId) {
+        var previousLastSize = 0
         snapshotFlow {
             val info = listState.layoutInfo
             val last = info.visibleItemsInfo.lastOrNull() ?: return@snapshotFlow null
             if (last.index != info.totalItemsCount - 1) return@snapshotFlow null
-            val lastBottom = last.offset + last.size
-            val viewportEnd = info.viewportEndOffset
-            Triple(info.totalItemsCount, lastBottom, viewportEnd)
+            Triple(info.totalItemsCount, last.size, last.offset + last.size > info.viewportEndOffset)
         }
             .distinctUntilChanged()
             .collect { snap ->
-                if (snap == null) return@collect
-                val (total, lastBottom, viewportEnd) = snap
+                if (snap == null) {
+                    previousLastSize = 0
+                    return@collect
+                }
+                val (total, lastSize, overflowsViewport) = snap
+                val grew = previousLastSize > 0 && lastSize > previousLastSize
+                previousLastSize = lastSize
                 if (initialScrollPending || !shouldFollowLatest || total == 0) return@collect
-                if (lastBottom > viewportEnd) {
+                if (grew && overflowsViewport) {
                     listState.scrollToItem(total - 1)
                 }
             }

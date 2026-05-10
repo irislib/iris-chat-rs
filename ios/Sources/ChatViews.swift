@@ -19,6 +19,7 @@ struct ChatScreen: View {
     @State private var forceScrollToLatest = false
     @State private var timelineViewportMaxY: CGFloat = 0
     @State private var timelineBottomMaxY: CGFloat = .greatestFiniteMagnitude
+    @State private var timelineContentHeight: CGFloat = 0
     @State private var initialScrollPending = true
     @State private var renderedMessageCount = 0
     @State private var replyTarget: ChatMessageSnapshot?
@@ -135,6 +136,23 @@ struct ChatScreen: View {
                                         }
                                         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 14)
                                         .padding(.vertical, 10)
+                                        .background(
+                                            // Publishes the timeline's
+                                            // intrinsic content height —
+                                            // this background sits on the
+                                            // padded LazyVStack, so its
+                                            // size reflects "how tall do
+                                            // all the bubbles want to be"
+                                            // and changes only when bubbles
+                                            // are added/removed/resized,
+                                            // not when the user scrolls.
+                                            GeometryReader { geo in
+                                                Color.clear.preference(
+                                                    key: ChatTimelineContentHeightPreferenceKey.self,
+                                                    value: geo.size.height
+                                                )
+                                            }
+                                        )
                                         .frame(minHeight: viewport.size.height, alignment: .bottom)
                                         .accessibilityIdentifier("chatTimeline")
                                     }
@@ -160,6 +178,7 @@ struct ChatScreen: View {
                                     shouldFollowLatest = true
                                     forceScrollToLatest = false
                                     renderedMessageCount = 0
+                                    timelineContentHeight = 0
                                     lastTypingSentAt = nil
                                     sentTypingIndicator = false
                                 }
@@ -177,8 +196,6 @@ struct ChatScreen: View {
                                     )
                                 }
                                 .onPreferenceChange(ChatTimelineBottomMaxYPreferenceKey.self) { value in
-                                    let previousBottomMaxY = timelineBottomMaxY
-                                    let wasFollowing = shouldFollowLatest
                                     let nearBottom = chatTimelineIsNearBottom(
                                         viewportMaxY: timelineViewportMaxY,
                                         bottomMaxY: value
@@ -186,22 +203,28 @@ struct ChatScreen: View {
                                     if !chatTimelineGeometryMatches(timelineBottomMaxY, value) {
                                         timelineBottomMaxY = value
                                     }
-                                    // If we were pinned to the bottom and the
-                                    // content grew (a reaction landed, an
-                                    // attachment finished loading, a quote
-                                    // preview rendered, etc.), repin instead of
-                                    // letting the latest bubble drift up out of
-                                    // view. Skip during the initial scroll —
-                                    // that path scrolls itself.
-                                    let contentGrew = previousBottomMaxY > 0
-                                        && value > previousBottomMaxY + 1
-                                    if !initialScrollPending, wasFollowing, contentGrew {
+                                    updateTimelineFollowState(
+                                        nearBottom: nearBottom,
+                                        messageCount: chat.messages.count
+                                    )
+                                }
+                                .onPreferenceChange(ChatTimelineContentHeightPreferenceKey.self) { value in
+                                    // Repin to the bottom when the timeline's
+                                    // intrinsic content grew (reaction landed,
+                                    // attachment finished loading, quote
+                                    // preview rendered, etc.) and we were
+                                    // already following. Crucially, this
+                                    // preference does NOT change while the
+                                    // user is scrolling — only when bubbles
+                                    // actually resize — so scrolling up is
+                                    // never misread as growth.
+                                    let previous = timelineContentHeight
+                                    if !chatTimelineGeometryMatches(timelineContentHeight, value) {
+                                        timelineContentHeight = value
+                                    }
+                                    let grew = previous > 0 && value > previous + 1
+                                    if !initialScrollPending, shouldFollowLatest, grew {
                                         scrollToBottom(proxy: proxy, animated: false)
-                                    } else {
-                                        updateTimelineFollowState(
-                                            nearBottom: nearBottom,
-                                            messageCount: chat.messages.count
-                                        )
                                     }
                                 }
                                 .task(id: chat.messages.last?.id) {
@@ -536,6 +559,20 @@ private struct ChatTimelineViewportMaxYPreferenceKey: PreferenceKey {
 
 private struct ChatTimelineBottomMaxYPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = .greatestFiniteMagnitude
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+// Reports the timeline's intrinsic content height (sum of all bubbles +
+// padding), independent of scroll position. Used as a stable "did the
+// content grow?" signal for the auto-stick-to-bottom logic — bottomMaxY
+// alone changes when the user scrolls, which made the old check
+// repeatedly drag the user back to the bottom every time they scrolled
+// up.
+private struct ChatTimelineContentHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
