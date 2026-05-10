@@ -46,6 +46,20 @@
                                    FontSize="12"
                                    TextTrimming="CharacterEllipsis" />
                     </StackPanel>
+                    <StackPanel x:Name="HeaderDisappearingStatus"
+                                Orientation="Horizontal"
+                                Visibility="Collapsed">
+                        <TextBlock Text="&#xE823;"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   Foreground="{StaticResource TextMuted}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,4,0" />
+                        <TextBlock x:Name="HeaderDisappearingText"
+                                   Foreground="{StaticResource TextMuted}"
+                                   FontSize="12"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
                 </StackPanel>
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Style="{StaticResource GhostButton}"

@@ -165,6 +165,8 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         title: title_label.clone(),
         title_column: title_column.clone(),
         title_status: title_status.clone(),
+        title_status_icon: title_status_icon.clone(),
+        title_status_label: title_status_label.clone(),
         title_slot: title_slot.clone(),
     };
     apply_state(&content_slot, &header_widgets, &manager, &current.borrow());
@@ -288,6 +290,8 @@ struct HeaderWidgets {
     title: gtk::Label,
     title_column: gtk::Box,
     title_status: gtk::Box,
+    title_status_icon: gtk::Image,
+    title_status_label: gtk::Label,
     title_slot: gtk::Box,
 }
 
@@ -326,14 +330,27 @@ fn apply_state(
     let title_text =
         chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());
     header.title.set_label(&title_text);
-    header.title_status.set_visible(
-        matches!(screen, Screen::Chat { .. })
-            && state
-                .current_chat
-                .as_ref()
-                .map(|chat| chat.is_muted)
-                .unwrap_or(false),
-    );
+    let chat_in_view = matches!(screen, Screen::Chat { .. })
+        .then(|| state.current_chat.as_ref())
+        .flatten();
+    let header_status: Option<(&str, String)> = chat_in_view.and_then(|chat| {
+        if let Some(ttl) = chat.message_ttl_seconds {
+            if ttl > 0 {
+                return Some(("alarm-symbolic", disappearing_label(ttl)));
+            }
+        }
+        if chat.is_muted {
+            return Some(("notifications-disabled-symbolic", "muted".to_string()));
+        }
+        None
+    });
+    if let Some((icon_name, label)) = header_status {
+        header.title_status_icon.set_icon_name(Some(icon_name));
+        header.title_status_label.set_label(&label);
+        header.title_status.set_visible(true);
+    } else {
+        header.title_status.set_visible(false);
+    }
 
     // Tear down any avatar from a previous render.
     while let Some(child) = header.title_slot.first_child() {
@@ -486,6 +503,22 @@ fn notify_new_messages(
             .clone()
             .unwrap_or_else(|| "New message".to_string());
         notifications::notify(APP_ID, &chat.display_name, &body);
+    }
+}
+
+fn disappearing_label(seconds: u64) -> String {
+    match seconds {
+        300 => "5 minutes".to_string(),
+        3_600 => "1 hour".to_string(),
+        86_400 => "24 hours".to_string(),
+        604_800 => "1 week".to_string(),
+        2_592_000 => "1 month".to_string(),
+        7_776_000 => "3 months".to_string(),
+        s if s < 3_600 => format!("{} min", s / 60),
+        s if s < 86_400 => format!("{} h", s / 3_600),
+        s if s < 604_800 => format!("{} d", s / 86_400),
+        s if s < 2_592_000 => format!("{} wk", s / 604_800),
+        s => format!("{} mo", s / 2_592_000),
     }
 }
 

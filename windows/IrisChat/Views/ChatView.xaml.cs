@@ -54,9 +54,30 @@ public partial class ChatView : UserControl
         }
 
         HeaderTitle.Text = chat.displayName;
-        HeaderSubtitle.Text = chat.isMuted ? string.Empty : chat.subtitle ?? string.Empty;
-        HeaderSubtitle.Visibility = chat.isMuted ? Visibility.Collapsed : Visibility.Visible;
-        HeaderMutedStatus.Visibility = chat.isMuted ? Visibility.Visible : Visibility.Collapsed;
+        // Header subtitle priority: disappearing-message timeout (clock + ttl)
+        // > muted (bell-slash + muted) > group subtitle text. Hide the others
+        // when one wins so we don't stack indicators.
+        var hasTtl = chat.messageTtlSeconds.HasValue && chat.messageTtlSeconds.Value > 0;
+        if (hasTtl)
+        {
+            HeaderDisappearingText.Text = DisappearingLabel(chat.messageTtlSeconds!.Value);
+            HeaderDisappearingStatus.Visibility = Visibility.Visible;
+            HeaderMutedStatus.Visibility = Visibility.Collapsed;
+            HeaderSubtitle.Visibility = Visibility.Collapsed;
+        }
+        else if (chat.isMuted)
+        {
+            HeaderDisappearingStatus.Visibility = Visibility.Collapsed;
+            HeaderMutedStatus.Visibility = Visibility.Visible;
+            HeaderSubtitle.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            HeaderDisappearingStatus.Visibility = Visibility.Collapsed;
+            HeaderMutedStatus.Visibility = Visibility.Collapsed;
+            HeaderSubtitle.Text = chat.subtitle ?? string.Empty;
+            HeaderSubtitle.Visibility = Visibility.Visible;
+        }
         HeaderAvatar.Label = chat.displayName;
         HeaderAvatar.PictureUrl = chat.pictureUrl;
         MuteChatButton.Visibility = Visibility.Visible;
@@ -176,5 +197,23 @@ public partial class ChatView : UserControl
         var chat = App.CurrentManager.CurrentChat;
         if (chat == null) return;
         App.CurrentManager.SetChatMuted(chat.chatId, !chat.isMuted);
+    }
+
+    private static string DisappearingLabel(ulong seconds)
+    {
+        return seconds switch
+        {
+            300 => "5 minutes",
+            3_600 => "1 hour",
+            86_400 => "24 hours",
+            604_800 => "1 week",
+            2_592_000 => "1 month",
+            7_776_000 => "3 months",
+            < 3_600 => $"{seconds / 60} min",
+            < 86_400 => $"{seconds / 3_600} h",
+            < 604_800 => $"{seconds / 86_400} d",
+            < 2_592_000 => $"{seconds / 604_800} wk",
+            _ => $"{seconds / 2_592_000} mo",
+        };
     }
 }
