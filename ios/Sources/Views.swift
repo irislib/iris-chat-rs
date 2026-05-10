@@ -617,10 +617,14 @@ private struct NavigationHeaderChrome: View {
     let palette: IrisPalette
 
     var body: some View {
+        // Pure background color fading to transparent — no toolbar
+        // tone lift. In dark theme that's black-at-top → transparent,
+        // in light theme white-at-top → transparent. Identical fade
+        // shape, just inverted by the palette.
         LinearGradient(
             colors: [
-                palette.toolbar,
-                palette.toolbar.opacity(0.78),
+                palette.background,
+                palette.background.opacity(0.78),
                 palette.background.opacity(0)
             ],
             startPoint: .top,

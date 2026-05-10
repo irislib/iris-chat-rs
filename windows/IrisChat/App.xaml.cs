@@ -43,11 +43,11 @@ public partial class App : Application
         "#FFFFFFFF");
 
     private static readonly PlatformPalette DarkPalette = new(
-        "#FF0A0A0A",
-        "#FF1A1A1A",
-        "#FF2A2A2A",
+        "#FF000000",
+        "#FF161616",
+        "#FF262626",
         "#1FFFFFFF",
-        "#F5101010",
+        "#F50A0A0A",
         "#FF702ACE",
         "#FF3A3A3A",
         "#FF702ACE",

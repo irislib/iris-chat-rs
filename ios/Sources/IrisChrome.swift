@@ -208,11 +208,11 @@ struct IrisPalette {
     )
 
     static let dark = IrisPalette(
-        background: Color(hex: 0x0A0A0A),
-        panel: Color(hex: 0x1A1A1A),
-        panelAlt: Color(hex: 0x2A2A2A),
+        background: Color(hex: 0x000000),
+        panel: Color(hex: 0x161616),
+        panelAlt: Color(hex: 0x262626),
         border: Color.white.opacity(0.12),
-        toolbar: Color(hex: 0x101010).opacity(0.96),
+        toolbar: Color(hex: 0x0A0A0A).opacity(0.96),
         bubbleMine: Color(hex: 0x702ACE),
         bubbleTheirs: Color(hex: 0x3A3A3A),
         accent: Color(hex: 0x702ACE),
