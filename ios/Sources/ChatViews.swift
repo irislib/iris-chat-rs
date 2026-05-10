@@ -613,6 +613,12 @@ private struct ChatMessageRow: View {
                     .foregroundStyle(message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 11)
+                    // Cap the bubble width so a long single-line message
+                    // wraps instead of stretching the bubble across the
+                    // whole row. Without alignment so short messages stay
+                    // short; alignment is enforced by the row VStack's
+                    // outer .frame(maxWidth: .infinity, alignment:).
+                    .frame(maxWidth: IrisLayout.usesDesktopChrome ? 520 : 320)
                     .background(
                         bubbleShape
                             .fill(message.isOutgoing ? palette.bubbleMine : palette.bubbleTheirs)
