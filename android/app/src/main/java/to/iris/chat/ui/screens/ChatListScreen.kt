@@ -435,6 +435,12 @@ private fun NearbyChatListItem(
             leadingContent = {
                 NearbyChatIcon(visible = snapshot.visible || snapshot.localNetworkVisible)
             },
+            previewLeading =
+                if (snapshot.peers.isNotEmpty()) {
+                    { NearbyAvatarStack(peers = snapshot.peers.take(3)) }
+                } else {
+                    null
+                },
             unreadCount = 0,
             lastMessageMine = false,
             lastDelivery = null,
@@ -497,6 +503,39 @@ private fun nearbyWifiStatusLabel(status: String): String =
         "Local network failed" -> "Wi-Fi failed"
         else -> status
     }
+
+// Small avatar group shown inline with the "Boromir nearby" subtitle so the
+// faces of the people who are actually around appear next to their names,
+// rather than replacing the wireless icon in the leading slot. Each avatar
+// gets a thin ring in the surface color to keep overlapping faces
+// visually separated, same trick as iOS.
+@Composable
+private fun NearbyAvatarStack(peers: List<IrisNearbyService.Peer>) {
+    val avatarSize = 18.dp
+    val overlap = 6.dp
+    val stride = avatarSize - overlap
+    val stackWidth = stride * (peers.size - 1) + avatarSize
+    val ringColor = MaterialTheme.colorScheme.background
+    Box(modifier = Modifier.size(width = stackWidth, height = avatarSize)) {
+        peers.forEachIndexed { index, peer ->
+            Box(
+                modifier =
+                    Modifier
+                        .align(Alignment.CenterStart)
+                        .offset(x = stride * index)
+                        .size(avatarSize)
+                        .background(ringColor, CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                IrisAvatar(
+                    label = peer.name.ifBlank { "?" },
+                    size = avatarSize - 2.dp,
+                    imageUrl = peer.pictureUrl,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun NearbyChatIcon(visible: Boolean) {

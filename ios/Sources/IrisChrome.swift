@@ -872,6 +872,7 @@ struct IrisChatRow: View {
     let preferences: PreferencesSnapshot?
     let manager: AppManager?
     let leading: AnyView?
+    let previewLeading: AnyView?
     let onTap: () -> Void
 
     init(
@@ -886,6 +887,7 @@ struct IrisChatRow: View {
         preferences: PreferencesSnapshot? = nil,
         manager: AppManager? = nil,
         leading: AnyView? = nil,
+        previewLeading: AnyView? = nil,
         onTap: @escaping () -> Void
     ) {
         self.title = title
@@ -899,6 +901,7 @@ struct IrisChatRow: View {
         self.preferences = preferences
         self.manager = manager
         self.leading = leading
+        self.previewLeading = previewLeading
         self.onTap = onTap
     }
 
@@ -951,10 +954,15 @@ struct IrisChatRow: View {
                         }
                     }
 
-                    Text(preview)
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(palette.muted)
-                        .lineLimit(2)
+                    HStack(alignment: .center, spacing: 6) {
+                        if let previewLeading {
+                            previewLeading
+                        }
+                        Text(preview)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(2)
+                    }
 
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle)

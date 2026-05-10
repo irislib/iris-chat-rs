@@ -539,6 +539,7 @@ fun IrisChatListRow(
     imageUrl: String? = null,
     imageData: ByteArray? = null,
     leadingContent: (@Composable () -> Unit)? = null,
+    previewLeading: (@Composable () -> Unit)? = null,
     unreadCount: Long,
     lastMessageMine: Boolean,
     lastDelivery: DeliveryState?,
@@ -603,12 +604,15 @@ fun IrisChatListRow(
                     )
                 }
             }
-            if (preview != null || (lastMessageMine && lastDelivery != null) || unreadCount > 0) {
+            if (preview != null || previewLeading != null || (lastMessageMine && lastDelivery != null) || unreadCount > 0) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    if (previewLeading != null) {
+                        previewLeading()
+                    }
                     if (preview != null) {
                         Text(
                             text = preview,

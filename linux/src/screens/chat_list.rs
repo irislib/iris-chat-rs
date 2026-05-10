@@ -3,7 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
 use iris_chat_core::{
-    proxied_image_url, AppAction, AppState, ChatThreadSnapshot, PreferencesSnapshot,
+    proxied_image_url, AppAction, AppState, ChatThreadSnapshot, DesktopNearbyPeerSnapshot,
+    PreferencesSnapshot,
 };
 
 use crate::app_manager::AppManager;
@@ -32,7 +33,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     scrolled.upcast()
 }
 
-fn nearby_row(manager: &Rc<AppManager>) -> adw::ActionRow {
+fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     let snapshot = manager.nearby_snapshot();
     let subtitle = if !snapshot.visible {
         "Click to enable".to_string()
@@ -41,18 +42,86 @@ fn nearby_row(manager: &Rc<AppManager>) -> adw::ActionRow {
     } else {
         wifi_status_label(&snapshot.status)
     };
-    let row = adw::ActionRow::builder()
-        .title("Nearby")
-        .subtitle(escape(&subtitle))
-        .activatable(true)
-        .build();
-    row.add_prefix(&gtk::Image::from_icon_name("network-wireless-symbolic"));
-    let manager = manager.clone();
-    row.connect_activated(move |row| {
-        let parent = row.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-        crate::screens::present_nearby(parent.as_ref(), manager.clone());
+
+    // Custom row instead of adw::ActionRow because we need an inline
+    // avatar stack rendered next to the subtitle text — the avatars
+    // belong on the same line as the "Boromir nearby" label, not in
+    // the prefix slot where they'd replace the wireless icon.
+    let outer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    outer.set_margin_top(6);
+    outer.set_margin_bottom(6);
+    outer.set_margin_start(12);
+    outer.set_margin_end(12);
+
+    let icon = gtk::Image::from_icon_name("network-wireless-symbolic");
+    icon.set_pixel_size(24);
+    icon.set_valign(gtk::Align::Center);
+    outer.append(&icon);
+
+    let text_col = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    text_col.set_valign(gtk::Align::Center);
+    text_col.set_hexpand(true);
+    let title_label = gtk::Label::new(Some("Nearby"));
+    title_label.set_halign(gtk::Align::Start);
+    title_label.set_xalign(0.0);
+    title_label.add_css_class("heading");
+    text_col.append(&title_label);
+
+    let subtitle_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    subtitle_row.set_halign(gtk::Align::Start);
+    if !snapshot.peers.is_empty() {
+        subtitle_row.append(&nearby_avatar_stack(&snapshot.peers, manager));
+    }
+    let subtitle_label = gtk::Label::new(Some(&subtitle));
+    subtitle_label.set_halign(gtk::Align::Start);
+    subtitle_label.set_xalign(0.0);
+    subtitle_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    subtitle_label.add_css_class("dim-label");
+    subtitle_label.add_css_class("caption");
+    subtitle_row.append(&subtitle_label);
+    text_col.append(&subtitle_row);
+
+    outer.append(&text_col);
+
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.set_child(Some(&outer));
+    let manager_for_click = manager.clone();
+    button.connect_clicked(move |btn| {
+        let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+        crate::screens::present_nearby(parent.as_ref(), manager_for_click.clone());
     });
-    row
+    button.upcast()
+}
+
+fn nearby_avatar_stack(
+    peers: &[DesktopNearbyPeerSnapshot],
+    manager: &Rc<AppManager>,
+) -> gtk::Widget {
+    let take = peers.len().min(3);
+    let avatar_size: i32 = 16;
+    let overlap: i32 = 6;
+    let stride = avatar_size - overlap;
+    let stack_width = stride * (take as i32 - 1) + avatar_size;
+    let overlay = gtk::Fixed::new();
+    overlay.set_size_request(stack_width, avatar_size);
+    overlay.set_valign(gtk::Align::Center);
+    let prefs = manager.current_state().preferences.clone();
+    for (index, peer) in peers.iter().take(take).enumerate() {
+        let avatar = adw::Avatar::new(avatar_size, Some(&peer.name), true);
+        if let Some(url) = peer.picture_url.as_ref() {
+            let proxied = proxied_image_url(
+                url.clone(),
+                prefs.clone(),
+                Some((avatar_size * 2) as u32),
+                Some((avatar_size * 2) as u32),
+                true,
+            );
+            image_cache::fetch_into_avatar(&avatar, &proxied);
+        }
+        overlay.put(&avatar, (stride * index as i32) as f64, 0.0);
+    }
+    overlay.upcast()
 }
 
 fn row_for(

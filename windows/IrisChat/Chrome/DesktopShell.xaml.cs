@@ -128,37 +128,54 @@ public partial class DesktopShell : UserControl
                 ? NearbySummary(snapshot.peers)
                 : WifiStatusLabel(snapshot.status);
 
-        var grid = new Grid { Margin = new Thickness(8, 7, 8, 7) };
+        // Match the regular ChatRow layout: 44px wireless badge in the
+        // leading slot, 12px gutter, then title + subtitle stack with an
+        // inline avatar group sitting next to the "Boromir nearby" label.
+        var grid = new Grid { Margin = new Thickness(10, 8, 10, 8) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        var icon = new TextBlock
-        {
-            Text = "N",
-            FontSize = 18,
-            Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(3, 0, 12, 0),
-        };
-        Grid.SetColumn(icon, 0);
+        var leading = BuildWirelessIcon();
+        Grid.SetColumn(leading, 0);
 
-        var text = new StackPanel { Orientation = Orientation.Vertical };
+        var text = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 0, 0),
+        };
         text.Children.Add(new TextBlock
         {
             Text = "Nearby",
             Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
+            FontSize = 15,
             FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
         });
-        text.Children.Add(new TextBlock
+
+        var subtitleRow = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 2, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        if (snapshot.peers.Length > 0)
+        {
+            subtitleRow.Children.Add(BuildNearbyAvatarStack(snapshot.peers));
+        }
+        subtitleRow.Children.Add(new TextBlock
         {
             Text = subtitle,
             Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
-            FontSize = 12,
+            FontSize = 13,
+            Margin = new Thickness(snapshot.peers.Length > 0 ? 6 : 0, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
+        text.Children.Add(subtitleRow);
         Grid.SetColumn(text, 1);
 
-        grid.Children.Add(icon);
+        grid.Children.Add(leading);
         grid.Children.Add(text);
 
         var button = new Button
@@ -171,6 +188,65 @@ public partial class DesktopShell : UserControl
         };
         button.Click += OnNearby;
         return button;
+    }
+
+    // 44px round wireless badge that always occupies the leading slot of
+    // the Nearby chat-list row, so the row visually lines up with regular
+    // chat avatars.
+    private FrameworkElement BuildWirelessIcon()
+    {
+        const double Size = 44;
+        return new System.Windows.Controls.Border
+        {
+            Width = Size,
+            Height = Size,
+            CornerRadius = new CornerRadius(Size / 2),
+            Background = (System.Windows.Media.Brush)FindResource("Panel"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = new TextBlock
+            {
+                // Segoe MDL2 Assets E701 = wireless / wifi fan
+                Text = "\uE701",
+                FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+                FontSize = 20,
+                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+    }
+
+    // Small inline avatar group rendered next to the subtitle text, so
+    // when peers are around their faces show up alongside their names
+    // ("Boromir nearby"). Up to three avatars overlap by ~6px each.
+    private static FrameworkElement BuildNearbyAvatarStack(DesktopNearbyPeerSnapshot[] peers)
+    {
+        const double AvatarSize = 18;
+        const double Overlap = 6;
+        var stride = AvatarSize - Overlap;
+        var take = Math.Min(peers.Length, 3);
+        var stackWidth = (take - 1) * stride + AvatarSize;
+        var canvas = new System.Windows.Controls.Canvas
+        {
+            Width = stackWidth,
+            Height = AvatarSize,
+            Background = System.Windows.Media.Brushes.Transparent,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        for (var i = 0; i < take; i++)
+        {
+            var peer = peers[i];
+            var avatar = new Avatar
+            {
+                Size = AvatarSize,
+                Label = string.IsNullOrEmpty(peer.name) ? "?" : peer.name,
+                PictureUrl = peer.pictureUrl,
+            };
+            System.Windows.Controls.Canvas.SetLeft(avatar, i * stride);
+            System.Windows.Controls.Canvas.SetTop(avatar, 0);
+            canvas.Children.Add(avatar);
+        }
+        return canvas;
     }
 
     private ContextMenu BuildChatContextMenu(ChatThreadSnapshot chat)

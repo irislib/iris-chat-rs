@@ -2202,7 +2202,8 @@ private struct NearbyChatListRow: View {
             pictureUrl: nil,
             preferences: manager.state.preferences,
             manager: manager,
-            leading: AnyView(leadingContent),
+            leading: AnyView(NearbyWirelessAvatar()),
+            previewLeading: previewLeading,
             onTap: {
                 onOpen()
             }
@@ -2210,17 +2211,15 @@ private struct NearbyChatListRow: View {
         .accessibilityIdentifier("nearbyChatRow")
     }
 
-    @ViewBuilder
-    private var leadingContent: some View {
-        if service.peers.isEmpty {
-            NearbyWirelessAvatar()
-        } else {
+    private var previewLeading: AnyView? {
+        guard !service.peers.isEmpty else { return nil }
+        return AnyView(
             NearbyAvatarStack(
                 peers: Array(service.peers.prefix(3)),
                 preferences: manager.state.preferences,
                 manager: manager
             )
-        }
+        )
     }
 }
 
@@ -2244,9 +2243,9 @@ private struct NearbyAvatarStack: View {
     let peers: [IrisNearbyPeer]
     let preferences: PreferencesSnapshot?
     let manager: AppManager?
+    var avatarSize: CGFloat = 18
 
-    private let avatarSize: CGFloat = 28
-    private let stride: CGFloat = 18  // = avatarSize - overlap
+    private var stride: CGFloat { avatarSize - 6 }
 
     var body: some View {
         ZStack(alignment: .leading) {
@@ -2258,15 +2257,15 @@ private struct NearbyAvatarStack: View {
                     preferences: preferences,
                     manager: manager
                 )
-                .overlay(Circle().stroke(palette.background, lineWidth: 2))
+                .overlay(Circle().stroke(palette.background, lineWidth: 1.5))
                 .offset(x: CGFloat(index) * stride)
             }
         }
-        .frame(width: stackWidth, height: 42, alignment: .leading)
+        .frame(width: stackWidth, height: avatarSize, alignment: .leading)
     }
 
     private var stackWidth: CGFloat {
-        guard !peers.isEmpty else { return 42 }
+        guard !peers.isEmpty else { return avatarSize }
         return CGFloat(peers.count - 1) * stride + avatarSize
     }
 }
