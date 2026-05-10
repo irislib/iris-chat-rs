@@ -558,6 +558,9 @@ private struct ChatMessageRow: View {
                 }
 
                 HStack(alignment: .center, spacing: 6) {
+                    if message.isOutgoing {
+                        Spacer(minLength: 56)
+                    }
                     if showActionDock && message.isOutgoing {
                         ChatMessageActionDock(
                             onShowReactionPicker: { showReactionPicker = true },
@@ -613,12 +616,6 @@ private struct ChatMessageRow: View {
                     .foregroundStyle(message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 11)
-                    // Cap the bubble width so a long single-line message
-                    // wraps instead of stretching the bubble across the
-                    // whole row. Without alignment so short messages stay
-                    // short; alignment is enforced by the row VStack's
-                    // outer .frame(maxWidth: .infinity, alignment:).
-                    .frame(maxWidth: IrisLayout.usesDesktopChrome ? 520 : 320)
                     .background(
                         bubbleShape
                             .fill(message.isOutgoing ? palette.bubbleMine : palette.bubbleTheirs)
@@ -684,6 +681,9 @@ private struct ChatMessageRow: View {
                             onInfo: onInfo,
                             onDelete: onDelete
                         )
+                    }
+                    if !message.isOutgoing {
+                        Spacer(minLength: 56)
                     }
                 }
 
@@ -1752,7 +1752,6 @@ private struct ReplyPreviewView: View {
                     }
                 }
             }
-            .frame(maxWidth: 360, alignment: .leading)
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .background(
