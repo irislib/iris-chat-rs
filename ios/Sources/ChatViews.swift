@@ -156,6 +156,7 @@ struct ChatScreen: View {
                                         .frame(minHeight: viewport.size.height, alignment: .bottom)
                                         .accessibilityIdentifier("chatTimeline")
                                     }
+                                    .irisDefaultScrollAnchorBottom()
                                     .simultaneousGesture(
                                         TapGesture().onEnded {
                                             isComposerFocused = false
@@ -276,8 +277,8 @@ struct ChatScreen: View {
                                         Image(systemName: "arrow.down")
                                             .font(.system(size: 17, weight: .bold))
                                             .foregroundStyle(palette.textPrimary)
-                                            .frame(width: 42, height: 42)
-                                            .irisGlassSurface(in: Circle(), tintOpacity: 0.7)
+                                            .frame(width: 44, height: 44)
+                                            .irisGlassSurface(in: Circle())
                                             .overlay(
                                                 Circle()
                                                     .strokeBorder(
@@ -302,49 +303,59 @@ struct ChatScreen: View {
                                         .allowsHitTesting(false)
                                 }
                             }
-                        }
-
-                        if let replyTarget {
-                            IrisReplyComposerStrip(message: replyTarget) {
-                                self.replyTarget = nil
-                            }
-                        }
-
-                        IrisComposerBar(
-                            draft: $draft,
-                            attachments: $selectedAttachments,
-                            placeholder: "Message",
-                            isSending: manager.state.busy.sendingMessage,
-                            isUploading: manager.state.busy.uploadingAttachment,
-                            isFocused: $isComposerFocused,
-                            onDraftChange: {
-                                sendTypingIfNeeded()
-                            },
-                            onAttach: { urls in
-                                do {
-                                    selectedAttachments.append(
-                                        contentsOf: try manager.stageOutgoingAttachments(urls)
-                                    )
-                                } catch {
-                                    manager.showAttachmentOpenError()
+                            // Float the reply strip + composer over the
+                            // chat timeline via .safeAreaInset so the
+                            // bubbles actually scroll *under* the
+                            // composer's glass surface — that's what
+                            // makes the translucent material visible.
+                            // Without this the composer was a separate
+                            // band below the ScrollView, with no content
+                            // behind it for the blur to reveal.
+                            .safeAreaInset(edge: .bottom, spacing: 0) {
+                                VStack(spacing: 0) {
+                                    if let replyTarget {
+                                        IrisReplyComposerStrip(message: replyTarget) {
+                                            self.replyTarget = nil
+                                        }
+                                    }
+                                    IrisComposerBar(
+                                        draft: $draft,
+                                        attachments: $selectedAttachments,
+                                        placeholder: "Message",
+                                        isSending: manager.state.busy.sendingMessage,
+                                        isUploading: manager.state.busy.uploadingAttachment,
+                                        isFocused: $isComposerFocused,
+                                        onDraftChange: {
+                                            sendTypingIfNeeded()
+                                        },
+                                        onAttach: { urls in
+                                            do {
+                                                selectedAttachments.append(
+                                                    contentsOf: try manager.stageOutgoingAttachments(urls)
+                                                )
+                                            } catch {
+                                                manager.showAttachmentOpenError()
+                                            }
+                                        }
+                                    ) {
+                                        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
+                                        stopTypingIfNeeded()
+                                        shouldFollowLatest = true
+                                        forceScrollToLatest = true
+                                        let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
+                                        replyTarget = nil
+                                        if selectedAttachments.isEmpty {
+                                            draft = ""
+                                            manager.dispatch(.sendMessage(chatId: chatId, text: outgoingText))
+                                        } else {
+                                            let attachments = selectedAttachments
+                                            selectedAttachments = []
+                                            draft = ""
+                                            manager.sendAttachments(chatId: chatId, attachments: attachments, caption: outgoingText)
+                                        }
+                                    }
                                 }
-                            }
-                        ) {
-                            let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
-                            stopTypingIfNeeded()
-                            shouldFollowLatest = true
-                            forceScrollToLatest = true
-                            let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
-                            replyTarget = nil
-                            if selectedAttachments.isEmpty {
-                                draft = ""
-                                manager.dispatch(.sendMessage(chatId: chatId, text: outgoingText))
-                            } else {
-                                let attachments = selectedAttachments
-                                selectedAttachments = []
-                                draft = ""
-                                manager.sendAttachments(chatId: chatId, attachments: attachments, caption: outgoingText)
                             }
                         }
                     }

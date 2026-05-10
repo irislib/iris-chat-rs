@@ -51,23 +51,24 @@ extension ButtonStyle where Self == IrisPlainButtonStyle {
 // scroll-to-bottom button, and any other "floating chrome" element
 // that should let the timeline ghost through. Mirrors Signal-iOS's
 // strategy:
-//   * iOS 26+ : SwiftUI's native `.glassEffect`, which adapts to
-//     content underneath and stays interactive.
-//   * iOS 16-25: an ultra-thin material blur with a translucent
-//     palette tint stacked on top so the surface still reads as
-//     part of the app and not a generic system bar.
+//   * iOS 26+ : SwiftUI's native `.glassEffect`, which is the
+//     Liquid Glass material — adapts to content underneath, stays
+//     interactive, no extra tint needed.
+//   * iOS 16-25: `.regularMaterial` blur — the thickest of the
+//     visible-translucent materials, no palette tint so the blur
+//     itself reads as the surface.
 //   * Reduce Transparency: solid panel-tone fill so accessibility
 //     users get the same affordance without the blur.
 struct IrisGlassSurface<S: Shape>: ViewModifier {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.irisPalette) private var palette
     let shape: S
-    let tintOpacity: Double
+    let isInteractive: Bool
     let solidWhenReduced: Bool
 
-    init(shape: S, tintOpacity: Double = 0.55, solidWhenReduced: Bool = true) {
+    init(shape: S, isInteractive: Bool = true, solidWhenReduced: Bool = true) {
         self.shape = shape
-        self.tintOpacity = tintOpacity
+        self.isInteractive = isInteractive
         self.solidWhenReduced = solidWhenReduced
     }
 
@@ -77,23 +78,27 @@ struct IrisGlassSurface<S: Shape>: ViewModifier {
         } else {
             #if os(iOS)
             if #available(iOS 26.0, *) {
-                content.background(.regularMaterial, in: shape)
-                    .background(palette.toolbar.opacity(tintOpacity * 0.6), in: shape)
+                // Apple Liquid Glass — the real thing. Content
+                // underneath shows through with light bending,
+                // depth, and adaptive contrast.
+                content.glassEffect(
+                    isInteractive ? .regular.interactive() : .regular,
+                    in: shape
+                )
             } else {
-                content.background(.ultraThinMaterial, in: shape)
-                    .background(palette.toolbar.opacity(tintOpacity), in: shape)
+                content.background(.regularMaterial, in: shape)
             }
             #elseif os(macOS)
             if #available(macOS 26.0, *) {
-                content.background(.regularMaterial, in: shape)
-                    .background(palette.toolbar.opacity(tintOpacity * 0.6), in: shape)
+                content.glassEffect(
+                    isInteractive ? .regular.interactive() : .regular,
+                    in: shape
+                )
             } else {
-                content.background(.ultraThinMaterial, in: shape)
-                    .background(palette.toolbar.opacity(tintOpacity), in: shape)
+                content.background(.regularMaterial, in: shape)
             }
             #else
-            content.background(.ultraThinMaterial, in: shape)
-                .background(palette.toolbar.opacity(tintOpacity), in: shape)
+            content.background(.regularMaterial, in: shape)
             #endif
         }
     }
@@ -105,10 +110,25 @@ extension View {
     /// `RoundedRectangle` or `Capsule`).
     func irisGlassSurface<S: Shape>(
         in shape: S,
-        tintOpacity: Double = 0.55,
+        isInteractive: Bool = true,
         solidWhenReduced: Bool = true
     ) -> some View {
-        modifier(IrisGlassSurface(shape: shape, tintOpacity: tintOpacity, solidWhenReduced: solidWhenReduced))
+        modifier(IrisGlassSurface(shape: shape, isInteractive: isInteractive, solidWhenReduced: solidWhenReduced))
+    }
+
+    /// Anchor a `ScrollView`'s initial offset to the bottom edge so a
+    /// long chat opens already scrolled to the latest message — the
+    /// SwiftUI equivalent of Signal's "measure all rows, then
+    /// `setContentOffset(maxY)` instantly" trick. Also keeps the
+    /// scroll pinned to the bottom as content grows. iOS 16/macOS 13
+    /// fall back to the manual `proxy.scrollTo(.bottom)` path.
+    @ViewBuilder
+    func irisDefaultScrollAnchorBottom() -> some View {
+        if #available(iOS 17.0, macOS 14.0, *) {
+            self.defaultScrollAnchor(.bottom)
+        } else {
+            self
+        }
     }
 }
 
@@ -351,9 +371,26 @@ struct IrisTopBar: View {
         }
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 12 : 14)
         .padding(.vertical, IrisLayout.usesDesktopChrome ? 6 : 8)
+        // Signal-style: header fades from the toolbar tone at the
+        // top (where the status bar / nav cluster sits) into the
+        // chat background at the bottom. No hard divider line — the
+        // title floats on a gradient that visually merges with the
+        // timeline below. A regular-material base lets any content
+        // ghosting up the gradient remain legible.
         .background(
-            Rectangle()
-                .fill(palette.toolbar)
+            ZStack {
+                Rectangle().fill(.regularMaterial)
+                LinearGradient(
+                    colors: [
+                        palette.toolbar,
+                        palette.toolbar.opacity(0.78),
+                        palette.background.opacity(0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+            .ignoresSafeArea(edges: .top)
         )
         .frame(maxWidth: IrisLayout.chromeMaxWidth)
         .frame(maxWidth: .infinity)
@@ -775,15 +812,22 @@ struct IrisSecondaryButtonStyle: ButtonStyle {
 struct IrisInputFieldModifier: ViewModifier {
     @Environment(\.irisPalette) private var palette
 
+    private var pillRadius: CGFloat { 22 }
+
     func body(content: Content) -> some View {
         content
             .textFieldStyle(.plain)
             .font(.system(.body, design: .rounded))
-            .padding(.horizontal, 14)
-            .padding(.vertical, 13)
-            .background(
-                RoundedRectangle(cornerRadius: IrisLayout.inputCornerRadius, style: .continuous)
-                    .fill(palette.panel.opacity(IrisLayout.usesDesktopChrome ? 0.62 : 1))
+            .padding(.horizontal, 16)
+            .padding(.vertical, 11)
+            // Signal-style input pill: a glass capsule that floats
+            // over the timeline. No solid fill — the OS glass effect
+            // handles tint + blur. Hairline border keeps the shape
+            // visible against same-tone backdrops.
+            .irisGlassSurface(in: RoundedRectangle(cornerRadius: pillRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: pillRadius, style: .continuous)
+                    .strokeBorder(palette.border.opacity(0.32), lineWidth: 0.5)
             )
     }
 }
@@ -1056,6 +1100,62 @@ struct IrisChatRow: View {
     }
 }
 
+// Signal-style send button label. On iOS 26+ we get the real
+// `prominentGlass` configuration via .glassEffect with a tint —
+// the button reads as a colored glass disc that the timeline
+// bends light through, distinct from a flat accent bubble. On
+// older iOS we approximate with a solid accent fill + a bright
+// halo ring so it can't be confused with an outgoing bubble.
+private struct IrisSendButtonLabel: View {
+    @Environment(\.irisPalette) private var palette
+    let isSending: Bool
+
+    var body: some View {
+        let icon = Image(systemName: isSending ? "ellipsis.circle.fill" : "arrow.up")
+            .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(palette.onAccent)
+            .frame(width: 40, height: 40)
+        #if os(iOS)
+        if #available(iOS 26.0, *) {
+            return AnyView(
+                icon
+                    .glassEffect(
+                        .regular.tint(palette.accent).interactive(),
+                        in: Circle()
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
+                    )
+            )
+        } else {
+            return AnyView(
+                icon
+                    .background(Circle().fill(palette.accent))
+                    .overlay(
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
+                    )
+                    .overlay(
+                        Circle()
+                            .strokeBorder(palette.accent.opacity(0.6), lineWidth: 1)
+                            .padding(-2)
+                    )
+            )
+        }
+        #else
+        return AnyView(
+            icon
+                .background(Circle().fill(palette.accent))
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.55), lineWidth: 1)
+                )
+        )
+        #endif
+    }
+}
+
 struct IrisDayChip: View {
     @Environment(\.irisPalette) private var palette
     let text: String
@@ -1133,14 +1233,15 @@ struct IrisComposerBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack(alignment: .bottom, spacing: 12) {
+            HStack(alignment: .bottom, spacing: 8) {
                 Button {
                     presentAttachmentSource()
                 } label: {
                     Image(systemName: isUploading ? "ellipsis.circle.fill" : "paperclip")
-                        .font(.system(size: 19, weight: .semibold))
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle((isSending || isUploading) ? palette.muted.opacity(0.54) : palette.textPrimary)
-                        .frame(width: 42, height: 46)
+                        .frame(width: 40, height: 40)
+                        .irisGlassSurface(in: Circle())
                 }
                 .buttonStyle(.irisPlain)
                 .disabled(isSending || isUploading)
@@ -1153,7 +1254,8 @@ struct IrisComposerBar: View {
                         Image(systemName: "face.smiling.fill")
                             .font(.system(size: 18, weight: .semibold))
                             .foregroundStyle(isSending || isUploading ? palette.muted.opacity(0.54) : palette.textPrimary)
-                            .frame(width: 42, height: 46)
+                            .frame(width: 40, height: 40)
+                            .irisGlassSurface(in: Circle())
                     }
                     .buttonStyle(.irisPlain)
                     .disabled(isSending || isUploading)
@@ -1166,7 +1268,8 @@ struct IrisComposerBar: View {
                     .accessibilityIdentifier("chatEmojiButton")
                 }
 
-                TextField(placeholder, text: $draft)
+                TextField(placeholder, text: $draft, axis: .vertical)
+                    .lineLimit(1...5)
                     .irisDraftInputModifiers()
                     .irisInputField()
                     .irisDesktopSubmit(submitDraft)
@@ -1174,22 +1277,40 @@ struct IrisComposerBar: View {
                     .irisOnChange(of: draft) { _ in onDraftChange() }
                     .accessibilityIdentifier("chatMessageInput")
 
-                Button(action: submitDraft) {
-                    Image(systemName: isSending ? "ellipsis.circle.fill" : "paperplane.fill")
-                        .font(.system(size: 18, weight: .bold))
-                        .frame(width: IrisLayout.usesDesktopChrome ? 52 : 46, height: 46)
+                // Signal pattern: send button is hidden when there's
+                // nothing to send. It springs in from the right when
+                // text or an attachment lands, and out when the field
+                // empties again. The accent fill is wrapped in a
+                // bright outer ring so the button always reads as a
+                // distinct floating control even when it sits near an
+                // outgoing (same-accent) bubble.
+                if canSend || isSending {
+                    Button(action: submitDraft) {
+                        IrisSendButtonLabel(isSending: isSending)
+                    }
+                    .buttonStyle(.irisPlain)
+                    .disabled(!canSend)
+                    .accessibilityIdentifier("chatSendButton")
+                    .transition(
+                        .asymmetric(
+                            insertion: .scale(scale: 0.4, anchor: .center)
+                                .combined(with: .opacity)
+                                .combined(with: .move(edge: .trailing)),
+                            removal: .scale(scale: 0.4, anchor: .center)
+                                .combined(with: .opacity)
+                        )
+                    )
                 }
-                .buttonStyle(IrisPrimaryCircleButtonStyle())
-                .disabled(!canSend)
-                .accessibilityIdentifier("chatSendButton")
             }
+            .animation(.spring(response: 0.32, dampingFraction: 0.72), value: canSend)
+            .animation(.spring(response: 0.32, dampingFraction: 0.72), value: isSending)
         }
-        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 16 : IrisLayout.contentHorizontalPadding)
-        .padding(.vertical, 10)
-        // Signal-style translucent backdrop. The timeline's bottom
-        // edge ghosts through behind the composer instead of the
-        // composer reading as an opaque dock.
-        .irisGlassSurface(in: Rectangle())
+        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 12)
+        .padding(.vertical, 8)
+        // No outer background: each composer element (attach button,
+        // input pill, send button) carries its own glass surface, so
+        // the timeline scrolls cleanly through the gaps between them
+        // — Signal's iOS 26 layout pattern.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatComposerBar")
         .overlay {
