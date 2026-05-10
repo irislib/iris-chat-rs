@@ -2,6 +2,7 @@ package to.iris.chat.nearby
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
@@ -62,6 +63,7 @@ class IrisNearbyLanService(
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var resolving = false
+    @Volatile private var localNetwork: Network? = null
     private val directExecutor = Executor { command -> command.run() }
 
     fun start() {
@@ -94,6 +96,7 @@ class IrisNearbyLanService(
         releaseMulticastLock()
         runCatching { serverSocket?.close() }
         serverSocket = null
+        localNetwork = null
         connections.values.forEach { connection ->
             runCatching { connection.socket.close() }
         }
@@ -144,15 +147,16 @@ class IrisNearbyLanService(
     fun peerIds(): Set<String> = connections.values.mapNotNullTo(mutableSetOf()) { it.peerId }
 
     private fun startServer(): Boolean {
-        val bindAddress = privateLocalAddress(connectivityManager) ?: run {
+        val binding = localNearbyBinding(connectivityManager) ?: run {
             status = "Local network unavailable"
             return false
         }
+        localNetwork = binding.network
         val server =
             runCatching {
                 ServerSocket().apply {
                     reuseAddress = true
-                    bind(InetSocketAddress(bindAddress, 0))
+                    bind(InetSocketAddress(binding.address, 0))
                 }
             }.getOrElse { error ->
                 Log.w(TAG, "LAN server failed", error)
@@ -239,6 +243,7 @@ class IrisNearbyLanService(
                 serviceName = "Iris-$peerId"
                 serviceType = SERVICE_TYPE
                 setPort(port)
+                runCatching { setAttribute("v", "1") }
             }
         registrationListener = listener
         runCatching {
@@ -255,7 +260,9 @@ class IrisNearbyLanService(
                 override fun onDiscoveryStarted(serviceType: String) = Unit
 
                 override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                    if (serviceInfo.serviceType != SERVICE_TYPE || serviceInfo.serviceName.contains(peerId)) {
+                    if (normalizeServiceType(serviceInfo.serviceType) != SERVICE_TYPE ||
+                        serviceInfo.serviceName.contains(peerId)
+                    ) {
                         return
                     }
                     enqueueResolve(serviceInfo)
@@ -339,20 +346,36 @@ class IrisNearbyLanService(
         if (!endpointKeys.add(key)) {
             return
         }
+        val network = localNetwork
         applicationScope.launch {
             val socket =
-                runCatching {
-                    Socket(host, port).also { it.tcpNoDelay = true }
-                }.getOrElse { error ->
-                    endpointKeys.remove(key)
-                    if (enabled) {
-                        Log.d(TAG, "LAN connect failed $key", error)
+                openConnectedSocket(network, host, port)
+                    ?: openConnectedSocket(null, host, port)
+                    ?: run {
+                        endpointKeys.remove(key)
+                        return@launch
                     }
-                    return@launch
-                }
             add(socket)
         }
     }
+
+    private fun openConnectedSocket(
+        network: Network?,
+        host: InetAddress,
+        port: Int,
+    ): Socket? =
+        runCatching {
+            val factory = network?.socketFactory
+            val s = factory?.createSocket() ?: Socket()
+            s.tcpNoDelay = true
+            s.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MILLIS)
+            s
+        }.getOrElse { error ->
+            if (enabled) {
+                Log.d(TAG, "LAN connect failed ${host.hostAddress}:$port via=${network ?: "default"}", error)
+            }
+            null
+        }
 
     private fun add(socket: Socket) {
         if (!enabled) {
@@ -401,9 +424,13 @@ class IrisNearbyLanService(
 
     private companion object {
         const val TAG = "IrisNearbyLan"
-        const val SERVICE_TYPE = "_iris-chat._tcp."
+        const val SERVICE_TYPE = "_iris-chat._tcp"
         const val NEARBY_FRAME_HEADER_BYTES = 13
         const val MAX_FRAME_BODY_BYTES = 256 * 1024
+        const val CONNECT_TIMEOUT_MILLIS = 5_000
+
+        private fun normalizeServiceType(type: String?): String =
+            type?.trim('.', ' ')?.removePrefix("_")?.let { "_$it" } ?: ""
 
         fun readExact(
             input: java.io.InputStream,
@@ -432,10 +459,16 @@ class IrisNearbyLanService(
             return false
         }
 
-        fun privateLocalAddress(connectivityManager: ConnectivityManager?): InetAddress? {
-            val candidates = networkAddresses(connectivityManager).ifEmpty {
-                interfaceAddresses()
+        data class NearbyBinding(val network: Network?, val address: InetAddress)
+
+        fun localNearbyBinding(connectivityManager: ConnectivityManager?): NearbyBinding? {
+            networkBindings(connectivityManager).forEach { binding ->
+                preferredAddress(binding.addresses)?.let { return NearbyBinding(binding.network, it) }
             }
+            return preferredAddress(interfaceAddresses())?.let { NearbyBinding(null, it) }
+        }
+
+        private fun preferredAddress(candidates: List<InetAddress>): InetAddress? {
             var fallback: InetAddress? = null
             candidates.forEach { address ->
                 if (
@@ -455,20 +488,24 @@ class IrisNearbyLanService(
             return fallback
         }
 
+        private data class NetworkBinding(val network: Network, val addresses: List<InetAddress>)
+
         @Suppress("DEPRECATION")
-        private fun networkAddresses(connectivityManager: ConnectivityManager?): List<InetAddress> {
+        private fun networkBindings(connectivityManager: ConnectivityManager?): List<NetworkBinding> {
             val manager = connectivityManager ?: return emptyList()
             return runCatching {
-                manager.allNetworks.flatMap { network ->
-                    val capabilities = manager.getNetworkCapabilities(network) ?: return@flatMap emptyList()
+                manager.allNetworks.mapNotNull { network ->
+                    val capabilities = manager.getNetworkCapabilities(network) ?: return@mapNotNull null
                     if (!isLocalNearbyTransport(capabilities)) {
-                        return@flatMap emptyList()
+                        return@mapNotNull null
                     }
-                    manager
-                        .getLinkProperties(network)
-                        ?.linkAddresses
-                        ?.map { it.address }
-                        .orEmpty()
+                    val addresses =
+                        manager
+                            .getLinkProperties(network)
+                            ?.linkAddresses
+                            ?.map { it.address }
+                            .orEmpty()
+                    NetworkBinding(network, addresses)
                 }
             }.getOrDefault(emptyList())
         }
@@ -491,9 +528,13 @@ class IrisNearbyLanService(
             }
         }
 
-        private fun isLocalNearbyTransport(capabilities: NetworkCapabilities): Boolean =
-            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+        private fun isLocalNearbyTransport(capabilities: NetworkCapabilities): Boolean {
+            if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) {
+                return false
+            }
+            return capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
                 capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+        }
 
         private fun isLocalNearbyInterface(networkInterface: NetworkInterface): Boolean {
             val name = networkInterface.name.lowercase()
