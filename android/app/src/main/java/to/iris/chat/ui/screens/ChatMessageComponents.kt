@@ -806,7 +806,10 @@ private fun ReplyPreview(
                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
             },
         shape = RoundedCornerShape(10.dp),
-        modifier = Modifier.clickable { onTap() },
+        // Stretch across the bubble Column's resolved width — when the
+        // body Text below is wider, the reply preview matches it instead
+        // of sitting as a narrow pill on the leading side.
+        modifier = Modifier.fillMaxWidth().clickable { onTap() },
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),

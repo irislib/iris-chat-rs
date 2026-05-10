@@ -615,6 +615,14 @@ private struct ChatMessageRow: View {
                                 isOutgoing: message.isOutgoing,
                                 onTap: { onScrollToQuote(reply) }
                             )
+                            // Stretch the reply preview across the bubble's
+                            // resolved width so it visually matches the body
+                            // Text below it. .infinity here only fills the
+                            // proposed width — it doesn't push the bubble
+                            // wider, since the VStack still sizes to its
+                            // widest "ideal" child (which is the body Text,
+                            // capped by the row's HStack spacer).
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         if !bodyParts.body.isEmpty {
                             Text(
