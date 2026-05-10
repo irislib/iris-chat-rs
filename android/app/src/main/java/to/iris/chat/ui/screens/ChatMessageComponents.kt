@@ -936,27 +936,19 @@ private fun ReactionRow(
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         reactions.forEach { reaction ->
-            // Opaque, theme-aware pill bg (panelAlt is a shade darker than the
-            // chat backdrop and the incoming bubble in both light and dark
-            // themes), so the chip reads as a distinct attached element rather
-            // than a transparent tint of whatever sits underneath. Reactions
-            // you sent get a thin accent ring instead of the previous
-            // see-through purple fill.
+            // Chat-background-coloured ring carves a visible gap around the
+            // pill so it reads as a floating chip when tucked under the
+            // bubble's lower edge — same trick Signal uses.
             Surface(
                 color = IrisTheme.palette.panelAlt,
                 shape = RoundedCornerShape(100.dp),
-                border =
-                    if (reaction.reactedByMe) {
-                        BorderStroke(1.2.dp, IrisTheme.palette.accent)
-                    } else {
-                        null
-                    },
+                border = BorderStroke(2.dp, MaterialTheme.colorScheme.background),
             ) {
                 Text(
                     text = "${reaction.emoji} ${reaction.count}",
                     modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    fontWeight = if (reaction.reactedByMe) FontWeight.Bold else FontWeight.SemiBold,
                 )
             }
         }

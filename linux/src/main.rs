@@ -215,9 +215,9 @@ button.flat {{
 }}
 
 button.pill {{
-    background-color: @iris_panel;
+    background-color: @iris_panel_alt;
     color: @iris_text_primary;
-    border-color: @iris_border;
+    border: 2px solid @iris_background;
 }}
 
 button.suggested-action {{
