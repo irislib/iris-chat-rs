@@ -1823,11 +1823,13 @@ struct ChatListScreen: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 20)
                 } else {
+                    let preferences = manager.state.preferences
                     ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
                         ChatListRowContainer(
                             manager: manager,
                             chat: chat,
-                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow)
+                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
+                            preferences: preferences
                         )
                         .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
 
@@ -1863,9 +1865,15 @@ private struct NewChatCircleButton: View {
 }
 
 private struct ChatListRowContainer: View {
-    @ObservedObject var manager: AppManager
+    // Plain reference — the parent ChatListScreen already observes `manager`
+    // and rebuilds this container with fresh `chat` / `timeLabel` / `preferences`
+    // values when state changes. Subscribing here would re-evaluate every row
+    // on every manager publish (typing pings, relay events, …), which on a
+    // chat list of any size adds up to noticeable CPU + battery drain.
+    let manager: AppManager
     let chat: ChatThreadSnapshot
     let timeLabel: String?
+    let preferences: PreferencesSnapshot
 
     @ViewBuilder
     var body: some View {
@@ -1907,7 +1915,7 @@ private struct ChatListRowContainer: View {
             timeLabel: timeLabel,
             unreadCount: chat.unreadCount,
             pictureUrl: chat.pictureUrl,
-            preferences: manager.state.preferences,
+            preferences: preferences,
             manager: manager,
             onTap: {
                 manager.dispatch(.openChat(chatId: chat.chatId))
