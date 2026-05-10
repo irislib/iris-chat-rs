@@ -940,6 +940,7 @@ private fun ReactionRow(
             // pill so it reads as a floating chip when tucked under the
             // bubble's lower edge — same trick Signal uses.
             Surface(
+                modifier = Modifier.testTag("chatReactionPill"),
                 color = IrisTheme.palette.panelAlt,
                 shape = RoundedCornerShape(100.dp),
                 border = BorderStroke(2.dp, MaterialTheme.colorScheme.background),

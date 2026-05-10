@@ -490,26 +490,24 @@ struct ChatScreen: View {
         // happily resolves it to its current (wrong) position when sibling
         // rows haven't been measured yet.
         //
-        // Issue twice across run-loops on the initial paint: the first
-        // call lands the scroll while bubbles' images / quoted previews
-        // are still laying out, and the second call (after the next
-        // run-loop tick) catches any settling that nudged the bottom row
-        // a few points further down.
+        // Issue across several run-loop ticks on the initial paint: the
+        // first call lands the scroll while bubbles' images / quoted
+        // previews are still laying out, and the follow-up calls catch
+        // any settling that nudged the bottom row a few points further
+        // down. Each tick is cheap when we're already at the bottom.
         let target = chat?.messages.last?.id ?? ChatTimelineAnchor.bottom
-        let perform = {
-            if animated {
-                withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(target, anchor: .bottom)
-                }
-            } else {
-                proxy.scrollTo(target, anchor: .bottom)
-            }
+        let scroll = {
+            proxy.scrollTo(target, anchor: .bottom)
         }
         DispatchQueue.main.async {
-            perform()
-            DispatchQueue.main.async {
-                proxy.scrollTo(target, anchor: .bottom)
+            if animated {
+                withAnimation(.easeOut(duration: 0.2)) { scroll() }
+            } else {
+                scroll()
             }
+            DispatchQueue.main.async { scroll() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { scroll() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { scroll() }
         }
     }
 

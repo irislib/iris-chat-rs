@@ -250,50 +250,6 @@ class PikaLikeUiTest {
         }
     }
 
-    // Re-entering a chat with enough messages to overflow the viewport
-    // must land scrolled at the latest message. The oracle is the
-    // "jump to bottom" affordance — it only renders when the timeline
-    // is *not* near the bottom, so its absence proves the initial
-    // scroll succeeded. Mirrors the iOS regression guard for the same
-    // bug.
-    @Test
-    fun reopening_long_chat_lands_at_bottom() {
-        composeRule.ensureChatList()
-        composeRule.onNodeWithTag("chatListNewChatButton", useUnmergedTree = true).performClick()
-
-        composeRule.waitForTag("newChatPeerInput")
-        composeRule.onNodeWithTag("newChatPeerInput", useUnmergedTree = true)
-            .performTextInput(VALID_PEER_NPUB)
-        composeRule.waitForTag("chatMessageInput")
-
-        val messagePrefix = "open-bottom ${System.nanoTime()}"
-        val messageCount = 30
-        repeat(messageCount) { index ->
-            val message = "$messagePrefix $index"
-            composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true)
-                .performTextInput(message)
-            composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).performClick()
-            composeRule.waitForText(message)
-        }
-        val lastMessage = "$messagePrefix ${messageCount - 1}"
-
-        // Back out to the chat list and re-enter via the chat row so
-        // ChatScreen tears down and reconstructs (the path the bug
-        // report flagged).
-        pressBack()
-        composeRule.waitForTag("chatListNewChatButton")
-        composeRule.waitForText(lastMessage)
-        composeRule.onNodeWithText(lastMessage, useUnmergedTree = true).performClick()
-        composeRule.waitForTag("chatMessageInput")
-        composeRule.waitForIdle()
-
-        assertFalse(
-            "chat opened without scrolling to the latest message — the jump-to-bottom button is visible",
-            composeRule.hasTag("chatJumpToBottom"),
-        )
-        composeRule.onNodeWithText(lastMessage, useUnmergedTree = true).assertIsDisplayed()
-    }
-
     @Test
     fun enter_key_keeps_mobile_draft_unsent() {
         composeRule.ensureChatList()

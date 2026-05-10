@@ -132,16 +132,6 @@ extension View {
     }
 }
 
-/// Whether `defaultScrollAnchor(.bottom)` is in effect. Used by the
-/// chat timeline to suppress its own manual initial-scroll dance on
-/// the OS versions where the system already handles it.
-var irisDefaultScrollAnchorAvailable: Bool {
-    if #available(iOS 17.0, macOS 14.0, *) {
-        return true
-    }
-    return false
-}
-
 enum IrisLayout {
     #if canImport(AppKit)
     static let usesDesktopChrome = true

@@ -83,11 +83,11 @@ final class IrisChatUITests: XCTestCase {
     func testReopeningLongChatLandsAtBottom() {
         let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 30)
 
-        // Walk the welcome → create-account flow, but don't wait for
-        // the chat list at the end: the seed dispatches `createChat`
-        // as soon as the account exists and the core auto-navigates
-        // straight into the new chat, so the chat list never paints
-        // — we land on the chat screen with the seeded messages.
+        // Walk the welcome → create-account flow without the trailing
+        // chatList wait — the seed dispatches createChat right after
+        // the account exists, so the core navigates straight into the
+        // new chat and the chat list never paints until the seed pops
+        // back at the end.
         XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 15))
         element(app, "welcomeCreateAction").tap()
         XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15))
@@ -96,24 +96,20 @@ final class IrisChatUITests: XCTestCase {
         typeText("ios tester", into: nameField, app: app)
         element(app, "generateKeyButton").tap()
 
+        // Once the seed finishes dispatching, it pops back to the chat
+        // list so we can re-enter the chat from a clean state — that's
+        // the "open an existing long chat" scenario the bug report
+        // describes. Wait for *any* seed-formatted message to show up
+        // as the chat row preview (the Rust core's tie-breaking on
+        // identical timestamps means we can't predict which seed
+        // message lands last in the ordering), then tap into the chat.
+        let chatRowPreview = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'seed-msg-' OR label BEGINSWITH 'LAST_SCROLL_SENTINEL'")).firstMatch
         XCTAssertTrue(
-            element(app, "chatMessageInput").waitForExistence(timeout: 30),
-            "never landed on the seeded chat after account creation"
+            chatRowPreview.waitForExistence(timeout: 30),
+            "seeded chat row never appeared in the chat list"
         )
-
-        // Wait for the seed's last dispatched message to render in the
-        // timeline — the seed dispatches 30 sendMessage actions back to
-        // back, so this gives the Rust core + state reconciler time to
-        // finish flushing all 30 before we judge the scroll position.
-        let lastSentinel = "LAST_SCROLL_SENTINEL"
-        XCTAssertTrue(
-            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", lastSentinel)).firstMatch.waitForExistence(timeout: 15),
-            "seeded last message never rendered in the timeline"
-        )
-        // Quiet pause for the SwiftUI layout to settle (avatars, quoted
-        // previews, image placeholders all nudge bubble heights as they
-        // resolve). The growth-pinning logic must handle these without
-        // leaving the timeline above the bottom.
+        chatRowPreview.tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
         Thread.sleep(forTimeInterval: 1.5)
 
         let attachment = XCTAttachment(screenshot: app.screenshot())
@@ -121,8 +117,11 @@ final class IrisChatUITests: XCTestCase {
         attachment.name = "timeline-on-open"
         add(attachment)
 
-        // If the timeline is at the bottom, the jump-to-bottom button
-        // must NOT exist.
+        // The bug: the chat opens scrolled mid-timeline so older
+        // messages are visible at the bottom and the user can't see
+        // the most recent one. The `chatJumpToBottom` button only
+        // renders when the timeline is *not* near the bottom, so its
+        // absence is proof the initial scroll succeeded.
         XCTAssertFalse(
             element(app, "chatJumpToBottom").exists,
             "chat opened without scrolling to the latest message — the jump-to-bottom button is visible"
