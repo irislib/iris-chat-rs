@@ -67,6 +67,64 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
     }
 
+    // Re-entering a chat with enough messages to overflow the viewport
+    // must land scrolled at the latest message. The oracle is the
+    // "jump to bottom" affordance — it only renders when the timeline
+    // is *not* near the bottom, so its absence proves the initial
+    // scroll succeeded. Regression guard for the SwiftUI `LazyVStack`
+    // case where lazy rows above the viewport haven't been measured at
+    // scroll time and the manual `proxy.scrollTo(.bottom)` lands too
+    // high — fixed by `defaultScrollAnchor(.bottom)`.
+    func testReopeningLongChatLandsAtBottom() {
+        let app = launchCleanApp()
+
+        createAccount(app)
+        openChatWithPeer(app)
+
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+        XCTAssertTrue(element(app, "chatSendButton").waitForExistence(timeout: 10))
+
+        // Each message is a multi-line block, so 12 of them
+        // comfortably overflow the iPhone 16 viewport (~800pt) and
+        // make scroll-to-bottom on re-open meaningful. Keeping the
+        // count low keeps the typing loop reliable — XCUITest's
+        // `typeText`+`tap` cycle gets flaky past ~16 sends.
+        let bodyPad = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt"
+        let messageCount = 9
+        let lastSentinel = "LAST_SCROLL_SENTINEL"
+        for i in 1...messageCount {
+            let label = i == messageCount ? lastSentinel : "msg\(i)"
+            let payload = "\(label) \(bodyPad)"
+            typeText(payload, into: element(app, "chatMessageInput"), app: app)
+            element(app, "chatSendButton").tap()
+            XCTAssertTrue(
+                app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch.waitForExistence(timeout: 15),
+                "message #\(i) (\(label)) never appeared in the timeline"
+            )
+        }
+
+        // Re-enter the chat. We use the chat list back-and-forth so the
+        // ChatScreen view tears down and reconstructs (the `.task(id: chatId)`
+        // path the bug report flagged).
+        returnToChatList(app)
+        let chatRow = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", lastSentinel)).firstMatch
+        XCTAssertTrue(chatRow.waitForExistence(timeout: 10))
+        chatRow.tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+
+        // Give the view a beat to settle. If we landed at the bottom, the
+        // jump-to-bottom button must NOT appear.
+        let jumpToBottom = element(app, "chatJumpToBottom")
+        XCTAssertFalse(
+            jumpToBottom.waitForExistence(timeout: 3),
+            "chat opened without scrolling to the latest message — the jump-to-bottom button is visible"
+        )
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", lastSentinel)).firstMatch.exists,
+            "latest message is not visible after re-opening the long chat"
+        )
+    }
+
     func testReturnKeyKeepsMobileDraftUnsent() throws {
 #if os(macOS)
         throw XCTSkip("Return key sends on macOS; this checks the mobile keyboard behavior")
