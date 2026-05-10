@@ -24,6 +24,7 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -96,6 +97,20 @@ private val DisappearingMessageOptions =
         "1 month" to 2_592_000uL,
         "3 months" to 7_776_000uL,
     )
+
+// Compact label for the chat header subtitle when disappearing-messages is on.
+// Tries the canonical menu options first so the wording matches what the user
+// picked, then falls back to a generic unit-based string for any odd value.
+private fun disappearingLabel(seconds: ULong): String {
+    DisappearingMessageOptions.firstOrNull { it.second == seconds }?.let { return it.first }
+    return when {
+        seconds < 3_600uL -> "${seconds / 60uL} min"
+        seconds < 86_400uL -> "${seconds / 3_600uL} h"
+        seconds < 604_800uL -> "${seconds / 86_400uL} d"
+        seconds < 2_592_000uL -> "${seconds / 604_800uL} wk"
+        else -> "${seconds / 2_592_000uL} mo"
+    }
+}
 
 @Composable
 fun ChatScreen(
@@ -256,8 +271,19 @@ fun ChatScreen(
                             "${chat.displayName} · ${chat.subtitle}"
                         else -> chat?.displayName ?: "Chat"
                     },
-                subtitle = if (chat?.isMuted == true) "muted" else null,
-                subtitleIcon = if (chat?.isMuted == true) IrisIcons.NotificationsOff else null,
+                subtitle =
+                    when {
+                        chat?.messageTtlSeconds?.let { it > 0uL } == true ->
+                            disappearingLabel(chat.messageTtlSeconds!!)
+                        chat?.isMuted == true -> "muted"
+                        else -> null
+                    },
+                subtitleIcon =
+                    when {
+                        chat?.messageTtlSeconds?.let { it > 0uL } == true -> Icons.Rounded.Schedule
+                        chat?.isMuted == true -> IrisIcons.NotificationsOff
+                        else -> null
+                    },
                 onBack = {
                     appManager.dispatch(
                         AppAction.UpdateScreenStack(router.screenStack.dropLast(1)),

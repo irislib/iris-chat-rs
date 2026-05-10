@@ -19,6 +19,23 @@ private let disappearingMessageOptions: [(String, UInt64?)] = [
     ("1 month", 2_592_000),
     ("3 months", 7_776_000),
 ]
+
+// Compact label for the chat header subtitle when disappearing-messages is
+// on. Tries the canonical menu options first so the wording matches what
+// the user picked, then falls back to a generic unit-based string for any
+// odd value that arrives over the wire.
+private func irisDisappearingLabel(seconds: UInt64) -> String {
+    for (label, value) in disappearingMessageOptions {
+        if let v = value, v == seconds {
+            return label
+        }
+    }
+    if seconds < 3_600 { return "\(seconds / 60) min" }
+    if seconds < 86_400 { return "\(seconds / 3_600) h" }
+    if seconds < 604_800 { return "\(seconds / 86_400) d" }
+    if seconds < 2_592_000 { return "\(seconds / 604_800) wk" }
+    return "\(seconds / 2_592_000) mo"
+}
 private let offlineBannerGraceInterval: TimeInterval = 30
 
 private func hasHttpPicture(_ url: String?) -> Bool {
@@ -272,7 +289,7 @@ struct RootView: View {
         return AnyView(
             IrisAvatar(
                 label: chat.displayName,
-                size: 30,
+                size: 34,
                 pictureUrl: chat.pictureUrl,
                 preferences: manager.state.preferences,
                 manager: manager
@@ -297,16 +314,29 @@ struct RootView: View {
     }
 
     private var chatHeaderSubtitle: String? {
-        guard case .chat = manager.activeScreen,
-              let chat = manager.state.currentChat,
-              chat.isMuted else {
+        guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
             return nil
         }
-        return "muted"
+        if let ttl = chat.messageTtlSeconds, ttl > 0 {
+            return irisDisappearingLabel(seconds: ttl)
+        }
+        if chat.isMuted {
+            return "muted"
+        }
+        return nil
     }
 
     private var chatHeaderSubtitleSystemImage: String? {
-        chatHeaderSubtitle == nil ? nil : "bell.slash.fill"
+        guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
+            return nil
+        }
+        if let ttl = chat.messageTtlSeconds, ttl > 0 {
+            return "timer"
+        }
+        if chat.isMuted {
+            return "bell.slash.fill"
+        }
+        return nil
     }
 
     private var offlineBanner: AnyView {
