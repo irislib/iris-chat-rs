@@ -320,6 +320,7 @@ internal fun MessageBubble(
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
+                        onCopy = { clipboard.setText("Message", copyableMessageText(message)) },
                         onInfo = { isInfoOpen = true },
                         onDelete = onDelete,
                     )
@@ -438,6 +439,7 @@ internal fun MessageBubble(
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
+                        onCopy = { clipboard.setText("Message", copyableMessageText(message)) },
                         onInfo = { isInfoOpen = true },
                         onDelete = onDelete,
                     )
@@ -506,6 +508,7 @@ private fun MessageActionDock(
     postReactionSuggestions: List<String>,
     onReact: (String) -> Unit,
     onReply: () -> Unit,
+    onCopy: () -> Unit,
     onInfo: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -544,6 +547,13 @@ private fun MessageActionDock(
                     expanded = menuOpen,
                     onDismissRequest = { menuOpen = false },
                 ) {
+                    DropdownMenuItem(
+                        text = { Text("Copy text") },
+                        onClick = {
+                            menuOpen = false
+                            onCopy()
+                        },
+                    )
                     DropdownMenuItem(
                         text = { Text("Message info") },
                         onClick = {

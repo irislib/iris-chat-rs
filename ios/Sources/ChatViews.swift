@@ -695,6 +695,9 @@ private struct ChatMessageRow: View, Equatable {
                         ChatMessageActionDock(
                             onShowReactionPicker: { showReactionPicker = true },
                             onReply: onReply,
+                            onCopy: {
+                                PlatformClipboard.setString(copyableMessageText(message))
+                            },
                             onInfo: onInfo,
                             onDelete: onDelete
                         )
@@ -821,6 +824,9 @@ private struct ChatMessageRow: View, Equatable {
                         ChatMessageActionDock(
                             onShowReactionPicker: { showReactionPicker = true },
                             onReply: onReply,
+                            onCopy: {
+                                PlatformClipboard.setString(copyableMessageText(message))
+                            },
                             onInfo: onInfo,
                             onDelete: onDelete
                         )
@@ -1325,6 +1331,7 @@ private struct ChatMessageActionDock: View {
     @Environment(\.irisPalette) private var palette
     let onShowReactionPicker: () -> Void
     let onReply: () -> Void
+    let onCopy: () -> Void
     let onInfo: () -> Void
     let onDelete: () -> Void
 
@@ -1344,6 +1351,7 @@ private struct ChatMessageActionDock: View {
             .accessibilityIdentifier("messageReactButton")
             dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
             Menu {
+                Button("Copy text", action: onCopy)
                 Button("Message info", action: onInfo)
                 Button("Delete message", role: .destructive, action: onDelete)
             } label: {
