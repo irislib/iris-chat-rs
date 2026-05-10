@@ -593,15 +593,15 @@ struct NavigationShell<Content: View>: View {
                     )
                     offlineBanner
                 }
-                // The header chrome sits behind the top bar AND the
-                // status bar. Matches Signal's UINavigationBar setup:
-                // UIBlurEffect(.regular) backdrop + a muted palette
-                // tint on top + a 1pt hairline divider at the bottom.
-                // On iOS 26 Material auto-promotes to the system glass
-                // look, same path Apple's stock nav bar takes. Drawn
-                // here (not inside IrisTopBar) because .safeAreaInset
-                // content can't extend its background up into the
-                // system status bar with the normal .ignoresSafeArea.
+                // Signal-style "fade into chat" header: a vertical
+                // gradient fading from the toolbar tone at the top
+                // into the chat background at the bottom — no
+                // hairline divider, the title cluster floats on a
+                // soft gradient that softens into the timeline.
+                // Drawn here (not inside IrisTopBar) because
+                // .safeAreaInset content can't extend its background
+                // up into the system status bar with the normal
+                // .ignoresSafeArea modifier.
                 .background(alignment: .top) {
                     NavigationHeaderChrome(palette: palette)
                         .ignoresSafeArea(.all, edges: .top)
@@ -617,14 +617,15 @@ private struct NavigationHeaderChrome: View {
     let palette: IrisPalette
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Rectangle()
-                .fill(.regularMaterial)
-                .overlay(palette.background.opacity(0.5))
-            Rectangle()
-                .fill(palette.border)
-                .frame(height: 1)
-        }
+        LinearGradient(
+            colors: [
+                palette.toolbar,
+                palette.toolbar.opacity(0.78),
+                palette.background.opacity(0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
     }
 }
 
