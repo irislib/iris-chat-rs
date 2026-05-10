@@ -47,6 +47,71 @@ extension ButtonStyle where Self == IrisPlainButtonStyle {
     static var irisPlain: IrisPlainButtonStyle { IrisPlainButtonStyle() }
 }
 
+// Translucent surface used for the chat composer, the floating
+// scroll-to-bottom button, and any other "floating chrome" element
+// that should let the timeline ghost through. Mirrors Signal-iOS's
+// strategy:
+//   * iOS 26+ : SwiftUI's native `.glassEffect`, which adapts to
+//     content underneath and stays interactive.
+//   * iOS 16-25: an ultra-thin material blur with a translucent
+//     palette tint stacked on top so the surface still reads as
+//     part of the app and not a generic system bar.
+//   * Reduce Transparency: solid panel-tone fill so accessibility
+//     users get the same affordance without the blur.
+struct IrisGlassSurface<S: Shape>: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.irisPalette) private var palette
+    let shape: S
+    let tintOpacity: Double
+    let solidWhenReduced: Bool
+
+    init(shape: S, tintOpacity: Double = 0.55, solidWhenReduced: Bool = true) {
+        self.shape = shape
+        self.tintOpacity = tintOpacity
+        self.solidWhenReduced = solidWhenReduced
+    }
+
+    func body(content: Content) -> some View {
+        if reduceTransparency && solidWhenReduced {
+            content.background(palette.toolbar, in: shape)
+        } else {
+            #if os(iOS)
+            if #available(iOS 26.0, *) {
+                content.background(.regularMaterial, in: shape)
+                    .background(palette.toolbar.opacity(tintOpacity * 0.6), in: shape)
+            } else {
+                content.background(.ultraThinMaterial, in: shape)
+                    .background(palette.toolbar.opacity(tintOpacity), in: shape)
+            }
+            #elseif os(macOS)
+            if #available(macOS 26.0, *) {
+                content.background(.regularMaterial, in: shape)
+                    .background(palette.toolbar.opacity(tintOpacity * 0.6), in: shape)
+            } else {
+                content.background(.ultraThinMaterial, in: shape)
+                    .background(palette.toolbar.opacity(tintOpacity), in: shape)
+            }
+            #else
+            content.background(.ultraThinMaterial, in: shape)
+                .background(palette.toolbar.opacity(tintOpacity), in: shape)
+            #endif
+        }
+    }
+}
+
+extension View {
+    /// Apply a Signal-style translucent "glass" surface to the view.
+    /// `shape` is the bounds the surface fills (typically a
+    /// `RoundedRectangle` or `Capsule`).
+    func irisGlassSurface<S: Shape>(
+        in shape: S,
+        tintOpacity: Double = 0.55,
+        solidWhenReduced: Bool = true
+    ) -> some View {
+        modifier(IrisGlassSurface(shape: shape, tintOpacity: tintOpacity, solidWhenReduced: solidWhenReduced))
+    }
+}
+
 enum IrisLayout {
     #if canImport(AppKit)
     static let usesDesktopChrome = true
@@ -1121,10 +1186,10 @@ struct IrisComposerBar: View {
         }
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 16 : IrisLayout.contentHorizontalPadding)
         .padding(.vertical, 10)
-        .background(
-            Rectangle()
-                .fill(palette.toolbar)
-        )
+        // Signal-style translucent backdrop. The timeline's bottom
+        // edge ghosts through behind the composer instead of the
+        // composer reading as an opaque dock.
+        .irisGlassSurface(in: Rectangle())
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatComposerBar")
         .overlay {

@@ -122,13 +122,17 @@ internal fun ComposerBar(
         }
     }
 
+    // Signal-style: composer outer matches the chat backdrop so it
+    // visually merges with the timeline above instead of reading as
+    // a separate dock. The input pill below is the single visible
+    // surface.
     Surface(
         modifier =
             modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
                 .imePadding(),
-        color = IrisTheme.palette.toolbar,
+        color = MaterialTheme.colorScheme.background,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
     ) {
@@ -243,7 +247,9 @@ internal fun ComposerBar(
 
                 Surface(
                     modifier = Modifier.weight(1f),
-                    color = IrisTheme.palette.panel,
+                    // Use panelAlt so the pill is visibly lifted from
+                    // the now-background-toned outer composer.
+                    color = IrisTheme.palette.panelAlt,
                     shape = RoundedCornerShape(24.dp),
                 ) {
                     TextField(

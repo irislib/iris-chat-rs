@@ -268,19 +268,28 @@ struct ChatScreen: View {
                                         shouldFollowLatest = true
                                         scrollToBottom(proxy: proxy, animated: true)
                                     } label: {
+                                        // Signal-style glass capsule:
+                                        // translucent pane that adapts to
+                                        // the bubbles below, the arrow
+                                        // itself carries the accent
+                                        // colour for visibility.
                                         Image(systemName: "arrow.down")
-                                            .font(.system(size: 18, weight: .bold))
-                                            .foregroundStyle(palette.onAccent)
-                                            .frame(width: 48, height: 48)
-                                            .background(
+                                            .font(.system(size: 17, weight: .bold))
+                                            .foregroundStyle(palette.textPrimary)
+                                            .frame(width: 42, height: 42)
+                                            .irisGlassSurface(in: Circle(), tintOpacity: 0.7)
+                                            .overlay(
                                                 Circle()
-                                                    .fill(palette.accent)
+                                                    .strokeBorder(
+                                                        palette.border.opacity(0.42),
+                                                        lineWidth: 0.5
+                                                    )
                                             )
                                     }
-                                    .padding(.trailing, 18)
-                                    .padding(.bottom, 18)
+                                    .padding(.trailing, 16)
+                                    .padding(.bottom, 16)
                                     .buttonStyle(.irisPlain)
-                                    .shadow(color: .black.opacity(0.16), radius: 16, y: 10)
+                                    .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
                                     .accessibilityIdentifier("chatJumpToBottom")
                                 }
 

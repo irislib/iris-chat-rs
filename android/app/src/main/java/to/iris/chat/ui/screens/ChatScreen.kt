@@ -24,8 +24,10 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Check
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -570,31 +572,36 @@ fun ChatScreen(
             }
 
             if (showJumpToBottom) {
+                // Signal-style FAB: 36dp circular surface raised over the
+                // timeline with a soft shadow, sitting just above the
+                // composer (~12dp gap, plus the composer's own 70dp).
                 Surface(
                     modifier =
                         Modifier
                             .align(Alignment.BottomEnd)
-                            .padding(end = 18.dp, bottom = 104.dp)
-                            .testTag("chatJumpToBottom"),
-                    color = IrisTheme.palette.panel,
-                    shape = CircleShape,
-                    shadowElevation = 0.dp,
-                ) {
-                    IconButton(
-                        onClick = {
-                            shouldFollowLatest = true
-                            coroutineScope.launch {
-                                val total = chat.messages.size
-                                if (total > 0) {
-                                    listState.animateScrollToItem(total - 1)
+                            .padding(end = 12.dp, bottom = 92.dp)
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .clickable {
+                                shouldFollowLatest = true
+                                coroutineScope.launch {
+                                    val total = chat.messages.size
+                                    if (total > 0) {
+                                        listState.animateScrollToItem(total - 1)
+                                    }
                                 }
                             }
-                        },
-                    ) {
-                        Text(
-                            text = "↓",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
+                            .testTag("chatJumpToBottom"),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    shape = CircleShape,
+                    shadowElevation = 4.dp,
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Rounded.KeyboardArrowDown,
+                            contentDescription = "Scroll to bottom",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(22.dp),
                         )
                     }
                 }
