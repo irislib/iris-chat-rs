@@ -61,7 +61,7 @@ struct ChatScreen: View {
                                                     )
                                                 } ?? true
 
-                                                ChatMessageRow(
+                                                EquatableView(content: ChatMessageRow(
                                                     message: message,
                                                     chatKind: chat.kind,
                                                     showDayChip: showDayChip,
@@ -116,7 +116,7 @@ struct ChatScreen: View {
                                                     onOpenImage: { data, filename in
                                                         imageViewerItem = ImageViewerItem(data: data, filename: filename)
                                                     }
-                                                )
+                                                ))
                                                 .id(message.id)
                                             }
 
@@ -544,7 +544,22 @@ private func chatTimelineGeometryMatches(_ lhs: CGFloat, _ rhs: CGFloat) -> Bool
     return abs(lhs - rhs) < 0.5
 }
 
-private struct ChatMessageRow: View {
+private struct ChatMessageRow: View, Equatable {
+    // Only compare the data SwiftUI actually renders from. Closures captured
+    // by the parent are recreated on every parent body call (relay events,
+    // typing pings, scene phase, …) and would otherwise force this row's
+    // body to re-evaluate every time. With Equatable + .equatable() in the
+    // ForEach, SwiftUI skips body when nothing visible changed, so a single
+    // message update only re-renders that one row instead of all 50.
+    static func == (lhs: ChatMessageRow, rhs: ChatMessageRow) -> Bool {
+        lhs.message == rhs.message
+            && lhs.reactions == rhs.reactions
+            && lhs.chatKind == rhs.chatKind
+            && lhs.showDayChip == rhs.showDayChip
+            && lhs.isFirstInCluster == rhs.isFirstInCluster
+            && lhs.isLastInCluster == rhs.isLastInCluster
+    }
+
     @Environment(\.irisPalette) private var palette
     let message: ChatMessageSnapshot
     let chatKind: ChatKind
@@ -657,7 +672,10 @@ private struct ChatMessageRow: View {
                                 )
                             )
                             .font(.system(.body, design: .rounded))
-                            .multilineTextAlignment(message.isOutgoing ? .trailing : .leading)
+                            // Always left-aligned — wrapped lines hugging the
+                            // right edge in own bubbles read worse than the
+                            // sender-side alignment everyone uses.
+                            .multilineTextAlignment(.leading)
                         }
                         ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
                             ChatAttachmentView(
