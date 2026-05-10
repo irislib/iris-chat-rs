@@ -326,14 +326,14 @@ struct IrisTopBar: View {
             if canGoBack {
                 Button(action: onBack) {
                     ZStack(alignment: .topTrailing) {
+                        // Match the composer's attach button: 40pt
+                        // glass circle so the two are visually a pair
+                        // sitting at the same horizontal inset.
                         Image(systemName: "chevron.left")
-                            .font(.system(size: 20, weight: .bold))
+                            .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(palette.textPrimary)
-                            .frame(width: 44, height: 44)
-                            .background(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .fill(palette.panel.opacity(0.64))
-                            )
+                            .frame(width: 40, height: 40)
+                            .irisGlassSurface(in: Circle())
                         if backBadgeCount > 0 {
                             Text(backBadgeCount > 99 ? "99+" : "\(backBadgeCount)")
                                 .font(.system(size: 10, weight: .bold))
@@ -369,34 +369,15 @@ struct IrisTopBar: View {
             trailing
                 .frame(minWidth: 44, alignment: .trailing)
         }
-        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 12 : 14)
-        .padding(.vertical, IrisLayout.usesDesktopChrome ? 6 : 8)
-        // Signal-style: header fades from the toolbar tone at the
-        // top (where the status bar / nav cluster sits) into the
-        // chat background at the bottom. No hard divider line — the
-        // title floats on a gradient that visually merges with the
-        // timeline below. A regular-material base lets any content
-        // ghosting up the gradient remain legible.
-        .background(
-            ZStack {
-                Rectangle().fill(.regularMaterial)
-                LinearGradient(
-                    colors: [
-                        palette.toolbar,
-                        palette.toolbar.opacity(0.78),
-                        palette.background.opacity(0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            }
-            .ignoresSafeArea(edges: .top)
-        )
+        // Tight horizontal padding — the chevron / attach button
+        // sits closer to the screen edge so it lines up cleanly with
+        // the composer's leading control. No vertical padding: the
+        // bar has no background of its own, the gradient (drawn at
+        // the NavigationShell level) handles the visual breathing
+        // room behind the title cluster.
+        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 12 : 8)
         .frame(maxWidth: IrisLayout.chromeMaxWidth)
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, 0)
-        .padding(.top, IrisLayout.usesDesktopChrome ? 0 : 4)
-        .padding(.bottom, 0)
     }
 }
 
@@ -1247,8 +1228,12 @@ struct IrisComposerBar: View {
                 Button {
                     presentAttachmentSource()
                 } label: {
-                    Image(systemName: isUploading ? "ellipsis.circle.fill" : "paperclip")
-                        .font(.system(size: 18, weight: .semibold))
+                    // Signal-iOS 26 uses a plain "plus" glyph for the
+                    // attachment button instead of a paperclip — reads
+                    // as "more / add", matches their AttachmentButton
+                    // configuration.
+                    Image(systemName: isUploading ? "ellipsis" : "plus")
+                        .font(.system(size: 19, weight: .semibold))
                         .foregroundStyle((isSending || isUploading) ? palette.muted.opacity(0.54) : palette.textPrimary)
                         .frame(width: 40, height: 40)
                         .irisGlassSurface(in: Circle())
@@ -1315,12 +1300,12 @@ struct IrisComposerBar: View {
             .animation(.spring(response: 0.32, dampingFraction: 0.72), value: canSend)
             .animation(.spring(response: 0.32, dampingFraction: 0.72), value: isSending)
         }
-        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 12)
-        .padding(.vertical, 8)
-        // No outer background: each composer element (attach button,
-        // input pill, send button) carries its own glass surface, so
-        // the timeline scrolls cleanly through the gaps between them
-        // — Signal's iOS 26 layout pattern.
+        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 8)
+        // No outer background and no vertical padding: the composer
+        // is just three floating glass elements, the safe-area inset
+        // handles bottom positioning. Each element (attach, input
+        // pill, send) carries its own glass surface so the timeline
+        // scrolls cleanly through the gaps between them.
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatComposerBar")
         .overlay {

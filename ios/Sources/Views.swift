@@ -562,28 +562,52 @@ struct NavigationShell<Content: View>: View {
         self.content = content
     }
 
+    @Environment(\.irisPalette) private var palette
+
     var body: some View {
-        VStack(spacing: 0) {
-            IrisTopBar(
-                title: title,
-                subtitle: subtitle,
-                subtitleSystemImage: subtitleSystemImage,
-                canGoBack: canGoBack,
-                onBack: onBack,
-                backBadgeCount: backBadgeCount,
-                leading: leading,
-                trailing: trailing,
-                titleAccessoryLeading: titleAccessoryLeading,
-                onTitleTap: onTitleTap
-            )
-
-            offlineBanner
-
-            content()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        }
+        content()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            // Float the IrisTopBar (and the offline banner when active)
+            // over the screen content via .safeAreaInset, so the chat
+            // timeline scrolls *under* the header instead of being
+            // bumped down by a solid bar above it.
+            .safeAreaInset(edge: .top, spacing: 0) {
+                VStack(spacing: 0) {
+                    IrisTopBar(
+                        title: title,
+                        subtitle: subtitle,
+                        subtitleSystemImage: subtitleSystemImage,
+                        canGoBack: canGoBack,
+                        onBack: onBack,
+                        backBadgeCount: backBadgeCount,
+                        leading: leading,
+                        trailing: trailing,
+                        titleAccessoryLeading: titleAccessoryLeading,
+                        onTitleTap: onTitleTap
+                    )
+                    offlineBanner
+                }
+                // The header gradient sits behind the top bar AND
+                // the status bar, fading out into the chat content
+                // below. Has to be drawn here (not inside IrisTopBar)
+                // because .safeAreaInset content can't extend its
+                // background up into the system status bar with the
+                // normal .ignoresSafeArea modifier.
+                .background(alignment: .top) {
+                    LinearGradient(
+                        stops: [
+                            .init(color: palette.background.opacity(0.82), location: 0.0),
+                            .init(color: palette.background.opacity(0.78), location: 0.65),
+                            .init(color: palette.background.opacity(0.0), location: 1.0)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .ignoresSafeArea(.all, edges: .top)
+                }
+            }
 #if os(iOS)
-        .modifier(IrisSwipeBackModifier(enabled: canGoBack, onBack: onBack))
+            .modifier(IrisSwipeBackModifier(enabled: canGoBack, onBack: onBack))
 #endif
     }
 }
