@@ -670,7 +670,6 @@ private struct ChatMessageRow: View {
                         .irisDismissOnMacOutsideClick { showReactionPicker = false }
                     }
                     .accessibilityIdentifier("chatMessage-\(message.id)")
-                    .applyMessageBubbleSwipe(onReply: onReply, onInfo: onInfo)
 
                     if showActionDock && !message.isOutgoing {
                         ChatMessageActionDock(
@@ -687,6 +686,7 @@ private struct ChatMessageRow: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
+            .applyMessageBubbleSwipe(onReply: onReply, onInfo: onInfo)
             .contentShape(Rectangle())
             .onHover { isHovering = $0 }
             .padding(.top, isFirstInCluster ? 10 : 4)
