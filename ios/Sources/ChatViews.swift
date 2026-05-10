@@ -919,7 +919,7 @@ private struct MessageInfoSheet: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .background(palette.background)
-            .navigationTitle("Message info")
+            .navigationTitle("Message details")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     IrisModalCloseButton(action: onClose)
@@ -1372,7 +1372,7 @@ private struct ChatMessageActionDock: View {
             dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
             Menu {
                 Button("Copy text", action: onCopy)
-                Button("Message info", action: onInfo)
+                Button("Message details", action: onInfo)
                 Button("Delete message", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis")
@@ -1522,7 +1522,7 @@ private struct ChatMessageActionsSheet: View {
             VStack(spacing: 0) {
                 actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
                 actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
-                actionRow(icon: "info.circle", label: "Message info", action: onInfo)
+                actionRow(icon: "info.circle", label: "Message details", action: onInfo)
                 actionRow(icon: "trash", label: "Delete locally", destructive: true, action: onDelete)
             }
             .background(

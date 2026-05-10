@@ -138,7 +138,7 @@ fn present_message_info(
     chat: &CurrentChatSnapshot,
 ) {
     let dialog = adw::Dialog::builder()
-        .title("Message info")
+        .title("Message details")
         .content_width(420)
         .content_height(560)
         .build();
@@ -825,7 +825,7 @@ fn build_message_popover(
     });
     column.append(&copy);
 
-    let info_btn = gtk::Button::with_label("Message info");
+    let info_btn = gtk::Button::with_label("Message details");
     info_btn.add_css_class("flat");
     info_btn.set_halign(gtk::Align::Fill);
     let popover_for_info = popover.clone();

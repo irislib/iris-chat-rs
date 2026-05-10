@@ -555,7 +555,7 @@ private fun MessageActionDock(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Message info") },
+                        text = { Text("Message details") },
                         onClick = {
                             menuOpen = false
                             onInfo()
@@ -645,7 +645,7 @@ private fun MessageActionsSheet(
                 )
                 MessageActionRow(
                     icon = Icons.Rounded.Info,
-                    label = "Message info",
+                    label = "Message details",
                     onClick = onInfo,
                 )
                 MessageActionRow(
@@ -1154,11 +1154,11 @@ private fun MessageInfoDialog(
         dismissButton = {
             TextButton(
                 onClick = {
-                    clipboard.setText("Message info", messageInfoText(message, chat))
+                    clipboard.setText("Message details", messageInfoText(message, chat))
                 },
             ) { Text("Copy info") }
         },
-        title = { Text("Message info") },
+        title = { Text("Message details") },
         text = {
             Column(
                 modifier =

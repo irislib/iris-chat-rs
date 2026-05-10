@@ -4,7 +4,7 @@
     <UserControl.ContextMenu>
         <ContextMenu>
             <MenuItem Header="Copy" Click="OnCopyText" />
-            <MenuItem Header="Message info" Click="OnShowInfo" />
+            <MenuItem Header="Message details" Click="OnShowInfo" />
         </ContextMenu>
     </UserControl.ContextMenu>
     <Border x:Name="Bubble"

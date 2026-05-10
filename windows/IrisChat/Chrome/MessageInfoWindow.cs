@@ -16,7 +16,7 @@ public class MessageInfoWindow : Window
     public MessageInfoWindow(ChatMessageSnapshot message)
     {
         _message = message;
-        Title = "Message info";
+        Title = "Message details";
         Width = 460;
         Height = 600;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
