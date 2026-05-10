@@ -46,11 +46,11 @@ const IRIS_LIGHT: GtkPalette = GtkPalette {
 };
 
 const IRIS_DARK: GtkPalette = GtkPalette {
-    background: "#1B1B1B",
-    panel: "#2A2A2A",
-    panel_alt: "#3A3A3A",
+    background: "#0A0A0A",
+    panel: "#1A1A1A",
+    panel_alt: "#2A2A2A",
     border: "rgba(255, 255, 255, 0.12)",
-    toolbar: "rgba(31, 31, 31, 0.96)",
+    toolbar: "rgba(16, 16, 16, 0.96)",
     bubble_mine: "#702ACE",
     bubble_theirs: "#3A3A3A",
     accent: "#702ACE",
