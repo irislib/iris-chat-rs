@@ -314,7 +314,6 @@ class IrisNearbyService(
             if (record.kind == 0L) {
                 sendHello(excludingPeerId = null)
             }
-            sendInventory(excludingPeerId = null)
             sendEvent(record, excludingPeerId = null)
         }
     }
@@ -491,6 +490,9 @@ class IrisNearbyService(
             centralReconnectSuppressedUntilMillis.remove(address)
         }
         if (gatts.containsKey(address)) {
+            return
+        }
+        if (subscribedServerAddresses.contains(address)) {
             return
         }
         if (gatts.size >= MAX_SIMULTANEOUS_GATTS) {
@@ -1038,7 +1040,7 @@ class IrisNearbyService(
         rememberProfile(eventJson, remotePeerId)
         forwarded[record.id] = record
         pruneMailbags()
-        sendInventory(excludingPeerId = remotePeerId)
+        sendEventJson(eventJson, excludingPeerId = remotePeerId)
         Log.d(TAG, "accepted event kind=${record.kind} id=${record.id}")
     }
 
@@ -1894,6 +1896,9 @@ class IrisNearbyService(
                     if (descriptor.uuid == CLIENT_CONFIG_UUID) {
                         if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
                             subscribedServerAddresses.add(device.address)
+                            gatts[device.address]?.let { existing ->
+                                forgetCentralConnection(device.address, existing, "peer subscribed as central")
+                            }
                         } else {
                             subscribedServerAddresses.remove(device.address)
                         }
