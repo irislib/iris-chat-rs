@@ -2,6 +2,7 @@ package to.iris.chat.ui.screens
 
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -925,14 +926,21 @@ private fun ReactionRow(
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         reactions.forEach { reaction ->
+            // Opaque, theme-aware pill bg (panelAlt is a shade darker than the
+            // chat backdrop and the incoming bubble in both light and dark
+            // themes), so the chip reads as a distinct attached element rather
+            // than a transparent tint of whatever sits underneath. Reactions
+            // you sent get a thin accent ring instead of the previous
+            // see-through purple fill.
             Surface(
-                color =
-                    if (reaction.reactedByMe) {
-                        IrisTheme.palette.accent.copy(alpha = 0.18f)
-                    } else {
-                        IrisTheme.palette.panel
-                    },
+                color = IrisTheme.palette.panelAlt,
                 shape = RoundedCornerShape(100.dp),
+                border =
+                    if (reaction.reactedByMe) {
+                        BorderStroke(1.2.dp, IrisTheme.palette.accent)
+                    } else {
+                        null
+                    },
             ) {
                 Text(
                     text = "${reaction.emoji} ${reaction.count}",

@@ -234,6 +234,33 @@ fun ChatScreen(
         }
     }
 
+    // Repin to bottom when the last bubble grows below the viewport while
+    // we should be following the latest. Catches the cases the message-count
+    // / last-id LaunchedEffect above misses: a reaction landing on the last
+    // message, an attachment image lazy-loading taller than its placeholder,
+    // a quote preview rendering after first layout. Without this, the user
+    // opens a chat, the initial scroll-to-bottom fires, then late layout
+    // shifts push the latest bubble up out of view.
+    LaunchedEffect(listState, chatId) {
+        snapshotFlow {
+            val info = listState.layoutInfo
+            val last = info.visibleItemsInfo.lastOrNull() ?: return@snapshotFlow null
+            if (last.index != info.totalItemsCount - 1) return@snapshotFlow null
+            val lastBottom = last.offset + last.size
+            val viewportEnd = info.viewportEndOffset
+            Triple(info.totalItemsCount, lastBottom, viewportEnd)
+        }
+            .distinctUntilChanged()
+            .collect { snap ->
+                if (snap == null) return@collect
+                val (total, lastBottom, viewportEnd) = snap
+                if (initialScrollPending || !shouldFollowLatest || total == 0) return@collect
+                if (lastBottom > viewportEnd) {
+                    listState.scrollToItem(total - 1)
+                }
+            }
+    }
+
     val unseenIncomingIds =
         remember(chat?.messages) {
             chat
