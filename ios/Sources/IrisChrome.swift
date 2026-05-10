@@ -871,6 +871,7 @@ struct IrisChatRow: View {
     let pictureUrl: String?
     let preferences: PreferencesSnapshot?
     let manager: AppManager?
+    let leading: AnyView?
     let onTap: () -> Void
 
     init(
@@ -884,6 +885,7 @@ struct IrisChatRow: View {
         pictureUrl: String? = nil,
         preferences: PreferencesSnapshot? = nil,
         manager: AppManager? = nil,
+        leading: AnyView? = nil,
         onTap: @escaping () -> Void
     ) {
         self.title = title
@@ -896,19 +898,24 @@ struct IrisChatRow: View {
         self.pictureUrl = pictureUrl
         self.preferences = preferences
         self.manager = manager
+        self.leading = leading
         self.onTap = onTap
     }
 
     var body: some View {
         Button(action: onTap) {
             HStack(alignment: .top, spacing: 14) {
-                IrisAvatar(
-                    label: title,
-                    emphasize: unreadCount > 0,
-                    pictureUrl: pictureUrl,
-                    preferences: preferences,
-                    manager: manager
-                )
+                if let leading {
+                    leading
+                } else {
+                    IrisAvatar(
+                        label: title,
+                        emphasize: unreadCount > 0,
+                        pictureUrl: pictureUrl,
+                        preferences: preferences,
+                        manager: manager
+                    )
+                }
 
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
