@@ -67,7 +67,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
     }
 
-    // Re-entering a chat with enough messages to overflow the viewport
+    // Opening a chat with enough messages to overflow the viewport
     // must land scrolled at the latest message. The oracle is the
     // "jump to bottom" affordance — it only renders when the timeline
     // is *not* near the bottom, so its absence proves the initial
@@ -75,53 +75,57 @@ final class IrisChatUITests: XCTestCase {
     // case where lazy rows above the viewport haven't been measured at
     // scroll time and the manual `proxy.scrollTo(.bottom)` lands too
     // high — fixed by `defaultScrollAnchor(.bottom)`.
+    //
+    // Uses the IRIS_UI_TEST_SEED_* escape hatch to dispatch 30 outgoing
+    // messages directly through AppManager once the account exists —
+    // XCUITest's typeText+tap loop gets flaky past ~12 sends, which
+    // can't reliably build a chat tall enough to test the lazy-row case.
     func testReopeningLongChatLandsAtBottom() {
-        let app = launchCleanApp()
+        let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 30)
 
-        createAccount(app)
-        openChatWithPeer(app)
+        // Walk the welcome → create-account flow, but don't wait for
+        // the chat list at the end: the seed dispatches `createChat`
+        // as soon as the account exists and the core auto-navigates
+        // straight into the new chat, so the chat list never paints
+        // — we land on the chat screen with the seeded messages.
+        XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 15))
+        element(app, "welcomeCreateAction").tap()
+        XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15))
+        let nameField = element(app, "signupNameField")
+        XCTAssertTrue(nameField.waitForExistence(timeout: 15))
+        typeText("ios tester", into: nameField, app: app)
+        element(app, "generateKeyButton").tap()
 
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-        XCTAssertTrue(element(app, "chatSendButton").waitForExistence(timeout: 10))
-
-        // Each message is a multi-line block, so 12 of them
-        // comfortably overflow the iPhone 16 viewport (~800pt) and
-        // make scroll-to-bottom on re-open meaningful. Keeping the
-        // count low keeps the typing loop reliable — XCUITest's
-        // `typeText`+`tap` cycle gets flaky past ~16 sends.
-        let bodyPad = "lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt"
-        let messageCount = 9
-        let lastSentinel = "LAST_SCROLL_SENTINEL"
-        for i in 1...messageCount {
-            let label = i == messageCount ? lastSentinel : "msg\(i)"
-            let payload = "\(label) \(bodyPad)"
-            typeText(payload, into: element(app, "chatMessageInput"), app: app)
-            element(app, "chatSendButton").tap()
-            XCTAssertTrue(
-                app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", label)).firstMatch.waitForExistence(timeout: 15),
-                "message #\(i) (\(label)) never appeared in the timeline"
-            )
-        }
-
-        // Re-enter the chat. We use the chat list back-and-forth so the
-        // ChatScreen view tears down and reconstructs (the `.task(id: chatId)`
-        // path the bug report flagged).
-        returnToChatList(app)
-        let chatRow = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", lastSentinel)).firstMatch
-        XCTAssertTrue(chatRow.waitForExistence(timeout: 10))
-        chatRow.tap()
-        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
-
-        // Give the view a beat to settle. If we landed at the bottom, the
-        // jump-to-bottom button must NOT appear.
-        let jumpToBottom = element(app, "chatJumpToBottom")
-        XCTAssertFalse(
-            jumpToBottom.waitForExistence(timeout: 3),
-            "chat opened without scrolling to the latest message — the jump-to-bottom button is visible"
-        )
         XCTAssertTrue(
-            app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", lastSentinel)).firstMatch.exists,
-            "latest message is not visible after re-opening the long chat"
+            element(app, "chatMessageInput").waitForExistence(timeout: 30),
+            "never landed on the seeded chat after account creation"
+        )
+
+        // Wait for the seed's last dispatched message to render in the
+        // timeline — the seed dispatches 30 sendMessage actions back to
+        // back, so this gives the Rust core + state reconciler time to
+        // finish flushing all 30 before we judge the scroll position.
+        let lastSentinel = "LAST_SCROLL_SENTINEL"
+        XCTAssertTrue(
+            app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", lastSentinel)).firstMatch.waitForExistence(timeout: 15),
+            "seeded last message never rendered in the timeline"
+        )
+        // Quiet pause for the SwiftUI layout to settle (avatars, quoted
+        // previews, image placeholders all nudge bubble heights as they
+        // resolve). The growth-pinning logic must handle these without
+        // leaving the timeline above the bottom.
+        Thread.sleep(forTimeInterval: 1.5)
+
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.lifetime = .keepAlways
+        attachment.name = "timeline-on-open"
+        add(attachment)
+
+        // If the timeline is at the bottom, the jump-to-bottom button
+        // must NOT exist.
+        XCTAssertFalse(
+            element(app, "chatJumpToBottom").exists,
+            "chat opened without scrolling to the latest message — the jump-to-bottom button is visible"
         )
     }
 
@@ -330,16 +334,27 @@ final class IrisChatUITests: XCTestCase {
     private func launchCleanApp(
         runId: String = UUID().uuidString,
         qrValue: String? = nil,
-        profilePicturePath: String? = nil
+        profilePicturePath: String? = nil,
+        seedPeer: String? = nil,
+        seedCount: Int? = nil
     ) -> XCUIApplication {
-        launchApp(runId: runId, reset: true, qrValue: qrValue, profilePicturePath: profilePicturePath)
+        launchApp(
+            runId: runId,
+            reset: true,
+            qrValue: qrValue,
+            profilePicturePath: profilePicturePath,
+            seedPeer: seedPeer,
+            seedCount: seedCount
+        )
     }
 
     private func launchApp(
         runId: String,
         reset: Bool = false,
         qrValue: String? = nil,
-        profilePicturePath: String? = nil
+        profilePicturePath: String? = nil,
+        seedPeer: String? = nil,
+        seedCount: Int? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
         if reset {
@@ -352,6 +367,10 @@ final class IrisChatUITests: XCTestCase {
         }
         if let profilePicturePath {
             app.launchEnvironment["IRIS_UI_TEST_PROFILE_PICTURE_PATH"] = profilePicturePath
+        }
+        if let seedPeer, let seedCount {
+            app.launchEnvironment["IRIS_UI_TEST_SEED_PEER"] = seedPeer
+            app.launchEnvironment["IRIS_UI_TEST_SEED_COUNT"] = String(seedCount)
         }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))

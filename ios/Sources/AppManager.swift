@@ -778,6 +778,17 @@ final class AppManager: ObservableObject {
     private var backgroundSuspendPrepared = false
     private var storedAccountBundle: StoredAccountBundle?
     private var nearbySettingsWasOpened = false
+    // UI-test escape hatch: when IRIS_UI_TEST_SEED_PEER + IRIS_UI_TEST_SEED_COUNT
+    // are set, AppManager auto-creates a chat with that peer once the account
+    // is ready, then dispatches `count` outgoing messages back-to-back. Lets
+    // tests build a long-chat scenario in milliseconds instead of paying the
+    // ~15s/message tax of XCUITest's typeText loop.
+    private struct PendingTestSeed {
+        let peer: String
+        let count: Int
+    }
+    private var pendingTestSeed: PendingTestSeed?
+    private var seedTestMessagesDispatched = false
     private lazy var reconciler = UpdateBridge(owner: self)
     init(
         rust: RustAppClient? = nil,
@@ -799,6 +810,12 @@ final class AppManager: ObservableObject {
         if environment["IRIS_UI_TEST_RESET"] == "1" {
             resolvedSecretStore.clear()
             try? fileManager.removeItem(at: resolvedDataDir)
+        }
+        if let peer = environment["IRIS_UI_TEST_SEED_PEER"]?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !peer.isEmpty,
+           let count = environment["IRIS_UI_TEST_SEED_COUNT"].flatMap(Int.init),
+           count > 0 {
+            self.pendingTestSeed = PendingTestSeed(peer: peer, count: count)
         }
         try? fileManager.createDirectory(at: resolvedDataDir, withIntermediateDirectories: true)
         AppPaths.prepareDataDirForBackgroundNotificationReads(resolvedDataDir, fileManager: fileManager)
@@ -1731,7 +1748,30 @@ final class AppManager: ObservableObject {
             if let toast = nextState.toast, !toast.isEmpty {
                 showToast(toast)
             }
+            runPendingTestSeedIfNeeded()
         }
+    }
+
+    private func runPendingTestSeedIfNeeded() {
+        guard let seed = pendingTestSeed else { return }
+        guard state.account != nil else { return }
+        if state.chatList.isEmpty {
+            let normalized = normalizePeerInput(input: seed.peer)
+            guard !normalized.isEmpty, isValidPeerInput(input: normalized) else {
+                pendingTestSeed = nil
+                return
+            }
+            dispatchToRust(.createChat(peerInput: normalized))
+            return
+        }
+        guard !seedTestMessagesDispatched, let chat = state.chatList.first else { return }
+        seedTestMessagesDispatched = true
+        for i in 1...seed.count {
+            let label = i == seed.count ? "LAST_SCROLL_SENTINEL" : "seed-msg-\(i)"
+            let body = "\(label) lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
+            dispatchToRust(.sendMessage(chatId: chat.chatId, text: body))
+        }
+        pendingTestSeed = nil
     }
 
     private func restorePersistedSession() {

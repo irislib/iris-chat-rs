@@ -44,7 +44,22 @@ struct ChatScreen: View {
                                 GeometryReader { viewport in
                                     ScrollView {
                                         let visibleMessages = chat.messages
-                                        LazyVStack(spacing: 0) {
+                                        // Eager VStack instead of LazyVStack:
+                                        // SwiftUI's `LazyVStack` only realises
+                                        // & measures rows once they're scrolled
+                                        // into view, so on a freshly opened
+                                        // long chat `proxy.scrollTo(.bottom)`
+                                        // landed mid-timeline (the trailing
+                                        // anchor's resolved position was wrong
+                                        // because the rows above hadn't been
+                                        // measured yet). The chat already pages
+                                        // to ≤ `OPEN_CHAT_MESSAGES_PER_PAGE`
+                                        // (80) messages per open in the Rust
+                                        // core, so eager layout is fine —
+                                        // matches Signal-iOS, which also
+                                        // pre-measures every visible cell
+                                        // before the scroll lands.
+                                        VStack(spacing: 0) {
                                             ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
                                                 let previous = index > 0 ? visibleMessages[index - 1] : nil
                                                 let next = index + 1 < visibleMessages.count ? visibleMessages[index + 1] : nil
@@ -120,19 +135,6 @@ struct ChatScreen: View {
                                                 ))
                                                 .id(message.id)
                                             }
-
-                                            Color.clear
-                                                .frame(height: 1)
-                                                .id(ChatTimelineAnchor.bottom)
-                                                .background(
-                                                    GeometryReader { geometry in
-                                                        Color.clear.preference(
-                                                            key: ChatTimelineBottomMaxYPreferenceKey.self,
-                                                            value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).maxY
-                                                        )
-                                                    }
-                                                )
-                                                .accessibilityHidden(true)
                                         }
                                         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 14)
                                         .padding(.vertical, 10)
@@ -155,6 +157,31 @@ struct ChatScreen: View {
                                         )
                                         .frame(minHeight: viewport.size.height, alignment: .bottom)
                                         .accessibilityIdentifier("chatTimeline")
+
+                                        // Trailing bottom anchor sits OUTSIDE
+                                        // the LazyVStack so SwiftUI always
+                                        // realises it. When it was a child of
+                                        // the LazyVStack, SwiftUI would only
+                                        // lay it out once it scrolled into
+                                        // view — so on a freshly opened long
+                                        // chat its frame.maxY stayed at the
+                                        // default `.greatestFiniteMagnitude`,
+                                        // `chatTimelineIsNearBottom` returned
+                                        // false, and the jump-to-bottom button
+                                        // flashed up even though we were at
+                                        // the latest message.
+                                        Color.clear
+                                            .frame(height: 1)
+                                            .id(ChatTimelineAnchor.bottom)
+                                            .background(
+                                                GeometryReader { geometry in
+                                                    Color.clear.preference(
+                                                        key: ChatTimelineBottomMaxYPreferenceKey.self,
+                                                        value: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name)).maxY
+                                                    )
+                                                }
+                                            )
+                                            .accessibilityHidden(true)
                                     }
                                     .irisDefaultScrollAnchorBottom()
                                     .simultaneousGesture(
@@ -457,18 +484,30 @@ struct ChatScreen: View {
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
         // Prefer the last message's own id over the trailing 1pt anchor:
         // SwiftUI must realise & measure the targeted row, so a scroll to
-        // the actual final bubble forces the LazyVStack to lay it out
-        // and lands the bottom of that bubble at the viewport's bottom.
-        // Scrolling to the empty anchor view doesn't have that effect —
-        // SwiftUI happily resolves it to its current (wrong) position
-        // when intermediate rows are still lazy.
+        // the actual final bubble forces SwiftUI to lay it out and lands
+        // the bottom of that bubble at the viewport's bottom. Scrolling to
+        // the empty anchor view doesn't have that effect — SwiftUI
+        // happily resolves it to its current (wrong) position when sibling
+        // rows haven't been measured yet.
+        //
+        // Issue twice across run-loops on the initial paint: the first
+        // call lands the scroll while bubbles' images / quoted previews
+        // are still laying out, and the second call (after the next
+        // run-loop tick) catches any settling that nudged the bottom row
+        // a few points further down.
         let target = chat?.messages.last?.id ?? ChatTimelineAnchor.bottom
-        DispatchQueue.main.async {
+        let perform = {
             if animated {
                 withAnimation(.easeOut(duration: 0.2)) {
                     proxy.scrollTo(target, anchor: .bottom)
                 }
             } else {
+                proxy.scrollTo(target, anchor: .bottom)
+            }
+        }
+        DispatchQueue.main.async {
+            perform()
+            DispatchQueue.main.async {
                 proxy.scrollTo(target, anchor: .bottom)
             }
         }
