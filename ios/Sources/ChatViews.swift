@@ -1714,28 +1714,53 @@ private struct ReplyPreviewView: View {
     let reply: ReplyPreview
     let isOutgoing: Bool
 
+    @State private var expanded = false
+
+    private let collapsedLineLimit = 4
+    // Show "Tap to expand" only when the body is plausibly longer than the
+    // collapsed view. Cheap heuristic — multi-line OR > a few hundred chars.
+    private var likelyTruncates: Bool {
+        reply.body.contains("\n") || reply.body.count > 220
+    }
+
     var body: some View {
-        HStack(spacing: 8) {
-            Rectangle()
-                .fill(isOutgoing ? palette.onBubbleMine.opacity(0.6) : palette.accent)
-                .frame(width: 3)
-                .clipShape(Capsule())
-            VStack(alignment: .leading, spacing: 2) {
-                Text(reply.author)
-                    .font(.system(.caption, design: .rounded, weight: .bold))
-                Text(reply.body)
-                    .font(.system(.caption, design: .rounded, weight: .medium))
-                    .lineLimit(2)
-                    .opacity(0.82)
+        Button(action: toggleIfNeeded) {
+            HStack(spacing: 8) {
+                Rectangle()
+                    .fill(isOutgoing ? palette.onBubbleMine.opacity(0.6) : palette.accent)
+                    .frame(width: 3)
+                    .clipShape(Capsule())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(reply.author)
+                        .font(.system(.caption, design: .rounded, weight: .bold))
+                    Text(reply.body)
+                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .lineLimit(expanded ? nil : collapsedLineLimit)
+                        .multilineTextAlignment(.leading)
+                        .opacity(0.82)
+                    if likelyTruncates {
+                        Text(expanded ? "Tap to collapse" : "Tap to expand")
+                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                            .opacity(0.6)
+                            .accessibilityIdentifier("chatReplyPreviewToggle")
+                    }
+                }
             }
+            .frame(maxWidth: 360, alignment: .leading)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
+            )
         }
-        .frame(maxWidth: 280, alignment: .leading)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
-        )
+        .buttonStyle(.irisPlain)
+        .accessibilityHint(likelyTruncates ? (expanded ? "Tap to collapse the quoted reply" : "Tap to expand the quoted reply") : "")
+    }
+
+    private func toggleIfNeeded() {
+        guard likelyTruncates else { return }
+        withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
     }
 }
 

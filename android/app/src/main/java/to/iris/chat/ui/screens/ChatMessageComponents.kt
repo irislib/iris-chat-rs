@@ -20,7 +20,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -793,6 +795,9 @@ private fun ReplyPreview(
     reply: ReplyPreviewData,
     isOutgoing: Boolean,
 ) {
+    var expanded by remember(reply) { mutableStateOf(false) }
+    val likelyTruncates = reply.body.contains('\n') || reply.body.length > 220
+    val collapsedLineLimit = 4
     Surface(
         color =
             if (isOutgoing) {
@@ -801,6 +806,12 @@ private fun ReplyPreview(
                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f)
             },
         shape = RoundedCornerShape(10.dp),
+        modifier =
+            if (likelyTruncates) {
+                Modifier.clickable { expanded = !expanded }
+            } else {
+                Modifier
+            },
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
@@ -809,7 +820,8 @@ private fun ReplyPreview(
             Box(
                 modifier =
                     Modifier
-                        .size(width = 3.dp, height = 34.dp)
+                        .width(3.dp)
+                        .heightIn(min = 34.dp)
                         .clip(CircleShape)
                         .background(if (isOutgoing) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f) else IrisTheme.palette.accent),
             )
@@ -824,9 +836,16 @@ private fun ReplyPreview(
                 Text(
                     text = reply.body,
                     style = MaterialTheme.typography.labelSmall,
-                    maxLines = 2,
+                    maxLines = if (expanded) Int.MAX_VALUE else collapsedLineLimit,
                     overflow = TextOverflow.Ellipsis,
                 )
+                if (likelyTruncates) {
+                    Text(
+                        text = if (expanded) "Tap to collapse" else "Tap to expand",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    )
+                }
             }
         }
     }
