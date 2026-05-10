@@ -85,8 +85,8 @@ struct RootView: View {
                 if usesDesktopChatShell {
                     VStack(spacing: 0) {
 #if os(macOS)
-                        if manager.updateAvailable {
-                            DesktopUpdateStripe(manager: manager)
+                        if manager.updates.available {
+                            DesktopUpdateStripe(updates: manager.updates)
                         }
 #endif
                         DesktopChatShell(
@@ -115,10 +115,7 @@ struct RootView: View {
                     }
                 }
 
-                if let toast = manager.toastMessage {
-                    ToastView(text: toast)
-                        .padding(.top, 14)
-                }
+                ToastOverlay(center: manager.toasts)
 
                 if manager.bootstrapInFlight {
                     LoadingOverlay()
@@ -1197,7 +1194,9 @@ private struct IrisContextMenuLabel: View {
 #if os(macOS)
 private struct DesktopUpdateStripe: View {
     @Environment(\.irisPalette) private var palette
-    @ObservedObject var manager: AppManager
+    // Observe only the update controller so unrelated AppManager publishes
+    // (relay events, typing pings, scene phase) don't re-evaluate this view.
+    @ObservedObject var updates: DesktopUpdateController
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1205,26 +1204,26 @@ private struct DesktopUpdateStripe: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(palette.muted)
 
-            Text(manager.updateVersion.isEmpty ? "Update available" : "\(manager.updateVersion) available")
+            Text(updates.version.isEmpty ? "Update available" : "\(updates.version) available")
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
                 .lineLimit(1)
 
             Spacer(minLength: 12)
 
-            Toggle("Install automatically", isOn: $manager.autoInstallUpdates)
+            Toggle("Install automatically", isOn: $updates.autoInstall)
                 .toggleStyle(.checkbox)
                 .font(.system(.caption, design: .rounded, weight: .medium))
                 .foregroundStyle(palette.muted)
                 .accessibilityIdentifier("desktopUpdateAutoInstallToggle")
 
             Button {
-                manager.installUpdate()
+                updates.install()
             } label: {
-                Text(manager.updateInstalling ? "Installing…" : "Install")
+                Text(updates.installing ? "Installing…" : "Install")
             }
             .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-            .disabled(!manager.updateInstallEnabled)
+            .disabled(!updates.canInstall)
             .accessibilityIdentifier("desktopInstallUpdateButton")
         }
         .padding(.horizontal, 16)
@@ -3793,7 +3792,7 @@ struct SettingsScreen: View {
 
 #if os(macOS)
                     IrisSectionCard {
-                        DesktopUpdateSettingsSection(manager: manager)
+                        DesktopUpdateSettingsSection(buildSummary: manager.buildSummaryText(), updates: manager.updates)
                     }
 #endif
 
@@ -4005,7 +4004,8 @@ private struct NearbySettingsRows: View {
 #if os(macOS)
 private struct DesktopUpdateSettingsSection: View {
     @Environment(\.irisPalette) private var palette
-    @ObservedObject var manager: AppManager
+    let buildSummary: String
+    @ObservedObject var updates: DesktopUpdateController
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -4018,7 +4018,7 @@ private struct DesktopUpdateSettingsSection: View {
                     Text("Current version")
                         .font(.system(.headline, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.textPrimary)
-                    Text(manager.buildSummaryText())
+                    Text(buildSummary)
                         .font(.system(.body, design: .rounded))
                         .foregroundStyle(palette.muted)
                         .accessibilityIdentifier("desktopCurrentVersionValue")
@@ -4026,36 +4026,36 @@ private struct DesktopUpdateSettingsSection: View {
                 Spacer()
             }
 
-            Toggle("Check automatically", isOn: $manager.autoCheckUpdates)
+            Toggle("Check automatically", isOn: $updates.autoCheck)
                 .accessibilityIdentifier("desktopAutoCheckUpdatesToggle")
 
-            Toggle("Install automatically", isOn: $manager.autoInstallUpdates)
+            Toggle("Install automatically", isOn: $updates.autoInstall)
                 .accessibilityIdentifier("desktopAutoInstallUpdatesToggle")
 
             HStack(spacing: 10) {
                 Button {
-                    manager.checkForUpdates()
+                    updates.check()
                 } label: {
-                    Label(manager.updateChecking ? "Checking" : "Check for updates", systemImage: "arrow.clockwise")
+                    Label(updates.checking ? "Checking" : "Check for updates", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
-                .disabled(manager.updateChecking || manager.updateInstalling)
+                .disabled(updates.checking || updates.installing)
                 .accessibilityIdentifier("desktopCheckForUpdatesButton")
 
-                if manager.updateAvailable {
+                if updates.available {
                     Button {
-                        manager.installUpdate()
+                        updates.install()
                     } label: {
-                        Label(manager.updateInstalling ? "Installing" : "Install update", systemImage: "square.and.arrow.down.fill")
+                        Label(updates.installing ? "Installing" : "Install update", systemImage: "square.and.arrow.down.fill")
                     }
                     .buttonStyle(IrisPrimaryButtonStyle())
-                    .disabled(!manager.updateInstallEnabled)
+                    .disabled(!updates.canInstall)
                     .accessibilityIdentifier("desktopInstallUpdateSettingsButton")
                 }
             }
 
-            if !manager.updateStatus.isEmpty {
-                Text(manager.updateStatus)
+            if !updates.status.isEmpty {
+                Text(updates.status)
                     .font(.system(.caption, design: .rounded, weight: .medium))
                     .foregroundStyle(palette.muted)
                     .accessibilityIdentifier("desktopUpdateStatusText")
@@ -4624,6 +4624,20 @@ private struct ToastView: View {
                             .stroke(palette.border, lineWidth: 1)
                     )
             )
+    }
+}
+
+// Tiny wrapper so RootView doesn't have to subscribe to ToastCenter via the
+// fat AppManager — toasts pop on their own publisher and don't drag any
+// other view into a re-render.
+private struct ToastOverlay: View {
+    @ObservedObject var center: ToastCenter
+
+    var body: some View {
+        if let toast = center.message {
+            ToastView(text: toast)
+                .padding(.top, 14)
+        }
     }
 }
 

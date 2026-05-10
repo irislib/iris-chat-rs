@@ -14,7 +14,7 @@ struct IrisChatMacApp: App {
                 .frame(minWidth: 980, minHeight: 640)
                 .onAppear {
                     appDelegate.configure(manager: manager, startInBackground: startInBackground)
-                    manager.startDesktopUpdateChecks()
+                    manager.updates.runStartupCheckIfNeeded()
                 }
                 .onOpenURL { url in
                     _ = manager.handleShareURL(url)

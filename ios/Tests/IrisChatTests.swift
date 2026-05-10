@@ -881,7 +881,7 @@ final class IrisChatTests: XCTestCase {
         rust.emit(.fullState(newer))
         await Task.yield()
         XCTAssertEqual(manager.state.rev, 2)
-        XCTAssertEqual(manager.toastMessage, "synced")
+        XCTAssertEqual(manager.toasts.message, "synced")
 
         rust.emit(.fullState(older))
         await Task.yield()
@@ -1057,7 +1057,7 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.dispatch(.pushScreen(screen: .newChat))
 
-        XCTAssertEqual(manager.toastMessage, "Action failed. Copy support bundle in Settings.")
+        XCTAssertEqual(manager.toasts.message, "Action failed. Copy support bundle in Settings.")
         XCTAssertTrue(rust.dispatchedActions.isEmpty)
         let supportBundle = manager.supportBundleJson()
         XCTAssertTrue(supportBundle.contains("\"client_log\""))
