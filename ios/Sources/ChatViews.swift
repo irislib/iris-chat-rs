@@ -1644,83 +1644,16 @@ private struct ReactionRow: View {
 }
 
 extension View {
-    @ViewBuilder
+    // No-op on iOS for now: SwiftUI's DragGesture has no horizontal-only
+    // variant, and the simultaneousGesture(...) we tried fought the chat
+    // ScrollView for touches, leaving scroll unreliable. Reply/Info are
+    // still reachable from the long-press action sheet. Bring this back
+    // when we wrap a UIPanGestureRecognizer that actually defers to
+    // vertical scroll the way Compose's detectHorizontalDragGestures does.
     func applyMessageBubbleSwipe(onReply: @escaping () -> Void, onInfo: @escaping () -> Void) -> some View {
-#if os(iOS)
-        modifier(MessageBubbleSwipeActions(onReply: onReply, onInfo: onInfo))
-#else
         self
-#endif
     }
 }
-
-#if os(iOS)
-private struct MessageBubbleSwipeActions: ViewModifier {
-    let onReply: () -> Void
-    let onInfo: () -> Void
-
-    @State private var dragOffset: CGFloat = 0
-    @State private var hasFedHaptic = false
-
-    private let threshold: CGFloat = 60
-    private let maxOffset: CGFloat = 90
-
-    func body(content: Content) -> some View {
-        ZStack {
-            HStack(spacing: 0) {
-                Image(systemName: "arrowshape.turn.up.left.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .opacity(revealProgress(forwards: true))
-                    .scaleEffect(0.7 + 0.3 * revealProgress(forwards: true))
-                    .padding(.leading, 14)
-                Spacer(minLength: 0)
-                Image(systemName: "info.circle.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .opacity(revealProgress(forwards: false))
-                    .scaleEffect(0.7 + 0.3 * revealProgress(forwards: false))
-                    .padding(.trailing, 14)
-            }
-
-            content.offset(x: dragOffset)
-        }
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 14, coordinateSpace: .local)
-                .onChanged { value in
-                    let dx = value.translation.width
-                    guard abs(dx) > abs(value.translation.height) else { return }
-                    let clamped = max(-maxOffset, min(maxOffset, dx))
-                    dragOffset = clamped
-                    let crossed = abs(clamped) >= threshold
-                    if crossed && !hasFedHaptic {
-                        PlatformHaptics.messageMenuOpened()
-                        hasFedHaptic = true
-                    } else if !crossed {
-                        hasFedHaptic = false
-                    }
-                }
-                .onEnded { _ in
-                    let final = dragOffset
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.74)) {
-                        dragOffset = 0
-                    }
-                    if final >= threshold {
-                        onReply()
-                    } else if final <= -threshold {
-                        onInfo()
-                    }
-                    hasFedHaptic = false
-                }
-        )
-    }
-
-    private func revealProgress(forwards: Bool) -> Double {
-        let value = forwards ? dragOffset : -dragOffset
-        return Double(min(1, max(0, value / threshold)))
-    }
-}
-#endif
 
 private struct EscDismissesReply: ViewModifier {
     @Binding var replyTarget: ChatMessageSnapshot?
