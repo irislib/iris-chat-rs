@@ -405,7 +405,21 @@ enum AppPaths {
     static let appGroupIdentifier = "group.to.iris.chat"
 
     static func appVersion(bundle: Bundle = .main) -> String {
-        bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        // CFBundleShortVersionString gets stripped to 3 parts before reaching
+        // Apple, so reading it alone makes the update comparator think
+        // 2026.5.10.1 is newer than the running 2026.5.10. Reconstruct the
+        // optional 4th .build segment from CFBundleVersion (= the integer
+        // IRIS_APP_VERSION_CODE = major*10000 + minor*1000 + patch*100 + build);
+        // its last two digits are the build segment.
+        let short = bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        if let buildString = bundle.infoDictionary?["CFBundleVersion"] as? String,
+           let code = Int(buildString) {
+            let buildSegment = code % 100
+            if buildSegment > 0 {
+                return "\(short).\(buildSegment)"
+            }
+        }
+        return short
     }
 
     static func testRunId(environment: [String: String]) -> String? {
