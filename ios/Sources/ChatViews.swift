@@ -26,6 +26,7 @@ struct ChatScreen: View {
     @State private var lastTypingSentAt: Date?
     @State private var sentTypingIndicator = false
     @State private var messageInfoSelection: MessageInfoSelection?
+    @State private var reactorsSelection: MessageReactorsSelection?
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -102,6 +103,9 @@ struct ChatScreen: View {
                                                             in: chat.messages,
                                                             proxy: proxy
                                                         )
+                                                    },
+                                                    onShowReactors: {
+                                                        reactorsSelection = MessageReactorsSelection(messageId: message.id)
                                                     },
                                                     downloadAttachment: { attachment in
                                                         await manager.downloadAttachment(attachment)
@@ -331,6 +335,17 @@ struct ChatScreen: View {
                 messageInfoSelection = nil
             }
         }
+        .sheet(item: $reactorsSelection) { selection in
+            let context = reactorsContext(for: selection)
+            MessageReactorsSheet(reactors: context.reactors, chat: context.chat, manager: manager) {
+                reactorsSelection = nil
+            }
+            .presentationDetents([.medium, .large])
+            .presentationDragIndicator(.visible)
+            .irisDismissOnMacOutsideClick {
+                reactorsSelection = nil
+            }
+        }
         .onDisappear {
             stopTypingIfNeeded()
         }
@@ -430,6 +445,17 @@ struct ChatScreen: View {
         return (message, currentChat)
     }
 
+    private func reactorsContext(for selection: MessageReactorsSelection) -> (reactors: [MessageReactor], chat: CurrentChatSnapshot?) {
+        let currentChat = chat
+        let message = currentChat?.messages.first { $0.id == selection.messageId }
+        return (message?.reactors ?? [], currentChat)
+    }
+
+}
+
+private struct MessageReactorsSelection: Identifiable {
+    let messageId: String
+    var id: String { messageId }
 }
 
 private struct MessageInfoSelection: Identifiable {
@@ -531,6 +557,7 @@ private struct ChatMessageRow: View {
     let onInfo: () -> Void
     let onDelete: () -> Void
     let onScrollToQuote: (ReplyPreview) -> Void
+    let onShowReactors: () -> Void
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
     let onOpenImage: (Data, String) -> Void
@@ -736,7 +763,11 @@ private struct ChatMessageRow: View {
                 }
 
                 if !reactions.isEmpty {
-                    ReactionRow(reactions: reactions, isOutgoing: message.isOutgoing)
+                    ReactionRow(
+                        reactions: reactions,
+                        isOutgoing: message.isOutgoing,
+                        onTap: onShowReactors
+                    )
                         // Tuck the reaction pills up under the bubble's
                         // bottom edge so they read as attached to the
                         // message rather than a separate row below it.
@@ -1680,13 +1711,79 @@ private struct IrisTypingIndicatorRow: View {
     }
 }
 
+private struct MessageReactorsSheet: View {
+    @Environment(\.irisPalette) private var palette
+    let reactors: [MessageReactor]
+    let chat: CurrentChatSnapshot?
+    @ObservedObject var manager: AppManager
+    let onClose: () -> Void
+
+    private var visibleReactors: [MessageReactor] {
+        reactors.filter { !$0.emoji.isEmpty }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(visibleReactors, id: \.author) { reactor in
+                        MessageInfoReactorRow(
+                            info: participantInfo(reactor.author),
+                            emoji: reactor.emoji,
+                            manager: manager
+                        )
+                        .padding(.horizontal, 18)
+                    }
+                }
+                .padding(.vertical, 8)
+                .frame(maxWidth: IrisLayout.scrollMaxWidth, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .background(palette.background)
+            .navigationTitle("Reactions")
+#if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done", action: onClose)
+                }
+            }
+#elseif os(macOS)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done", action: onClose)
+                }
+            }
+#endif
+        }
+        .accessibilityIdentifier("messageReactorsSheet")
+    }
+
+    private func participantInfo(_ pubkeyHex: String) -> ParticipantInfo {
+        if let account = manager.state.account, account.publicKeyHex == pubkeyHex {
+            let name = account.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            return ParticipantInfo(
+                name: name.isEmpty ? "You" : name,
+                pictureUrl: account.pictureUrl,
+                isMe: true
+            )
+        }
+        if let chat, chat.kind == .direct, chat.chatId == pubkeyHex {
+            return ParticipantInfo(name: chat.displayName, pictureUrl: chat.pictureUrl, isMe: false)
+        }
+        return ParticipantInfo(name: shortNpub(pubkeyHex), pictureUrl: nil, isMe: false)
+    }
+}
+
 private struct ReactionRow: View {
     @Environment(\.irisPalette) private var palette
     let reactions: [MessageReactionSnapshot]
     let isOutgoing: Bool
+    var onTap: (() -> Void)? = nil
 
+    @ViewBuilder
     var body: some View {
-        HStack(spacing: 5) {
+        let pills = HStack(spacing: 5) {
             ForEach(reactions, id: \.emoji) { reaction in
                 Text("\(reaction.emoji) \(reaction.count)")
                     .font(.system(.caption, design: .rounded, weight: .semibold))
@@ -1699,6 +1796,15 @@ private struct ReactionRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
+        .accessibilityIdentifier("chatReactionRow")
+
+        if let onTap {
+            Button(action: onTap) { pills }
+                .buttonStyle(.irisPlain)
+                .accessibilityHint("Tap to see who reacted")
+        } else {
+            pills
+        }
     }
 }
 

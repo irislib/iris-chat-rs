@@ -146,6 +146,15 @@ internal fun MessageBubble(
     var isInfoOpen by remember(message.id) { mutableStateOf(false) }
     var isActionsSheetOpen by remember(message.id) { mutableStateOf(false) }
     var isReactionPickerOpen by remember(message.id) { mutableStateOf(false) }
+    var isReactorsSheetOpen by remember(message.id) { mutableStateOf(false) }
+    if (isReactorsSheetOpen) {
+        MessageReactorsSheet(
+            reactors = message.reactors,
+            chat = chat,
+            appManager = appManager,
+            onDismiss = { isReactorsSheetOpen = false },
+        )
+    }
     if (isInfoOpen) {
         MessageInfoDialog(
             message = message,
@@ -436,6 +445,7 @@ internal fun MessageBubble(
             if (reactions.isNotEmpty()) {
                 ReactionRow(
                     reactions = reactions,
+                    onTap = { isReactorsSheetOpen = true },
                     modifier =
                         Modifier
                             // Tuck the reaction pills up under the bubble's
@@ -865,12 +875,55 @@ private fun ReplyPreview(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MessageReactorsSheet(
+    reactors: List<MessageReactor>,
+    chat: CurrentChatSnapshot?,
+    appManager: AppManager?,
+    onDismiss: () -> Unit,
+) {
+    val account = appManager?.account?.collectAsStateWithLifecycle()?.value
+    val visible = remember(reactors) { reactors.filter { it.emoji.isNotBlank() } }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(),
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 8.dp)
+                    .testTag("messageReactorsSheet"),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = "Reactions",
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+            visible.forEach { reactor ->
+                MessageInfoReactorRow(
+                    info = participantInfo(reactor.author, chat = chat, account = account),
+                    emoji = reactor.emoji,
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun ReactionRow(
     reactions: List<MessageReactionSnapshot>,
     modifier: Modifier = Modifier,
+    onTap: (() -> Unit)? = null,
 ) {
-    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+    Row(
+        modifier = modifier.then(if (onTap != null) Modifier.clickable { onTap() } else Modifier),
+        horizontalArrangement = Arrangement.spacedBy(5.dp),
+    ) {
         reactions.forEach { reaction ->
             Surface(
                 color =
