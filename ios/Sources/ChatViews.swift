@@ -539,10 +539,6 @@ private struct ChatMessageRow: View {
     @State private var showReactionPicker = false
     @State private var showActionsSheet = false
 
-    private var bodyParts: ReplyParsedMessage {
-        parseReplyEncodedMessage(message.body)
-    }
-
     private var showActionDock: Bool {
         IrisLayout.usesDesktopChrome && isHovering
     }
@@ -551,16 +547,18 @@ private struct ChatMessageRow: View {
         irisPostReactionSuggestionEmojis(reactions)
     }
 
-    private var bubbleShape: ChatMessageBubbleShape {
-        ChatMessageBubbleShape(
+    var body: some View {
+        // Hoist a couple of computed values that are read 3-4 times in this
+        // body so we don't pay for parsing/struct construction on every
+        // access. SwiftUI re-evaluates body whenever the parent ChatScreen
+        // re-runs, which happens on any AppManager publish.
+        let parsed = parseReplyEncodedMessage(message.body)
+        let bubble = ChatMessageBubbleShape(
             isOutgoing: message.isOutgoing,
             isFirstInCluster: isFirstInCluster,
             isLastInCluster: isLastInCluster
         )
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
+        return VStack(spacing: 0) {
             if showDayChip {
                 HStack {
                     Spacer()
@@ -609,7 +607,7 @@ private struct ChatMessageRow: View {
                     }
 
                     VStack(alignment: .trailing, spacing: 8) {
-                        if let reply = bodyParts.reply {
+                        if let reply = parsed.reply {
                             ReplyPreviewView(
                                 reply: reply,
                                 isOutgoing: message.isOutgoing,
@@ -624,10 +622,10 @@ private struct ChatMessageRow: View {
                             // capped by the row's HStack spacer).
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        if !bodyParts.body.isEmpty {
+                        if !parsed.body.isEmpty {
                             Text(
                                 linkedMessageAttributedString(
-                                    bodyParts.body,
+                                    parsed.body,
                                     linkColor: message.isOutgoing ? palette.onBubbleMine : palette.accentAlt
                                 )
                             )
@@ -667,11 +665,11 @@ private struct ChatMessageRow: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 11)
                     .background(
-                        bubbleShape
+                        bubble
                             .fill(message.isOutgoing ? palette.bubbleMine : palette.bubbleTheirs)
                     )
-                    .clipShape(bubbleShape)
-                    .contentShape(bubbleShape)
+                    .clipShape(bubble)
+                    .contentShape(bubble)
                     .onLongPressGesture(minimumDuration: 0.4) {
                         if !IrisLayout.usesDesktopChrome {
                             PlatformHaptics.messageMenuOpened()
@@ -681,7 +679,7 @@ private struct ChatMessageRow: View {
                     .sheet(isPresented: $showActionsSheet) {
                         ChatMessageActionsSheet(
                             message: message,
-                            bodyText: bodyParts.body,
+                            bodyText: parsed.body,
                             onReact: { emoji in
                                 showActionsSheet = false
                                 onReact(emoji)
