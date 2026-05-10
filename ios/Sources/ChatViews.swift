@@ -1827,16 +1827,170 @@ private struct ReactionRow: View {
 }
 
 extension View {
-    // No-op on iOS for now: SwiftUI's DragGesture has no horizontal-only
-    // variant, and the simultaneousGesture(...) we tried fought the chat
-    // ScrollView for touches, leaving scroll unreliable. Reply/Info are
-    // still reachable from the long-press action sheet. Bring this back
-    // when we wrap a UIPanGestureRecognizer that actually defers to
-    // vertical scroll the way Compose's detectHorizontalDragGestures does.
+    @ViewBuilder
     func applyMessageBubbleSwipe(onReply: @escaping () -> Void, onInfo: @escaping () -> Void) -> some View {
+#if os(iOS)
+        modifier(MessageBubbleSwipeActions(onReply: onReply, onInfo: onInfo))
+#else
         self
+#endif
     }
 }
+
+#if os(iOS)
+// Custom UIPanGestureRecognizer that fails itself in touchesMoved when the
+// initial slope is vertical, so UIKit hands the touch sequence to the
+// ScrollView underneath SwiftUI. This is the Signal-iOS approach
+// (DirectionalPanGestureRecognizer) — the only thing that lets us add a
+// horizontal swipe to a row inside a vertically-scrolling container without
+// the two gesture systems fighting for the touch.
+private final class IrisDirectionalPanGestureRecognizer: UIPanGestureRecognizer {
+    private var startPoint: CGPoint?
+    private let slop: CGFloat = 10
+
+    override func reset() {
+        super.reset()
+        startPoint = nil
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesBegan(touches, with: event)
+        startPoint = touches.first?.location(in: view)
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        super.touchesMoved(touches, with: event)
+        guard state == .possible,
+              let touch = touches.first,
+              let view,
+              let start = startPoint else { return }
+        let current = touch.location(in: view)
+        let dx = current.x - start.x
+        let dy = current.y - start.y
+        // Once we've moved past the slop, decide which axis dominates.
+        // Vertical → fail so the ScrollView's pan can take the touch.
+        if abs(dy) > slop && abs(dy) > abs(dx) {
+            state = .failed
+        }
+    }
+}
+
+private struct IrisDirectionalPanGesture: UIViewRepresentable {
+    var onChange: (CGFloat) -> Void
+    var onEnded: (CGFloat) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = true
+        let recognizer = IrisDirectionalPanGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handle(_:))
+        )
+        recognizer.maximumNumberOfTouches = 1
+        view.addGestureRecognizer(recognizer)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        context.coordinator.onChange = onChange
+        context.coordinator.onEnded = onEnded
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onChange: onChange, onEnded: onEnded)
+    }
+
+    @MainActor
+    final class Coordinator {
+        var onChange: (CGFloat) -> Void
+        var onEnded: (CGFloat) -> Void
+
+        init(onChange: @escaping (CGFloat) -> Void, onEnded: @escaping (CGFloat) -> Void) {
+            self.onChange = onChange
+            self.onEnded = onEnded
+        }
+
+        @objc func handle(_ recognizer: UIPanGestureRecognizer) {
+            let translation = recognizer.translation(in: recognizer.view)
+            switch recognizer.state {
+            case .began, .changed:
+                onChange(translation.x)
+            case .ended, .cancelled, .failed:
+                onEnded(translation.x)
+            default:
+                break
+            }
+        }
+    }
+}
+
+private struct MessageBubbleSwipeActions: ViewModifier {
+    let onReply: () -> Void
+    let onInfo: () -> Void
+
+    @State private var dragOffset: CGFloat = 0
+    @State private var hasFedHaptic = false
+
+    private let threshold: CGFloat = 60
+    private let maxOffset: CGFloat = 90
+
+    func body(content: Content) -> some View {
+        ZStack {
+            HStack(spacing: 0) {
+                Image(systemName: "arrowshape.turn.up.left.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .opacity(reveal(forwards: true))
+                    .scaleEffect(0.7 + 0.3 * reveal(forwards: true))
+                    .padding(.leading, 14)
+                Spacer(minLength: 0)
+                Image(systemName: "info.circle.fill")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .opacity(reveal(forwards: false))
+                    .scaleEffect(0.7 + 0.3 * reveal(forwards: false))
+                    .padding(.trailing, 14)
+            }
+
+            content.offset(x: dragOffset)
+        }
+        .background(
+            IrisDirectionalPanGesture(onChange: handleChange, onEnded: handleEnded)
+        )
+    }
+
+    private func handleChange(_ dx: CGFloat) {
+        let clamped = max(-maxOffset, min(maxOffset, dx))
+        dragOffset = clamped
+        let crossed = abs(clamped) >= threshold
+        if crossed && !hasFedHaptic {
+            PlatformHaptics.messageMenuOpened()
+            hasFedHaptic = true
+        } else if !crossed {
+            hasFedHaptic = false
+        }
+    }
+
+    private func handleEnded(_ dx: CGFloat) {
+        let final = max(-maxOffset, min(maxOffset, dx))
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.74)) {
+            dragOffset = 0
+        }
+        if final >= threshold {
+            onReply()
+        } else if final <= -threshold {
+            onInfo()
+        }
+        hasFedHaptic = false
+    }
+
+    private func reveal(forwards: Bool) -> Double {
+        let v = forwards ? dragOffset : -dragOffset
+        return Double(min(1, max(0, v / threshold)))
+    }
+}
+#endif
 
 private struct EscDismissesReply: ViewModifier {
     @Binding var replyTarget: ChatMessageSnapshot?
