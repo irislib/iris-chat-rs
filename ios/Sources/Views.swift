@@ -1908,9 +1908,9 @@ private struct NewChatCircleButton: View {
         Button(action: action) {
             Image(systemName: "square.and.pencil")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(palette.onAccent)
+                .foregroundStyle(palette.textPrimary)
                 .frame(width: 36, height: 36)
-                .background(Circle().fill(palette.accent))
+                .irisGlassSurface(in: Circle())
         }
         .buttonStyle(.irisPlain)
         .accessibilityLabel("New chat")
