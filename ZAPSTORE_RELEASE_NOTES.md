@@ -1,8 +1,9 @@
-# Iris Chat 2026.5.10.6
+# Iris Chat 2026.5.11.1
 
-- Reaction pills are now opaque and theme-aware instead of transparent purple; reactions you sent get a thin accent ring.
-- Quoted-reply preview stretches to the bubble's full inner width on iOS, and incoming-with-quote bubbles align left as expected.
-- Stay pinned to the bottom of the chat when a reaction lands or an attachment finishes loading mid-render — the latest bubble no longer drifts up out of view after the initial scroll. (No more force-snapping you back when you scroll up either.)
-- Nearby row keeps the wireless icon as the leading and shows a small avatar group of up to three nearby peers next to their names. The row's height stays stable when peers come and go.
-- iOS swipe-to-reply now only fires when you start the drag on the bubble itself; dragging from the gutter or below a reaction pill leaves the chat free to scroll, the same way Signal scopes its swipe gesture.
-- "Copy text" is reachable from the message overflow menus on every platform.
+- Signal-style chat-list cleanup: rows no longer have hairline dividers between them, and the header avatar + new-chat button now share the same 16pt gutter as the chat rows below.
+- New-chat button in the chat list is now a translucent glass disc instead of a solid accent circle — matches the composer's glass attach button.
+- Dark theme reset to pure black (background, panel, panelAlt sliders all dropped to Signal-iOS's `#000000` / `#161616` / `#262626` values). Light theme stays pure white.
+- Header chrome fades from the bg color at the top to fully transparent at the bottom — no toolbar tone lift, no hairline divider. Same fade shape in both themes.
+- "Message info" is now "Message details" across iOS, Android, Linux, and Windows.
+- Bigger tap targets on the scroll-to-bottom chevron and the send button — off-center thumb taps no longer slip through the composer's transparent gaps to the bubble underneath.
+- Composer alignment fixes on iOS: top-bar back button shares an x with the composer's plus button, and the input pill is height-matched to the glass attach/send buttons so `.bottom` alignment reads as centered.
