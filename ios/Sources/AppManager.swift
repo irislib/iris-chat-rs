@@ -2079,13 +2079,18 @@ private let irisUpdateSession: URLSession = {
     config.timeoutIntervalForResource = 15
     config.waitsForConnectivity = false
     config.requestCachePolicy = .reloadIgnoringLocalCacheData
-    // Skip HTTP/3 negotiation. On networks where the server doesn't
-    // accept QUIC packets cleanly, URLSession waits ~30 s for the
-    // handshake to fail before retrying over HTTP/2, even though the
-    // server happily serves HTTP/2 the whole time.
-    if #available(macOS 12.0, iOS 15.0, *) {
+    // Skip HTTP/3 negotiation where the SDK exposes the toggle. On
+    // networks where the server doesn't accept QUIC packets cleanly,
+    // URLSession otherwise waits ~30 s for the handshake to fail before
+    // retrying over HTTP/2, even though the server happily serves
+    // HTTP/2 the whole time. The property is iOS-only in our SDK
+    // window — macOS Foundation here doesn't expose it, but the
+    // tighter timeouts above already shave most of the stall.
+    #if os(iOS)
+    if #available(iOS 15.0, *) {
         config.assumesHTTP3Capable = false
     }
+    #endif
     return URLSession(configuration: config)
 }()
 
