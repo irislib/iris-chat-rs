@@ -1,4 +1,4 @@
-# Iris Chat 2026.5.11.2
+# Iris Chat 2026.5.11.3
 
 - Dark theme is now pure black across iOS, Android, Linux, and Windows — `#000000` background, `#161616` panel, `#262626` panel-alt. Light theme stays pure white.
 - Header chrome fades from the bg color at the top to fully transparent at the bottom (no toolbar tone lift, no hairline divider). Identical fade shape in both themes.
@@ -9,3 +9,4 @@
 - "Message info" is now "Message details" everywhere.
 - Android styling tightened to match signal-android: incoming bubble surface variant (#303133 dark / #E7EBF3 light), 20dp avatar→title gap in the chat list row, SemiBold top-bar title.
 - Reaction pills (Android + Linux) now use a chat-background-coloured ring so the chip reads as a floating element tucked under the bubble.
+- iOS offline banner is now a small glass capsule with an accent-coloured wifi.slash glyph instead of a full-width orange bar — the warning's still there without dominating the screen.
