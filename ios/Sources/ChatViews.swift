@@ -274,7 +274,7 @@ struct ChatScreen: View {
                                         // the bubbles below, the arrow
                                         // itself carries the accent
                                         // colour for visibility.
-                                        Image(systemName: "arrow.down")
+                                        Image(systemName: "chevron.down")
                                             .font(.system(size: 17, weight: .bold))
                                             .foregroundStyle(palette.textPrimary)
                                             .frame(width: 44, height: 44)
@@ -1881,26 +1881,20 @@ private struct ReactionRow: View {
         let pills = HStack(spacing: 5) {
             ForEach(reactions, id: \.emoji) { reaction in
                 Text("\(reaction.emoji) \(reaction.count)")
-                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .font(.system(.caption, design: .rounded, weight: reaction.reactedByMe ? .bold : .semibold))
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
-                    // Opaque, theme-aware pill: panelAlt is one shade darker
-                    // than the chat background and the incoming bubble in
-                    // both light and dark themes, so the pill reads as a
-                    // distinct attached element rather than a transparent
-                    // tint of whatever sits underneath.
                     .background(
                         Capsule(style: .continuous)
                             .fill(palette.panelAlt)
                     )
-                    // Subtle accent ring marks the reactions you sent without
-                    // reintroducing the previous see-through purple fill.
+                    // Chat-background-coloured ring carves a visible gap
+                    // around the pill so it reads as a floating chip
+                    // when tucked under the bubble's lower edge — same
+                    // trick Signal uses.
                     .overlay(
                         Capsule(style: .continuous)
-                            .strokeBorder(
-                                reaction.reactedByMe ? palette.accent : Color.clear,
-                                lineWidth: 1.2
-                            )
+                            .strokeBorder(palette.background, lineWidth: 2)
                     )
             }
         }

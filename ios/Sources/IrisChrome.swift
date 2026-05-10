@@ -1016,12 +1016,19 @@ struct IrisChatRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            HStack(alignment: .top, spacing: 14) {
+            // Signal-style row: 48pt avatar, title in default headline
+            // weight (not extra-bold), preview at .subheadline body
+            // weight, time label at the same .subheadline so it sits
+            // on the same baseline as the title and is comfortably
+            // readable. 12pt horizontal gap between avatar and the
+            // text column matches Signal-iOS's `ChatListCell` spec.
+            HStack(alignment: .top, spacing: 12) {
                 if let leading {
                     leading
                 } else {
                     IrisAvatar(
                         label: title,
+                        size: 48,
                         emphasize: unreadCount > 0,
                         pictureUrl: pictureUrl,
                         preferences: preferences,
@@ -1029,24 +1036,24 @@ struct IrisChatRow: View {
                     )
                 }
 
-                VStack(alignment: .leading, spacing: 5) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
                             Text(title)
-                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .font(.system(.headline, design: .rounded))
                                 .foregroundStyle(palette.textPrimary)
                                 .lineLimit(1)
 
                             if isMuted {
                                 Image(systemName: "bell.slash.fill")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(palette.muted)
                                     .accessibilityLabel("muted")
                             }
 
                             if isPinned {
                                 Image(systemName: "pin.fill")
-                                    .font(.system(size: 11, weight: .semibold))
+                                    .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(palette.muted)
                                     .accessibilityLabel("pinned")
                             }
@@ -1057,7 +1064,7 @@ struct IrisChatRow: View {
 
                         if let timeLabel, !timeLabel.isEmpty {
                             Text(timeLabel)
-                                .font(.system(.caption, design: .rounded, weight: .medium))
+                                .font(.system(.subheadline, design: .rounded))
                                 .foregroundStyle(palette.muted)
                                 .lineLimit(1)
                         }
@@ -1085,15 +1092,17 @@ struct IrisChatRow: View {
                 }
 
                 Text(unreadCount > 99 ? "99+" : "\(max(unreadCount, 1))")
-                    .font(.system(.caption, design: .rounded, weight: .bold))
+                    .font(.system(.footnote, design: .rounded, weight: .semibold))
                     .foregroundStyle(unreadCount > 0 ? palette.onAccent : Color.clear)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .frame(minWidth: 22)
                     .background(Capsule(style: .continuous).fill(unreadCount > 0 ? palette.accent : Color.clear))
+                    .padding(.top, 2)
                     .accessibilityHidden(unreadCount == 0)
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.vertical, 12)
             .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
@@ -1163,13 +1172,14 @@ struct IrisDayChip: View {
     var body: some View {
         Text(text)
             .font(.system(.caption, design: .rounded, weight: .semibold))
-            .foregroundStyle(palette.muted)
+            .foregroundStyle(palette.textPrimary)
             .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: IrisLayout.pillCornerRadius, style: .continuous)
-                    .fill(palette.panel.opacity(0.64))
-            )
+            .padding(.vertical, 6)
+            // Signal-style glass day separator. iOS 26+ gets a real
+            // capsule glass effect; older iOS falls back to a
+            // regular-material blur — both via IrisGlassSurface so
+            // the same modifier path applies as the composer and FAB.
+            .irisGlassSurface(in: Capsule(style: .continuous), isInteractive: false)
     }
 }
 

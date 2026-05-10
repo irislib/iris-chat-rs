@@ -547,21 +547,25 @@ fun IrisChatListRow(
     modifier: Modifier = Modifier,
 ) {
     val palette = IrisTheme.palette
+    // Signal-Android spec: 48dp avatar, BodyLarge title in onSurface,
+    // BodyMedium preview in secondary tint, BodyMedium time in
+    // tertiary tint, 16dp side gutter, 10dp top/bottom padding so the
+    // row sits at the 84dp min-height when the preview is one line.
     Row(
         modifier =
             modifier
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         if (leadingContent != null) {
             leadingContent()
         } else {
-            IrisAvatar(label = title, size = 42.dp, imageUrl = imageUrl, imageData = imageData)
+            IrisAvatar(label = title, size = 48.dp, imageUrl = imageUrl, imageData = imageData)
         }
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -575,7 +579,8 @@ fun IrisChatListRow(
                     Text(
                         text = title,
                         modifier = Modifier.weight(1f, fill = false),
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
@@ -599,7 +604,7 @@ fun IrisChatListRow(
                 if (timeLabel != null) {
                     Text(
                         text = timeLabel,
-                        style = MaterialTheme.typography.labelMedium,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = palette.muted,
                     )
                 }

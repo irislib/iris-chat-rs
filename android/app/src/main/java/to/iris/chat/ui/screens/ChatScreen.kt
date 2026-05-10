@@ -413,6 +413,11 @@ fun ChatScreen(
                             val isLastInCluster = next == null || startsMessageCluster(message, next, chat.kind)
 
                             if (showDayChip) {
+                                // Signal-Android style: a tonal-elevation
+                                // capsule on the surfaceContainerHighest
+                                // tier so the date chip floats over the
+                                // timeline without the harsh "halftone"
+                                // alpha tint the previous version used.
                                 Box(
                                     modifier =
                                         Modifier
@@ -421,14 +426,15 @@ fun ChatScreen(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     Surface(
-                                        color = IrisTheme.palette.panel.copy(alpha = 0.58f),
+                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
                                         shape = RoundedCornerShape(100.dp),
+                                        tonalElevation = 2.dp,
                                     ) {
                                         Text(
                                             text = formatTimelineDay(message.createdAtSecs.toLong()),
                                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = IrisTheme.palette.muted,
+                                            color = MaterialTheme.colorScheme.onSurface,
                                         )
                                     }
                                 }
