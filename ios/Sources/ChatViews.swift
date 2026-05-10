@@ -1838,102 +1838,30 @@ extension View {
 }
 
 #if os(iOS)
-// Custom UIPanGestureRecognizer that fails itself in touchesMoved when the
-// initial slope is vertical, so UIKit hands the touch sequence to the
-// ScrollView underneath SwiftUI. This is the Signal-iOS approach
-// (DirectionalPanGestureRecognizer) — the only thing that lets us add a
-// horizontal swipe to a row inside a vertically-scrolling container without
-// the two gesture systems fighting for the touch.
-private final class IrisDirectionalPanGestureRecognizer: UIPanGestureRecognizer {
-    private var startPoint: CGPoint?
-    private let slop: CGFloat = 10
-
-    override func reset() {
-        super.reset()
-        startPoint = nil
-    }
-
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
-        super.touchesBegan(touches, with: event)
-        startPoint = touches.first?.location(in: view)
-    }
-
-    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
-        super.touchesMoved(touches, with: event)
-        guard state == .possible,
-              let touch = touches.first,
-              let view,
-              let start = startPoint else { return }
-        let current = touch.location(in: view)
-        let dx = current.x - start.x
-        let dy = current.y - start.y
-        // Once we've moved past the slop, decide which axis dominates.
-        // Vertical → fail so the ScrollView's pan can take the touch.
-        if abs(dy) > slop && abs(dy) > abs(dx) {
-            state = .failed
-        }
-    }
-}
-
-private struct IrisDirectionalPanGesture: UIViewRepresentable {
-    var onChange: (CGFloat) -> Void
-    var onEnded: (CGFloat) -> Void
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        view.isUserInteractionEnabled = true
-        let recognizer = IrisDirectionalPanGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handle(_:))
-        )
-        recognizer.maximumNumberOfTouches = 1
-        view.addGestureRecognizer(recognizer)
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.onChange = onChange
-        context.coordinator.onEnded = onEnded
-    }
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onChange: onChange, onEnded: onEnded)
-    }
-
-    @MainActor
-    final class Coordinator {
-        var onChange: (CGFloat) -> Void
-        var onEnded: (CGFloat) -> Void
-
-        init(onChange: @escaping (CGFloat) -> Void, onEnded: @escaping (CGFloat) -> Void) {
-            self.onChange = onChange
-            self.onEnded = onEnded
-        }
-
-        @objc func handle(_ recognizer: UIPanGestureRecognizer) {
-            let translation = recognizer.translation(in: recognizer.view)
-            switch recognizer.state {
-            case .began, .changed:
-                onChange(translation.x)
-            case .ended, .cancelled, .failed:
-                onEnded(translation.x)
-            default:
-                break
-            }
-        }
-    }
-}
-
+// SwiftUI doesn't expose UIKit's `state = .failed` semantics, so we can't
+// match Signal's UIPanGestureRecognizer subclass approach (a previous
+// attempt wrapped the recognizer via UIHostingController, which broke
+// XCTest hit-testing on the inner Text). The simultaneousGesture path
+// below approximates the same intent: a 22pt activation distance keeps
+// short scroll drags from triggering us, and an axis lock based on the
+// first past-threshold sample keeps us from offsetting on diagonal drags
+// where vertical dominates.
 private struct MessageBubbleSwipeActions: ViewModifier {
     let onReply: () -> Void
     let onInfo: () -> Void
 
     @State private var dragOffset: CGFloat = 0
     @State private var hasFedHaptic = false
+    @State private var locked: Axis? = nil
 
     private let threshold: CGFloat = 60
     private let maxOffset: CGFloat = 90
+    // High enough to clear the ScrollView's ~10pt pan threshold so vertical
+    // scrolls win the gesture race; low enough that a deliberate horizontal
+    // swipe still feels responsive.
+    private let activationDistance: CGFloat = 22
+
+    private enum Axis { case horizontal, vertical }
 
     func body(content: Content) -> some View {
         ZStack {
@@ -1955,8 +1883,44 @@ private struct MessageBubbleSwipeActions: ViewModifier {
 
             content.offset(x: dragOffset)
         }
-        .background(
-            IrisDirectionalPanGesture(onChange: handleChange, onEnded: handleEnded)
+        // simultaneousGesture lets the chat ScrollView's pan run alongside us;
+        // the activation threshold + axis lock keep us from offsetting on
+        // vertical drags even when the gesture fires.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: activationDistance, coordinateSpace: .local)
+                .onChanged { value in
+                    let dx = value.translation.width
+                    let dy = value.translation.height
+                    if locked == nil {
+                        // First sample past the threshold sets the axis. If
+                        // vertical wins the slope test, lock to .vertical and
+                        // never touch dragOffset for the rest of this drag.
+                        locked = abs(dx) > abs(dy) ? .horizontal : .vertical
+                    }
+                    guard locked == .horizontal else { return }
+                    let clamped = max(-maxOffset, min(maxOffset, dx))
+                    dragOffset = clamped
+                    let crossed = abs(clamped) >= threshold
+                    if crossed && !hasFedHaptic {
+                        PlatformHaptics.messageMenuOpened()
+                        hasFedHaptic = true
+                    } else if !crossed {
+                        hasFedHaptic = false
+                    }
+                }
+                .onEnded { value in
+                    let final = locked == .horizontal ? max(-maxOffset, min(maxOffset, value.translation.width)) : 0
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.74)) {
+                        dragOffset = 0
+                    }
+                    if final >= threshold {
+                        onReply()
+                    } else if final <= -threshold {
+                        onInfo()
+                    }
+                    hasFedHaptic = false
+                    locked = nil
+                }
         )
     }
 
