@@ -99,7 +99,9 @@ fn nearby_avatar_stack(
     manager: &Rc<AppManager>,
 ) -> gtk::Widget {
     let take = peers.len().min(3);
-    let avatar_size: i32 = 16;
+    // Match the caption-style subtitle line height — keeps the row's
+    // overall height stable when the avatar stack toggles in/out.
+    let avatar_size: i32 = 14;
     let overlap: i32 = 6;
     let stride = avatar_size - overlap;
     let stack_width = stride * (take as i32 - 1) + avatar_size;

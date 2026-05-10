@@ -961,7 +961,10 @@ struct IrisChatRow: View {
                         Text(preview)
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(palette.muted)
-                            .lineLimit(2)
+                            // When an inline avatar group sits to the left,
+                            // clamp to a single line so the row's height
+                            // stays stable when peers come and go.
+                            .lineLimit(previewLeading == nil ? 2 : 1)
                     }
 
                     if let subtitle, !subtitle.isEmpty {

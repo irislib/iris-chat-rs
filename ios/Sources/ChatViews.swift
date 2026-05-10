@@ -773,6 +773,12 @@ private struct ChatMessageRow: View, Equatable {
                         .irisDismissOnMacOutsideClick { showReactionPicker = false }
                     }
                     .accessibilityIdentifier("chatMessage-\(message.id)")
+                    // Swipe-to-reply is scoped to the bubble itself, not
+                    // the whole row, so dragging from the gutter or below a
+                    // reaction pill leaves the chat ScrollView free to
+                    // scroll — matches Signal's UIPanGestureRecognizer
+                    // attached to the cell's bubble subview.
+                    .applyMessageBubbleSwipe(onReply: onReply, onInfo: onInfo)
 
                     if showActionDock && !message.isOutgoing {
                         ChatMessageActionDock(
@@ -801,7 +807,6 @@ private struct ChatMessageRow: View, Equatable {
                 }
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
-            .applyMessageBubbleSwipe(onReply: onReply, onInfo: onInfo)
             .contentShape(Rectangle())
             .onHover { isHovering = $0 }
             .padding(.top, isFirstInCluster ? 10 : 4)

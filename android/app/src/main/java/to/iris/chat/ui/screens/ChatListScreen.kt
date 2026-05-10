@@ -511,7 +511,9 @@ private fun nearbyWifiStatusLabel(status: String): String =
 // visually separated, same trick as iOS.
 @Composable
 private fun NearbyAvatarStack(peers: List<IrisNearbyService.Peer>) {
-    val avatarSize = 18.dp
+    // Stays smaller than the bodyMedium line height so the row's preview
+    // row doesn't grow taller when the stack appears.
+    val avatarSize = 16.dp
     val overlap = 6.dp
     val stride = avatarSize - overlap
     val stackWidth = stride * (peers.size - 1) + avatarSize

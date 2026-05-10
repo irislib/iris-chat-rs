@@ -158,6 +158,10 @@ public partial class DesktopShell : UserControl
             Orientation = Orientation.Horizontal,
             Margin = new Thickness(0, 2, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
+            // Pin the height so the row doesn't grow vertically when the
+            // avatar stack toggles in/out — the subtitle text alone is
+            // ~17px, and the 16px avatars below fit inside that.
+            MinHeight = 18,
         };
         if (snapshot.peers.Length > 0)
         {
@@ -221,7 +225,7 @@ public partial class DesktopShell : UserControl
     // ("Boromir nearby"). Up to three avatars overlap by ~6px each.
     private static FrameworkElement BuildNearbyAvatarStack(DesktopNearbyPeerSnapshot[] peers)
     {
-        const double AvatarSize = 18;
+        const double AvatarSize = 16;
         const double Overlap = 6;
         var stride = AvatarSize - Overlap;
         var take = Math.Min(peers.Length, 3);

@@ -2243,7 +2243,9 @@ private struct NearbyAvatarStack: View {
     let peers: [IrisNearbyPeer]
     let preferences: PreferencesSnapshot?
     let manager: AppManager?
-    var avatarSize: CGFloat = 18
+    // Stays smaller than the subheadline line height so the row's preview
+    // HStack doesn't grow taller when the stack appears.
+    var avatarSize: CGFloat = 16
 
     private var stride: CGFloat { avatarSize - 6 }
 
