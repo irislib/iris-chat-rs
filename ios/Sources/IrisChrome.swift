@@ -132,6 +132,16 @@ extension View {
     }
 }
 
+/// Whether `defaultScrollAnchor(.bottom)` is in effect. Used by the
+/// chat timeline to suppress its own manual initial-scroll dance on
+/// the OS versions where the system already handles it.
+var irisDefaultScrollAnchorAvailable: Bool {
+    if #available(iOS 17.0, macOS 14.0, *) {
+        return true
+    }
+    return false
+}
+
 enum IrisLayout {
     #if canImport(AppKit)
     static let usesDesktopChrome = true
@@ -1287,6 +1297,13 @@ struct IrisComposerBar: View {
                 if canSend || isSending {
                     Button(action: submitDraft) {
                         IrisSendButtonLabel(isSending: isSending)
+                            // Outer 48-pt content shape so a slightly
+                            // off-center thumb tap still lands on the
+                            // button rather than slipping past it to
+                            // an outgoing bubble visible through the
+                            // composer's transparent gaps.
+                            .frame(width: 48, height: 48)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.irisPlain)
                     .disabled(!canSend)

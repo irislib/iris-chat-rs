@@ -273,7 +273,12 @@ struct ChatScreen: View {
                                         // translucent pane that adapts to
                                         // the bubbles below, the arrow
                                         // itself carries the accent
-                                        // colour for visibility.
+                                        // colour for visibility. The
+                                        // outer 60×60 contentShape lets
+                                        // off-center thumb taps still
+                                        // land on the button instead of
+                                        // slipping through to a bubble
+                                        // underneath.
                                         Image(systemName: "chevron.down")
                                             .font(.system(size: 17, weight: .bold))
                                             .foregroundStyle(palette.textPrimary)
@@ -286,9 +291,11 @@ struct ChatScreen: View {
                                                         lineWidth: 0.5
                                                     )
                                             )
+                                            .frame(width: 60, height: 60)
+                                            .contentShape(Rectangle())
                                     }
-                                    .padding(.trailing, 16)
-                                    .padding(.bottom, 16)
+                                    .padding(.trailing, 8)
+                                    .padding(.bottom, 8)
                                     .buttonStyle(.irisPlain)
                                     .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
                                     .accessibilityIdentifier("chatJumpToBottom")
@@ -448,13 +455,21 @@ struct ChatScreen: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+        // Prefer the last message's own id over the trailing 1pt anchor:
+        // SwiftUI must realise & measure the targeted row, so a scroll to
+        // the actual final bubble forces the LazyVStack to lay it out
+        // and lands the bottom of that bubble at the viewport's bottom.
+        // Scrolling to the empty anchor view doesn't have that effect —
+        // SwiftUI happily resolves it to its current (wrong) position
+        // when intermediate rows are still lazy.
+        let target = chat?.messages.last?.id ?? ChatTimelineAnchor.bottom
         DispatchQueue.main.async {
             if animated {
                 withAnimation(.easeOut(duration: 0.2)) {
-                    proxy.scrollTo(ChatTimelineAnchor.bottom, anchor: .bottom)
+                    proxy.scrollTo(target, anchor: .bottom)
                 }
             } else {
-                proxy.scrollTo(ChatTimelineAnchor.bottom, anchor: .bottom)
+                proxy.scrollTo(target, anchor: .bottom)
             }
         }
     }
