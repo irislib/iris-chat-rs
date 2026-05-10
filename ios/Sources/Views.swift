@@ -4656,16 +4656,13 @@ private struct BackgroundFill: View {
     @Environment(\.irisPalette) private var palette
 
     var body: some View {
-        LinearGradient(
-            colors: [
-                palette.background,
-                palette.background,
-                palette.panelAlt.opacity(0.28)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .ignoresSafeArea()
+        // Solid palette.background — a previous gradient mixed in 28%
+        // panelAlt at the bottom, which lifted the lower half of every
+        // screen with no explicit .background of its own (e.g., the
+        // chat screen) into a noticeably greyer tone than the near-
+        // black palette value the rest of the app is tuned for.
+        palette.background
+            .ignoresSafeArea()
     }
 }
 
