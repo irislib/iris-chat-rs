@@ -2061,38 +2061,9 @@ private func loadIrisUpdateData(from url: URL) async throws -> Data {
     if url.isFileURL {
         return try Data(contentsOf: url)
     }
-    var request = URLRequest(url: url)
-    // The manifest is a ~2 KB JSON. URLSession.shared's defaults
-    // (60 s request timeout, HTTP/3-preferred, waitsForConnectivity =
-    // true) routinely turned this into a 30-second stall on macOS when
-    // the QUIC handshake fell back to HTTP/2 — something curl never
-    // saw because curl is HTTP/2 by default.
-    request.timeoutInterval = 8
-    request.cachePolicy = .reloadIgnoringLocalCacheData
-    let (data, _) = try await irisUpdateSession.data(for: request)
+    let (data, _) = try await URLSession.shared.data(from: url)
     return data
 }
-
-private let irisUpdateSession: URLSession = {
-    let config = URLSessionConfiguration.ephemeral
-    config.timeoutIntervalForRequest = 8
-    config.timeoutIntervalForResource = 15
-    config.waitsForConnectivity = false
-    config.requestCachePolicy = .reloadIgnoringLocalCacheData
-    // Skip HTTP/3 negotiation where the SDK exposes the toggle. On
-    // networks where the server doesn't accept QUIC packets cleanly,
-    // URLSession otherwise waits ~30 s for the handshake to fail before
-    // retrying over HTTP/2, even though the server happily serves
-    // HTTP/2 the whole time. The property is iOS-only in our SDK
-    // window — macOS Foundation here doesn't expose it, but the
-    // tighter timeouts above already shave most of the stall.
-    #if os(iOS)
-    if #available(iOS 15.0, *) {
-        config.assumesHTTP3Capable = false
-    }
-    #endif
-    return URLSession(configuration: config)
-}()
 
 private func moveIrisDownloadedUpdate(_ downloadedUrl: URL, from assetUrl: URL) throws -> URL {
     let fileName = assetUrl.lastPathComponent.isEmpty ? "iris-chat-update" : assetUrl.lastPathComponent

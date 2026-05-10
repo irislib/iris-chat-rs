@@ -6,4 +6,3 @@
 - Nearby row keeps the wireless icon as the leading and shows a small avatar group of up to three nearby peers next to their names. The row's height stays stable when peers come and go.
 - iOS swipe-to-reply now only fires when you start the drag on the bubble itself; dragging from the gutter or below a reaction pill leaves the chat free to scroll, the same way Signal scopes its swipe gesture.
 - "Copy text" is reachable from the message overflow menus on every platform.
-- macOS "Check for updates" finishes in roughly the same time `curl` does — the previous ~30 s wait was URLSession falling back from HTTP/3 to HTTP/2 on networks where the QUIC handshake stalled.
