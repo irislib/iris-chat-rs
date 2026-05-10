@@ -71,6 +71,29 @@ impl AppCore {
         receipt_type: &str,
         message_ids: Vec<String>,
     ) {
+        if message_ids.is_empty() {
+            return;
+        }
+        // Within a batch (catch-up flurry, multi-action handling, …), queue
+        // ids by (chat, receipt_type) and let exit_batch flush them all at
+        // once. Outside a batch — e.g. a single `markMessagesSeen` from the
+        // shell — fall through and send immediately, same as before.
+        if self.batch_depth > 0 {
+            self.pending_outgoing_receipts
+                .entry((chat_id.to_string(), receipt_type.to_string()))
+                .or_default()
+                .extend(message_ids);
+            return;
+        }
+        self.send_receipt_inner(chat_id, receipt_type, message_ids);
+    }
+
+    pub(super) fn send_receipt_inner(
+        &mut self,
+        chat_id: &str,
+        receipt_type: &str,
+        message_ids: Vec<String>,
+    ) {
         let Some(owner_pubkey) = self
             .logged_in
             .as_ref()

@@ -183,6 +183,13 @@ pub struct AppCore {
     batch_depth: u32,
     batch_dirty_state: bool,
     batch_dirty_persist: bool,
+    /// Outgoing read-receipts queued during the current batch. Each
+    /// `send_receipt` call inside an `enter_batch()/exit_batch()` scope
+    /// pushes its message ids here keyed by `(chat_id, receipt_type)`,
+    /// and the outermost `exit_batch()` flushes them as one relay event
+    /// per (chat, type). Without this a 10-message catch-up would emit
+    /// 10 separate `delivered` events; with it, one event with 10 e-tags.
+    pending_outgoing_receipts: BTreeMap<(String, String), Vec<String>>,
     /// Last `AppState` we successfully pushed across the FFI boundary, kept
     /// so `emit_state_inner` can skip pushes that don't change anything
     /// user-visible (a full `AppState` JNI marshal + Compose recomposition

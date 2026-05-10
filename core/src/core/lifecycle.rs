@@ -81,6 +81,7 @@ impl AppCore {
             batch_depth: 0,
             batch_dirty_state: false,
             batch_dirty_persist: false,
+            pending_outgoing_receipts: BTreeMap::new(),
             last_emitted_state: None,
             app_store,
             _data_dir_lock: data_dir_lock,

@@ -588,6 +588,18 @@ impl AppCore {
             self.rebuild_state_inner();
             self.emit_state_inner();
         }
+        // Flush any receipts queued during the batch as one event per
+        // (chat_id, receipt_type) so a 10-message catch-up sends one
+        // `delivered` event with 10 e-tags instead of 10 separate events.
+        let pending = std::mem::take(&mut self.pending_outgoing_receipts);
+        for ((chat_id, receipt_type), mut ids) in pending {
+            ids.sort();
+            ids.dedup();
+            if ids.is_empty() {
+                continue;
+            }
+            self.send_receipt_inner(&chat_id, &receipt_type, ids);
+        }
     }
 }
 
