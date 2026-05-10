@@ -382,11 +382,12 @@ struct IrisTopBar: View {
         }
         // Tight horizontal padding — the chevron / attach button
         // sits closer to the screen edge so it lines up cleanly with
-        // the composer's leading control. No vertical padding: the
-        // bar has no background of its own, the gradient (drawn at
-        // the NavigationShell level) handles the visual breathing
-        // room behind the title cluster.
+        // the composer's leading control. 6pt bottom padding gives
+        // the title cluster breathing room from whatever sits
+        // beneath the bar (the offline banner stripe, the day chip
+        // at the top of the timeline, …).
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 12 : 8)
+        .padding(.bottom, 6)
         .frame(maxWidth: IrisLayout.chromeMaxWidth)
         .frame(maxWidth: .infinity)
     }
@@ -1323,11 +1324,12 @@ struct IrisComposerBar: View {
             .animation(.spring(response: 0.32, dampingFraction: 0.72), value: isSending)
         }
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 8)
-        // No outer background and no vertical padding: the composer
-        // is just three floating glass elements, the safe-area inset
-        // handles bottom positioning. Each element (attach, input
-        // pill, send) carries its own glass surface so the timeline
-        // scrolls cleanly through the gaps between them.
+        // 6pt vertical breathing room around the glass elements so
+        // the composer doesn't sit flush against the keyboard top
+        // edge (or the home-indicator on devices without a keyboard).
+        // No outer background — the elements still float as separate
+        // glass discs over the timeline.
+        .padding(.vertical, 6)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatComposerBar")
         .overlay {
