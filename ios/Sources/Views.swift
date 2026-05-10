@@ -587,28 +587,38 @@ struct NavigationShell<Content: View>: View {
                     )
                     offlineBanner
                 }
-                // The header gradient sits behind the top bar AND
-                // the status bar, fading out into the chat content
-                // below. Has to be drawn here (not inside IrisTopBar)
-                // because .safeAreaInset content can't extend its
-                // background up into the system status bar with the
-                // normal .ignoresSafeArea modifier.
+                // The header chrome sits behind the top bar AND the
+                // status bar. Matches Signal's UINavigationBar setup:
+                // UIBlurEffect(.regular) backdrop + a muted palette
+                // tint on top + a 1pt hairline divider at the bottom.
+                // On iOS 26 Material auto-promotes to the system glass
+                // look, same path Apple's stock nav bar takes. Drawn
+                // here (not inside IrisTopBar) because .safeAreaInset
+                // content can't extend its background up into the
+                // system status bar with the normal .ignoresSafeArea.
                 .background(alignment: .top) {
-                    LinearGradient(
-                        stops: [
-                            .init(color: palette.background.opacity(0.82), location: 0.0),
-                            .init(color: palette.background.opacity(0.78), location: 0.65),
-                            .init(color: palette.background.opacity(0.0), location: 1.0)
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .ignoresSafeArea(.all, edges: .top)
+                    NavigationHeaderChrome(palette: palette)
+                        .ignoresSafeArea(.all, edges: .top)
                 }
             }
 #if os(iOS)
             .modifier(IrisSwipeBackModifier(enabled: canGoBack, onBack: onBack))
 #endif
+    }
+}
+
+private struct NavigationHeaderChrome: View {
+    let palette: IrisPalette
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            Rectangle()
+                .fill(.regularMaterial)
+                .overlay(palette.background.opacity(0.5))
+            Rectangle()
+                .fill(palette.border)
+                .frame(height: 1)
+        }
     }
 }
 
@@ -1863,10 +1873,6 @@ struct ChatListScreen: View {
             LazyVStack(spacing: 0) {
 #if os(iOS) || os(macOS)
                 NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
-                if !manager.state.chatList.isEmpty {
-                    Divider()
-                        .overlay(palette.border)
-                }
 #endif
 
                 if manager.state.chatList.isEmpty {
@@ -1885,11 +1891,6 @@ struct ChatListScreen: View {
                             preferences: preferences
                         )
                         .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
-
-                        if index < manager.state.chatList.count - 1 {
-                            Divider()
-                                .overlay(palette.border)
-                        }
                     }
                 }
             }
@@ -2255,10 +2256,10 @@ private struct NearbyWirelessAvatar: View {
             Circle().fill(palette.panelAlt)
             Circle().stroke(palette.border, lineWidth: 1)
             Image(systemName: "dot.radiowaves.left.and.right")
-                .font(.system(size: 18, weight: .semibold))
+                .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
         }
-        .frame(width: 42, height: 42)
+        .frame(width: 48, height: 48)
     }
 }
 

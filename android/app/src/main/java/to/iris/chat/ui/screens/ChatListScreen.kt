@@ -60,7 +60,6 @@ import to.iris.chat.rust.Screen
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisChatListRow
-import to.iris.chat.ui.components.IrisDivider
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
@@ -229,7 +228,6 @@ fun ChatListScreen(
                                 color = IrisTheme.palette.muted,
                             )
                         }
-                        IrisDivider(modifier = Modifier.padding(start = 70.dp))
                     }
                 }
             }
@@ -447,7 +445,6 @@ private fun NearbyChatListItem(
             onClick = onClick,
             modifier = Modifier.testTag("nearbyChatRow"),
         )
-        IrisDivider(modifier = Modifier.padding(start = 70.dp))
     }
 }
 
@@ -545,7 +542,7 @@ private fun NearbyChatIcon(visible: Boolean) {
     Box(
         modifier =
             Modifier
-                .size(42.dp)
+                .size(48.dp)
                 .background(if (visible) palette.accent else palette.panelAlt, CircleShape),
         contentAlignment = Alignment.Center,
     ) {

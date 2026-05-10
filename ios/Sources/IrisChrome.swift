@@ -198,11 +198,11 @@ struct IrisPalette {
     )
 
     static let dark = IrisPalette(
-        background: Color(hex: 0x101010),
-        panel: Color(hex: 0x242424),
-        panelAlt: Color(hex: 0x343434),
+        background: Color(hex: 0x1B1B1B),
+        panel: Color(hex: 0x2A2A2A),
+        panelAlt: Color(hex: 0x3A3A3A),
         border: Color.white.opacity(0.12),
-        toolbar: Color(hex: 0x181818).opacity(0.96),
+        toolbar: Color(hex: 0x1F1F1F).opacity(0.96),
         bubbleMine: Color(hex: 0x702ACE),
         bubbleTheirs: Color(hex: 0x3A3A3A),
         accent: Color(hex: 0x702ACE),
@@ -318,11 +318,12 @@ struct IrisTopBar: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            Color.clear
-                .frame(width: 0, height: 0)
-                .accessibilityIdentifier("navigationTopBar")
-
+        // Spacing 8 matches the composer's HStack spacing, and the
+        // 0×0 accessibility-identifier placeholder is gone (it was
+        // sitting at the leading edge with 10pt of HStack spacing
+        // before the back button, pushing the chevron 10pt to the
+        // right of where the composer's plus button starts).
+        HStack(spacing: 8) {
             if canGoBack {
                 Button(action: onBack) {
                     ZStack(alignment: .topTrailing) {
@@ -800,7 +801,11 @@ struct IrisInputFieldModifier: ViewModifier {
             .textFieldStyle(.plain)
             .font(.system(.body, design: .rounded))
             .padding(.horizontal, 16)
-            .padding(.vertical, 11)
+            // Vertical padding tuned so the input pill is the same
+            // 40pt height as the attach + send glass buttons —
+            // .bottom alignment in the composer's HStack then reads
+            // as center-aligned in the single-line case.
+            .padding(.vertical, 9)
             // Signal-style input pill: a glass capsule that floats
             // over the timeline. No solid fill — the OS glass effect
             // handles tint + blur. Hairline border keeps the shape

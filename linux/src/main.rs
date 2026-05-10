@@ -46,11 +46,11 @@ const IRIS_LIGHT: GtkPalette = GtkPalette {
 };
 
 const IRIS_DARK: GtkPalette = GtkPalette {
-    background: "#101010",
-    panel: "#242424",
-    panel_alt: "#343434",
+    background: "#1B1B1B",
+    panel: "#2A2A2A",
+    panel_alt: "#3A3A3A",
     border: "rgba(255, 255, 255, 0.12)",
-    toolbar: "rgba(24, 24, 24, 0.96)",
+    toolbar: "rgba(31, 31, 31, 0.96)",
     bubble_mine: "#702ACE",
     bubble_theirs: "#3A3A3A",
     accent: "#702ACE",
@@ -231,6 +231,11 @@ button.suggested-action {{
     background-color: @iris_panel;
     color: @iris_text_primary;
     border-color: @iris_border;
+}}
+
+/* Signal-style chat list: rows blend with the panel, no hairlines. */
+.boxed-list > row + row {{
+    border-top: none;
 }}
 
 .dim-label {{
