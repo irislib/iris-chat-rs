@@ -739,6 +739,11 @@ private struct ChatMessageRow: View {
 
                 if !reactions.isEmpty {
                     ReactionRow(reactions: reactions, isOutgoing: message.isOutgoing)
+                        // Tuck the reaction pills up under the bubble's
+                        // bottom edge so they read as attached to the
+                        // message rather than a separate row below it.
+                        .padding(.top, -14)
+                        .padding(message.isOutgoing ? .trailing : .leading, 6)
                 }
             }
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
@@ -1777,7 +1782,11 @@ private struct ReplyPreviewView: View {
         Button(action: onTap) {
             HStack(spacing: 8) {
                 Rectangle()
-                    .fill(isOutgoing ? palette.onBubbleMine.opacity(0.6) : palette.accent)
+                    // Match the quote text color (the bubble's foreground)
+                    // so the rule reads as a margin marker, not an accent
+                    // band — it was previously the app accent (purple) on
+                    // incoming bubbles, which fought with the message.
+                    .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.6))
                     .frame(width: 3)
                     .clipShape(Capsule())
                 VStack(alignment: .leading, spacing: 2) {

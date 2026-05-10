@@ -51,6 +51,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -433,7 +434,24 @@ internal fun MessageBubble(
                 }
             }
             if (reactions.isNotEmpty()) {
-                ReactionRow(reactions = reactions)
+                ReactionRow(
+                    reactions = reactions,
+                    modifier =
+                        Modifier
+                            // Tuck the reaction pills up under the bubble's
+                            // bottom edge — visually attached to the message
+                            // rather than a separate row below it. Custom
+                            // layout shifts the row up AND reports a smaller
+                            // height so the next message follows naturally.
+                            .layout { measurable, constraints ->
+                                val placeable = measurable.measure(constraints)
+                                val overlap = 14.dp.roundToPx()
+                                layout(placeable.width, (placeable.height - overlap).coerceAtLeast(0)) {
+                                    placeable.place(0, -overlap)
+                                }
+                            }
+                            .padding(if (message.isOutgoing) PaddingValues(end = 6.dp) else PaddingValues(start = 6.dp)),
+                )
             }
         }
     }
@@ -821,7 +839,12 @@ private fun ReplyPreview(
                         .width(3.dp)
                         .heightIn(min = 34.dp)
                         .clip(CircleShape)
-                        .background(if (isOutgoing) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f) else IrisTheme.palette.accent),
+                        .background(
+                            (
+                                if (isOutgoing) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.onSurface
+                            ).copy(alpha = 0.6f),
+                        ),
             )
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
@@ -843,8 +866,11 @@ private fun ReplyPreview(
 }
 
 @Composable
-private fun ReactionRow(reactions: List<MessageReactionSnapshot>) {
-    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+private fun ReactionRow(
+    reactions: List<MessageReactionSnapshot>,
+    modifier: Modifier = Modifier,
+) {
+    Row(modifier = modifier, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
         reactions.forEach { reaction ->
             Surface(
                 color =
