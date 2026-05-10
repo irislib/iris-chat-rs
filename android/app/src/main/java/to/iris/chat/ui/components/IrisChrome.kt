@@ -219,7 +219,11 @@ fun IrisTopBar(
                         Text(
                             text = title,
                             style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold,
+                            // Signal-Android Material 3 spec uses
+                            // SemiBold for titleLarge in nav headers.
+                            // Bold reads too heavy next to the row
+                            // body text below.
+                            fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -558,7 +562,10 @@ fun IrisChatListRow(
                 .clickable(onClick = onClick)
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        // 20dp matches Signal-Android's conversation_list_item_view
+        // (16dp marginStart + 4dp implicit on the avatar's right
+        // edge), so the row title lines up where Signal puts it.
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
     ) {
         if (leadingContent != null) {
             leadingContent()

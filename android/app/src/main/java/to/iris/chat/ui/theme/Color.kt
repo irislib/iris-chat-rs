@@ -16,7 +16,9 @@ val IrisNightSurfaceAlt = Color(0xFF262626)
 val IrisNightBorder = Color(0x1FFFFFFF)
 val IrisNightToolbar = Color(0xF50A0A0A)
 val IrisNightBubbleMine = Color(0xFF702ACE)
-val IrisNightBubbleTheirs = Color(0xFF3A3A3A)
+// Signal-Android dark conversation_item_recv_bubble_color_normal
+// (signal_colorSurfaceVariant in core/ui material3_colors_dark.xml).
+val IrisNightBubbleTheirs = Color(0xFF303133)
 
 val IrisLightBackground = Color(0xFFFFFFFF)
 val IrisLightSurface = Color(0xFFF7F9FA)
@@ -24,7 +26,9 @@ val IrisLightSurfaceAlt = Color(0xFFE1E8ED)
 val IrisLightBorder = Color(0x14000000)
 val IrisLightToolbar = Color(0xF5F7F9FA)
 val IrisLightBubbleMine = IrisPurple
-val IrisLightBubbleTheirs = Color(0xFFF7F9FA)
+// Signal-Android light conversation_item_recv_bubble_color_normal
+// (signal_colorSurfaceVariant in core/ui material3_colors_light.xml).
+val IrisLightBubbleTheirs = Color(0xFFE7EBF3)
 
 val IrisPurpleDeep = Color(0xFF34216C)
 val IrisAccent = Color(0xFFDB8216)
