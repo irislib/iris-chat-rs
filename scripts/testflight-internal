@@ -554,6 +554,24 @@ def submit_beta_review(build):
     if status == 409:
         print("Beta App Review submission already exists")
         return
+    # Apple serializes Beta App Review by "train" (major.minor.patch). When
+    # we ship multiple builds for the same train (a v2026.5.10.5 right after
+    # v2026.5.10.1 — both strip to 2026.5.10), the second submit returns
+    # 422 ENTITY_UNPROCESSABLE.ANOTHER_BUILD_IN_REVIEW until the prior one
+    # clears review. Treat it as a soft skip so the rest of the release
+    # pipeline (htree publish, Homebrew tap) keeps going. The build is
+    # already attached to internal groups; resubmit with `testflight-public
+    # submit` once Apple finishes the prior review.
+    if status == 422 and any(
+        error.get("code") == "ENTITY_UNPROCESSABLE.ANOTHER_BUILD_IN_REVIEW"
+        for error in body.get("errors", [])
+    ):
+        print(
+            "Submit Beta App Review skipped: another build in the same train is "
+            "still in review. Resubmit with `./scripts/testflight-public submit` "
+            "once Apple clears it."
+        )
+        return
     require_ok(status, body, "Submit Beta App Review")
     data = body.get("data", {})
     review_state = data.get("attributes", {}).get("betaReviewState") or "submitted"
