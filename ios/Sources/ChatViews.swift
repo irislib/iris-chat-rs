@@ -1890,25 +1890,34 @@ private struct MessageBubbleSwipeActions: ViewModifier {
     private enum Axis { case horizontal, vertical }
 
     func body(content: Content) -> some View {
-        ZStack {
-            HStack(spacing: 0) {
+        // Use overlays anchored to the bubble's natural frame instead of a
+        // ZStack with a Spacer-expanded HStack — that pattern made the
+        // wrapper balloon to the row's full width, which centered the
+        // bubble and dropped invisible hint icons across the whole row
+        // (eating taps and scroll). With overlays, the hint icons sit on
+        // the bubble's leading/trailing edges and don't grow the layout
+        // frame; .allowsHitTesting(false) makes sure they never steal
+        // touches from the bubble below.
+        content
+            .offset(x: dragOffset)
+            .overlay(alignment: .leading) {
                 Image(systemName: "arrowshape.turn.up.left.fill")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .opacity(reveal(forwards: true))
                     .scaleEffect(0.7 + 0.3 * reveal(forwards: true))
                     .padding(.leading, 14)
-                Spacer(minLength: 0)
+                    .allowsHitTesting(false)
+            }
+            .overlay(alignment: .trailing) {
                 Image(systemName: "info.circle.fill")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.secondary)
                     .opacity(reveal(forwards: false))
                     .scaleEffect(0.7 + 0.3 * reveal(forwards: false))
                     .padding(.trailing, 14)
+                    .allowsHitTesting(false)
             }
-
-            content.offset(x: dragOffset)
-        }
         // simultaneousGesture lets the chat ScrollView's pan run alongside us;
         // the activation threshold + axis lock keep us from offsetting on
         // vertical drags even when the gesture fires.
