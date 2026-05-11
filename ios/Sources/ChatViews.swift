@@ -997,18 +997,23 @@ private struct ChatMessageRow: View, Equatable {
                     // attached to the cell's bubble subview.
                     .applyMessageBubbleSwipe(onReply: onReply, onInfo: onInfo)
                     // Cap bubble width on desktop and float the hover
-                    // action dock as an overlay. Both are about the
-                    // same regression: on macOS the bubble would
-                    // stretch the full pane (~830pt) and the action
-                    // dock — when it appeared on hover — sat as an
-                    // HStack sibling, shrinking the bubble and
-                    // visibly jittering its width. Frame caps wrap
-                    // point; overlay puts the dock outside the
-                    // layout flow so its visibility never resizes
-                    // the bubble. On iOS chatBubbleMaxWidth is nil
-                    // (phone widths already keep bubbles in range)
-                    // and showActionDock is gated to desktop chrome,
-                    // so both modifiers are no-ops there.
+                    // action dock as an overlay. Both fix the same
+                    // class of macOS bug: bubble used to stretch the
+                    // full pane (~830pt) and the action dock — when
+                    // it appeared on hover — sat as an HStack
+                    // sibling, shrinking the bubble and visibly
+                    // jittering its width. Frame caps wrap point;
+                    // overlay puts the dock outside layout flow so
+                    // its visibility never resizes the bubble.
+                    //
+                    // Gated to AppKit (macOS) because: iOS/Android
+                    // have no hover state, phone widths already keep
+                    // bubbles in range, and an early version of this
+                    // change applied a .frame(maxWidth: nil, ...) on
+                    // iOS — which SwiftUI on some versions promoted
+                    // to a flexible frame, stretching bubbles to
+                    // half the screen height.
+#if canImport(AppKit)
                     .frame(
                         maxWidth: IrisLayout.chatBubbleMaxWidth,
                         alignment: message.isOutgoing ? .trailing : .leading
@@ -1026,6 +1031,7 @@ private struct ChatMessageRow: View, Equatable {
                             }
                         }
                     }
+#endif
                     if !message.isOutgoing {
                         Spacer(minLength: 56)
                     }
