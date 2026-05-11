@@ -6954,6 +6954,1065 @@ fn send_disappearing_message_action_uses_explicit_expiration_and_persists() {
     );
 }
 
+struct SenderKeyMatrixDevice {
+    owner: Keys,
+    device: Keys,
+    engine: ProtocolEngine,
+}
+
+impl SenderKeyMatrixDevice {
+    fn new() -> Self {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let engine = test_protocol_engine(&owner, &device);
+        Self {
+            owner,
+            device,
+            engine,
+        }
+    }
+}
+
+fn sender_key_matrix_devices(count: usize) -> Vec<SenderKeyMatrixDevice> {
+    let mut devices = (0..count)
+        .map(|_| SenderKeyMatrixDevice::new())
+        .collect::<Vec<_>>();
+    observe_sender_key_matrix_protocol_state(&mut devices);
+    devices
+}
+
+fn observe_sender_key_matrix_protocol_state(devices: &mut [SenderKeyMatrixDevice]) {
+    let identities = devices
+        .iter()
+        .map(|device| {
+            (
+                device.owner.clone(),
+                device.device.clone(),
+                device.engine.local_invite_for_test().expect("local invite"),
+            )
+        })
+        .collect::<Vec<_>>();
+    for recipient in devices.iter_mut() {
+        for (owner, device, invite) in &identities {
+            if recipient.device.public_key() != device.public_key() {
+                observe_local_invite_for_test(&mut recipient.engine, owner, device, invite);
+            } else {
+                observe_current_device_appkeys_for_test(&mut recipient.engine, owner, device);
+            }
+        }
+    }
+}
+
+fn observe_local_invite_for_test(
+    engine: &mut ProtocolEngine,
+    owner: &Keys,
+    device: &Keys,
+    invite: &Invite,
+) {
+    engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(
+                device.public_key(),
+                invite.created_at.get(),
+            )]),
+            invite.created_at.get(),
+        )
+        .expect("peer appkeys");
+    let mut invite = invite.clone();
+    invite.inviter_owner_pubkey = Some(ndr_owner_pubkey(owner.public_key()));
+    let event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+        .expect("invite event")
+        .sign_with_keys(device)
+        .expect("signed invite");
+    engine
+        .observe_invite_event(&event)
+        .expect("observe peer local invite");
+}
+
+fn ordered_protocol_events(effects: &[ProtocolEffect]) -> Vec<Event> {
+    effects
+        .iter()
+        .flat_map(|effect| match effect {
+            ProtocolEffect::PublishSigned(event) => vec![event.clone()],
+            ProtocolEffect::PublishSignedForInnerEvent { event, .. } => vec![event.clone()],
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => bootstrap
+                .iter()
+                .chain(payload)
+                .map(|publish| publish.event.clone())
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn sender_key_outer_count(effects: &[ProtocolEffect], event_ids: &[String]) -> usize {
+    protocol_payload_events_for_result(effects, event_ids)
+        .into_iter()
+        .filter(|event| parse_group_sender_key_message_event(event).is_ok())
+        .count()
+}
+
+fn apply_protocol_event_to_engine(
+    engine: &mut ProtocolEngine,
+    event: &Event,
+    group_events: &mut Vec<GroupIncomingEvent>,
+) {
+    if event.kind.as_u16() as u32 == INVITE_EVENT_KIND {
+        let retry = engine
+            .observe_invite_event(event)
+            .expect("observe invite event");
+        group_events.extend(retry.group_result.events);
+        apply_protocol_events_to_engine(
+            engine,
+            &ordered_protocol_events(&retry.effects),
+            group_events,
+        );
+        apply_protocol_events_to_engine(
+            engine,
+            &ordered_protocol_events(&retry.group_result.effects),
+            group_events,
+        );
+        return;
+    }
+
+    if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
+        let retry = engine
+            .observe_invite_response_event(event)
+            .expect("observe invite response event");
+        group_events.extend(retry.group_result.events);
+        apply_protocol_events_to_engine(
+            engine,
+            &ordered_protocol_events(&retry.effects),
+            group_events,
+        );
+        apply_protocol_events_to_engine(
+            engine,
+            &ordered_protocol_events(&retry.group_result.effects),
+            group_events,
+        );
+        return;
+    }
+
+    if parse_group_sender_key_message_event(event).is_ok() {
+        let result = engine
+            .process_group_outer_event(event)
+            .expect("process sender-key outer event");
+        group_events.extend(result.events);
+        apply_protocol_events_to_engine(
+            engine,
+            &ordered_protocol_events(&result.effects),
+            group_events,
+        );
+        return;
+    }
+
+    if parse_message_event(event).is_ok() {
+        let decrypted = match engine.process_direct_message_event(event) {
+            Ok(decrypted) => decrypted,
+            Err(error)
+                if error.to_string().contains("Invalid header")
+                    || error.to_string().contains("invalid header")
+                    || error
+                        .to_string()
+                        .contains("Failed to decrypt header with available keys") =>
+            {
+                None
+            }
+            Err(error) => panic!("process pairwise protocol event: {error}"),
+        };
+        if let Some(decrypted) = decrypted {
+            let result = engine
+                .process_group_pairwise_payload(
+                    decrypted.content.as_bytes(),
+                    decrypted.sender,
+                    decrypted.sender_device,
+                )
+                .expect("process group pairwise payload");
+            group_events.extend(result.events);
+            apply_protocol_events_to_engine(
+                engine,
+                &ordered_protocol_events(&result.effects),
+                group_events,
+            );
+        }
+    }
+}
+
+fn apply_protocol_events_to_engine(
+    engine: &mut ProtocolEngine,
+    events: &[Event],
+    group_events: &mut Vec<GroupIncomingEvent>,
+) {
+    for event in events {
+        apply_protocol_event_to_engine(engine, event, group_events);
+    }
+}
+
+fn deliver_protocol_effects_to_engine(
+    engine: &mut ProtocolEngine,
+    effects: &[ProtocolEffect],
+) -> Vec<GroupIncomingEvent> {
+    let mut group_events = Vec::new();
+    apply_protocol_events_to_engine(engine, &ordered_protocol_events(effects), &mut group_events);
+    group_events
+}
+
+fn group_events_contain_body(
+    events: &[GroupIncomingEvent],
+    group_id: &str,
+    sender_owner: PublicKey,
+    sender_device: PublicKey,
+    body: &[u8],
+) -> bool {
+    events.iter().any(|event| {
+        matches!(
+            event,
+            GroupIncomingEvent::Message(message)
+                if message.group_id == group_id
+                    && message.sender_owner == ndr_owner_pubkey(sender_owner)
+                    && message.sender_device == Some(ndr_device_pubkey(sender_device))
+                    && message.body == body
+        )
+    })
+}
+
+#[test]
+fn appcore_create_group_defaults_to_sender_key_protocol() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let result = engine
+        .create_group("sender-key group".to_string(), Vec::new(), UnixSeconds(3))
+        .expect("create sender-key group");
+    let group = result.snapshot.expect("created group snapshot");
+
+    assert_eq!(
+        group.protocol,
+        nostr_double_ratchet::GroupProtocol::sender_key_v1()
+    );
+    assert_eq!(
+        engine.group_manager_snapshot_for_test().sender_keys.len(),
+        1,
+        "sender-key group creation should seed a local sender-key record"
+    );
+    assert_eq!(
+        engine.known_group_sender_event_pubkeys().len(),
+        1,
+        "sender-key group creation should make its sender event author subscribable"
+    );
+}
+
+#[test]
+fn appcore_sender_key_group_send_publishes_one_outer_event() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let created = engine
+        .create_group("sender-key group".to_string(), Vec::new(), UnixSeconds(3))
+        .expect("create sender-key group");
+    let group = created.snapshot.expect("created group snapshot");
+
+    let result = engine
+        .send_group_payload(
+            &group.group_id,
+            b"sender-key message".to_vec(),
+            Some("inner-message-id".to_string()),
+        )
+        .expect("send sender-key group payload");
+
+    assert_eq!(result.event_ids.len(), 1);
+    let outer_events = result
+        .effects
+        .iter()
+        .flat_map(|effect| match effect {
+            ProtocolEffect::PublishSigned(event) => vec![event],
+            ProtocolEffect::PublishSignedForInnerEvent { event, .. } => vec![event],
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => bootstrap
+                .iter()
+                .chain(payload)
+                .map(|publish| &publish.event)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .filter(|event| parse_group_sender_key_message_event(event).is_ok())
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        outer_events.len(),
+        1,
+        "sender-key group send should publish one shared outer event"
+    );
+    assert_eq!(outer_events[0].id.to_string(), result.event_ids[0]);
+    assert_eq!(
+        parse_group_sender_key_message_event(outer_events[0])
+            .expect("sender-key outer event")
+            .sender_event_pubkey
+            .to_bytes(),
+        outer_events[0].pubkey.to_bytes()
+    );
+}
+
+#[test]
+fn appcore_sender_key_outer_before_distribution_retries_after_control_state() {
+    let alice_owner = Keys::generate();
+    let alice_device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+    let mut alice = test_protocol_engine(&alice_owner, &alice_device);
+    let mut bob = test_protocol_engine(&bob_owner, &bob_device);
+    observe_current_device_appkeys_for_test(&mut alice, &alice_owner, &alice_device);
+    observe_current_device_appkeys_for_test(&mut bob, &bob_owner, &bob_device);
+    observe_peer_device_invite_for_test(&mut alice, &bob_owner, &bob_device, 50);
+    observe_peer_device_invite_for_test(&mut bob, &alice_owner, &alice_device, 50);
+
+    let created = alice
+        .create_group(
+            "sender-key group".to_string(),
+            vec![bob_owner.public_key()],
+            UnixSeconds(51),
+        )
+        .expect("create sender-key group");
+    let group = created.snapshot.expect("created group snapshot");
+    let group_id = group.group_id.clone();
+    let sender_key = alice
+        .group_manager_snapshot_for_test()
+        .sender_keys
+        .into_iter()
+        .find(|record| record.group_id == group_id)
+        .expect("local sender-key record");
+    let key_id = sender_key.latest_key_id.expect("latest sender key id");
+    let state = sender_key
+        .states
+        .iter()
+        .find(|state| state.key_id() == key_id)
+        .expect("sender-key state");
+    let distribution = nostr_double_ratchet::SenderKeyDistribution {
+        group_id: group.group_id.clone(),
+        key_id,
+        sender_event_pubkey: sender_key.sender_event_pubkey,
+        chain_key: state.chain_key(),
+        iteration: state.iteration(),
+        created_at: NdrUnixSeconds(51),
+    };
+
+    let sent = alice
+        .send_group_payload(
+            &group.group_id,
+            b"queued until sender-key distribution".to_vec(),
+            Some("sender-key-inner".to_string()),
+        )
+        .expect("send sender-key group payload");
+    let outer = protocol_payload_events_for_result(&sent.effects, &sent.event_ids)
+        .into_iter()
+        .find(|event| parse_group_sender_key_message_event(event).is_ok())
+        .expect("sender-key outer event");
+
+    let pending = bob
+        .process_group_outer_event(outer)
+        .expect("process outer before distribution");
+    assert!(pending.consumed);
+    assert_eq!(
+        bob.debug_snapshot().pending_group_sender_key_message_count,
+        1
+    );
+
+    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+        &codec,
+        nostr_double_ratchet::GroupPayloadEncodeContext {
+            local_device_pubkey: ndr_device_pubkey(alice_device.public_key()),
+            created_at: NdrUnixSeconds(52),
+        },
+        &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot {
+            snapshot: group.clone(),
+        },
+    )
+    .expect("metadata payload");
+    let distribution_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+        &codec,
+        nostr_double_ratchet::GroupPayloadEncodeContext {
+            local_device_pubkey: ndr_device_pubkey(alice_device.public_key()),
+            created_at: NdrUnixSeconds(53),
+        },
+        &nostr_double_ratchet::GroupPairwiseCommand::SenderKeyDistribution { distribution },
+    )
+    .expect("sender-key distribution payload");
+
+    let metadata_result = bob
+        .process_group_pairwise_payload(
+            &metadata_payload,
+            alice_owner.public_key(),
+            Some(alice_device.public_key()),
+        )
+        .expect("process metadata");
+    let distribution_result = bob
+        .process_group_pairwise_payload(
+            &distribution_payload,
+            alice_owner.public_key(),
+            Some(alice_device.public_key()),
+        )
+        .expect("process distribution");
+    assert!(matches!(
+        metadata_result.events.as_slice(),
+        [GroupIncomingEvent::MetadataUpdated(_)]
+    ));
+    assert_eq!(
+        bob.debug_snapshot().pending_group_sender_key_message_count,
+        0
+    );
+    assert!(distribution_result.events.iter().any(|event| matches!(
+        event,
+        GroupIncomingEvent::Message(message)
+            if message.group_id == group_id
+                && message.sender_owner == ndr_owner_pubkey(alice_owner.public_key())
+                && message.sender_device == Some(ndr_device_pubkey(alice_device.public_key()))
+                && message.body == b"queued until sender-key distribution".to_vec()
+    )));
+    let retry = bob
+        .retry_pending_protocol(NdrUnixSeconds(54))
+        .expect("retry after pending sender-key outer already applied");
+    assert!(
+        retry.group_result.events.is_empty(),
+        "applied pending sender-key outer must not replay on later retry"
+    );
+}
+
+#[test]
+fn appcore_sender_key_group_create_prepares_pairwise_metadata_and_distribution() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    observe_peer_device_invite_for_test(&mut engine, &peer_owner, &peer_device, 10);
+
+    let result = engine
+        .create_group(
+            "sender-key group".to_string(),
+            vec![peer_owner.public_key()],
+            UnixSeconds(20),
+        )
+        .expect("create sender-key group");
+    let group = result.snapshot.expect("created group snapshot");
+    let payload_events = protocol_payload_events_for_result(&result.effects, &result.event_ids);
+
+    assert_eq!(
+        group.protocol,
+        nostr_double_ratchet::GroupProtocol::sender_key_v1()
+    );
+    assert_eq!(
+        result.event_ids.len(),
+        2,
+        "sender-key group creation should send metadata and sender-key distribution over pairwise control"
+    );
+    assert_eq!(payload_events.len(), 2);
+    assert!(
+        payload_events
+            .iter()
+            .all(|event| parse_message_event(event).is_ok()
+                && parse_group_sender_key_message_event(event).is_err()),
+        "sender-key group creation must not publish a group outer message before app payloads"
+    );
+    assert_eq!(
+        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
+        2,
+        "the peer should receive both metadata and sender-key distribution control messages"
+    );
+}
+
+#[test]
+fn appcore_sender_key_add_member_sends_current_distribution_pairwise() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let created = engine
+        .create_group("sender-key group".to_string(), Vec::new(), UnixSeconds(20))
+        .expect("create sender-key group");
+    let group = created.snapshot.expect("created group snapshot");
+    observe_peer_device_invite_for_test(&mut engine, &peer_owner, &peer_device, 21);
+
+    let result = engine
+        .add_group_members(&group.group_id, vec![peer_owner.public_key()])
+        .expect("add sender-key group member");
+    let payload_events = protocol_payload_events_for_result(&result.effects, &result.event_ids);
+
+    assert_eq!(
+        result.event_ids.len(),
+        2,
+        "adding a member should send metadata and the current sender-key distribution"
+    );
+    assert!(
+        payload_events
+            .iter()
+            .all(|event| parse_message_event(event).is_ok()
+                && parse_group_sender_key_message_event(event).is_err()),
+        "add-member control traffic should remain pairwise"
+    );
+    assert_eq!(
+        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
+        2
+    );
+}
+
+#[test]
+fn appcore_sender_key_remove_member_rotates_key_only_to_remaining_members() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+    let carol_owner = Keys::generate();
+    let carol_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    observe_peer_device_invite_for_test(&mut engine, &bob_owner, &bob_device, 30);
+    observe_peer_device_invite_for_test(&mut engine, &carol_owner, &carol_device, 31);
+
+    let created = engine
+        .create_group(
+            "sender-key group".to_string(),
+            vec![bob_owner.public_key(), carol_owner.public_key()],
+            UnixSeconds(32),
+        )
+        .expect("create sender-key group");
+    let group = created.snapshot.expect("created group snapshot");
+
+    let result = engine
+        .remove_group_member(&group.group_id, carol_owner.public_key())
+        .expect("remove sender-key group member");
+    let payload_events = protocol_payload_events_for_result(&result.effects, &result.event_ids);
+
+    assert_eq!(
+        result.event_ids.len(),
+        3,
+        "removal should send metadata to removed member and metadata plus rotated sender key to remaining member"
+    );
+    assert!(
+        payload_events
+            .iter()
+            .all(|event| parse_message_event(event).is_ok()
+                && parse_group_sender_key_message_event(event).is_err()),
+        "remove-member control traffic should remain pairwise"
+    );
+    assert_eq!(
+        protocol_targeted_payload_count(&result.effects, &bob_owner.public_key().to_hex()),
+        2,
+        "remaining member should receive metadata and rotated sender key"
+    );
+    assert_eq!(
+        protocol_targeted_payload_count(&result.effects, &carol_owner.public_key().to_hex()),
+        1,
+        "removed member should receive metadata but not the rotated sender key"
+    );
+}
+
+#[test]
+fn appcore_existing_pairwise_group_still_uses_pairwise_fanout() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    observe_peer_device_invite_for_test(&mut engine, &peer_owner, &peer_device, 40);
+
+    let group_id = "legacy-pairwise-group".to_string();
+    let mut snapshot = test_group_snapshot(
+        &group_id,
+        "Legacy Pairwise Group",
+        owner.public_key(),
+        vec![owner.public_key(), peer_owner.public_key()],
+        vec![owner.public_key()],
+        1,
+    );
+    snapshot.protocol = nostr_double_ratchet::GroupProtocol::PairwiseFanoutV1;
+    let codec = nostr_double_ratchet_nostr::JsonGroupPayloadCodecV1;
+    let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+        &codec,
+        nostr_double_ratchet::GroupPayloadEncodeContext {
+            local_device_pubkey: ndr_device_pubkey(device.public_key()),
+            created_at: NdrUnixSeconds(41),
+        },
+        &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot { snapshot },
+    )
+    .expect("metadata payload");
+    engine
+        .process_group_pairwise_payload(
+            &metadata_payload,
+            owner.public_key(),
+            Some(device.public_key()),
+        )
+        .expect("install legacy pairwise group");
+
+    let result = engine
+        .send_group_payload(
+            &group_id,
+            b"legacy pairwise body".to_vec(),
+            Some("legacy-inner".to_string()),
+        )
+        .expect("send legacy pairwise group payload");
+    let payload_events = protocol_payload_events_for_result(&result.effects, &result.event_ids);
+
+    assert_eq!(result.event_ids.len(), 1);
+    assert_eq!(payload_events.len(), 1);
+    assert!(parse_message_event(payload_events[0]).is_ok());
+    assert!(parse_group_sender_key_message_event(payload_events[0]).is_err());
+    assert_eq!(
+        protocol_targeted_payload_count(&result.effects, &peer_owner.public_key().to_hex()),
+        1
+    );
+}
+
+#[test]
+fn appcore_sender_key_four_member_matrix_delivers_one_outer_per_sender() {
+    let mut devices = sender_key_matrix_devices(4);
+    let member_pubkeys = devices
+        .iter()
+        .skip(1)
+        .map(|device| device.owner.public_key())
+        .collect::<Vec<_>>();
+    let created = devices[0]
+        .engine
+        .create_group(
+            "sender-key matrix".to_string(),
+            member_pubkeys,
+            UnixSeconds(100),
+        )
+        .expect("create sender-key matrix group");
+    let group_id = created.snapshot.expect("created group").group_id;
+    let create_effects = created.effects.clone();
+
+    for recipient in devices.iter_mut().skip(1) {
+        deliver_protocol_effects_to_engine(&mut recipient.engine, &create_effects);
+    }
+
+    for sender_index in 0..devices.len() {
+        let sender_owner = devices[sender_index].owner.public_key();
+        let sender_device = devices[sender_index].device.public_key();
+        let body = format!("sender-key-matrix-{sender_index}").into_bytes();
+        let sent = devices[sender_index]
+            .engine
+            .send_group_payload(
+                &group_id,
+                body.clone(),
+                Some(format!("sender-key-matrix-inner-{sender_index}")),
+            )
+            .expect("send sender-key matrix group payload");
+
+        assert_eq!(
+            sender_key_outer_count(&sent.effects, &sent.event_ids),
+            1,
+            "sender-key message should publish one shared group outer event"
+        );
+
+        let outer_events = protocol_payload_events_for_result(&sent.effects, &sent.event_ids)
+            .into_iter()
+            .filter(|event| parse_group_sender_key_message_event(event).is_ok())
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_eq!(outer_events.len(), 1);
+
+        for recipient_index in 0..devices.len() {
+            if recipient_index == sender_index {
+                continue;
+            }
+            let received = deliver_protocol_effects_to_engine(
+                &mut devices[recipient_index].engine,
+                &sent.effects,
+            );
+            assert!(
+                group_events_contain_body(
+                    &received,
+                    &group_id,
+                    sender_owner,
+                    sender_device,
+                    &body
+                ),
+                "recipient {recipient_index} did not decrypt message from sender {sender_index}; events={received:?}"
+            );
+
+            let duplicate = {
+                let mut duplicate_events = Vec::new();
+                apply_protocol_events_to_engine(
+                    &mut devices[recipient_index].engine,
+                    &outer_events,
+                    &mut duplicate_events,
+                );
+                duplicate_events
+            };
+            assert!(
+                !group_events_contain_body(
+                    &duplicate,
+                    &group_id,
+                    sender_owner,
+                    sender_device,
+                    &body
+                ),
+                "duplicate sender-key relay replay emitted a duplicate app message"
+            );
+        }
+    }
+}
+
+#[test]
+fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() {
+    let mut devices = sender_key_matrix_devices(4);
+    let alice = 0;
+    let bob = 1;
+    let carol = 2;
+    let dave = 3;
+    let bob_owner_pubkey = devices[bob].owner.public_key();
+    let carol_owner_pubkey = devices[carol].owner.public_key();
+    let dave_owner_pubkey = devices[dave].owner.public_key();
+    let alice_owner_pubkey = devices[alice].owner.public_key();
+    let alice_device_pubkey = devices[alice].device.public_key();
+    let created = devices[alice]
+        .engine
+        .create_group(
+            "sender-key membership window".to_string(),
+            vec![bob_owner_pubkey, carol_owner_pubkey],
+            UnixSeconds(110),
+        )
+        .expect("create sender-key group");
+    let group_id = created.snapshot.expect("created group").group_id;
+    for recipient_index in [bob, carol] {
+        deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &created.effects);
+    }
+
+    let before_add = b"before dave joined".to_vec();
+    let before_add_sent = devices[alice]
+        .engine
+        .send_group_payload(
+            &group_id,
+            before_add.clone(),
+            Some("sender-key-before-add".to_string()),
+        )
+        .expect("send before late member add");
+    let dave_before =
+        deliver_protocol_effects_to_engine(&mut devices[dave].engine, &before_add_sent.effects);
+    assert!(
+        !group_events_contain_body(
+            &dave_before,
+            &group_id,
+            alice_owner_pubkey,
+            alice_device_pubkey,
+            &before_add
+        ),
+        "late member must not decrypt messages from before membership"
+    );
+
+    let add_dave = devices[alice]
+        .engine
+        .add_group_members(&group_id, vec![dave_owner_pubkey])
+        .expect("add late member");
+    for recipient_index in [bob, carol, dave] {
+        let events = deliver_protocol_effects_to_engine(
+            &mut devices[recipient_index].engine,
+            &add_dave.effects,
+        );
+        assert!(
+            !group_events_contain_body(
+                &events,
+                &group_id,
+                alice_owner_pubkey,
+                alice_device_pubkey,
+                &before_add
+            ),
+            "sender-key distribution on add must not reveal older queued outers"
+        );
+    }
+
+    let after_add = b"after dave joined".to_vec();
+    let after_add_sent = devices[alice]
+        .engine
+        .send_group_payload(
+            &group_id,
+            after_add.clone(),
+            Some("sender-key-after-add".to_string()),
+        )
+        .expect("send after late member add");
+    for recipient_index in [bob, carol, dave] {
+        let events = deliver_protocol_effects_to_engine(
+            &mut devices[recipient_index].engine,
+            &after_add_sent.effects,
+        );
+        assert!(
+            group_events_contain_body(
+                &events,
+                &group_id,
+                alice_owner_pubkey,
+                alice_device_pubkey,
+                &after_add
+            ),
+            "current member {recipient_index} did not decrypt post-add sender-key message"
+        );
+    }
+
+    let remove_bob = devices[alice]
+        .engine
+        .remove_group_member(&group_id, bob_owner_pubkey)
+        .expect("remove member");
+    for recipient_index in [bob, carol, dave] {
+        deliver_protocol_effects_to_engine(
+            &mut devices[recipient_index].engine,
+            &remove_bob.effects,
+        );
+    }
+
+    let after_remove = b"after bob removed".to_vec();
+    let after_remove_sent = devices[alice]
+        .engine
+        .send_group_payload(
+            &group_id,
+            after_remove.clone(),
+            Some("sender-key-after-remove".to_string()),
+        )
+        .expect("send after member removal");
+    let bob_events =
+        deliver_protocol_effects_to_engine(&mut devices[bob].engine, &after_remove_sent.effects);
+    assert!(
+        !group_events_contain_body(
+            &bob_events,
+            &group_id,
+            alice_owner_pubkey,
+            alice_device_pubkey,
+            &after_remove
+        ),
+        "removed member must not decrypt future sender-key messages"
+    );
+    for recipient_index in [carol, dave] {
+        let events = deliver_protocol_effects_to_engine(
+            &mut devices[recipient_index].engine,
+            &after_remove_sent.effects,
+        );
+        assert!(
+            group_events_contain_body(
+                &events,
+                &group_id,
+                alice_owner_pubkey,
+                alice_device_pubkey,
+                &after_remove
+            ),
+            "remaining member {recipient_index} did not decrypt post-removal message"
+        );
+    }
+}
+
+#[test]
+fn appcore_sender_key_pending_outer_survives_restart_and_applies_once() {
+    let alice_owner = Keys::generate();
+    let alice_device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+    let mut alice = test_protocol_engine(&alice_owner, &alice_device);
+    observe_current_device_appkeys_for_test(&mut alice, &alice_owner, &alice_device);
+    let alice_invite = alice.local_invite_for_test().expect("alice local invite");
+
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_string_lossy().to_string();
+    let mut bob_core = logged_in_test_core_at_data_dir(&bob_owner, &bob_device, data_dir.clone());
+    {
+        let bob = bob_core
+            .protocol_engine
+            .as_mut()
+            .expect("bob protocol engine");
+        observe_current_device_appkeys_for_test(bob, &bob_owner, &bob_device);
+        observe_local_invite_for_test(bob, &alice_owner, &alice_device, &alice_invite);
+    }
+    let bob_invite = bob_core
+        .protocol_engine
+        .as_ref()
+        .expect("bob protocol engine")
+        .local_invite_for_test()
+        .expect("bob local invite");
+    observe_local_invite_for_test(&mut alice, &bob_owner, &bob_device, &bob_invite);
+
+    let created = alice
+        .create_group(
+            "sender-key restart".to_string(),
+            vec![bob_owner.public_key()],
+            UnixSeconds(122),
+        )
+        .expect("create sender-key group");
+    let group_id = created.snapshot.expect("created group").group_id;
+    let sent = alice
+        .send_group_payload(
+            &group_id,
+            b"queued across restart".to_vec(),
+            Some("sender-key-restart-inner".to_string()),
+        )
+        .expect("send sender-key message");
+    let outer_events = protocol_payload_events_for_result(&sent.effects, &sent.event_ids)
+        .into_iter()
+        .filter(|event| parse_group_sender_key_message_event(event).is_ok())
+        .cloned()
+        .collect::<Vec<_>>();
+    assert_eq!(outer_events.len(), 1);
+
+    {
+        let bob = bob_core
+            .protocol_engine
+            .as_mut()
+            .expect("bob protocol engine");
+        let mut pending_events = Vec::new();
+        apply_protocol_events_to_engine(bob, &outer_events, &mut pending_events);
+        assert!(pending_events.is_empty());
+        assert_eq!(
+            bob.debug_snapshot().pending_group_sender_key_message_count,
+            1
+        );
+    }
+
+    drop(bob_core);
+    let mut restarted = logged_in_test_core_at_data_dir(&bob_owner, &bob_device, data_dir);
+    let bob = restarted
+        .protocol_engine
+        .as_mut()
+        .expect("restarted bob protocol engine");
+    assert_eq!(
+        bob.debug_snapshot().pending_group_sender_key_message_count,
+        1,
+        "pending sender-key outer should be durable across restart"
+    );
+    let applied = deliver_protocol_effects_to_engine(bob, &created.effects);
+    assert!(
+        group_events_contain_body(
+            &applied,
+            &group_id,
+            alice_owner.public_key(),
+            alice_device.public_key(),
+            b"queued across restart"
+        ),
+        "pending sender-key outer should apply after persisted restart and control state arrival"
+    );
+    assert_eq!(
+        bob.debug_snapshot().pending_group_sender_key_message_count,
+        0
+    );
+    let retry = bob
+        .retry_pending_protocol(NdrUnixSeconds(123))
+        .expect("retry after persisted pending outer applied");
+    assert!(
+        retry.group_result.events.is_empty(),
+        "applied persisted sender-key outer must not replay"
+    );
+}
+
+#[test]
+#[ignore = "long-running exploratory sender-key group soak"]
+fn appcore_sender_key_stochastic_group_soak() {
+    let mut devices = sender_key_matrix_devices(6);
+    let member_one = devices[1].owner.public_key();
+    let member_two = devices[2].owner.public_key();
+    let member_three = devices[3].owner.public_key();
+    let member_four = devices[4].owner.public_key();
+    let created = devices[0]
+        .engine
+        .create_group(
+            "sender-key soak".to_string(),
+            vec![member_one, member_two],
+            UnixSeconds(200),
+        )
+        .expect("create sender-key soak group");
+    let group_id = created.snapshot.expect("created group").group_id;
+    for recipient_index in [1, 2] {
+        deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &created.effects);
+    }
+    let mut active = vec![0usize, 1, 2];
+
+    for step in 0..90 {
+        if step == 15 {
+            let add = devices[0]
+                .engine
+                .add_group_members(&group_id, vec![member_three])
+                .expect("add fourth soak member");
+            active.push(3);
+            for recipient_index in active.iter().copied() {
+                deliver_protocol_effects_to_engine(
+                    &mut devices[recipient_index].engine,
+                    &add.effects,
+                );
+            }
+        }
+        if step == 35 {
+            let add = devices[0]
+                .engine
+                .add_group_members(&group_id, vec![member_four])
+                .expect("add fifth soak member");
+            active.push(4);
+            for recipient_index in active.iter().copied() {
+                deliver_protocol_effects_to_engine(
+                    &mut devices[recipient_index].engine,
+                    &add.effects,
+                );
+            }
+        }
+        if step == 60 {
+            let remove = devices[0]
+                .engine
+                .remove_group_member(&group_id, member_one)
+                .expect("remove soak member");
+            active.retain(|index| *index != 1);
+            for recipient_index in [1usize, 0, 2, 3, 4] {
+                deliver_protocol_effects_to_engine(
+                    &mut devices[recipient_index].engine,
+                    &remove.effects,
+                );
+            }
+        }
+
+        let sender_index = active[step % active.len()];
+        let body = format!("sender-key-soak-{step}").into_bytes();
+        let sent = devices[sender_index]
+            .engine
+            .send_group_payload(
+                &group_id,
+                body.clone(),
+                Some(format!("sender-key-soak-inner-{step}")),
+            )
+            .expect("send soak payload");
+        assert_eq!(sender_key_outer_count(&sent.effects, &sent.event_ids), 1);
+        let sender_owner = devices[sender_index].owner.public_key();
+        let sender_device = devices[sender_index].device.public_key();
+        for recipient_index in active.iter().copied() {
+            if recipient_index == sender_index {
+                continue;
+            }
+            let events = deliver_protocol_effects_to_engine(
+                &mut devices[recipient_index].engine,
+                &sent.effects,
+            );
+            assert!(group_events_contain_body(
+                &events,
+                &group_id,
+                sender_owner,
+                sender_device,
+                &body
+            ));
+        }
+        let removed_events =
+            deliver_protocol_effects_to_engine(&mut devices[1].engine, &sent.effects);
+        if !active.contains(&1) && sender_index != 1 {
+            assert!(!group_events_contain_body(
+                &removed_events,
+                &group_id,
+                sender_owner,
+                sender_device,
+                &body
+            ));
+        }
+    }
+}
+
 #[test]
 fn create_group_allows_self_only_group() {
     let owner = Keys::generate();
@@ -6972,7 +8031,7 @@ fn create_group_allows_self_only_group() {
     assert_eq!(group.name, "Notes");
     assert_eq!(
         group.protocol,
-        nostr_double_ratchet::GroupProtocol::PairwiseFanoutV1
+        nostr_double_ratchet::GroupProtocol::sender_key_v1()
     );
     assert_eq!(group.members, vec![owner]);
     assert_eq!(group.admins, vec![owner]);
@@ -7952,6 +9011,83 @@ fn observe_current_device_appkeys_for_test(
             created_at,
         )
         .expect("local appkeys");
+}
+
+fn observe_peer_device_invite_for_test(
+    engine: &mut ProtocolEngine,
+    owner: &Keys,
+    device: &Keys,
+    created_at: u64,
+) {
+    engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(device.public_key(), created_at)]),
+            created_at,
+        )
+        .expect("peer appkeys");
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(created_at), &mut rng);
+    let invite = Invite::create_new_with_context(
+        &mut ctx,
+        ndr_device_pubkey(device.public_key()),
+        Some(ndr_owner_pubkey(owner.public_key())),
+        None,
+    )
+    .expect("peer invite");
+    let event = nostr_double_ratchet_nostr::invite_unsigned_event(&invite)
+        .expect("invite event")
+        .sign_with_keys(device)
+        .expect("signed invite");
+    engine
+        .observe_invite_event(&event)
+        .expect("observe peer invite");
+}
+
+fn protocol_payload_events_for_result<'a>(
+    effects: &'a [ProtocolEffect],
+    event_ids: &[String],
+) -> Vec<&'a Event> {
+    let event_ids = event_ids.iter().cloned().collect::<HashSet<_>>();
+    protocol_effect_events(effects)
+        .into_iter()
+        .filter(|event| event_ids.contains(&event.id.to_string()))
+        .collect()
+}
+
+fn protocol_effect_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
+    effects
+        .iter()
+        .flat_map(|effect| match effect {
+            ProtocolEffect::PublishSigned(event) => vec![event],
+            ProtocolEffect::PublishSignedForInnerEvent { event, .. } => vec![event],
+            ProtocolEffect::PublishStagedFirstContact { bootstrap, payload } => bootstrap
+                .iter()
+                .chain(payload)
+                .map(|publish| &publish.event)
+                .collect::<Vec<_>>(),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+fn protocol_targeted_payload_count(effects: &[ProtocolEffect], owner_pubkey_hex: &str) -> usize {
+    effects
+        .iter()
+        .map(|effect| match effect {
+            ProtocolEffect::PublishSignedForInnerEvent {
+                target_owner_pubkey_hex,
+                ..
+            } if target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex) => 1,
+            ProtocolEffect::PublishStagedFirstContact { payload, .. } => payload
+                .iter()
+                .filter(|publish| {
+                    publish.target_owner_pubkey_hex.as_deref() == Some(owner_pubkey_hex)
+                })
+                .count(),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn install_test_protocol_engine(

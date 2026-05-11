@@ -1066,7 +1066,7 @@ impl ProtocolEngine {
                 &mut ctx,
                 name,
                 member_owners.into_iter().map(ndr_owner).collect(),
-                GroupProtocol::PairwiseFanoutV1,
+                GroupProtocol::sender_key_v1(),
             )?;
             let mut output = engine.protocol_group_send_from_prepared(&result.prepared, None)?;
             output.snapshot = Some(result.group);
@@ -2412,9 +2412,21 @@ impl ProtocolEngine {
         &mut self,
         message: GroupSenderKeyMessage,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        let result = self
+        let result = match self
             .group_manager
-            .handle_sender_key_message(message.clone())?;
+            .handle_sender_key_message(message.clone())
+        {
+            Ok(result) => result,
+            Err(nostr_double_ratchet::Error::Decryption(error))
+                if error == "duplicate or missing sender-key message" =>
+            {
+                return Ok(ProtocolGroupIncomingResult {
+                    consumed: true,
+                    ..Default::default()
+                });
+            }
+            Err(error) => return Err(error.into()),
+        };
         match result {
             GroupSenderKeyHandleResult::Event(event) => {
                 self.persist()?;
