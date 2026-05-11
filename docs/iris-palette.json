@@ -16,11 +16,11 @@
     "onBubbleTheirs": { "rgb": "#0F1419", "alpha": 1.0 }
   },
   "dark": {
-    "background": { "rgb": "#101010", "alpha": 1.0 },
-    "panel": { "rgb": "#242424", "alpha": 1.0 },
-    "panelAlt": { "rgb": "#343434", "alpha": 1.0 },
+    "background": { "rgb": "#000000", "alpha": 1.0 },
+    "panel": { "rgb": "#161616", "alpha": 1.0 },
+    "panelAlt": { "rgb": "#262626", "alpha": 1.0 },
     "border": { "rgb": "#FFFFFF", "alpha": 0.12 },
-    "toolbar": { "rgb": "#181818", "alpha": 0.96 },
+    "toolbar": { "rgb": "#0A0A0A", "alpha": 0.96 },
     "bubbleMine": { "rgb": "#702ACE", "alpha": 1.0 },
     "bubbleTheirs": { "rgb": "#3A3A3A", "alpha": 1.0 },
     "accent": { "rgb": "#702ACE", "alpha": 1.0 },
@@ -30,5 +30,14 @@
     "onAccent": { "rgb": "#FFFFFF", "alpha": 1.0 },
     "onBubbleMine": { "rgb": "#FFFFFF", "alpha": 1.0 },
     "onBubbleTheirs": { "rgb": "#FFFFFF", "alpha": 1.0 }
+  },
+  "androidOverrides": {
+    "_comment": "Android shells use Signal-Android's surface-variant for the incoming bubble (conversation_item_recv_bubble_color_normal) instead of the shared bubbleTheirs token — neutral Iris greys felt off next to Material 3's surfaceVariant. Introduced in 8303a1d.",
+    "light": {
+      "bubbleTheirs": { "rgb": "#E7EBF3", "alpha": 1.0 }
+    },
+    "dark": {
+      "bubbleTheirs": { "rgb": "#303133", "alpha": 1.0 }
+    }
   }
 }

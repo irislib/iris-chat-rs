@@ -59,6 +59,22 @@ def assert_contains(path, expectations):
 light = PALETTE["light"]
 dark = PALETTE["dark"]
 
+
+def with_overrides(base, overrides):
+    """Merge platform overrides on top of a base palette. Anything the
+    override doesn't redefine falls through to the shared values, so a
+    single token like `dark.bubbleTheirs` can drift on Android without
+    duplicating the rest of the palette.
+    """
+    merged = dict(base)
+    merged.update(overrides or {})
+    return merged
+
+
+android_overrides = PALETTE.get("androidOverrides", {})
+android_light = with_overrides(light, android_overrides.get("light", {}))
+android_dark = with_overrides(dark, android_overrides.get("dark", {}))
+
 checks = []
 
 checks += assert_contains(
@@ -95,26 +111,26 @@ checks += assert_contains(
 checks += assert_contains(
     "android/app/src/main/java/to/iris/chat/ui/theme/Color.kt",
     [
-        ("accent", f"val IrisPurple = Color(0x{argb(light['accent'])})"),
-        ("dark.background", f"val IrisNightBackground = Color(0x{argb(dark['background'])})"),
-        ("dark.panel", f"val IrisNightSurface = Color(0x{argb(dark['panel'])})"),
-        ("dark.panelAlt", f"val IrisNightSurfaceAlt = Color(0x{argb(dark['panelAlt'])})"),
-        ("dark.border", f"val IrisNightBorder = Color(0x{argb(dark['border'])})"),
-        ("dark.toolbar", f"val IrisNightToolbar = Color(0x{argb(dark['toolbar'])})"),
-        ("dark.bubbleMine", f"val IrisNightBubbleMine = Color(0x{argb(dark['bubbleMine'])})"),
-        ("dark.bubbleTheirs", f"val IrisNightBubbleTheirs = Color(0x{argb(dark['bubbleTheirs'])})"),
-        ("light.background", f"val IrisLightBackground = Color(0x{argb(light['background'])})"),
-        ("light.panel", f"val IrisLightSurface = Color(0x{argb(light['panel'])})"),
-        ("light.panelAlt", f"val IrisLightSurfaceAlt = Color(0x{argb(light['panelAlt'])})"),
-        ("light.border", f"val IrisLightBorder = Color(0x{argb(light['border'])})"),
-        ("light.toolbar", f"val IrisLightToolbar = Color(0x{argb(light['toolbar'])})"),
+        ("accent", f"val IrisPurple = Color(0x{argb(android_light['accent'])})"),
+        ("dark.background", f"val IrisNightBackground = Color(0x{argb(android_dark['background'])})"),
+        ("dark.panel", f"val IrisNightSurface = Color(0x{argb(android_dark['panel'])})"),
+        ("dark.panelAlt", f"val IrisNightSurfaceAlt = Color(0x{argb(android_dark['panelAlt'])})"),
+        ("dark.border", f"val IrisNightBorder = Color(0x{argb(android_dark['border'])})"),
+        ("dark.toolbar", f"val IrisNightToolbar = Color(0x{argb(android_dark['toolbar'])})"),
+        ("dark.bubbleMine", f"val IrisNightBubbleMine = Color(0x{argb(android_dark['bubbleMine'])})"),
+        ("dark.bubbleTheirs", f"val IrisNightBubbleTheirs = Color(0x{argb(android_dark['bubbleTheirs'])})"),
+        ("light.background", f"val IrisLightBackground = Color(0x{argb(android_light['background'])})"),
+        ("light.panel", f"val IrisLightSurface = Color(0x{argb(android_light['panel'])})"),
+        ("light.panelAlt", f"val IrisLightSurfaceAlt = Color(0x{argb(android_light['panelAlt'])})"),
+        ("light.border", f"val IrisLightBorder = Color(0x{argb(android_light['border'])})"),
+        ("light.toolbar", f"val IrisLightToolbar = Color(0x{argb(android_light['toolbar'])})"),
         ("light.bubbleMine", "val IrisLightBubbleMine = IrisPurple"),
-        ("light.bubbleTheirs", f"val IrisLightBubbleTheirs = Color(0x{argb(light['bubbleTheirs'])})"),
-        ("accentAlt", f"val IrisAccent = Color(0x{argb(light['accentAlt'])})"),
-        ("textPrimaryLight", f"val IrisBlack = Color(0x{argb(light['textPrimary'])})"),
-        ("white", f"val IrisWhite = Color(0x{argb(light['onAccent'])})"),
-        ("mutedLight", f"val IrisMutedLight = Color(0x{argb(light['muted'])})"),
-        ("mutedDark", f"val IrisMutedDark = Color(0x{argb(dark['muted'])})"),
+        ("light.bubbleTheirs", f"val IrisLightBubbleTheirs = Color(0x{argb(android_light['bubbleTheirs'])})"),
+        ("accentAlt", f"val IrisAccent = Color(0x{argb(android_light['accentAlt'])})"),
+        ("textPrimaryLight", f"val IrisBlack = Color(0x{argb(android_light['textPrimary'])})"),
+        ("white", f"val IrisWhite = Color(0x{argb(android_light['onAccent'])})"),
+        ("mutedLight", f"val IrisMutedLight = Color(0x{argb(android_light['muted'])})"),
+        ("mutedDark", f"val IrisMutedDark = Color(0x{argb(android_dark['muted'])})"),
     ],
 )
 
