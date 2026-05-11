@@ -240,19 +240,27 @@ impl AppCore {
         };
 
         let now = unix_now().get();
-        self.prune_expired_messages(now);
-        self.ensure_thread_record(&chat_id, now).unread_count = 0;
-        self.load_latest_message_page_for_chat(&chat_id);
+        // Flip the screen first and emit before doing any of the
+        // heavy load / persist / network work — otherwise tapping a
+        // cold chat row could spend a noticeable beat in Rust before
+        // the UI knew anything changed, and the user got "tap, wait,
+        // … screen finally flips" instead of an immediate response.
         self.active_chat_id = Some(chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
             chat_id: chat_id.clone(),
         }];
-        self.republish_local_identity_artifacts();
         self.rebuild_state();
+        self.emit_state();
+
+        self.prune_expired_messages(now);
+        self.ensure_thread_record(&chat_id, now).unread_count = 0;
+        self.load_latest_message_page_for_chat(&chat_id);
+        self.republish_local_identity_artifacts();
         self.persist_best_effort();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));
+        self.rebuild_state();
         self.emit_state();
     }
 

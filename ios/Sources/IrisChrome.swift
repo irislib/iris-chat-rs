@@ -318,18 +318,23 @@ struct IrisTopBar: View {
     }
 
     var body: some View {
-        // Spacing 8 matches the composer's HStack spacing, and the
-        // 0×0 accessibility-identifier placeholder is gone (it was
-        // sitting at the leading edge with 10pt of HStack spacing
-        // before the back button, pushing the chevron 10pt to the
-        // right of where the composer's plus button starts).
-        HStack(spacing: 8) {
+        // 14pt spacing between the back chevron and the chat avatar
+        // cluster — 8pt felt too tight on the chat screen, fat thumbs
+        // tapping the avatar were catching the chevron and bouncing
+        // back to the list instead.
+        HStack(spacing: 14) {
             if canGoBack {
                 Button(action: onBack) {
                     ZStack(alignment: .topTrailing) {
                         // Match the composer's attach button: 40pt
-                        // glass circle so the two are visually a pair
-                        // sitting at the same horizontal inset.
+                        // glass circle so the two are visually a
+                        // pair sitting at the same horizontal inset.
+                        // The 48pt content shape (visible disc still
+                        // pinned to the leading edge so the chevron
+                        // stays at x=8) gives the button some extra
+                        // hit area on the trailing side, so an off-
+                        // center thumb tap toward the title doesn't
+                        // slip past the disc.
                         Image(systemName: "chevron.left")
                             .font(.system(size: 17, weight: .bold))
                             .foregroundStyle(palette.textPrimary)
@@ -345,6 +350,8 @@ struct IrisTopBar: View {
                                 .offset(x: 5, y: -5)
                         }
                     }
+                    .frame(width: 48, height: 48, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.irisPlain)
                 .accessibilityLabel("Back")
