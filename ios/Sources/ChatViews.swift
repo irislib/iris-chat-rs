@@ -799,9 +799,6 @@ private struct ChatMessageRow: View, Equatable {
         irisPostReactionSuggestionEmojis(reactions)
     }
 
-    // Hover-revealed quick-action row. Lives here as a helper so
-    // the overlay below can position it on either side of the
-    // bubble without duplicating the closure wiring.
     @ViewBuilder
     private func actionDock() -> some View {
         ChatMessageActionDock(
@@ -996,39 +993,18 @@ private struct ChatMessageRow: View, Equatable {
                     // scroll — matches Signal's UIPanGestureRecognizer
                     // attached to the cell's bubble subview.
                     .applyMessageBubbleSwipe(onReply: onReply, onInfo: onInfo)
-                    // Cap bubble width on desktop and float the hover
-                    // action dock as an overlay. Both fix the same
-                    // class of macOS bug: bubble used to stretch the
-                    // full pane (~830pt) and the action dock — when
-                    // it appeared on hover — sat as an HStack
-                    // sibling, shrinking the bubble and visibly
-                    // jittering its width. Frame caps wrap point;
-                    // overlay puts the dock outside layout flow so
-                    // its visibility never resizes the bubble.
-                    //
-                    // Gated to AppKit (macOS) because: iOS/Android
-                    // have no hover state, phone widths already keep
-                    // bubbles in range, and an early version of this
-                    // change applied a .frame(maxWidth: nil, ...) on
-                    // iOS — which SwiftUI on some versions promoted
-                    // to a flexible frame, stretching bubbles to
-                    // half the screen height.
+                    // Two macOS-only fixes: cap bubble width (without
+                    // this it stretches the full ~830pt pane), and
+                    // render the hover dock as an overlay (without
+                    // this its appearance reflows the bubble width).
+                    // iOS has no hover and phone widths self-limit.
 #if canImport(AppKit)
-                    .frame(
-                        maxWidth: IrisLayout.chatBubbleMaxWidth,
-                        alignment: message.isOutgoing ? .trailing : .leading
-                    )
+                    .frame(maxWidth: IrisLayout.chatBubbleMaxWidth)
                     .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
                         if showActionDock {
-                            if message.isOutgoing {
-                                actionDock()
-                                    .fixedSize()
-                                    .alignmentGuide(.leading) { d in d[.trailing] + 6 }
-                            } else {
-                                actionDock()
-                                    .fixedSize()
-                                    .alignmentGuide(.trailing) { d in d[.leading] - 6 }
-                            }
+                            actionDock()
+                                .fixedSize()
+                                .offset(x: message.isOutgoing ? -132 : 132)
                         }
                     }
 #endif
