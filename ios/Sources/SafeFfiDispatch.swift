@@ -82,7 +82,8 @@ extension FfiApp {
                 scopeChatId: scopeChatId,
                 contacts: [],
                 groups: [],
-                messages: []
+                messages: [],
+                shortcut: nil
             )
         }
     }

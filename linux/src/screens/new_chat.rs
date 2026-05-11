@@ -5,7 +5,9 @@ use iris_chat_core::{AppAction, AppState, Screen};
 
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;
-use crate::screens::{entry, pill_button, primary_button, scan_qr_button, screen_container};
+use crate::screens::{
+    chat_input_action, entry, pill_button, primary_button, scan_qr_button, screen_container,
+};
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let container = screen_container();
@@ -54,7 +56,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
             return;
         }
         btn.set_sensitive(false);
-        manager_for_submit.dispatch(action_for(value));
+        manager_for_submit.dispatch(chat_input_action(&value));
     });
 
     let manager_for_enter = manager.clone();
@@ -65,7 +67,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
             return;
         }
         submit_for_enter.set_sensitive(false);
-        manager_for_enter.dispatch(action_for(value));
+        manager_for_enter.dispatch(chat_input_action(&value));
     });
 
     container.append(&submit);
@@ -134,15 +136,4 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&other_actions);
 
     container.upcast()
-}
-
-fn action_for(input: String) -> AppAction {
-    let lower = input.to_lowercase();
-    if lower.contains("://") && lower.contains("#") {
-        AppAction::AcceptInvite {
-            invite_input: input,
-        }
-    } else {
-        AppAction::CreateChat { peer_input: input }
-    }
 }

@@ -151,6 +151,18 @@ struct RootView: View {
                     .presentationDragIndicator(.visible)
                     .irisDismissOnMacOutsideClick { directChatInfoChatId = nil }
             }
+        .sheet(item: $inChatSearch) { target in
+            InChatSearchSheet(manager: manager, target: target) {
+                inChatSearch = nil
+            }
+#if os(iOS)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+#elseif os(macOS)
+            .frame(minWidth: 420, minHeight: 520)
+#endif
+            .irisDismissOnMacOutsideClick { inChatSearch = nil }
+        }
         }
 #if os(iOS) || os(macOS)
         .sheet(isPresented: $showingNearbyIris) {
@@ -275,9 +287,43 @@ struct RootView: View {
             )
         }
 
+        // Surface "Search in this chat" on the chat / group-details
+        // pages. Tapping pops up an inline scoped-search sheet so the
+        // user doesn't have to navigate back to the chat list and
+        // retype the chat name.
+        if let target = chatHeaderSearchTarget() {
+            return AnyView(
+                Button {
+                    inChatSearch = target
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityLabel("Search in this chat")
+                .accessibilityIdentifier("chatHeaderSearchButton")
+                .padding(.trailing, 8)
+            )
+        }
+
         // The chat header avatar/title is the entry point to chat info now —
         // no overflow menu needed.
         return AnyView(EmptyView())
+    }
+
+    private func chatHeaderSearchTarget() -> InChatSearchTarget? {
+        switch manager.activeScreen {
+        case .chat:
+            guard let chat = manager.state.currentChat else { return nil }
+            return InChatSearchTarget(chatId: chat.chatId, displayName: chat.displayName)
+        case .groupDetails(let groupId):
+            let chatId = "group:\(groupId)"
+            let name = manager.state.groupDetails?.name ?? "Group"
+            return InChatSearchTarget(chatId: chatId, displayName: name)
+        default:
+            return nil
+        }
     }
 
     private var backUnreadCount: UInt64 {
@@ -2007,6 +2053,7 @@ private struct SearchResultsList: View {
         let isEmpty = results.contacts.isEmpty
             && results.groups.isEmpty
             && results.messages.isEmpty
+            && results.shortcut == nil
 
         if isEmpty {
             Text("No matches")
@@ -2016,6 +2063,9 @@ private struct SearchResultsList: View {
                 .padding(.vertical, 28)
         } else {
             VStack(alignment: .leading, spacing: 0) {
+                if let shortcut = results.shortcut {
+                    ChatInputShortcutRow(manager: manager, shortcut: shortcut)
+                }
                 if !results.contacts.isEmpty {
                     SearchSectionHeader(title: "Contacts")
                     ForEach(results.contacts, id: \.chatId) { chat in
@@ -2051,6 +2101,80 @@ private struct SearchResultsList: View {
                 }
             }
         }
+    }
+}
+
+private struct ChatInputShortcutRow: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    let shortcut: ChatInputShortcut
+
+    var body: some View {
+        let descriptor = describe(shortcut)
+        Button {
+            manager.dispatch(descriptor.action)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: descriptor.systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(palette.accent)
+                    .frame(width: 36, height: 36)
+                    .background(palette.panelAlt)
+                    .clipShape(Circle())
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(descriptor.title)
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                    Text(descriptor.subtitle)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier("chatListSearchShortcut")
+    }
+
+    private func describe(_ shortcut: ChatInputShortcut) -> Descriptor {
+        switch shortcut {
+        case let .directPeer(_, display, _, _):
+            return Descriptor(
+                systemImage: "person.crop.circle.badge.plus",
+                title: "Start chat",
+                subtitle: display,
+                action: peerAction(shortcut)
+            )
+        case let .invite(_, display):
+            return Descriptor(
+                systemImage: "envelope.open",
+                title: "Accept invite",
+                subtitle: display,
+                action: peerAction(shortcut)
+            )
+        }
+    }
+
+    private func peerAction(_ shortcut: ChatInputShortcut) -> AppAction {
+        switch shortcut {
+        case let .directPeer(peerInput, _, _, _):
+            return .createChat(peerInput: peerInput)
+        case let .invite(inviteInput, _):
+            return .acceptInvite(inviteInput: inviteInput)
+        }
+    }
+
+    private struct Descriptor {
+        let systemImage: String
+        let title: String
+        let subtitle: String
+        let action: AppAction
     }
 }
 
@@ -2092,6 +2216,104 @@ private struct MessageSearchHitRow: View {
             }
         )
         .accessibilityIdentifier("messageHit-\(String(hit.messageId.prefix(12)))")
+    }
+}
+
+struct InChatSearchTarget: Identifiable, Hashable {
+    let chatId: String
+    let displayName: String
+
+    var id: String { chatId }
+}
+
+/// Scoped message search bound to a single conversation. Reached from
+/// the chat / group-details header magnifying-glass icon. Tapping a
+/// hit dismisses the sheet and opens the chat at that conversation.
+private struct InChatSearchSheet: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    let target: InChatSearchTarget
+    let onClose: () -> Void
+    @State private var query: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                TextField("Search in \(target.displayName)", text: $query)
+                    .textFieldStyle(.plain)
+                    .autocorrectionDisabled(true)
+#if os(iOS)
+                    .textInputAutocapitalization(.never)
+#endif
+                    .focused($isFocused)
+                    .accessibilityIdentifier("inChatSearchField")
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                    }
+                    .buttonStyle(.plain)
+                }
+                Button("Done", action: onClose)
+                    .font(.system(.body, weight: .semibold))
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            ScrollView {
+                if trimmed.isEmpty {
+                    Text("Type to search messages in this chat.")
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 48)
+                } else {
+                    let results = manager.search(trimmed, scopeChatId: target.chatId)
+                    if results.messages.isEmpty {
+                        Text("No matches")
+                            .font(.system(.body, design: .rounded))
+                            .foregroundStyle(palette.muted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 48)
+                    } else {
+                        let preferences = manager.state.preferences
+                        let now = Date()
+                        LazyVStack(spacing: 0) {
+                            ForEach(results.messages, id: \.messageId) { hit in
+                                IrisChatRow(
+                                    title: hit.chatDisplayName,
+                                    isMuted: false,
+                                    isPinned: false,
+                                    preview: hit.body,
+                                    subtitle: nil,
+                                    timeLabel: irisRelativeTime(hit.createdAtSecs, relativeTo: now),
+                                    unreadCount: 0,
+                                    pictureUrl: hit.chatPictureUrl,
+                                    preferences: preferences,
+                                    manager: manager,
+                                    onTap: {
+                                        manager.dispatch(.openChat(chatId: hit.chatId))
+                                        onClose()
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        .background(palette.background)
+        .onAppear { isFocused = true }
     }
 }
 
@@ -2677,9 +2899,13 @@ struct NewChatScreen: View {
         !normalizedPeerInput.isEmpty && isValidPeerInput(input: normalizedPeerInput)
     }
 
+    private var inputShortcut: ChatInputShortcut? {
+        classifyChatInput(input: trimmedInput)
+    }
+
     private var looksLikeInviteLink: Bool {
-        let lower = trimmedInput.lowercased()
-        return lower.contains("://") && lower.contains("#")
+        if case .invite = inputShortcut { return true }
+        return false
     }
 
     var body: some View {

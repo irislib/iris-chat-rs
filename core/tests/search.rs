@@ -1,7 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use iris_chat_core::{AppAction, AppReconciler, AppState, AppUpdate, ChatKind, FfiApp};
+use iris_chat_core::{
+    classify_chat_input, AppAction, AppReconciler, AppState, AppUpdate, ChatInputShortcut,
+    ChatKind, FfiApp,
+};
 use tempfile::TempDir;
 
 /// A migrated v10 database must still serve FTS5 search after the
@@ -40,6 +43,55 @@ fn ffi_search_works_against_pre_search_database() {
     let result = app.search("abracadabra".to_string(), None, 20);
     assert_eq!(result.messages.len(), 1, "{:?}", result.messages);
     assert!(result.messages[0].body.contains("abracadabra"));
+}
+
+/// `classify_chat_input` is the single source of truth for "is this
+/// pasted text an npub or an invite URL?". New-chat, search-bar, and
+/// share-link handlers all route through it.
+#[test]
+fn classifies_npub_invite_and_plain_text_inputs() {
+    // Plain text → no shortcut row.
+    assert!(classify_chat_input("hello world".to_string()).is_none());
+    assert!(classify_chat_input("    ".to_string()).is_none());
+
+    // Real npub (Bob from the e2e tests below).
+    let bob_npub = ensure_account(&TempDir::new().unwrap(), "Bob");
+    let shortcut = classify_chat_input(bob_npub.clone()).expect("npub is a shortcut");
+    match shortcut {
+        ChatInputShortcut::DirectPeer {
+            peer_input,
+            npub,
+            pubkey_hex,
+            display,
+        } => {
+            assert_eq!(npub, bob_npub);
+            assert!(!pubkey_hex.is_empty());
+            assert!(peer_input.starts_with("npub"));
+            assert!(display.contains("…"), "{display}");
+        }
+        other => panic!("expected DirectPeer, got {other:?}"),
+    }
+
+    // Whitespace around an npub still classifies.
+    let padded = format!("  {bob_npub}  ");
+    assert!(matches!(
+        classify_chat_input(padded),
+        Some(ChatInputShortcut::DirectPeer { .. })
+    ));
+
+    // Invite-shaped URL — anything with both `://` and `#` is invited.
+    let invite = "https://chat.iris.to/#abc123".to_string();
+    let shortcut = classify_chat_input(invite.clone()).expect("invite shortcut");
+    match shortcut {
+        ChatInputShortcut::Invite {
+            invite_input,
+            display,
+        } => {
+            assert_eq!(invite_input, invite);
+            assert!(display.contains("chat.iris.to"), "{display}");
+        }
+        other => panic!("expected Invite, got {other:?}"),
+    }
 }
 
 /// Drives `FfiApp` end-to-end against a temp data dir and checks the
@@ -107,6 +159,7 @@ fn ffi_search_returns_grouped_contacts_groups_and_messages() {
     let scoped = app.search("hello".to_string(), Some(bob_chat.clone()), 20);
     assert!(scoped.contacts.is_empty());
     assert!(scoped.groups.is_empty());
+    assert!(scoped.shortcut.is_none(), "scoped search must not surface global shortcuts");
     assert!(!scoped.messages.is_empty());
     for hit in &scoped.messages {
         assert_eq!(hit.chat_id, bob_chat);
@@ -115,6 +168,16 @@ fn ffi_search_returns_grouped_contacts_groups_and_messages() {
     // Whitespace/empty queries short-circuit to an empty snapshot.
     let blank = app.search("   ".to_string(), None, 20);
     assert!(blank.is_empty());
+
+    // Pasting an npub into the global search surfaces the shortcut row
+    // — the UI offers "Start chat with …" without forcing the user to
+    // navigate to the New Chat screen first.
+    let bob_npub = ensure_account(&TempDir::new().unwrap(), "BobShortcut");
+    let with_npub = app.search(bob_npub.clone(), None, 20);
+    assert!(matches!(
+        with_npub.shortcut,
+        Some(ChatInputShortcut::DirectPeer { ref npub, .. }) if npub == &bob_npub
+    ));
 }
 
 #[derive(Clone)]

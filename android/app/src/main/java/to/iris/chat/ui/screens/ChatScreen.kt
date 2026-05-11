@@ -24,6 +24,7 @@ import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Schedule
 import androidx.compose.material.icons.rounded.Check
@@ -33,9 +34,16 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -83,7 +91,10 @@ import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisInlineAction
 import to.iris.chat.ui.components.IrisSectionCard
+import to.iris.chat.ui.components.IrisChatListRow
 import to.iris.chat.ui.components.IrisTopBar
+import to.iris.chat.ui.components.formatRelativeTime
+import androidx.compose.foundation.lazy.items
 import to.iris.chat.ui.components.formatTimelineDay
 import to.iris.chat.ui.components.isSameTimelineDay
 import to.iris.chat.ui.components.rememberIrisClipboard
@@ -146,6 +157,7 @@ fun ChatScreen(
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
     var directChatInfoOpen by remember(chatId) { mutableStateOf(false) }
+    var inChatSearchOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
     val composerFocusRequester = remember { FocusRequester() }
     val backUnreadCount by remember(chatId) {
@@ -356,7 +368,20 @@ fun ChatScreen(
                             { appManager.pushScreen(Screen.GroupDetails(groupId)) }
                         } ?: { directChatInfoOpen = true }
                     },
-                actions = {},
+                actions = {
+                    if (chat != null) {
+                        IconButton(
+                            onClick = { inChatSearchOpen = true },
+                            modifier = Modifier.testTag("chatHeaderSearchButton"),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Search,
+                                contentDescription = "Search in this chat",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                    }
+                },
             )
         },
     ) { padding ->
@@ -625,6 +650,15 @@ fun ChatScreen(
                     appManager = appManager,
                     chatId = chatId,
                     onDismiss = { directChatInfoOpen = false },
+                )
+            }
+
+            if (inChatSearchOpen && chat != null) {
+                InChatSearchSheet(
+                    appManager = appManager,
+                    chatId = chatId,
+                    chatDisplayName = chat.displayName,
+                    onDismiss = { inChatSearchOpen = false },
                 )
             }
         }
@@ -937,3 +971,146 @@ private fun Modifier.clearFocusOnTapOutside(
             }
         }
     }
+
+/// Scoped message search bound to a single conversation. Reached via
+/// the magnifying-glass icon in the chat header; mirrors the Signal
+/// in-conversation search experience without forcing the user to
+/// navigate back to the chat list.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun InChatSearchSheet(
+    appManager: AppManager,
+    chatId: String,
+    chatDisplayName: String,
+    onDismiss: () -> Unit,
+) {
+    val appState by appManager.state.collectAsStateWithLifecycle()
+    var query by remember(chatId) { mutableStateOf("") }
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+    }
+    val trimmed = query.trim()
+    val results by remember(query, chatId, appState.rev) {
+        derivedStateOf {
+            if (trimmed.isEmpty()) {
+                null
+            } else {
+                appManager.search(trimmed, scopeChatId = chatId)
+            }
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Surface(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .testTag("inChatSearchSheet"),
+            color = MaterialTheme.colorScheme.background,
+        ) {
+            Scaffold(
+                containerColor = MaterialTheme.colorScheme.background,
+                topBar = {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onDismiss) {
+                            Icon(
+                                imageVector = Icons.Filled.Clear,
+                                contentDescription = "Close search",
+                                tint = MaterialTheme.colorScheme.onBackground,
+                            )
+                        }
+                        TextField(
+                            value = query,
+                            onValueChange = { query = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .focusRequester(focusRequester)
+                                .testTag("inChatSearchField"),
+                            placeholder = { Text("Search in $chatDisplayName") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent,
+                                disabledIndicatorColor = Color.Transparent,
+                            ),
+                        )
+                    }
+                },
+            ) { padding ->
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .background(MaterialTheme.colorScheme.background),
+                ) {
+                    val current = results
+                    if (trimmed.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 48.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "Type to search messages in this chat.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = IrisTheme.palette.muted,
+                                )
+                            }
+                        }
+                    } else if (current == null || current.messages.isEmpty()) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 48.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "No matches",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = IrisTheme.palette.muted,
+                                )
+                            }
+                        }
+                    } else {
+                        val nowMs = System.currentTimeMillis()
+                        items(current.messages, key = { it.messageId }) { hit ->
+                            IrisChatListRow(
+                                title = hit.chatDisplayName,
+                                isMuted = false,
+                                isPinned = false,
+                                preview = hit.body,
+                                timeLabel = formatRelativeTime(hit.createdAtSecs.toLong(), nowMs),
+                                imageUrl = null,
+                                imageData = null,
+                                unreadCount = 0L,
+                                lastMessageMine = false,
+                                lastDelivery = null,
+                                onClick = {
+                                    onDismiss()
+                                    appManager.openChat(hit.chatId)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -93,6 +93,29 @@ pub(crate) fn entry(placeholder: &str) -> gtk::Entry {
     entry
 }
 
+/// Convert free-text input from any chat-action field (New Chat, the
+/// search bar's shortcut row, deep-link handler) into the right
+/// `AppAction`. The core does the parsing — we just adapt its enum
+/// into a one-shot dispatch so callers can't accidentally diverge on
+/// how an invite URL vs an npub is recognized.
+pub(crate) fn chat_input_action(input: &str) -> iris_chat_core::AppAction {
+    use iris_chat_core::ChatInputShortcut;
+    match iris_chat_core::classify_chat_input(input.to_string()) {
+        Some(ChatInputShortcut::Invite { invite_input, .. }) => {
+            iris_chat_core::AppAction::AcceptInvite { invite_input }
+        }
+        Some(ChatInputShortcut::DirectPeer { peer_input, .. }) => {
+            iris_chat_core::AppAction::CreateChat { peer_input }
+        }
+        // Unparseable text — let the core surface its own validation
+        // error via the existing CreateChat path. Matches the legacy
+        // behaviour for callers that hand-typed unrecognized text.
+        None => iris_chat_core::AppAction::CreateChat {
+            peer_input: input.to_string(),
+        },
+    }
+}
+
 pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc<AppManager>) {
     let dialog = adw::Dialog::builder()
         .title("Delete app data?")

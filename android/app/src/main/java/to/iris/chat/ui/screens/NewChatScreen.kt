@@ -49,7 +49,9 @@ import androidx.compose.ui.unit.dp
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
+import to.iris.chat.rust.ChatInputShortcut
 import to.iris.chat.rust.Screen
+import to.iris.chat.rust.classifyChatInput
 import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.components.IrisIcons
@@ -75,8 +77,11 @@ fun NewChatScreen(
     val trimmedInput = peerInput.trim()
     val normalizedInput = normalizePeerInput(peerInput)
     val isValidPeer = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput)
+    // Core decides what counts as an invite URL — same parser the chat
+    // list search bar and any future share-link handler use, so we
+    // can't drift on "is this an invite or an npub?".
     val looksLikeInviteLink =
-        trimmedInput.lowercase().let { it.contains("://") && it.contains("#") }
+        classifyChatInput(trimmedInput) is ChatInputShortcut.Invite
 
     val inviteUrl = appState.publicInvite?.url
     val canShareInvite = remember(context) { canShareText(context) }

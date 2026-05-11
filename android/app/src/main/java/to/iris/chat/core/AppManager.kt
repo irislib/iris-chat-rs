@@ -432,6 +432,7 @@ class AppManager(
                 contacts = emptyList(),
                 groups = emptyList(),
                 messages = emptyList(),
+                shortcut = null,
             )
         }
 

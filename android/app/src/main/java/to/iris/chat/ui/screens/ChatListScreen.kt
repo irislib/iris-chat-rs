@@ -64,6 +64,7 @@ import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
+import to.iris.chat.rust.ChatInputShortcut
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.MessageSearchHit
@@ -178,7 +179,12 @@ fun ChatListScreen(
             }
             if (searchActive) {
                 val results = searchResults
-                if (results == null || results.contacts.isEmpty() && results.groups.isEmpty() && results.messages.isEmpty()) {
+                val emptyResults = results == null
+                    || (results.contacts.isEmpty()
+                        && results.groups.isEmpty()
+                        && results.messages.isEmpty()
+                        && results.shortcut == null)
+                if (emptyResults) {
                     item(key = "chatListSearchEmpty") {
                         Box(
                             modifier =
@@ -195,6 +201,14 @@ fun ChatListScreen(
                         }
                     }
                 } else {
+                    results!!.shortcut?.let { shortcut ->
+                        item(key = "search-shortcut") {
+                            ChatInputShortcutRow(
+                                appManager = appManager,
+                                shortcut = shortcut,
+                            )
+                        }
+                    }
                     if (results.contacts.isNotEmpty()) {
                         item(key = "section-contacts") { SearchSectionHeader("Contacts") }
                         items(results.contacts, key = { "c:${it.chatId}" }) { chat ->
@@ -783,6 +797,66 @@ private fun SearchChatRow(
         onClick = { appManager.openChat(chat.chatId) },
     )
 }
+
+@Composable
+private fun ChatInputShortcutRow(
+    appManager: AppManager,
+    shortcut: ChatInputShortcut,
+) {
+    val (title, subtitle, icon, action) = when (shortcut) {
+        is ChatInputShortcut.DirectPeer -> Quad(
+            "Start chat",
+            shortcut.display,
+            Icons.Filled.Search,
+            { appManager.dispatch(AppAction.CreateChat(shortcut.peerInput)) },
+        )
+        is ChatInputShortcut.Invite -> Quad(
+            "Accept invite",
+            shortcut.display,
+            Icons.Filled.Search,
+            { appManager.dispatch(AppAction.AcceptInvite(shortcut.inviteInput)) },
+        )
+    }
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable { action() }
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+                .testTag("chatListSearchShortcut"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .size(40.dp)
+                    .background(IrisTheme.palette.accent, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Spacer(modifier = Modifier.width(12.dp))
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                color = MaterialTheme.colorScheme.onBackground,
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelMedium,
+                color = IrisTheme.palette.muted,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+private data class Quad<A, B, C, D>(val a: A, val b: B, val c: C, val d: D)
 
 @Composable
 private fun MessageSearchHitRow(

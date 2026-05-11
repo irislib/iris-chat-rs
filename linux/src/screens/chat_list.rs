@@ -3,8 +3,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
 use iris_chat_core::{
-    proxied_image_url, AppAction, AppState, ChatThreadSnapshot, DesktopNearbyPeerSnapshot,
-    MessageSearchHit, PreferencesSnapshot, SearchResultSnapshot,
+    proxied_image_url, AppAction, AppState, ChatInputShortcut, ChatThreadSnapshot,
+    DesktopNearbyPeerSnapshot, MessageSearchHit, PreferencesSnapshot, SearchResultSnapshot,
 };
 
 use crate::app_manager::{AppManager, SearchUiState};
@@ -149,6 +149,11 @@ fn append_search_results(
     let now = unix_now();
     let mut wrote_any = false;
 
+    if let Some(shortcut) = results.shortcut.as_ref() {
+        container.append(&shortcut_row(shortcut, manager));
+        wrote_any = true;
+    }
+
     if !results.contacts.is_empty() {
         container.append(&section_label("Contacts"));
         let list = grouped_list();
@@ -186,6 +191,51 @@ fn append_search_results(
         empty.set_margin_bottom(48);
         container.append(&empty);
     }
+}
+
+fn shortcut_row(shortcut: &ChatInputShortcut, manager: &Rc<AppManager>) -> gtk::Widget {
+    let (icon_name, title, subtitle, action) = match shortcut {
+        ChatInputShortcut::DirectPeer {
+            peer_input,
+            display,
+            ..
+        } => (
+            "list-add-symbolic",
+            format!("Start chat with {display}"),
+            "New direct chat".to_string(),
+            AppAction::CreateChat {
+                peer_input: peer_input.clone(),
+            },
+        ),
+        ChatInputShortcut::Invite {
+            invite_input,
+            display,
+        } => (
+            "mail-attachment-symbolic",
+            "Accept invite".to_string(),
+            display.clone(),
+            AppAction::AcceptInvite {
+                invite_input: invite_input.clone(),
+            },
+        ),
+    };
+    let row = adw::ActionRow::builder()
+        .title(escape(&title))
+        .subtitle(escape(&subtitle))
+        .activatable(true)
+        .build();
+    let icon = gtk::Image::from_icon_name(icon_name);
+    icon.set_pixel_size(28);
+    row.add_prefix(&icon);
+    let manager = manager.clone();
+    row.connect_activated(move |_| {
+        manager.clear_search();
+        manager.dispatch(action.clone());
+    });
+
+    let list = grouped_list();
+    list.append(&row);
+    list.upcast()
 }
 
 fn section_label(text: &str) -> gtk::Widget {

@@ -388,6 +388,34 @@ pub struct SearchResultSnapshot {
     pub contacts: Vec<ChatThreadSnapshot>,
     pub groups: Vec<ChatThreadSnapshot>,
     pub messages: Vec<MessageSearchHit>,
+    /// Inline shortcut row to show above the grouped sections when the
+    /// query is itself an npub / nprofile / hex pubkey / invite URL.
+    /// Shells render this as a single "Start chat with …" / "Accept
+    /// invite from …" row that dispatches the carried action on tap.
+    pub shortcut: Option<ChatInputShortcut>,
+}
+
+/// Classification of the free-text input typed into a chat-action
+/// field — the search bar, the "New chat" paste field, the share-link
+/// handler. Centralising the parsing here means the UI just looks at
+/// the enum and dispatches; no platform has its own ad-hoc
+/// `contains("://") && contains("#")` check.
+#[derive(uniffi::Enum, Clone, Debug, PartialEq, Eq)]
+pub enum ChatInputShortcut {
+    /// Input is a recognized owner pubkey (npub / nprofile / hex).
+    /// `display` is the user-presentable short form (npub…).
+    DirectPeer {
+        peer_input: String,
+        display: String,
+        npub: String,
+        pubkey_hex: String,
+    },
+    /// Input is a paste of an invite URL. `display` is a short label
+    /// suitable for "Accept invite from …" rows.
+    Invite {
+        invite_input: String,
+        display: String,
+    },
 }
 
 impl SearchResultSnapshot {
@@ -398,11 +426,15 @@ impl SearchResultSnapshot {
             contacts: Vec::new(),
             groups: Vec::new(),
             messages: Vec::new(),
+            shortcut: None,
         }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.contacts.is_empty() && self.groups.is_empty() && self.messages.is_empty()
+        self.contacts.is_empty()
+            && self.groups.is_empty()
+            && self.messages.is_empty()
+            && self.shortcut.is_none()
     }
 }
 

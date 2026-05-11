@@ -149,12 +149,22 @@ impl FfiApp {
                     None => Vec::new(),
                 };
                 let enriched = enrich_message_hits(messages, &state_snapshot.chat_list);
+                // The shortcut row only makes sense for global search.
+                // Once the user has scoped to a single chat, an npub
+                // paste should still search that chat's messages, not
+                // jump out of the scope.
+                let shortcut = if scope_chat_id.is_none() {
+                    chat_input_shortcut(trimmed)
+                } else {
+                    None
+                };
                 SearchResultSnapshot {
                     query,
                     scope_chat_id,
                     contacts,
                     groups,
                     messages: enriched,
+                    shortcut,
                 }
             },
         )
@@ -730,6 +740,67 @@ pub fn is_valid_peer_input(input: String) -> bool {
     ffi_or("is_valid_peer_input", false, || {
         crate::core::parse_peer_input(&input).is_ok()
     })
+}
+
+/// Single source of truth for "is this typed text an npub or an
+/// invite URL?". Used by the New Chat paste field, the chat-list
+/// search bar, and the deep-link handler so all three branches agree
+/// on what counts as a chat-opening shortcut. Returns `None` for
+/// regular search-style text.
+#[uniffi::export]
+pub fn classify_chat_input(input: String) -> Option<ChatInputShortcut> {
+    ffi_or("classify_chat_input", None, || {
+        chat_input_shortcut(&input)
+    })
+}
+
+fn chat_input_shortcut(raw: &str) -> Option<ChatInputShortcut> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let lower = trimmed.to_lowercase();
+    if lower.contains("://") && lower.contains('#') {
+        return Some(ChatInputShortcut::Invite {
+            invite_input: trimmed.to_string(),
+            display: short_invite_display(trimmed),
+        });
+    }
+    if crate::core::parse_peer_input(trimmed).is_ok() {
+        use nostr::nips::nip19::ToBech32;
+        let normalized = crate::core::normalize_peer_input_for_display(trimmed);
+        if let Ok(pubkey) = nostr::PublicKey::parse(&normalized) {
+            let npub = pubkey.to_bech32().unwrap_or_else(|_| normalized.clone());
+            let display = short_npub_display(&npub);
+            return Some(ChatInputShortcut::DirectPeer {
+                peer_input: normalized,
+                display,
+                npub,
+                pubkey_hex: pubkey.to_hex(),
+            });
+        }
+    }
+    None
+}
+
+fn short_npub_display(npub: &str) -> String {
+    if npub.len() > 16 {
+        format!("{}…{}", &npub[..10], &npub[npub.len() - 4..])
+    } else {
+        npub.to_string()
+    }
+}
+
+fn short_invite_display(invite: &str) -> String {
+    // Strip the scheme + host so the row reads "iris.to/invite/…" not
+    // a 120-char URL. We don't try to parse the bech32 payload; the
+    // visible host is enough context for the user.
+    let after_scheme = invite.split_once("://").map(|(_, rest)| rest).unwrap_or(invite);
+    if after_scheme.len() > 32 {
+        format!("{}…", &after_scheme[..32])
+    } else {
+        after_scheme.to_string()
+    }
 }
 
 /// Convert any pubkey-shaped input (hex, npub, nprofile, …) to its
