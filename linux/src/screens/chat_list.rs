@@ -4,33 +4,243 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use adw::prelude::*;
 use iris_chat_core::{
     proxied_image_url, AppAction, AppState, ChatThreadSnapshot, DesktopNearbyPeerSnapshot,
-    PreferencesSnapshot,
+    MessageSearchHit, PreferencesSnapshot, SearchResultSnapshot,
 };
 
-use crate::app_manager::AppManager;
+use crate::app_manager::{AppManager, SearchUiState};
 use crate::widgets::image_cache;
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
+    let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    outer.set_vexpand(true);
+
+    let ui_state = manager.search_ui();
+    let search_box = build_search_box(manager, &ui_state, state);
+    outer.append(&search_box);
+
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
     scrolled.set_vexpand(true);
 
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    if ui_state.is_active() {
+        let results = manager.run_search(50);
+        append_search_results(&body, state, manager, &results);
+    } else {
+        let list = gtk::ListBox::new();
+        list.set_selection_mode(gtk::SelectionMode::None);
+        list.add_css_class("boxed-list");
+        list.set_margin_top(12);
+        list.set_margin_bottom(12);
+        list.set_margin_start(12);
+        list.set_margin_end(12);
+
+        let now = unix_now();
+        list.append(&nearby_row(manager));
+        for chat in &state.chat_list {
+            list.append(&row_for(chat, &state.preferences, now, manager));
+        }
+        body.append(&list);
+    }
+
+    scrolled.set_child(Some(&body));
+    outer.append(&scrolled);
+    outer.upcast()
+}
+
+impl SearchUiState {
+    fn is_active(&self) -> bool {
+        !self.query.trim().is_empty() || self.scope_chat_id.is_some()
+    }
+}
+
+fn build_search_box(
+    manager: &Rc<AppManager>,
+    ui_state: &SearchUiState,
+    _state: &AppState,
+) -> gtk::Box {
+    let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    wrapper.set_margin_top(8);
+    wrapper.set_margin_start(12);
+    wrapper.set_margin_end(12);
+
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+
+    if let (Some(chat_id), Some(name)) = (
+        ui_state.scope_chat_id.as_ref(),
+        ui_state.scope_display_name.as_ref(),
+    ) {
+        let chip = build_scope_chip(manager, chat_id, name);
+        row.append(&chip);
+    }
+
+    let entry = gtk::SearchEntry::new();
+    entry.set_hexpand(true);
+    entry.set_text(&ui_state.query);
+    if let Some(name) = ui_state.scope_display_name.as_ref() {
+        entry.set_placeholder_text(Some(&format!("Search in {name}…")));
+    } else {
+        entry.set_placeholder_text(Some("Search chats, groups, messages…"));
+    }
+
+    let manager_for_change = manager.clone();
+    entry.connect_search_changed(move |entry| {
+        let text = entry.text().to_string();
+        if manager_for_change.search_ui().query == text {
+            return;
+        }
+        manager_for_change.set_search_query(text);
+        manager_for_change.redraw_ui();
+    });
+
+    row.append(&entry);
+    wrapper.append(&row);
+
+    if ui_state.is_active() {
+        // Re-render replaces the previous SearchEntry widget. Defer
+        // focus restoration to the next idle tick so the new widget
+        // is attached before we call grab_focus, otherwise GTK drops
+        // the request. Cursor goes to the end of the existing text so
+        // the user can keep typing.
+        let len = entry.text().len() as i32;
+        glib::idle_add_local_once({
+            let entry = entry.clone();
+            move || {
+                entry.grab_focus();
+                entry.set_position(len);
+            }
+        });
+    }
+
+    wrapper
+}
+
+fn build_scope_chip(manager: &Rc<AppManager>, _chat_id: &str, name: &str) -> gtk::Widget {
+    let chip = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    chip.add_css_class("pill");
+    chip.add_css_class("card");
+    let label = gtk::Label::new(Some(name));
+    label.add_css_class("caption-heading");
+    chip.append(&label);
+    let close = gtk::Button::from_icon_name("window-close-symbolic");
+    close.add_css_class("flat");
+    close.add_css_class("circular");
+    close.set_tooltip_text(Some("Clear filter"));
+    let manager = manager.clone();
+    close.connect_clicked(move |_| {
+        manager.clear_chat_scope();
+        manager.redraw_ui();
+    });
+    chip.append(&close);
+    chip.upcast()
+}
+
+fn append_search_results(
+    container: &gtk::Box,
+    state: &AppState,
+    manager: &Rc<AppManager>,
+    results: &SearchResultSnapshot,
+) {
+    container.set_margin_top(8);
+    container.set_margin_bottom(12);
+    container.set_margin_start(12);
+    container.set_margin_end(12);
+
+    let now = unix_now();
+    let mut wrote_any = false;
+
+    if !results.contacts.is_empty() {
+        container.append(&section_label("Contacts"));
+        let list = grouped_list();
+        for chat in &results.contacts {
+            list.append(&row_for(chat, &state.preferences, now, manager));
+        }
+        container.append(&list);
+        wrote_any = true;
+    }
+
+    if !results.groups.is_empty() {
+        container.append(&section_label("Groups"));
+        let list = grouped_list();
+        for chat in &results.groups {
+            list.append(&row_for(chat, &state.preferences, now, manager));
+        }
+        container.append(&list);
+        wrote_any = true;
+    }
+
+    if !results.messages.is_empty() {
+        container.append(&section_label("Messages"));
+        let list = grouped_list();
+        for hit in &results.messages {
+            list.append(&message_hit_row(hit, &state.preferences, now, manager));
+        }
+        container.append(&list);
+        wrote_any = true;
+    }
+
+    if !wrote_any {
+        let empty = gtk::Label::new(Some("No matches"));
+        empty.add_css_class("dim-label");
+        empty.set_margin_top(48);
+        empty.set_margin_bottom(48);
+        container.append(&empty);
+    }
+}
+
+fn section_label(text: &str) -> gtk::Widget {
+    let label = gtk::Label::new(Some(text));
+    label.add_css_class("heading");
+    label.add_css_class("dim-label");
+    label.set_halign(gtk::Align::Start);
+    label.set_margin_top(12);
+    label.set_margin_bottom(4);
+    label.upcast()
+}
+
+fn grouped_list() -> gtk::ListBox {
     let list = gtk::ListBox::new();
     list.set_selection_mode(gtk::SelectionMode::None);
     list.add_css_class("boxed-list");
-    list.set_margin_top(12);
-    list.set_margin_bottom(12);
-    list.set_margin_start(12);
-    list.set_margin_end(12);
+    list
+}
 
-    let now = unix_now();
-    list.append(&nearby_row(manager));
-    for chat in &state.chat_list {
-        list.append(&row_for(chat, &state.preferences, now, manager));
+fn message_hit_row(
+    hit: &MessageSearchHit,
+    prefs: &PreferencesSnapshot,
+    now: u64,
+    manager: &Rc<AppManager>,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(escape(&hit.chat_display_name))
+        .subtitle(escape(&hit.body))
+        .activatable(true)
+        .build();
+    let avatar = adw::Avatar::new(40, Some(&hit.chat_display_name), true);
+    if let Some(url) = hit.chat_picture_url.as_ref() {
+        let proxied = proxied_image_url(url.clone(), prefs.clone(), Some(80), Some(80), true);
+        image_cache::fetch_into_avatar(&avatar, &proxied);
+    }
+    row.add_prefix(&avatar);
+
+    if hit.created_at_secs > 0 {
+        let label = gtk::Label::new(Some(&relative_time(hit.created_at_secs, now)));
+        label.add_css_class("caption");
+        label.add_css_class("dim-label");
+        label.set_valign(gtk::Align::Center);
+        row.add_suffix(&label);
     }
 
-    scrolled.set_child(Some(&list));
-    scrolled.upcast()
+    let manager = manager.clone();
+    let chat_id = hit.chat_id.clone();
+    row.connect_activated(move |_| {
+        manager.clear_search();
+        manager.dispatch(AppAction::OpenChat {
+            chat_id: chat_id.clone(),
+        });
+    });
+
+    row
 }
 
 fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {

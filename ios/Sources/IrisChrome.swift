@@ -365,11 +365,14 @@ struct IrisTopBar: View {
                 if let onTitleTap {
                     Button(action: onTitleTap) {
                         titleContent
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.irisPlain)
                     .accessibilityIdentifier("chatHeaderTitleButton")
                 } else {
                     titleContent
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)

@@ -23,22 +23,32 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -56,7 +66,9 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatThreadSnapshot
+import to.iris.chat.rust.MessageSearchHit
 import to.iris.chat.rust.Screen
+import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisChatListRow
@@ -75,6 +87,23 @@ fun ChatListScreen(
 ) {
     var pendingDeleteChat by remember { mutableStateOf<ChatThreadSnapshot?>(null) }
     val account = appState.account
+
+    var searchQuery by remember { mutableStateOf("") }
+    val trimmedQuery = searchQuery.trim()
+    val searchActive = trimmedQuery.isNotEmpty()
+    // Re-evaluate whenever the query, chat list, or revision change so
+    // an incoming message shows up in matched contacts immediately. The
+    // search() call is sub-millisecond against FTS5 and only inspects
+    // in-memory state for the contacts/groups buckets.
+    val searchResults: SearchResultSnapshot? by remember(searchQuery, appState.rev) {
+        derivedStateOf {
+            if (searchActive) {
+                appManager.search(trimmedQuery)
+            } else {
+                null
+            }
+        }
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -140,32 +169,90 @@ fun ChatListScreen(
                     .padding(padding)
                     .background(MaterialTheme.colorScheme.background),
         ) {
-            if (nearbyService != null) {
-                item(key = "nearby") {
-                    NearbyChatListItem(
-                        service = nearbyService,
-                        onClick = onNearbyClick,
-                    )
-                }
+            item(key = "chatListSearch") {
+                ChatListSearchField(
+                    query = searchQuery,
+                    onQueryChange = { searchQuery = it },
+                    onClear = { searchQuery = "" },
+                )
             }
-            if (appState.chatList.isEmpty()) {
-                item {
-                    Box(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 12.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "No chats yet",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = IrisTheme.palette.muted,
-                        )
+            if (searchActive) {
+                val results = searchResults
+                if (results == null || results.contacts.isEmpty() && results.groups.isEmpty() && results.messages.isEmpty()) {
+                    item(key = "chatListSearchEmpty") {
+                        Box(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 28.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "No matches",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = IrisTheme.palette.muted,
+                            )
+                        }
+                    }
+                } else {
+                    if (results.contacts.isNotEmpty()) {
+                        item(key = "section-contacts") { SearchSectionHeader("Contacts") }
+                        items(results.contacts, key = { "c:${it.chatId}" }) { chat ->
+                            SearchChatRow(
+                                appManager = appManager,
+                                appState = appState,
+                                chat = chat,
+                            )
+                        }
+                    }
+                    if (results.groups.isNotEmpty()) {
+                        item(key = "section-groups") { SearchSectionHeader("Groups") }
+                        items(results.groups, key = { "g:${it.chatId}" }) { chat ->
+                            SearchChatRow(
+                                appManager = appManager,
+                                appState = appState,
+                                chat = chat,
+                            )
+                        }
+                    }
+                    if (results.messages.isNotEmpty()) {
+                        item(key = "section-messages") { SearchSectionHeader("Messages") }
+                        items(results.messages, key = { "m:${it.chatId}:${it.messageId}" }) { hit ->
+                            MessageSearchHitRow(
+                                appManager = appManager,
+                                appState = appState,
+                                hit = hit,
+                            )
+                        }
                     }
                 }
             } else {
-                items(appState.chatList, key = { it.chatId }) { chat ->
+                if (nearbyService != null) {
+                    item(key = "nearby") {
+                        NearbyChatListItem(
+                            service = nearbyService,
+                            onClick = onNearbyClick,
+                        )
+                    }
+                }
+                if (appState.chatList.isEmpty()) {
+                    item {
+                        Box(
+                            modifier =
+                                Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "No chats yet",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = IrisTheme.palette.muted,
+                            )
+                        }
+                    }
+                } else {
+                    items(appState.chatList, key = { it.chatId }) { chat ->
                     val subtitle = chat.subtitle
                     val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
                     val avatarUrl =
@@ -230,6 +317,7 @@ fun ChatListScreen(
                         }
                     }
                 }
+            }
             }
         }
 
@@ -598,4 +686,135 @@ internal fun parseNhashUri(value: String?): String? {
         .removePrefix(prefix)
         .substringBefore("/")
         .takeIf(String::isNotBlank)
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatListSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    TextField(
+        value = query,
+        onValueChange = onQueryChange,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .testTag("chatListSearchField"),
+        placeholder = { Text("Search chats, groups, messages") },
+        leadingIcon = {
+            Icon(
+                imageVector = Icons.Filled.Search,
+                contentDescription = null,
+                tint = IrisTheme.palette.muted,
+            )
+        },
+        trailingIcon = {
+            if (query.isNotEmpty()) {
+                IconButton(onClick = onClear) {
+                    Icon(
+                        imageVector = Icons.Filled.Clear,
+                        contentDescription = "Clear search",
+                        tint = IrisTheme.palette.muted,
+                    )
+                }
+            }
+        },
+        singleLine = true,
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+        shape = RoundedCornerShape(14.dp),
+        colors =
+            TextFieldDefaults.colors(
+                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent,
+            ),
+    )
+}
+
+@Composable
+private fun SearchSectionHeader(title: String) {
+    Text(
+        text = title,
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+        color = IrisTheme.palette.muted,
+    )
+}
+
+@Composable
+private fun SearchChatRow(
+    appManager: AppManager,
+    appState: AppState,
+    chat: ChatThreadSnapshot,
+) {
+    val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
+    val avatarUrl =
+        chat.pictureUrl
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?.let { url ->
+                proxiedImageUrl(
+                    originalSrc = url,
+                    preferences = appState.preferences,
+                    width = 84u,
+                    height = 84u,
+                    square = true,
+                )
+            }
+    IrisChatListRow(
+        title = chat.displayName,
+        isMuted = chat.isMuted,
+        isPinned = chat.isPinned,
+        preview = chat.lastMessagePreview ?: chat.subtitle.orEmpty(),
+        timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
+        imageUrl = avatarUrl,
+        imageData = avatarData,
+        unreadCount = chat.unreadCount.toLong(),
+        lastMessageMine = chat.lastMessageIsOutgoing == true,
+        lastDelivery = chat.lastMessageDelivery,
+        onClick = { appManager.openChat(chat.chatId) },
+    )
+}
+
+@Composable
+private fun MessageSearchHitRow(
+    appManager: AppManager,
+    appState: AppState,
+    hit: MessageSearchHit,
+) {
+    val avatarData by rememberNhashImageData(appManager, hit.chatPictureUrl)
+    val avatarUrl =
+        hit.chatPictureUrl
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?.let { url ->
+                proxiedImageUrl(
+                    originalSrc = url,
+                    preferences = appState.preferences,
+                    width = 84u,
+                    height = 84u,
+                    square = true,
+                )
+            }
+    IrisChatListRow(
+        title = hit.chatDisplayName,
+        isMuted = false,
+        isPinned = false,
+        preview = hit.body,
+        timeLabel = formatRelativeTime(hit.createdAtSecs.toLong(), System.currentTimeMillis()),
+        imageUrl = avatarUrl,
+        imageData = avatarData,
+        unreadCount = 0L,
+        lastMessageMine = false,
+        lastDelivery = null,
+        onClick = { appManager.openChat(hit.chatId) },
+        modifier = Modifier.testTag("messageHit-${hit.messageId.take(12)}"),
+    )
 }

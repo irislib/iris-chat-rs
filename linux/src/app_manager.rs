@@ -5,14 +5,31 @@ use std::sync::Arc;
 
 use iris_chat_core::{
     AppAction, AppReconciler, AppState, AppUpdate, DesktopNearbyObserver, DesktopNearbySnapshot,
-    FfiApp, FfiDesktopNearby, OutgoingAttachment,
+    FfiApp, FfiDesktopNearby, OutgoingAttachment, SearchResultSnapshot,
 };
 
 use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
 
+/// Chat-list search box state. Lives on the UI thread; queries are
+/// re-issued against the core whenever any field changes.
+#[derive(Default, Clone)]
+pub struct SearchUiState {
+    pub query: String,
+    /// When set, restricts the messages section to a single chat — the
+    /// "search in this chat" pill from Signal Desktop. We also stash
+    /// the resolved display name so the chip can render without
+    /// another lookup.
+    pub scope_chat_id: Option<String>,
+    pub scope_display_name: Option<String>,
+    /// Bumped by chat-screen header taps so the chat list grabs focus
+    /// on the search entry after navigating back.
+    pub focus_request: u64,
+}
+
 pub struct AppManager {
     ffi: Arc<FfiApp>,
     update_rx: async_channel::Receiver<AppUpdate>,
+    update_tx_ui: async_channel::Sender<AppUpdate>,
     secret_store: Arc<dyn SecretStore>,
     data_dir: PathBuf,
     nearby: Arc<FfiDesktopNearby>,
@@ -21,6 +38,7 @@ pub struct AppManager {
     nearby_first_open_path: PathBuf,
     staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
     last_focused_chat_id: RefCell<Option<String>>,
+    search_ui: RefCell<SearchUiState>,
 }
 
 struct Reconciler {
@@ -70,6 +88,7 @@ impl AppManager {
         );
 
         let (tx, rx) = async_channel::unbounded();
+        let update_tx_ui = tx.clone();
         let (nearby_tx, nearby_rx) = async_channel::unbounded();
         ffi.listen_for_updates(Box::new(Reconciler {
             tx,
@@ -99,6 +118,7 @@ impl AppManager {
         Self {
             ffi,
             update_rx: rx,
+            update_tx_ui,
             secret_store,
             data_dir,
             nearby,
@@ -107,7 +127,51 @@ impl AppManager {
             nearby_first_open_path: secrets_dir.join("nearby-first-open"),
             staged_attachments: RefCell::new(HashMap::new()),
             last_focused_chat_id: RefCell::new(None),
+            search_ui: RefCell::new(SearchUiState::default()),
         }
+    }
+
+    pub fn search_ui(&self) -> SearchUiState {
+        self.search_ui.borrow().clone()
+    }
+
+    pub fn set_search_query(&self, query: String) {
+        self.search_ui.borrow_mut().query = query;
+    }
+
+    pub fn enter_chat_scope(&self, chat_id: String, display_name: String) {
+        let mut slot = self.search_ui.borrow_mut();
+        slot.scope_chat_id = Some(chat_id);
+        slot.scope_display_name = Some(display_name);
+        slot.focus_request = slot.focus_request.wrapping_add(1);
+        if slot.query.is_empty() {
+            slot.query.clear();
+        }
+    }
+
+    pub fn clear_chat_scope(&self) {
+        let mut slot = self.search_ui.borrow_mut();
+        slot.scope_chat_id = None;
+        slot.scope_display_name = None;
+    }
+
+    pub fn clear_search(&self) {
+        *self.search_ui.borrow_mut() = SearchUiState::default();
+    }
+
+    pub fn run_search(&self, limit: u32) -> SearchResultSnapshot {
+        let snapshot = self.search_ui.borrow().clone();
+        self.ffi
+            .search(snapshot.query, snapshot.scope_chat_id, limit)
+    }
+
+    /// Re-emit the current `AppState` on the UI update channel so the
+    /// window can rebuild the chat-list section after a search-bar
+    /// edit. The channel already drives every other re-render, so we
+    /// piggy-back on it instead of growing a parallel redraw path.
+    pub fn redraw_ui(&self) {
+        let state = self.ffi.state();
+        let _ = self.update_tx_ui.send_blocking(AppUpdate::FullState(state));
     }
 
     pub fn should_focus_composer(&self, chat_id: &str) -> bool {

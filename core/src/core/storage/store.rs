@@ -287,6 +287,20 @@ impl AppStore {
         Ok(exists)
     }
 
+    #[cfg(test)]
+    pub(crate) fn search_messages_fts(
+        &self,
+        query: &str,
+        scope_chat_id: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<PersistedMessageSearchHit>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        search_messages_fts(&conn, query, scope_chat_id, limit)
+    }
+
     pub(crate) fn load_pending_relay_publishes(
         &self,
         owner_pubkey_hex: &str,
@@ -1193,6 +1207,103 @@ fn load_threads(
         .collect())
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct PersistedMessageSearchHit {
+    pub chat_id: String,
+    pub message_id: String,
+    pub author: String,
+    pub body: String,
+    pub is_outgoing: bool,
+    pub created_at_secs: u64,
+}
+
+pub(crate) fn search_messages_fts(
+    conn: &rusqlite::Connection,
+    query: &str,
+    scope_chat_id: Option<&str>,
+    limit: usize,
+) -> anyhow::Result<Vec<PersistedMessageSearchHit>> {
+    let Some(fts_query) = build_fts5_query(query) else {
+        return Ok(Vec::new());
+    };
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let map_row = |row: &Row<'_>| -> rusqlite::Result<PersistedMessageSearchHit> {
+        Ok(PersistedMessageSearchHit {
+            chat_id: row.get(0)?,
+            message_id: row.get(1)?,
+            author: row.get(2)?,
+            body: row.get(3)?,
+            is_outgoing: row.get::<_, i64>(4)? != 0,
+            created_at_secs: row.get::<_, i64>(5)?.max(0) as u64,
+        })
+    };
+    let mut hits = Vec::new();
+    match scope_chat_id {
+        Some(chat_id) => {
+            let mut stmt = conn.prepare(
+                "SELECT messages.chat_id, messages.id, messages.author, messages.body,
+                        messages.is_outgoing, messages.created_at_secs
+                 FROM messages_fts
+                 JOIN messages ON messages.rowid = messages_fts.rowid
+                 WHERE messages_fts MATCH ?1 AND messages.chat_id = ?2
+                 ORDER BY messages.created_at_secs DESC, messages.rowid DESC
+                 LIMIT ?3",
+            )?;
+            let rows = stmt.query_map(params![&fts_query, chat_id, limit as i64], map_row)?;
+            for row in rows {
+                hits.push(row?);
+            }
+        }
+        None => {
+            let mut stmt = conn.prepare(
+                "SELECT messages.chat_id, messages.id, messages.author, messages.body,
+                        messages.is_outgoing, messages.created_at_secs
+                 FROM messages_fts
+                 JOIN messages ON messages.rowid = messages_fts.rowid
+                 WHERE messages_fts MATCH ?1
+                 ORDER BY messages.created_at_secs DESC, messages.rowid DESC
+                 LIMIT ?2",
+            )?;
+            let rows = stmt.query_map(params![&fts_query, limit as i64], map_row)?;
+            for row in rows {
+                hits.push(row?);
+            }
+        }
+    }
+    Ok(hits)
+}
+
+/// Translate a free-text user query into a safe FTS5 MATCH expression.
+/// Each whitespace-separated token becomes a prefix-matched quoted
+/// phrase so partial typing matches early ("hel" finds "hello"), and
+/// punctuation/operator characters are folded into whitespace so a
+/// query like `:" OR DROP TABLE` can never escape the quoted phrase.
+fn build_fts5_query(input: &str) -> Option<String> {
+    let cleaned: String = input
+        .chars()
+        .map(|ch| {
+            if ch.is_alphanumeric() || ch.is_whitespace() {
+                ch
+            } else {
+                ' '
+            }
+        })
+        .collect();
+    let tokens: Vec<&str> = cleaned.split_whitespace().collect();
+    if tokens.is_empty() {
+        return None;
+    }
+    Some(
+        tokens
+            .iter()
+            .map(|t| format!("\"{t}\"*"))
+            .collect::<Vec<_>>()
+            .join(" "),
+    )
+}
+
 fn load_recent_messages(
     conn: &rusqlite::Connection,
     chat_id: &str,
@@ -2080,6 +2191,101 @@ mod tests {
         store.save_state(&snapshot).unwrap();
         assert_eq!(count(&conn_handle, "threads"), 1);
         assert_eq!(count(&conn_handle, "messages"), 1);
+    }
+
+    #[test]
+    fn search_messages_fts_returns_grouped_and_scoped_results() {
+        let (_tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+
+        let mut threads = BTreeMap::new();
+        threads.insert(
+            "chat-a".to_string(),
+            ThreadRecord {
+                chat_id: "chat-a".to_string(),
+                unread_count: 0,
+                updated_at_secs: 200,
+                messages: vec![
+                    sample_message_for_chat("chat-a", "m1", "Hello there, world", 100),
+                    sample_message_for_chat("chat-a", "m2", "good morning sunshine", 200),
+                ],
+            },
+        );
+        threads.insert(
+            "chat-b".to_string(),
+            ThreadRecord {
+                chat_id: "chat-b".to_string(),
+                unread_count: 0,
+                updated_at_secs: 300,
+                messages: vec![sample_message_for_chat(
+                    "chat-b",
+                    "m3",
+                    "Hello again from b",
+                    300,
+                )],
+            },
+        );
+        let snapshot = empty_snapshot(
+            None,
+            10,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        // Unscoped search matches both chats, newest first.
+        let hits = store.search_messages_fts("hello", None, 10).unwrap();
+        let ordered: Vec<(&str, &str)> = hits
+            .iter()
+            .map(|h| (h.chat_id.as_str(), h.message_id.as_str()))
+            .collect();
+        assert_eq!(ordered, vec![("chat-b", "m3"), ("chat-a", "m1")]);
+
+        // Scoped search only returns hits inside the scope chat.
+        let hits = store
+            .search_messages_fts("hello", Some("chat-a"), 10)
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].chat_id, "chat-a");
+        assert_eq!(hits[0].message_id, "m1");
+
+        // Empty / whitespace query returns nothing instead of every row.
+        assert!(store.search_messages_fts("   ", None, 10).unwrap().is_empty());
+
+        // Prefix matching (Signal-style live search): "hel" finds "Hello".
+        let hits = store.search_messages_fts("hel", None, 10).unwrap();
+        assert_eq!(hits.len(), 2);
+
+        // Punctuation in the query must not break out of the quoted phrase.
+        let hits = store.search_messages_fts("hello\"", None, 10).unwrap();
+        assert_eq!(hits.len(), 2);
+
+        // Delete propagates through the trigger.
+        store.delete_message("chat-b", "m3").unwrap();
+        let hits = store.search_messages_fts("hello", None, 10).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].chat_id, "chat-a");
+    }
+
+    fn sample_message_for_chat(
+        chat_id: &str,
+        id: &str,
+        body: &str,
+        ts: u64,
+    ) -> ChatMessageSnapshot {
+        let mut msg = sample_message(id, body, ts);
+        msg.chat_id = chat_id.to_string();
+        msg
     }
 
     #[test]

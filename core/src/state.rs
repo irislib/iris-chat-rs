@@ -364,6 +364,48 @@ pub struct MobilePushSubscriptionRequest {
     pub body_json: Option<String>,
 }
 
+/// One row inside the "Messages" section of a search result. Shells
+/// render this as a single conversation list row whose subtitle is the
+/// matched body and whose title is the chat's display name (resolved
+/// here so the UI doesn't have to look up the parent thread).
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct MessageSearchHit {
+    pub chat_id: String,
+    pub message_id: String,
+    pub chat_display_name: String,
+    pub chat_picture_url: Option<String>,
+    pub chat_kind: ChatKind,
+    pub author_pubkey: String,
+    pub body: String,
+    pub is_outgoing: bool,
+    pub created_at_secs: u64,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct SearchResultSnapshot {
+    pub query: String,
+    pub scope_chat_id: Option<String>,
+    pub contacts: Vec<ChatThreadSnapshot>,
+    pub groups: Vec<ChatThreadSnapshot>,
+    pub messages: Vec<MessageSearchHit>,
+}
+
+impl SearchResultSnapshot {
+    pub fn empty(query: String, scope_chat_id: Option<String>) -> Self {
+        Self {
+            query,
+            scope_chat_id,
+            contacts: Vec::new(),
+            groups: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.contacts.is_empty() && self.groups.is_empty() && self.messages.is_empty()
+    }
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct PublicInviteSnapshot {
     pub url: String,

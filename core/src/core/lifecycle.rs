@@ -92,6 +92,14 @@ impl AppCore {
         })
     }
 
+    /// Clone of the SQLite connection handle used by the core thread.
+    /// Search runs on the FFI thread directly to avoid queueing behind
+    /// `OpenChat`/relay-event batches; the per-connection mutex inside
+    /// `SharedConnection` keeps that safe against concurrent writes.
+    pub(crate) fn shared_db(&self) -> super::storage::SharedConnection {
+        self.app_store.shared()
+    }
+
     pub fn handle_message(&mut self, msg: CoreMsg) -> bool {
         let t0 = crate::perflog::now_ms();
         let label: &'static str = match &msg {

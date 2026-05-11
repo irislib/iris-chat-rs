@@ -57,7 +57,12 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     title_column.append(&title_status);
     let title_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     title_slot.set_valign(gtk::Align::Center);
-    title_slot.set_halign(gtk::Align::Start);
+    // Expand to fill the header center so an empty-space tap on the
+    // chat header still opens the chat info screen, not just clicks
+    // landing on the avatar/name. The inner title_column is
+    // halign-Start so visual layout stays left-aligned.
+    title_slot.set_hexpand(true);
+    title_slot.set_halign(gtk::Align::Fill);
     title_slot.append(&title_column);
     // Use an empty title so the header bar doesn't reserve centered space
     // for it; we pack the avatar+name on the left edge instead.
@@ -103,6 +108,29 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         });
     }
     header.pack_start(&settings_button);
+
+    let chat_search_button = gtk::Button::from_icon_name("system-search-symbolic");
+    chat_search_button.set_tooltip_text(Some("Search in chat"));
+    chat_search_button.set_visible(false);
+    {
+        let manager = manager.clone();
+        chat_search_button.connect_clicked(move |_| {
+            let state = manager.current_state();
+            let (chat_id, name) = if let Some(chat) = state.current_chat.as_ref() {
+                (chat.chat_id.clone(), chat.display_name.clone())
+            } else if let Some(details) = state.group_details.as_ref() {
+                (format!("group:{}", details.group_id), details.name.clone())
+            } else {
+                return;
+            };
+            manager.enter_chat_scope(chat_id, name);
+            // Drop the chat screen so the user lands back on the chat
+            // list with the scope chip and search input focused.
+            manager.dispatch(iris_chat_core::AppAction::UpdateScreenStack { stack: Vec::new() });
+            manager.redraw_ui();
+        });
+    }
+    header.pack_end(&chat_search_button);
 
     let chat_info_button = gtk::Button::from_icon_name("dialog-information-symbolic");
     chat_info_button.set_tooltip_text(Some("Chat info"));
@@ -160,6 +188,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         new_chat: new_chat_button.clone(),
         settings: settings_button.clone(),
         chat_info: chat_info_button.clone(),
+        chat_search: chat_search_button.clone(),
         title: title_label.clone(),
         title_column: title_column.clone(),
         title_status: title_status.clone(),
@@ -285,6 +314,7 @@ struct HeaderWidgets {
     new_chat: gtk::Button,
     settings: gtk::Button,
     chat_info: gtk::Button,
+    chat_search: gtk::Button,
     title: gtk::Label,
     title_column: gtk::Box,
     title_status: gtk::Box,
@@ -324,6 +354,10 @@ fn apply_state(
     header
         .chat_info
         .set_visible(matches!(screen, Screen::Chat { .. }));
+    header.chat_search.set_visible(matches!(
+        screen,
+        Screen::Chat { .. } | Screen::GroupDetails { .. }
+    ));
 
     let title_text =
         chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());

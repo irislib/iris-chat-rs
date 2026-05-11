@@ -59,6 +59,10 @@ pub struct FfiApp {
     update_rx: Receiver<AppUpdate>,
     listening: AtomicBool,
     shared_state: Arc<RwLock<AppState>>,
+    /// Shared SQLite handle used by `search`. None when `try_new`
+    /// failed (we surface a toast to the user instead of bringing up
+    /// a working core).
+    shared_db: Option<crate::core::SharedConnection>,
 }
 
 #[derive(uniffi::Object)]
@@ -93,6 +97,67 @@ impl FfiApp {
             crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
             let _ = self.core_tx.send(CoreMsg::Action(action));
         })
+    }
+
+    /// Grouped Signal-style search: filters the in-memory chat list
+    /// into contacts/groups by display name + subtitle + chat id, and
+    /// runs the SQLite FTS5 index for the messages section. Optional
+    /// `scope_chat_id` restricts message hits to a single thread (the
+    /// "search in this chat" pill in the desktop sidebar). Returns an
+    /// empty snapshot for empty / whitespace queries.
+    pub fn search(
+        &self,
+        query: String,
+        scope_chat_id: Option<String>,
+        limit: u32,
+    ) -> SearchResultSnapshot {
+        ffi_or(
+            "ffiapp.search",
+            SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone()),
+            || {
+                let trimmed = query.trim();
+                if trimmed.is_empty() {
+                    return SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone());
+                }
+                let limit = limit.max(1) as usize;
+                let state_snapshot = match self.shared_state.read() {
+                    Ok(slot) => slot.clone(),
+                    Err(poison) => poison.into_inner().clone(),
+                };
+                let (contacts, groups) = if scope_chat_id.is_some() {
+                    (Vec::new(), Vec::new())
+                } else {
+                    filter_threads_for_search(&state_snapshot.chat_list, trimmed)
+                };
+                let messages = match self.shared_db.as_ref() {
+                    Some(shared) => match shared.lock() {
+                        Ok(conn) => crate::core::search_messages_fts(
+                            &conn,
+                            trimmed,
+                            scope_chat_id.as_deref(),
+                            limit,
+                        )
+                        .unwrap_or_default(),
+                        Err(poison) => crate::core::search_messages_fts(
+                            &poison.into_inner(),
+                            trimmed,
+                            scope_chat_id.as_deref(),
+                            limit,
+                        )
+                        .unwrap_or_default(),
+                    },
+                    None => Vec::new(),
+                };
+                let enriched = enrich_message_hits(messages, &state_snapshot.chat_list);
+                SearchResultSnapshot {
+                    query,
+                    scope_chat_id,
+                    contacts,
+                    groups,
+                    messages: enriched,
+                }
+            },
+        )
     }
 
     pub fn ingest_nearby_event_json(&self, event_json: String) -> bool {
@@ -354,8 +419,10 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
     let core_tx_for_thread = core_tx.clone();
     let shared_for_thread = shared_state.clone();
     let update_tx_for_error = update_tx.clone();
+    let mut shared_db = None;
     match AppCore::try_new(update_tx, core_tx_for_thread, data_dir, shared_for_thread) {
         Ok(mut core) => {
+            shared_db = Some(core.shared_db());
             let spawn_result =
                 thread::Builder::new()
                     .name("iris-core".to_string())
@@ -418,6 +485,7 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
         update_rx,
         listening: AtomicBool::new(false),
         shared_state,
+        shared_db,
     })
 }
 
@@ -433,6 +501,7 @@ fn ffi_app_failure(message: String) -> Arc<FfiApp> {
         update_rx,
         listening: AtomicBool::new(false),
         shared_state,
+        shared_db: None,
     })
 }
 
@@ -509,6 +578,77 @@ fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
 
 fn is_foreground_core_msg(message: &CoreMsg) -> bool {
     !matches!(message, CoreMsg::Internal(_))
+}
+
+fn filter_threads_for_search(
+    chat_list: &[ChatThreadSnapshot],
+    query: &str,
+) -> (Vec<ChatThreadSnapshot>, Vec<ChatThreadSnapshot>) {
+    let needle = query.to_lowercase();
+    let mut contacts = Vec::new();
+    let mut groups = Vec::new();
+    for chat in chat_list {
+        if !thread_matches_query(chat, &needle) {
+            continue;
+        }
+        match chat.kind {
+            ChatKind::Direct => contacts.push(chat.clone()),
+            ChatKind::Group => groups.push(chat.clone()),
+        }
+    }
+    (contacts, groups)
+}
+
+fn thread_matches_query(chat: &ChatThreadSnapshot, needle_lower: &str) -> bool {
+    let candidates: [&str; 3] = [
+        &chat.display_name,
+        chat.subtitle.as_deref().unwrap_or(""),
+        &chat.chat_id,
+    ];
+    candidates
+        .iter()
+        .any(|field| field.to_lowercase().contains(needle_lower))
+}
+
+fn enrich_message_hits(
+    hits: Vec<crate::core::PersistedMessageSearchHit>,
+    chat_list: &[ChatThreadSnapshot],
+) -> Vec<MessageSearchHit> {
+    use std::collections::HashMap;
+    let lookup: HashMap<&str, &ChatThreadSnapshot> = chat_list
+        .iter()
+        .map(|chat| (chat.chat_id.as_str(), chat))
+        .collect();
+    hits.into_iter()
+        .map(|hit| {
+            let parent = lookup.get(hit.chat_id.as_str());
+            let display_name = parent
+                .map(|chat| chat.display_name.clone())
+                .unwrap_or_else(|| short_chat_label(&hit.chat_id));
+            let picture_url = parent.and_then(|chat| chat.picture_url.clone());
+            let kind = parent.map(|chat| chat.kind.clone()).unwrap_or(ChatKind::Direct);
+            MessageSearchHit {
+                chat_id: hit.chat_id,
+                message_id: hit.message_id,
+                chat_display_name: display_name,
+                chat_picture_url: picture_url,
+                chat_kind: kind,
+                author_pubkey: hit.author,
+                body: hit.body,
+                is_outgoing: hit.is_outgoing,
+                created_at_secs: hit.created_at_secs,
+            }
+        })
+        .collect()
+}
+
+fn short_chat_label(chat_id: &str) -> String {
+    let trimmed = chat_id.trim();
+    if trimmed.len() > 12 {
+        format!("{}…", &trimmed[..12])
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn verify_nearby_presence_event_json(

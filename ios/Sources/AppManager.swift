@@ -306,6 +306,7 @@ final class FileAccountSecretStore: AccountSecretStore {
 protocol RustAppClient: AnyObject {
     func state() -> AppState
     func dispatch(action: AppAction) throws
+    func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot
     func ingestNearbyEventJson(eventJson: String) -> Bool
     func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool
     func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String
@@ -332,6 +333,10 @@ final class LiveRustAppClient: RustAppClient {
 
     func dispatch(action: AppAction) throws {
         try ffi.dispatchSafely(action: action)
+    }
+
+    func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot {
+        ffi.searchSafely(query: query, scopeChatId: scopeChatId, limit: limit)
     }
 
     func ingestNearbyEventJson(eventJson: String) -> Bool {
@@ -946,6 +951,14 @@ final class AppManager: ObservableObject {
 
     func dispatch(_ action: AppAction) {
         dispatchToRust(action)
+    }
+
+    /// Run a grouped contacts / groups / messages search against the
+    /// Rust core. Safe to call on every keystroke — the FTS index
+    /// query is sub-millisecond and re-uses the core's open SQLite
+    /// connection without going through the action queue.
+    func search(_ query: String, scopeChatId: String? = nil, limit: UInt32 = 50) -> SearchResultSnapshot {
+        rust.search(query: query, scopeChatId: scopeChatId, limit: limit)
     }
 
     func handleChatLink(_ url: URL) {

@@ -908,14 +908,20 @@ private struct DesktopPaneTopBar: View {
             }
 
             if let onTitleTap {
-                Button(action: onTitleTap) { titleStack }
-                    .buttonStyle(.irisPlain)
-                    .accessibilityIdentifier("chatHeaderTitleButton")
+                Button(action: onTitleTap) {
+                    HStack(spacing: 0) {
+                        titleStack
+                        Spacer(minLength: 12)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("chatHeaderTitleButton")
             } else {
                 titleStack
+                Spacer(minLength: 12)
             }
-
-            Spacer(minLength: 12)
 
             trailing
         }
@@ -1888,43 +1894,203 @@ struct ChatListScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     let onOpenNearby: () -> Void
+    @State private var searchText: String = ""
 
     init(manager: AppManager, onOpenNearby: @escaping () -> Void = {}) {
         self.manager = manager
         self.onOpenNearby = onOpenNearby
     }
 
+    private var trimmedQuery: String {
+        searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var searchActive: Bool { !trimmedQuery.isEmpty }
+
     var body: some View {
         let relativeNow = Date()
 
         ScrollView {
             LazyVStack(spacing: 0) {
+                ChatListSearchField(text: $searchText)
+
+                if searchActive {
+                    let results = manager.search(trimmedQuery)
+                    SearchResultsList(
+                        manager: manager,
+                        results: results,
+                        relativeNow: relativeNow
+                    )
+                } else {
 #if os(iOS) || os(macOS)
-                NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
+                    NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
 #endif
 
-                if manager.state.chatList.isEmpty {
-                    Text("No chats yet")
-                        .font(.system(.body, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.muted)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 20)
-                } else {
-                    let preferences = manager.state.preferences
-                    ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
-                        ChatListRowContainer(
-                            manager: manager,
-                            chat: chat,
-                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
-                            preferences: preferences
-                        )
-                        .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                    if manager.state.chatList.isEmpty {
+                        Text("No chats yet")
+                            .font(.system(.body, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 20)
+                    } else {
+                        let preferences = manager.state.preferences
+                        ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
+                            ChatListRowContainer(
+                                manager: manager,
+                                chat: chat,
+                                timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
+                                preferences: preferences
+                            )
+                            .accessibilityIdentifier("chatRow-\(String(chat.chatId.prefix(12)))")
+                        }
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .background(palette.background)
+    }
+}
+
+/// Always-visible search field at the top of the chat list. Drives the
+/// grouped Signal-style search results below it. We render the field
+/// inline (instead of using `.searchable`) so it composes cleanly with
+/// the custom `NavigationShell` we use across iOS/macOS/Linux instead
+/// of a stock `NavigationStack`.
+private struct ChatListSearchField: View {
+    @Environment(\.irisPalette) private var palette
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(palette.muted)
+            TextField("Search chats, groups, messages", text: $text)
+                .textFieldStyle(.plain)
+                .autocorrectionDisabled(true)
+#if os(iOS)
+                .textInputAutocapitalization(.never)
+#endif
+                .accessibilityIdentifier("chatListSearchField")
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear search")
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(palette.panelAlt)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .padding(.horizontal, 12)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
+    }
+}
+
+private struct SearchResultsList: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    let results: SearchResultSnapshot
+    let relativeNow: Date
+
+    var body: some View {
+        let preferences = manager.state.preferences
+        let isEmpty = results.contacts.isEmpty
+            && results.groups.isEmpty
+            && results.messages.isEmpty
+
+        if isEmpty {
+            Text("No matches")
+                .font(.system(.body, design: .rounded))
+                .foregroundStyle(palette.muted)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 28)
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
+                if !results.contacts.isEmpty {
+                    SearchSectionHeader(title: "Contacts")
+                    ForEach(results.contacts, id: \.chatId) { chat in
+                        ChatListRowContainer(
+                            manager: manager,
+                            chat: chat,
+                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
+                            preferences: preferences
+                        )
+                    }
+                }
+                if !results.groups.isEmpty {
+                    SearchSectionHeader(title: "Groups")
+                    ForEach(results.groups, id: \.chatId) { chat in
+                        ChatListRowContainer(
+                            manager: manager,
+                            chat: chat,
+                            timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
+                            preferences: preferences
+                        )
+                    }
+                }
+                if !results.messages.isEmpty {
+                    SearchSectionHeader(title: "Messages")
+                    ForEach(results.messages, id: \.messageId) { hit in
+                        MessageSearchHitRow(
+                            manager: manager,
+                            hit: hit,
+                            relativeNow: relativeNow,
+                            preferences: preferences
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SearchSectionHeader: View {
+    @Environment(\.irisPalette) private var palette
+    let title: String
+
+    var body: some View {
+        Text(title)
+            .font(.system(.caption, design: .rounded, weight: .semibold))
+            .foregroundStyle(palette.muted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 4)
+    }
+}
+
+private struct MessageSearchHitRow: View {
+    @ObservedObject var manager: AppManager
+    let hit: MessageSearchHit
+    let relativeNow: Date
+    let preferences: PreferencesSnapshot
+
+    var body: some View {
+        IrisChatRow(
+            title: hit.chatDisplayName,
+            isMuted: false,
+            isPinned: false,
+            preview: hit.body,
+            subtitle: nil,
+            timeLabel: irisRelativeTime(hit.createdAtSecs, relativeTo: relativeNow),
+            unreadCount: 0,
+            pictureUrl: hit.chatPictureUrl,
+            preferences: preferences,
+            manager: manager,
+            onTap: {
+                manager.dispatch(.openChat(chatId: hit.chatId))
+            }
+        )
+        .accessibilityIdentifier("messageHit-\(String(hit.messageId.prefix(12)))")
     }
 }
 

@@ -58,6 +58,35 @@ extension FfiApp {
         try checkRustCallStatus(callStatus)
     }
 
+    func searchSafely(
+        query: String,
+        scopeChatId: String?,
+        limit: UInt32
+    ) -> SearchResultSnapshot {
+        do {
+            uniffiEnsureIrisChatCoreInitialized()
+            var callStatus = makeRustCallStatus()
+            let buffer = uniffi_iris_chat_core_fn_method_ffiapp_search(
+                self.uniffiClonePointer(),
+                try lowerString(query),
+                try lowerOptionalString(scopeChatId),
+                limit,
+                &callStatus
+            )
+            try checkRustCallStatus(callStatus)
+            return try FfiConverterTypeSearchResultSnapshot_lift(buffer)
+        } catch {
+            logSafeFfiFailure("ffiapp.search", error)
+            return SearchResultSnapshot(
+                query: query,
+                scopeChatId: scopeChatId,
+                contacts: [],
+                groups: [],
+                messages: []
+            )
+        }
+    }
+
     func buildNearbyPresenceEventJsonSafely(
         peerID: String,
         myNonce: String,
@@ -363,6 +392,22 @@ private func ffiVoid(
 
 private func lowerString(_ value: String) throws -> RustBuffer {
     try rustBuffer(from: Array(value.utf8))
+}
+
+private func lowerOptionalString(_ value: String?) throws -> RustBuffer {
+    var bytes: [UInt8] = []
+    if let value = value {
+        let payload = Array(value.utf8)
+        guard payload.count <= Int(Int32.max) else {
+            throw SafeFfiDispatchError.callError("String too large")
+        }
+        bytes.append(1)
+        appendInt32(Int32(payload.count), to: &bytes)
+        bytes.append(contentsOf: payload)
+    } else {
+        bytes.append(0)
+    }
+    return try rustBuffer(from: bytes)
 }
 
 private func lowerData(_ value: Data) throws -> RustBuffer {

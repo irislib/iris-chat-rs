@@ -120,6 +120,7 @@ use protocol_engine::*;
 use protocol_filters::*;
 use publish_helpers::*;
 use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
+pub(crate) use storage::{search_messages_fts, PersistedMessageSearchHit, SharedConnection};
 
 pub struct AppCore {
     update_tx: Sender<AppUpdate>,

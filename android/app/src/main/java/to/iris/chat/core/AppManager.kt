@@ -55,6 +55,7 @@ import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.rust.OutgoingAttachment
 import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.Screen
+import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.downloadHashtreeAttachment
 import to.iris.chat.push.AndroidMobilePushRuntime
 
@@ -62,6 +63,8 @@ interface RustAppClient {
     fun state(): AppState
 
     fun dispatch(action: AppAction)
+
+    fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot
 
     fun ingestNearbyEventJson(eventJson: String): Boolean
 
@@ -109,6 +112,9 @@ private class LiveRustAppClient(
     override fun dispatch(action: AppAction) {
         ffi.dispatch(action)
     }
+
+    override fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot =
+        ffi.search(query = query, scopeChatId = scopeChatId, limit = limit)
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = ffi.ingestNearbyEventJson(eventJson)
 
@@ -410,6 +416,24 @@ class AppManager(
     fun dispatch(action: AppAction) {
         dispatchToRust(action)
     }
+
+    /**
+     * Grouped search: contacts + groups filtered from the in-memory
+     * chat list, plus message hits from the SQLite FTS5 index. Cheap
+     * enough to call on every keystroke; runs synchronously on the
+     * caller thread, so the chat-list view should hop to the IO
+     * dispatcher when binding it to a `TextField`.
+     */
+    fun search(query: String, scopeChatId: String? = null, limit: UInt = 50u): SearchResultSnapshot =
+        runCatching { rust.search(query, scopeChatId, limit) }.getOrElse {
+            SearchResultSnapshot(
+                query = query,
+                scopeChatId = scopeChatId,
+                contacts = emptyList(),
+                groups = emptyList(),
+                messages = emptyList(),
+            )
+        }
 
     fun setNearbyEventPublisher(publisher: ((NearbyPublishedEvent) -> Unit)?) {
         nearbyEventPublisher = publisher
