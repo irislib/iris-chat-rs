@@ -5908,6 +5908,11 @@ fn retry_batch_self_synced_direct_message_updates_open_chat_projection() {
     );
 
     core.open_chat(&chat_id);
+    // `open_chat` defers the thread-load to an `OpenChatFinalize`
+    // InternalEvent so the screen flip is instant; in the real app the
+    // event loop drains the message right after. The test has no
+    // message pump, so run the finalize step inline.
+    core.open_chat_finalize(&chat_id);
     assert!(core
         .state
         .current_chat
@@ -7514,6 +7519,66 @@ fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
             .messages
             .len(),
         1
+    );
+}
+
+/// Regression for iOS RUNNINGBOARD 0xdead10cc crashes: a relay event
+/// queued just before `PrepareForSuspend` (or one that races in from
+/// the FFI channel during the suspend window) used to keep running
+/// inside `handle_relay_event_with_channel` and write to SQLite,
+/// which iOS' watchdog kills mid-`pwrite`. After this fix the gate
+/// in `handle_internal` drops queued background work once
+/// `PrepareForSuspend` has run, and clears on `AppForegrounded`.
+#[test]
+fn suspend_gate_drops_internal_events_until_foregrounded() {
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    // DebugLog is a simple internal-event signal: the handler appends
+    // to `core.debug_log`, no other code path mutates it, and it's
+    // not pruned by `rebuild_state` like typing indicators are.
+    let send_debug_log = |core: &mut AppCore, detail: &str| {
+        core.handle_message(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+            category: "test".to_string(),
+            detail: detail.to_string(),
+        })));
+    };
+    let log_count = |core: &AppCore| -> usize {
+        core.debug_log
+            .iter()
+            .filter(|entry| entry.category == "test")
+            .count()
+    };
+
+    // Sanity: an internal event before suspend lands in debug_log.
+    send_debug_log(&mut core, "before-suspend");
+    assert_eq!(log_count(&core), 1, "DebugLog must land before suspend");
+
+    // Engage the gate via the real CoreMsg path that iOS uses.
+    let (reply_tx, _reply_rx) = flume::bounded(1);
+    core.handle_message(CoreMsg::PrepareForSuspend(reply_tx));
+
+    // While suspended, internal events must be dropped — the gate is
+    // what keeps SQLite from being written while iOS is killing us.
+    send_debug_log(&mut core, "during-suspend");
+    assert_eq!(
+        log_count(&core),
+        1,
+        "suspend gate must drop internal events"
+    );
+
+    // Foregrounding lifts the gate; the next internal event is processed.
+    core.handle_message(CoreMsg::Action(AppAction::AppForegrounded));
+    send_debug_log(&mut core, "after-foreground");
+    assert_eq!(
+        log_count(&core),
+        2,
+        "after AppForegrounded, internal events flow again"
     );
 }
 

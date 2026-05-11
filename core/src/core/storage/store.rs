@@ -11,7 +11,7 @@ use crate::state::{
 use nostr_double_ratchet::GroupSnapshot;
 use rusqlite::{params, OptionalExtension, Row, Transaction};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
 const META_ACTIVE_CHAT_ID: &str = "active_chat_id";
@@ -33,7 +33,14 @@ struct PersistCache {
     chat_ttls: Option<u64>,
     app_keys: Option<u64>,
     groups: Option<u64>,
-    seen_events: Option<u64>,
+    /// Event ids currently in the `seen_events` table. Mirrors DB rows so
+    /// we can compute an INSERT/DELETE diff per save instead of rewriting
+    /// the whole window. Populated from `load_state` and after each save.
+    seen_events_persisted: HashSet<String>,
+    /// Monotonic next-sequence to assign to a newly inserted seen event.
+    /// Sequences are only used for `ORDER BY sequence ASC` on load, so
+    /// they need to grow but don't need to be dense.
+    seen_events_next_seq: i64,
     threads: HashMap<String, u64>,
 }
 
@@ -96,7 +103,16 @@ impl AppStore {
         let app_keys = load_app_keys(&conn)?;
         let groups = load_groups(&conn)?;
         let threads = load_threads(&conn, active_chat_id.as_deref())?;
-        let seen_event_ids = load_seen_events(&conn)?;
+        let (seen_event_ids, seen_events_max_seq) = load_seen_events(&conn)?;
+        drop(conn);
+
+        // Seed the diff cache so subsequent saves only INSERT new event ids
+        // and DELETE evicted ones, rather than rewriting the whole table on
+        // every relay event. Without this, the first save after launch
+        // would treat the loaded window as "new" and INSERT OR IGNORE all
+        // entries (cheap but pointless).
+        self.cache.seen_events_persisted = seen_event_ids.iter().cloned().collect();
+        self.cache.seen_events_next_seq = seen_events_max_seq.saturating_add(1);
 
         Ok(Some(PersistedState {
             version: PERSISTED_STATE_VERSION,
@@ -442,6 +458,20 @@ pub(crate) struct SaveSnapshot<'a> {
     pub seen_event_order: &'a VecDeque<String>,
 }
 
+/// Diff against the persisted `seen_events` mirror. We only apply rows
+/// that actually changed instead of rewriting the whole window every save:
+/// the window holds up to MAX_SEEN_EVENT_IDS (2048) entries and the old
+/// code did `DELETE FROM seen_events` + `INSERT × N` on every relay event,
+/// which was the SQLite hot path that iOS RUNNINGBOARD 0xdead10cc'd while
+/// the journal was mid-fsync.
+struct SeenEventsPlan {
+    to_insert: Vec<String>,
+    to_delete: Vec<String>,
+    first_insert_seq: i64,
+    next_persisted: HashSet<String>,
+    next_sequence: i64,
+}
+
 /// Decision tree for one save tick. Carries the new fingerprints so the
 /// cache can be updated atomically with the write.
 struct SavePlan {
@@ -451,7 +481,7 @@ struct SavePlan {
     chat_ttls: Option<u64>,
     app_keys: Option<u64>,
     groups: Option<u64>,
-    seen_events: Option<u64>,
+    seen_events: Option<SeenEventsPlan>,
     /// chat_id -> new hash; only changed threads are listed here.
     threads_to_write: HashMap<String, u64>,
     /// chat_ids cached previously but no longer present in the snapshot.
@@ -466,7 +496,7 @@ impl SavePlan {
         let chat_ttls_hash = hash_value(snapshot.chat_message_ttl_seconds);
         let app_keys_hash = hash_value(snapshot.app_keys);
         let groups_hash = hash_groups(snapshot.groups);
-        let seen_events_hash = hash_seen_events(snapshot.seen_event_order);
+        let seen_events = plan_seen_events_diff(cache, snapshot.seen_event_order);
 
         let mut threads_to_write = HashMap::new();
         for (chat_id, thread) in snapshot.threads {
@@ -489,7 +519,7 @@ impl SavePlan {
             chat_ttls: changed(cache.chat_ttls, chat_ttls_hash),
             app_keys: changed(cache.app_keys, app_keys_hash),
             groups: changed(cache.groups, groups_hash),
-            seen_events: changed(cache.seen_events, seen_events_hash),
+            seen_events,
             threads_to_write,
             threads_to_delete,
         }
@@ -526,8 +556,8 @@ impl SavePlan {
         if self.groups.is_some() {
             write_groups(tx, snapshot.groups)?;
         }
-        if self.seen_events.is_some() {
-            write_seen_events(tx, snapshot.seen_event_order)?;
+        if let Some(plan) = &self.seen_events {
+            apply_seen_events_diff(tx, plan)?;
         }
         for chat_id in &self.threads_to_delete {
             // Cascades to messages.
@@ -578,8 +608,9 @@ impl SavePlan {
         if let Some(hash) = self.groups {
             cache.groups = Some(hash);
         }
-        if let Some(hash) = self.seen_events {
-            cache.seen_events = Some(hash);
+        if let Some(plan) = self.seen_events {
+            cache.seen_events_persisted = plan.next_persisted;
+            cache.seen_events_next_seq = plan.next_sequence;
         }
         for chat_id in self.threads_to_delete {
             cache.threads.remove(&chat_id);
@@ -642,12 +673,40 @@ fn hash_groups(groups: &BTreeMap<String, GroupSnapshot>) -> u64 {
     hash_value(groups)
 }
 
-fn hash_seen_events(seen_event_order: &VecDeque<String>) -> u64 {
-    let mut hasher = DefaultHasher::new();
+/// Build the set of `INSERT` / `DELETE` ops needed to bring the persisted
+/// `seen_events` window in line with the in-memory snapshot. Returns
+/// `None` when nothing changed so the caller can short-circuit and skip
+/// the transaction entirely.
+fn plan_seen_events_diff(
+    cache: &PersistCache,
+    seen_event_order: &VecDeque<String>,
+) -> Option<SeenEventsPlan> {
+    let mut next_persisted: HashSet<String> = HashSet::with_capacity(seen_event_order.len());
+    let mut to_insert: Vec<String> = Vec::new();
     for event_id in seen_event_order {
-        event_id.hash(&mut hasher);
+        if !cache.seen_events_persisted.contains(event_id) {
+            to_insert.push(event_id.clone());
+        }
+        next_persisted.insert(event_id.clone());
     }
-    hasher.finish()
+    let to_delete: Vec<String> = cache
+        .seen_events_persisted
+        .iter()
+        .filter(|event_id| !next_persisted.contains(event_id.as_str()))
+        .cloned()
+        .collect();
+    if to_insert.is_empty() && to_delete.is_empty() {
+        return None;
+    }
+    let first_insert_seq = cache.seen_events_next_seq;
+    let next_sequence = first_insert_seq.saturating_add(to_insert.len() as i64);
+    Some(SeenEventsPlan {
+        to_insert,
+        to_delete,
+        first_insert_seq,
+        next_persisted,
+        next_sequence,
+    })
 }
 
 fn hash_thread(thread: &ThreadRecord) -> u64 {
@@ -1193,22 +1252,48 @@ fn persisted_message_from_row(row: &Row<'_>) -> rusqlite::Result<PersistedMessag
     })
 }
 
-fn load_seen_events(conn: &rusqlite::Connection) -> anyhow::Result<Vec<String>> {
-    let mut stmt = conn.prepare("SELECT event_id FROM seen_events ORDER BY sequence ASC")?;
-    let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+/// Returns the persisted event ids (in insertion order) and the highest
+/// sequence number seen, used by the cache to assign monotonically growing
+/// sequences to new inserts.
+fn load_seen_events(conn: &rusqlite::Connection) -> anyhow::Result<(Vec<String>, i64)> {
+    let mut stmt =
+        conn.prepare("SELECT event_id, sequence FROM seen_events ORDER BY sequence ASC")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
     let mut events = Vec::new();
+    let mut max_seq: i64 = -1;
     for row in rows {
-        events.push(row?);
+        let (event_id, sequence) = row?;
+        if sequence > max_seq {
+            max_seq = sequence;
+        }
+        events.push(event_id);
     }
-    Ok(events)
+    Ok((events, max_seq))
 }
 
-fn write_seen_events(tx: &Transaction, seen_event_order: &VecDeque<String>) -> anyhow::Result<()> {
-    tx.execute("DELETE FROM seen_events", [])?;
-    let mut stmt =
-        tx.prepare_cached("INSERT INTO seen_events(event_id, sequence) VALUES (?1, ?2)")?;
-    for (sequence, event_id) in seen_event_order.iter().enumerate() {
-        stmt.execute(params![event_id, sequence as i64])?;
+fn apply_seen_events_diff(tx: &Transaction, plan: &SeenEventsPlan) -> anyhow::Result<()> {
+    if !plan.to_delete.is_empty() {
+        let mut del_stmt = tx.prepare_cached("DELETE FROM seen_events WHERE event_id = ?1")?;
+        for event_id in &plan.to_delete {
+            del_stmt.execute([event_id])?;
+        }
+    }
+    if !plan.to_insert.is_empty() {
+        // ON CONFLICT DO NOTHING handles the case where a previous run
+        // left rows we don't have cached — e.g. cache was reset on a
+        // fresh AppStore. We never want a primary-key violation here.
+        let mut ins_stmt = tx.prepare_cached(
+            "INSERT INTO seen_events(event_id, sequence)
+             VALUES (?1, ?2)
+             ON CONFLICT(event_id) DO NOTHING",
+        )?;
+        let mut seq = plan.first_insert_seq;
+        for event_id in &plan.to_insert {
+            ins_stmt.execute(params![event_id, seq])?;
+            seq += 1;
+        }
     }
     Ok(())
 }
@@ -1347,6 +1432,112 @@ mod tests {
     fn empty_database_returns_none() {
         let (_tmp, mut store) = fresh_store();
         assert!(store.load_state().unwrap().is_none());
+    }
+
+    /// Regression for iOS RUNNINGBOARD 0xdead10cc crashes during relay
+    /// event processing: each save used to `DELETE FROM seen_events` and
+    /// re-INSERT every entry. Verify we now only touch the actual diff:
+    /// a single new event id gets exactly one new row and an evicted id
+    /// is the only deletion.
+    #[test]
+    fn seen_events_writes_are_incremental() {
+        let (_tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let threads = BTreeMap::new();
+
+        let mut window: VecDeque<String> = VecDeque::new();
+        window.push_back("evt-a".to_string());
+        window.push_back("evt-b".to_string());
+        let snapshot = empty_snapshot(
+            None,
+            1,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &window,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        let conn = store.shared();
+        let read_rows = || -> Vec<(String, i64)> {
+            let conn = conn.lock().unwrap();
+            let mut stmt = conn
+                .prepare("SELECT event_id, sequence FROM seen_events ORDER BY sequence ASC")
+                .unwrap();
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+                })
+                .unwrap();
+            rows.map(|r| r.unwrap()).collect()
+        };
+        let rows = read_rows();
+        assert_eq!(
+            rows,
+            vec![("evt-a".into(), 0_i64), ("evt-b".into(), 1_i64)]
+        );
+
+        // Append one new event id; the previous rows must keep their
+        // sequences (no full rewrite) and the new row must get sequence 2.
+        window.push_back("evt-c".to_string());
+        let snapshot = empty_snapshot(
+            None,
+            1,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &window,
+        );
+        store.save_state(&snapshot).unwrap();
+        let rows = read_rows();
+        assert_eq!(
+            rows,
+            vec![
+                ("evt-a".into(), 0_i64),
+                ("evt-b".into(), 1_i64),
+                ("evt-c".into(), 2_i64),
+            ]
+        );
+
+        // Evict the oldest and append another. The middle row keeps its
+        // sequence; only the head row is deleted and the tail row inserted.
+        window.pop_front();
+        window.push_back("evt-d".to_string());
+        let snapshot = empty_snapshot(
+            None,
+            1,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &window,
+        );
+        store.save_state(&snapshot).unwrap();
+        let rows = read_rows();
+        assert_eq!(
+            rows,
+            vec![
+                ("evt-b".into(), 1_i64),
+                ("evt-c".into(), 2_i64),
+                ("evt-d".into(), 3_i64),
+            ]
+        );
+
+        // Re-saving the same window must be a no-op (no rewrite churn).
+        store.save_state(&snapshot).unwrap();
+        assert_eq!(read_rows().len(), 3);
     }
 
     #[test]

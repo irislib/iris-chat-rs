@@ -24,6 +24,7 @@ release.env
 .env.zapstore.local
 .claude/
 .zapstore/
+.crashes/
 *.iml
 .DS_Store
 *.profraw

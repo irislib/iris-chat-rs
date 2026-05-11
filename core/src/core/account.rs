@@ -29,6 +29,9 @@ impl AppCore {
     }
 
     pub(super) fn handle_app_foregrounded(&mut self) {
+        // Lift the suspend gate even when not logged in so a re-foregrounded
+        // unauthenticated app can process events again.
+        self.suspended = false;
         if self.logged_in.is_none() {
             return;
         }

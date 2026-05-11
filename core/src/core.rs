@@ -210,6 +210,13 @@ pub struct AppCore {
     /// only recompute when `mobile_push_dirty` is set.
     cached_mobile_push: MobilePushSyncSnapshot,
     mobile_push_dirty: bool,
+    /// Set during `prepare_for_suspend` and cleared on `AppForegrounded`.
+    /// While suspended, `handle_internal` drops queued background work
+    /// (relay events, retries, polls, etc.) instead of writing to SQLite.
+    /// Why: iOS terminates suspended apps that are mid-SQLite-write with
+    /// RUNNINGBOARD 0xdead10cc, and the FFI message queue can hold relay
+    /// events that arrived just before the scene phase change.
+    suspended: bool,
 }
 
 async fn connect_client_with_timeout(client: &Client, timeout: Duration) {
