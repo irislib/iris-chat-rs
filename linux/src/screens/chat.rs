@@ -678,13 +678,7 @@ fn render_message(
     }
 
     if !message.body.is_empty() {
-        let body = gtk::Label::new(Some(&message.body));
-        body.set_wrap(true);
-        body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
-        body.set_xalign(0.0);
-        body.set_max_width_chars(40);
-        body.set_selectable(true);
-        bubble.append(&body);
+        append_truncatable_body(&bubble, &message.body);
     }
 
     if !other_attachments.is_empty() {
@@ -747,6 +741,57 @@ fn render_message(
     }
 
     row.upcast()
+}
+
+// Cap tall message bodies behind a Show more/less toggle. The
+// char-and-newline heuristic plus a hard `lines` cap means a single
+// pathological glyph stream still gets ellipsized — Pango won't render
+// past the lines limit even if the chars-per-line is unusual.
+fn append_truncatable_body(bubble: &gtk::Box, body_text: &str) {
+    const COLLAPSED_LINES: i32 = 14;
+    const LONG_CHAR_THRESHOLD: usize = 600;
+    const LONG_NEWLINE_THRESHOLD: usize = 14;
+
+    let body = gtk::Label::new(Some(body_text));
+    body.set_wrap(true);
+    body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    body.set_xalign(0.0);
+    body.set_max_width_chars(40);
+    body.set_selectable(true);
+
+    let long = body_text.chars().count() > LONG_CHAR_THRESHOLD
+        || body_text.matches('\n').count() >= LONG_NEWLINE_THRESHOLD;
+    if !long {
+        bubble.append(&body);
+        return;
+    }
+
+    body.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    body.set_lines(COLLAPSED_LINES);
+    bubble.append(&body);
+
+    let toggle = gtk::Button::with_label("Show more");
+    toggle.add_css_class("flat");
+    toggle.add_css_class("link");
+    toggle.set_halign(gtk::Align::Start);
+
+    let expanded = Rc::new(std::cell::Cell::new(false));
+    let label_for_click = body.clone();
+    let expanded_for_click = Rc::clone(&expanded);
+    toggle.connect_clicked(move |btn| {
+        let next = !expanded_for_click.get();
+        expanded_for_click.set(next);
+        if next {
+            label_for_click.set_lines(-1);
+            label_for_click.set_ellipsize(gtk::pango::EllipsizeMode::None);
+            btn.set_label("Show less");
+        } else {
+            label_for_click.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            label_for_click.set_lines(COLLAPSED_LINES);
+            btn.set_label("Show more");
+        }
+    });
+    bubble.append(&toggle);
 }
 
 fn build_message_popover(

@@ -367,7 +367,7 @@ internal fun MessageBubble(
                             ReplyPreview(reply = reply, isOutgoing = message.isOutgoing, onTap = onScrollToQuote)
                         }
                         if (parsed.body.isNotBlank()) {
-                            LinkedMessageText(
+                            TruncatableMessageBody(
                                 text = parsed.body,
                                 style = MaterialTheme.typography.bodyLarge,
                                 color =
@@ -377,6 +377,12 @@ internal fun MessageBubble(
                                         MaterialTheme.colorScheme.onSurface
                                     },
                                 linkColor =
+                                    if (message.isOutgoing) {
+                                        MaterialTheme.colorScheme.onPrimary
+                                    } else {
+                                        IrisTheme.palette.accent
+                                    },
+                                toggleColor =
                                     if (message.isOutgoing) {
                                         MaterialTheme.colorScheme.onPrimary
                                     } else {
@@ -1059,21 +1065,58 @@ internal fun replySnippet(message: ChatMessageSnapshot): String {
 
 private const val ReplyMessagePrefix = "↩ "
 
+// Caps tall message bubbles behind a Show more/less toggle. The
+// `heightIn` cap is the real backstop — weird unicode that renders as
+// one tall line still gets clipped, so we can't be bypassed by a low
+// newline count.
 @Composable
-private fun LinkedMessageText(
+private fun TruncatableMessageBody(
     text: String,
     style: TextStyle,
     color: Color,
     linkColor: Color,
+    toggleColor: Color,
 ) {
+    val collapsedMaxLines = 14
+    val collapsedMaxHeight = 320.dp
+    var isExpanded by remember(text) { mutableStateOf(false) }
+    var didOverflow by remember(text) { mutableStateOf(false) }
     val annotated = remember(text, linkColor) {
         linkedMessageAnnotatedString(text, linkColor)
     }
 
-    Text(
-        text = annotated,
-        style = style.copy(color = color),
-    )
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(
+            text = annotated,
+            style = style.copy(color = color),
+            maxLines = if (isExpanded) Int.MAX_VALUE else collapsedMaxLines,
+            overflow = TextOverflow.Ellipsis,
+            modifier =
+                if (isExpanded) {
+                    Modifier
+                } else {
+                    Modifier.heightIn(max = collapsedMaxHeight)
+                },
+            onTextLayout = { result ->
+                if (!isExpanded && result.hasVisualOverflow) {
+                    didOverflow = true
+                }
+            },
+        )
+        if (didOverflow) {
+            Text(
+                text = if (isExpanded) "Show less" else "Show more",
+                style = MaterialTheme.typography.labelMedium,
+                color = toggleColor,
+                fontWeight = FontWeight.SemiBold,
+                modifier =
+                    Modifier
+                        .padding(top = 2.dp)
+                        .clickable { isExpanded = !isExpanded }
+                        .testTag("chatMessageBodyToggle"),
+            )
+        }
+    }
 }
 
 private fun linkedMessageAnnotatedString(

@@ -26,8 +26,12 @@ public partial class MessageBubble : UserControl
     private static readonly ConcurrentDictionary<string, ImageSource> AttachmentImageCache = new();
     private const int RecentReactionEmojiLimit = 16;
     private const int AttachmentPreviewDecodeWidth = 640;
+    private const double CollapsedBodyMaxHeight = 320;
+    private const int LongBodyCharThreshold = 800;
+    private const int LongBodyNewlineThreshold = 14;
 
     private ChatMessageSnapshot? _message;
+    private bool _bodyExpanded;
 
     public MessageBubble()
     {
@@ -51,6 +55,7 @@ public partial class MessageBubble : UserControl
 
         BodyText.Text = message.body ?? string.Empty;
         BodyText.Visibility = string.IsNullOrEmpty(message.body) ? Visibility.Collapsed : Visibility.Visible;
+        ApplyBodyTruncation(message.body);
 
         if (message.kind == ChatMessageKind.System)
         {
@@ -376,6 +381,53 @@ public partial class MessageBubble : UserControl
         {
             _ = app.Manager.OpenAttachmentAsync(att);
         }
+    }
+
+    private void ApplyBodyTruncation(string? body)
+    {
+        _bodyExpanded = false;
+        var text = body ?? string.Empty;
+        var needsTruncation = text.Length > LongBodyCharThreshold;
+        if (!needsTruncation)
+        {
+            var newlines = 0;
+            foreach (var c in text)
+            {
+                if (c == '\n' && ++newlines >= LongBodyNewlineThreshold)
+                {
+                    needsTruncation = true;
+                    break;
+                }
+            }
+        }
+
+        if (needsTruncation)
+        {
+            BodyText.MaxHeight = CollapsedBodyMaxHeight;
+            ShowMoreLink.Visibility = Visibility.Visible;
+            ShowMoreLink.Text = "Show more";
+        }
+        else
+        {
+            BodyText.MaxHeight = double.PositiveInfinity;
+            ShowMoreLink.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    private void OnToggleShowMore(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        _bodyExpanded = !_bodyExpanded;
+        if (_bodyExpanded)
+        {
+            BodyText.MaxHeight = double.PositiveInfinity;
+            ShowMoreLink.Text = "Show less";
+        }
+        else
+        {
+            BodyText.MaxHeight = CollapsedBodyMaxHeight;
+            ShowMoreLink.Text = "Show more";
+        }
+        e.Handled = true;
     }
 
     private void OnCopyText(object sender, RoutedEventArgs e)

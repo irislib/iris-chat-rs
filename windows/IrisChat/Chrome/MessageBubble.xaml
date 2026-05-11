@@ -22,6 +22,15 @@
                        Foreground="White"
                        FontSize="14"
                        TextWrapping="Wrap" />
+            <TextBlock x:Name="ShowMoreLink"
+                       Visibility="Collapsed"
+                       Foreground="{StaticResource Accent}"
+                       FontSize="12"
+                       FontWeight="SemiBold"
+                       Margin="0,4,0,0"
+                       Cursor="Hand"
+                       MouseLeftButtonUp="OnToggleShowMore"
+                       Text="Show more" />
             <ItemsControl x:Name="AttachmentsList"
                           Visibility="Collapsed"
                           Margin="0,4,0,0" />

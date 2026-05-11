@@ -784,17 +784,13 @@ private struct ChatMessageRow: View, Equatable {
                             )
                         }
                         if !parsed.body.isEmpty {
-                            Text(
-                                linkedMessageAttributedString(
+                            TruncatableMessageBody(
+                                attributed: linkedMessageAttributedString(
                                     parsed.body,
                                     linkColor: message.isOutgoing ? palette.onBubbleMine : palette.accentAlt
-                                )
+                                ),
+                                isOutgoing: message.isOutgoing
                             )
-                            .font(.system(.body, design: .rounded))
-                            // Always left-aligned — wrapped lines hugging the
-                            // right edge in own bubbles read worse than the
-                            // sender-side alignment everyone uses.
-                            .multilineTextAlignment(.leading)
                         }
                         ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
                             ChatAttachmentView(
@@ -928,6 +924,65 @@ private struct ChatMessageRow: View, Equatable {
             .padding(.bottom, isLastInCluster ? 10 : 0)
             }
         }
+    }
+}
+
+// Caps tall message bubbles behind a Show more/less toggle. Uses
+// ViewThatFits — a rendered-size check — so weird unicode that
+// renders unusually tall but has few visible newlines still gets
+// caught.
+private struct TruncatableMessageBody: View {
+    let attributed: AttributedString
+    let isOutgoing: Bool
+    @Environment(\.irisPalette) private var palette
+    @State private var isExpanded = false
+
+    private let collapsedMaxHeight: CGFloat = 320
+    private let toggleReserve: CGFloat = 30
+
+    var body: some View {
+        if isExpanded {
+            VStack(alignment: .leading, spacing: 4) {
+                bodyText
+                toggleButton(label: "Show less")
+            }
+        } else {
+            ViewThatFits(in: .vertical) {
+                bodyText
+                VStack(alignment: .leading, spacing: 4) {
+                    bodyText
+                        .frame(
+                            maxHeight: collapsedMaxHeight - toggleReserve,
+                            alignment: .topLeading
+                        )
+                        .clipped()
+                    toggleButton(label: "Show more")
+                }
+            }
+            .frame(maxHeight: collapsedMaxHeight, alignment: .topLeading)
+        }
+    }
+
+    private var bodyText: some View {
+        Text(attributed)
+            .font(.system(.body, design: .rounded))
+            .multilineTextAlignment(.leading)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func toggleButton(label: String) -> some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.18)) { isExpanded.toggle() }
+        } label: {
+            Text(label)
+                .font(.system(.caption, design: .rounded, weight: .semibold))
+                .foregroundStyle(
+                    isOutgoing ? palette.onBubbleMine.opacity(0.85) : palette.accent
+                )
+                .padding(.top, 2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("chatMessageBodyToggle")
     }
 }
 
