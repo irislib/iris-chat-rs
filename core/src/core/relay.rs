@@ -32,10 +32,16 @@ impl AppCore {
         let is_invite_protocol_event = is_protocol_invite_event(&event);
         let is_invite_response_protocol_event = kind == INVITE_RESPONSE_KIND;
         if self.has_seen_event(&event_id) {
-            self.add_transport_channel_for_event_id(&event_id, channel);
-            self.persist_best_effort();
-            self.rebuild_state();
-            self.emit_state();
+            // Only persist + rebuild + emit when the transport-channel
+            // set actually grew. Without this guard, every mirrored
+            // relay re-delivery of an already-seen event burns a full
+            // snapshot serialize + state rebuild — measurably hot on
+            // accounts subscribed to a handful of relays.
+            if self.add_transport_channel_for_event_id(&event_id, channel) {
+                self.persist_best_effort();
+                self.rebuild_state();
+                self.emit_state();
+            }
             if !self.should_replay_seen_protocol_event(&event, is_invite_protocol_event) {
                 return;
             }

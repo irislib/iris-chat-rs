@@ -738,7 +738,17 @@ impl AppCore {
         push_unique(&mut message.delivery_trace.transport_channels, channel);
     }
 
-    pub(super) fn add_transport_channel_for_event_id(&mut self, event_id: &str, channel: &str) {
+    /// Returns true if a transport-channel entry was actually added —
+    /// callers use this to skip the persist + rebuild + emit cycle
+    /// when a duplicate relay event arrives whose channel set was
+    /// already recorded, which is the common firehose case once a
+    /// chat has been seen on multiple mirrored relays.
+    pub(super) fn add_transport_channel_for_event_id(
+        &mut self,
+        event_id: &str,
+        channel: &str,
+    ) -> bool {
+        let mut changed = false;
         for thread in self.threads.values_mut() {
             for message in &mut thread.messages {
                 let matches_source = message.source_event_id.as_deref() == Some(event_id);
@@ -748,10 +758,19 @@ impl AppCore {
                     .iter()
                     .any(|outer_event_id| outer_event_id == event_id);
                 if matches_source || matches_outer {
-                    push_unique(&mut message.delivery_trace.transport_channels, channel);
+                    if !message
+                        .delivery_trace
+                        .transport_channels
+                        .iter()
+                        .any(|existing| existing == channel)
+                    {
+                        message.delivery_trace.transport_channels.push(channel.to_string());
+                        changed = true;
+                    }
                 }
             }
         }
+        changed
     }
 
     pub(super) fn sync_message_delivery_trace(&mut self, chat_id: &str, message_id: &str) {
