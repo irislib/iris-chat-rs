@@ -82,7 +82,7 @@
                     <TextBox x:Name="PeerInput"
                              TextChanged="OnPeerInputChanged" />
                     <TextBlock Style="{StaticResource MutedText}"
-                               Text="Paste a user ID or invite."
+                               Text="Paste invite or user id"
                                Margin="2,8,2,0" />
                 </StackPanel>
             </Border>

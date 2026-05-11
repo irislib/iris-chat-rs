@@ -90,6 +90,7 @@ private enum SecretExportKind: Identifiable {
 struct RootView: View {
     @ObservedObject var manager: AppManager
     @State private var directChatInfoChatId: String?
+    @State private var inChatSearch: InChatSearchTarget?
 #if os(iOS) || os(macOS)
     @State private var showingNearbyIris = false
 #endif
@@ -2792,7 +2793,7 @@ struct NewChatScreen: View {
                 .foregroundStyle(palette.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            TextField("Paste invite", text: $peerInput)
+            TextField("Paste invite or user id", text: $peerInput)
                 .irisIdentifierInputModifiers()
                 .textFieldStyle(.plain)
                 .irisInputField()

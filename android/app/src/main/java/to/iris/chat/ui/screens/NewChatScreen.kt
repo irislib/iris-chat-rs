@@ -211,7 +211,7 @@ fun NewChatScreen(
                             .testTag("newChatPeerInput"),
                     placeholder = {
                         Text(
-                            text = "Paste invite",
+                            text = "Paste invite or user id",
                             color = IrisTheme.palette.muted,
                         )
                     },

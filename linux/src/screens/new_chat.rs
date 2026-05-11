@@ -15,7 +15,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     header.set_halign(gtk::Align::Start);
     container.append(&header);
 
-    let hint = gtk::Label::new(Some("Paste a user ID or invite."));
+    let hint = gtk::Label::new(Some("Paste invite or user id"));
     hint.add_css_class("dim-label");
     hint.set_halign(gtk::Align::Start);
     hint.set_wrap(true);
