@@ -1,5 +1,5 @@
-# Iris Chat 2026.5.11.4
+# Iris Chat 2026.5.11.5
 
-- iOS: fix RUNNINGBOARD 0xdead10cc crash when the app is suspended mid relay event — every queued internal event now drops cleanly during suspend and the SQLite seen-events table updates incrementally instead of being rewritten on every message (one INSERT instead of 2048).
-- Instant chat-screen flip: tapping a chat now flips the screen immediately and defers the message-page load to a follow-up event, so tap-to-back from a freshly opened chat no longer sits behind the cold-chat load.
-- Back navigation goes through a single `NavigateBack` intent end-to-end: the rust core owns the screen-stack pop instead of every platform computing it. Cleaner and consistent across iOS / Android / Linux.
+- Signal-style search across the chat list: tap the field at the top and grouped Contacts / Groups / Messages results appear, with the messages section backed by a real SQLite FTS5 index so it's fast even on long histories. Pasting an npub or invite URL into the search field auto-opens the chat or accepts the invite — no extra tap.
+- Search-in-chat: the magnifying-glass icon in a chat or group header opens a sheet that searches only that conversation's messages.
+- iOS: smoother send animation — the message log no longer flickers when you fire off a quick message. The chat timeline used to issue a dozen scroll-to-bottom calls per send; it now coalesces to one.
