@@ -89,6 +89,24 @@ fn build_search_box(
         if manager_for_change.search_ui().query == text {
             return;
         }
+        // Auto-proceed when the user pasted a full npub / invite URL —
+        // saves them tapping the shortcut row. Partial input never
+        // classifies (the core parser only accepts complete keys), so
+        // this is safe on every keystroke.
+        if let Some(shortcut) = iris_chat_core::classify_chat_input(text.clone()) {
+            let action = match shortcut {
+                iris_chat_core::ChatInputShortcut::DirectPeer { peer_input, .. } => {
+                    iris_chat_core::AppAction::CreateChat { peer_input }
+                }
+                iris_chat_core::ChatInputShortcut::Invite { invite_input, .. } => {
+                    iris_chat_core::AppAction::AcceptInvite { invite_input }
+                }
+            };
+            manager_for_change.clear_search();
+            manager_for_change.dispatch(action);
+            manager_for_change.redraw_ui();
+            return;
+        }
         manager_for_change.set_search_query(text);
         manager_for_change.redraw_ui();
     });

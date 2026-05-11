@@ -17,6 +17,7 @@ struct ChatScreen: View {
     @State private var isNearBottom = true
     @State private var shouldFollowLatest = true
     @State private var forceScrollToLatest = false
+    @State private var pendingScrollSettle: DispatchWorkItem?
     @State private var timelineViewportMaxY: CGFloat = 0
     @State private var timelineBottomMaxY: CGFloat = .greatestFiniteMagnitude
     @State private var timelineContentHeight: CGFloat = 0
@@ -278,12 +279,17 @@ struct ChatScreen: View {
                                         forceScrollToLatest = false
                                     }
                                 }
-                                .task(id: forceScrollToLatest) {
-                                    guard forceScrollToLatest, !chat.messages.isEmpty else {
-                                        return
-                                    }
-                                    scrollToBottom(proxy: proxy, animated: true)
-                                }
+                                // The `forceScrollToLatest` flag used to drive a
+                                // dedicated scroll task here, but it always fired
+                                // *before* the optimistic message landed — adding
+                                // a redundant animated scroll to the OLD bottom on
+                                // top of the scrolls already coming from
+                                // `.task(id: chat.messages.last?.id)` and the
+                                // content-height preference. We now just leave
+                                // the flag for the messages task to consume in
+                                // `shouldScroll`, so each send fires exactly one
+                                // animated scroll once the new bubble has been
+                                // laid out.
                                 .task(id: chatId) {
                                     if IrisLayout.usesDesktopChrome {
                                         isComposerFocused = true
@@ -482,33 +488,38 @@ struct ChatScreen: View {
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
-        // Prefer the last message's own id over the trailing 1pt anchor:
-        // SwiftUI must realise & measure the targeted row, so a scroll to
-        // the actual final bubble forces SwiftUI to lay it out and lands
-        // the bottom of that bubble at the viewport's bottom. Scrolling to
-        // the empty anchor view doesn't have that effect — SwiftUI
-        // happily resolves it to its current (wrong) position when sibling
-        // rows haven't been measured yet.
+        // Prefer the last message's own id over the trailing 1pt
+        // anchor: SwiftUI must realise & measure the targeted row, so
+        // a scroll to the actual final bubble forces SwiftUI to lay
+        // it out and lands the bottom of that bubble at the
+        // viewport's bottom. Scrolling to the empty anchor view
+        // doesn't have that effect — SwiftUI happily resolves it to
+        // its current (wrong) position when sibling rows haven't
+        // been measured yet.
         //
-        // Issue across several run-loop ticks on the initial paint: the
-        // first call lands the scroll while bubbles' images / quoted
-        // previews are still laying out, and the follow-up calls catch
-        // any settling that nudged the bottom row a few points further
-        // down. Each tick is cheap when we're already at the bottom.
+        // We previously queued four scrolls (immediate + async + 100ms
+        // + 300ms) to catch images/quotes settling. With the chat
+        // re-scrolling on every state push (send → queued, queued →
+        // pending, pending → sent), those overlapping batches stacked
+        // up to ~12 scrollTo calls per send, which iOS rendered as a
+        // visible flicker. We now keep a single deferred follow-up
+        // and cancel any earlier pending one — so a fresh send
+        // collapses cleanly to one immediate scroll + one short
+        // settle, with no leftover scrolls fighting the next state
+        // push.
         let target = chat?.messages.last?.id ?? ChatTimelineAnchor.bottom
         let scroll = {
             proxy.scrollTo(target, anchor: .bottom)
         }
-        DispatchQueue.main.async {
-            if animated {
-                withAnimation(.easeOut(duration: 0.2)) { scroll() }
-            } else {
-                scroll()
-            }
-            DispatchQueue.main.async { scroll() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { scroll() }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { scroll() }
+        if animated {
+            withAnimation(.easeOut(duration: 0.2)) { scroll() }
+        } else {
+            scroll()
         }
+        pendingScrollSettle?.cancel()
+        let item = DispatchWorkItem { scroll() }
+        pendingScrollSettle = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: item)
     }
 
     // The wire format for a quoted reply only carries author + a snippet

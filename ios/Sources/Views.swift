@@ -1996,6 +1996,28 @@ struct ChatListScreen: View {
             .frame(maxWidth: .infinity, alignment: .top)
         }
         .background(palette.background)
+        .irisOnChange(of: searchText) { _ in
+            autoProceedIfShortcut()
+        }
+    }
+
+    /// Mirrors NewChatScreen's auto-proceed: when the user pastes a
+    /// full npub or invite URL into the search bar, dispatch the
+    /// matching action without making them tap the shortcut row.
+    /// Partial input never classifies, so this is safe to call on
+    /// every keystroke.
+    private func autoProceedIfShortcut() {
+        let trimmed = trimmedQuery
+        guard !trimmed.isEmpty,
+              let shortcut = classifyChatInput(input: trimmed) else { return }
+        switch shortcut {
+        case let .directPeer(peerInput, _, _, _):
+            searchText = ""
+            manager.dispatch(.createChat(peerInput: peerInput))
+        case let .invite(inviteInput, _):
+            searchText = ""
+            manager.dispatch(.acceptInvite(inviteInput: inviteInput))
+        }
     }
 }
 

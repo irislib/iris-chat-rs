@@ -70,6 +70,7 @@ import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.MessageSearchHit
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.SearchResultSnapshot
+import to.iris.chat.rust.classifyChatInput
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisChatListRow
@@ -103,6 +104,26 @@ fun ChatListScreen(
             } else {
                 null
             }
+        }
+    }
+
+    // Mirrors NewChatScreen's auto-proceed behaviour: when the user
+    // pastes a full npub or invite URL into the search bar, dispatch
+    // the matching action without forcing them to tap the shortcut
+    // row. Partial input never classifies as a shortcut, so this is
+    // safe on every keystroke.
+    LaunchedEffect(trimmedQuery) {
+        if (trimmedQuery.isEmpty()) return@LaunchedEffect
+        when (val shortcut = classifyChatInput(trimmedQuery)) {
+            is ChatInputShortcut.DirectPeer -> {
+                searchQuery = ""
+                appManager.dispatch(AppAction.CreateChat(shortcut.peerInput))
+            }
+            is ChatInputShortcut.Invite -> {
+                searchQuery = ""
+                appManager.dispatch(AppAction.AcceptInvite(shortcut.inviteInput))
+            }
+            null -> Unit
         }
     }
 
