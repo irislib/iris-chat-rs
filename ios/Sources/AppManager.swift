@@ -453,14 +453,21 @@ enum AppPaths {
         fileManager: FileManager,
         environment: [String: String]
     ) -> AccountSecretStore {
-#if os(macOS)
+        // On the iOS simulator, Keychain items written through
+        // `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` do not
+        // reliably survive a terminate+relaunch — the second launch
+        // sees `errSecItemNotFound`, `restorePersistedSession()` skips
+        // the bundle dispatch, and the app falls back to the welcome
+        // screen. UI tests already opt in to the file-based store via
+        // `IRIS_UI_TEST_BYPASS_KEYCHAIN`; honour it on every platform
+        // so the relaunch flow is exercised the same way it is on
+        // macOS.
         if testRunId(environment: environment) != nil || environment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] == "1" {
             return FileAccountSecretStore(
                 url: dataDir.appendingPathComponent("account-secret.json"),
                 fileManager: fileManager
             )
         }
-#endif
         return KeychainSecretStore(service: keychainService(environment: environment))
     }
 
