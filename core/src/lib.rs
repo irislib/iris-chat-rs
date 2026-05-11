@@ -9,7 +9,7 @@ mod state;
 mod updates;
 
 use std::any::Any;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -53,6 +53,40 @@ pub trait DesktopNearbyObserver: Send + Sync + 'static {
     fn desktop_nearby_changed(&self, snapshot: DesktopNearbySnapshot);
 }
 
+/// Per-FFI-method call counters that feed the release-gate budget
+/// tests. Every `FfiApp::*` entry point bumps the matching atomic at
+/// the top of the call so a misbehaving shell that re-enters the
+/// core in a hot loop shows up as an obvious counter spike.
+///
+/// We track FFI surface area (not internal core counters) because
+/// the categorical heat bugs we hit have all been "the shell
+/// re-evaluated something and called us N times instead of once" —
+/// e.g. the iOS chat-list search re-firing on every body re-eval.
+/// Adding finer-grained counters inside the core is a future move
+/// if needed; the FFI line is what we can confidently budget today
+/// because each entry corresponds to one observable shell action.
+#[derive(Default, Debug)]
+pub(crate) struct FfiPerfCounters {
+    pub state: AtomicU64,
+    pub dispatch: AtomicU64,
+    pub search: AtomicU64,
+    pub ingest_nearby_event_json: AtomicU64,
+    pub export_support_bundle_json: AtomicU64,
+    pub peer_profile_debug: AtomicU64,
+    pub prepare_for_suspend: AtomicU64,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq, Default)]
+pub struct FfiPerfCountersSnapshot {
+    pub state: u64,
+    pub dispatch: u64,
+    pub search: u64,
+    pub ingest_nearby_event_json: u64,
+    pub export_support_bundle_json: u64,
+    pub peer_profile_debug: u64,
+    pub prepare_for_suspend: u64,
+}
+
 #[derive(uniffi::Object)]
 pub struct FfiApp {
     core_tx: Sender<CoreMsg>,
@@ -63,6 +97,7 @@ pub struct FfiApp {
     /// failed (we surface a toast to the user instead of bringing up
     /// a working core).
     shared_db: Option<crate::core::SharedConnection>,
+    perf: FfiPerfCounters,
 }
 
 #[derive(uniffi::Object)]
@@ -84,6 +119,7 @@ impl FfiApp {
     }
 
     pub fn state(&self) -> AppState {
+        self.perf.state.fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.state", ffi_failure_state(), || {
             match self.shared_state.read() {
                 Ok(slot) => slot.clone(),
@@ -93,10 +129,31 @@ impl FfiApp {
     }
 
     pub fn dispatch(&self, action: AppAction) {
+        self.perf.dispatch.fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.dispatch", (), || {
             crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
             let _ = self.core_tx.send(CoreMsg::Action(action));
         })
+    }
+
+    /// Snapshot of the per-FFI-method call counts since `FfiApp` was
+    /// created. Used by `tests/perf_budgets.rs` to assert that hot
+    /// shell paths stay within their expected FFI traffic. Reading
+    /// is best-effort `Relaxed` — call counts are advisory not
+    /// transactional.
+    pub fn perf_counters(&self) -> FfiPerfCountersSnapshot {
+        FfiPerfCountersSnapshot {
+            state: self.perf.state.load(Ordering::Relaxed),
+            dispatch: self.perf.dispatch.load(Ordering::Relaxed),
+            search: self.perf.search.load(Ordering::Relaxed),
+            ingest_nearby_event_json: self.perf.ingest_nearby_event_json.load(Ordering::Relaxed),
+            export_support_bundle_json: self
+                .perf
+                .export_support_bundle_json
+                .load(Ordering::Relaxed),
+            peer_profile_debug: self.perf.peer_profile_debug.load(Ordering::Relaxed),
+            prepare_for_suspend: self.perf.prepare_for_suspend.load(Ordering::Relaxed),
+        }
     }
 
     /// Grouped Signal-style search: filters the in-memory chat list
@@ -111,6 +168,7 @@ impl FfiApp {
         scope_chat_id: Option<String>,
         limit: u32,
     ) -> SearchResultSnapshot {
+        self.perf.search.fetch_add(1, Ordering::Relaxed);
         ffi_or(
             "ffiapp.search",
             SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone()),
@@ -171,6 +229,9 @@ impl FfiApp {
     }
 
     pub fn ingest_nearby_event_json(&self, event_json: String) -> bool {
+        self.perf
+            .ingest_nearby_event_json
+            .fetch_add(1, Ordering::Relaxed);
         self.ingest_nearby_event_json_with_transport(event_json, String::new())
     }
 
@@ -264,6 +325,9 @@ impl FfiApp {
     }
 
     pub fn export_support_bundle_json(&self) -> String {
+        self.perf
+            .export_support_bundle_json
+            .fetch_add(1, Ordering::Relaxed);
         ffi_or(
             "ffiapp.export_support_bundle_json",
             "{}".to_string(),
@@ -284,6 +348,7 @@ impl FfiApp {
     }
 
     pub fn peer_profile_debug(&self, owner_input: String) -> Option<PeerProfileDebugSnapshot> {
+        self.perf.peer_profile_debug.fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.peer_profile_debug", None, || {
             let (reply_tx, reply_rx) = flume::bounded(1);
             if self
@@ -301,6 +366,7 @@ impl FfiApp {
     }
 
     pub fn prepare_for_suspend(&self) {
+        self.perf.prepare_for_suspend.fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.prepare_for_suspend", (), || {
             let (reply_tx, reply_rx) = flume::bounded(1);
             if self
@@ -496,6 +562,7 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
         listening: AtomicBool::new(false),
         shared_state,
         shared_db,
+        perf: FfiPerfCounters::default(),
     })
 }
 
@@ -512,6 +579,7 @@ fn ffi_app_failure(message: String) -> Arc<FfiApp> {
         listening: AtomicBool::new(false),
         shared_state,
         shared_db: None,
+        perf: FfiPerfCounters::default(),
     })
 }
 
