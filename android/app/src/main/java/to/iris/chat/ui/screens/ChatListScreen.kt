@@ -424,7 +424,7 @@ private fun SwipeableChatListRow(
                 ChatSwipeActionButton(
                     label = if (chat.unreadCount > 0uL) "Read" else "Unread",
                     icon = if (chat.unreadCount > 0uL) IrisIcons.MarkRead else IrisIcons.MarkUnread,
-                    color = IrisTheme.palette.accent,
+                    color = MaterialTheme.colorScheme.onBackground,
                     onClick = {
                         onToggleUnread()
                         targetOffsetPx = 0f
@@ -434,7 +434,7 @@ private fun SwipeableChatListRow(
                 ChatSwipeActionButton(
                     label = if (chat.isPinned) "Unpin" else "Pin",
                     icon = IrisIcons.Pin,
-                    color = IrisTheme.palette.accentAlt,
+                    color = MaterialTheme.colorScheme.onBackground,
                     onClick = {
                         onTogglePin()
                         targetOffsetPx = 0f
@@ -454,7 +454,7 @@ private fun SwipeableChatListRow(
                 ChatSwipeActionButton(
                     label = if (chat.isMuted) "Unmute" else "Mute",
                     icon = if (chat.isMuted) IrisIcons.Notifications else IrisIcons.NotificationsOff,
-                    color = IrisTheme.palette.accent,
+                    color = MaterialTheme.colorScheme.onBackground,
                     onClick = {
                         onToggleMute()
                         targetOffsetPx = 0f
@@ -910,7 +910,7 @@ private fun MessageSearchHitRow(
         unreadCount = 0L,
         lastMessageMine = false,
         lastDelivery = null,
-        onClick = { appManager.openChat(hit.chatId) },
+        onClick = { appManager.openChatAtMessage(hit.chatId, hit.messageId) },
         modifier = Modifier.testTag("messageHit-${hit.messageId.take(12)}"),
     )
 }

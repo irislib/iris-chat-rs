@@ -380,7 +380,7 @@ private fun NewChatActionRow(
             Surface(
                 modifier = Modifier.width(22.dp),
                 color = Color.Transparent,
-                contentColor = IrisTheme.palette.accent,
+                contentColor = MaterialTheme.colorScheme.onBackground,
             ) {
                 icon()
             }

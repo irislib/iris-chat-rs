@@ -268,6 +268,24 @@ struct ChatScreen: View {
                                     }
                                     let messageCount = chat.messages.count
                                     let messageCountIncreased = messageCount > renderedMessageCount
+                                    // Search hits ask us to land on a
+                                    // specific bubble instead of the
+                                    // bottom of the timeline. Consume
+                                    // the manager-side flag here so a
+                                    // tap on a "Messages" row scrolls
+                                    // straight to that message; falls
+                                    // through to the regular bottom
+                                    // scroll for normal opens.
+                                    if let targetId = manager.pendingScrollMessageId,
+                                       chat.messages.contains(where: { $0.id == targetId }) {
+                                        renderedMessageCount = messageCount
+                                        initialScrollPending = false
+                                        shouldFollowLatest = false
+                                        forceScrollToLatest = false
+                                        scrollToMessage(proxy: proxy, messageId: targetId)
+                                        manager.consumePendingScrollMessage()
+                                        return
+                                    }
                                     let shouldScroll = initialScrollPending
                                         || forceScrollToLatest
                                         || (messageCountIncreased && shouldFollowLatest)
@@ -473,6 +491,20 @@ struct ChatScreen: View {
             guard !incomingIds.isEmpty else { return }
             manager.dispatch(.markMessagesSeen(chatId: chat.chatId, messageIds: incomingIds))
         }
+    }
+
+    /// Centre the targeted bubble in the viewport for search-hit
+    /// taps. Reuses the multi-tick re-scroll pattern from
+    /// `scrollToBottom` so quoted-reply previews / images that
+    /// resolve a moment after layout don't end up just off-screen.
+    private func scrollToMessage(proxy: ScrollViewProxy, messageId: String) {
+        let scroll = {
+            withAnimation(.easeOut(duration: 0.25)) {
+                proxy.scrollTo(messageId, anchor: .center)
+            }
+        }
+        DispatchQueue.main.async { scroll() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { scroll() }
     }
 
     /// Debounce composer writes so a fast typist generates one
@@ -1037,8 +1069,14 @@ private struct TruncatableMessageBody: View {
         } label: {
             Text(label)
                 .font(.system(.caption, design: .rounded, weight: .semibold))
+                // Match the bubble's text colour with a mute, same
+                // pattern the timestamp uses. The brand purple
+                // (`palette.accent`) is reserved for surfaces — never
+                // text — so the toggle stays readable on either bubble
+                // without lighting up purple on the chat canvas.
                 .foregroundStyle(
-                    isOutgoing ? palette.onBubbleMine.opacity(0.85) : palette.accent
+                    (isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
+                        .opacity(0.85)
                 )
                 .padding(.top, 2)
         }
@@ -1086,6 +1124,12 @@ private struct MessageInfoSheet: View {
                 .padding(.vertical, 16)
                 .frame(maxWidth: IrisLayout.scrollMaxWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, alignment: .center)
+                // Message details is a wall of identifiers — message
+                // id, source event id, sender hex, attachment urls.
+                // Default SwiftUI Text isn't selectable, so enable it
+                // for the whole sheet so a long-press can copy any of
+                // them onto the clipboard.
+                .textSelection(.enabled)
             }
             .background(palette.background)
             .navigationTitle("Message Details")

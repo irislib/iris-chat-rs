@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
@@ -175,6 +176,12 @@ fun MyProfileSheet(
             )
         },
     ) { padding ->
+        // Wrap the profile body in a `SelectionContainer` so the
+        // version, npub, device pubkey, build summary, etc. can be
+        // long-pressed and copied. Buttons / IconButtons inside still
+        // route taps the normal way — only inert `Text` picks up
+        // selection.
+        SelectionContainer {
         Column(
             modifier =
                 Modifier
@@ -796,6 +803,7 @@ fun MyProfileSheet(
                     },
                 )
             }
+        }
         }
     }
 

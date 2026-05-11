@@ -23,6 +23,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.rounded.KeyboardArrowDown
@@ -247,13 +248,33 @@ fun ChatScreen(
             }
     }
 
-    LaunchedEffect(chatId, chat?.messages?.size, chat?.messages?.lastOrNull()?.id, forceScrollToLatest) {
-        val total = chat?.messages?.size ?: 0
+    val pendingScrollMessage by appManager.pendingScrollMessage.collectAsStateWithLifecycle()
+
+    LaunchedEffect(chatId, chat?.messages?.size, chat?.messages?.lastOrNull()?.id, forceScrollToLatest, pendingScrollMessage) {
+        val messages = chat?.messages.orEmpty()
+        val total = messages.size
         if (total == 0) {
             initialScrollPending = true
             observedMessageCount = 0
             forceScrollToLatest = false
             return@LaunchedEffect
+        }
+        // Search-hit jump: when the user tapped a "Messages" row, the
+        // manager set a one-shot target id. If the chat's now showing
+        // that message, scroll to it instead of bottom and clear the
+        // flag so back-and-forth navigation doesn't keep snapping.
+        val target = pendingScrollMessage
+        if (target != null) {
+            val targetIndex = messages.indexOfFirst { it.id == target }
+            if (targetIndex >= 0) {
+                observedMessageCount = total
+                initialScrollPending = false
+                shouldFollowLatest = false
+                forceScrollToLatest = false
+                listState.scrollToItem(targetIndex)
+                appManager.consumePendingScrollMessage()
+                return@LaunchedEffect
+            }
         }
         val previousTotal = observedMessageCount
         val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -751,11 +772,21 @@ private fun DirectChatInfoSheet(
                     )
                 },
             ) { padding ->
+                // Chat info exposes the peer's hex pubkey + npub +
+                // their relay debug counters — make them all
+                // long-press-to-copy. SelectionContainer is inert for
+                // buttons, IconButtons, and the avatar; only Text
+                // children pick up selection.
+                SelectionContainer(
+                    modifier =
+                        Modifier
+                            .fillMaxSize()
+                            .padding(padding),
+                ) {
                 Column(
                     modifier =
                         Modifier
                             .fillMaxSize()
-                            .padding(padding)
                             .verticalScroll(rememberScrollState())
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp),
@@ -842,6 +873,7 @@ private fun DirectChatInfoSheet(
                             tint = MaterialTheme.colorScheme.error,
                         )
                     }
+                }
                 }
             }
         }
@@ -1139,7 +1171,7 @@ private fun InChatSearchSheet(
                                 lastDelivery = null,
                                 onClick = {
                                     onDismiss()
-                                    appManager.openChat(hit.chatId)
+                                    appManager.openChatAtMessage(hit.chatId, hit.messageId)
                                 },
                             )
                         }

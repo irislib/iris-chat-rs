@@ -748,6 +748,12 @@ final class AppManager: ObservableObject {
     @Published private(set) var pendingShare: PendingShare?
     @Published private(set) var lastForegroundedAt = Date()
     @Published private(set) var appSceneIsActive = true
+    /// Set when the user taps a hit in the search bar's Messages
+    /// section — ChatScreen reads it on appear, scrolls the timeline
+    /// to that message id, then clears via `consumePendingScroll()`.
+    /// Stays nil for normal `openChat` taps so we don't re-scroll on
+    /// every chat-open.
+    @Published private(set) var pendingScrollMessageId: String?
 
     // Domain-scoped sub-controllers — split out of the previous fat
     // ObservableObject so views that only care about toasts or the desktop
@@ -951,6 +957,24 @@ final class AppManager: ObservableObject {
 
     func dispatch(_ action: AppAction) {
         dispatchToRust(action)
+    }
+
+    /// Open a chat and queue a scroll-to-message hop on first paint.
+    /// Used by the search result rows so tapping a message hit lands
+    /// the chat at that bubble instead of the bottom of the
+    /// timeline.
+    func openChatAtMessage(chatId: String, messageId: String) {
+        pendingScrollMessageId = messageId
+        dispatchToRust(.openChat(chatId: chatId))
+    }
+
+    /// ChatScreen calls this after it's actually scrolled the
+    /// timeline to the target — clears the one-shot so navigating
+    /// away and back doesn't re-scroll to the same hit.
+    func consumePendingScrollMessage() {
+        if pendingScrollMessageId != nil {
+            pendingScrollMessageId = nil
+        }
     }
 
     /// Run a grouped contacts / groups / messages search against the

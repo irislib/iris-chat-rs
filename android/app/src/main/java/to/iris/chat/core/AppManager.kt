@@ -610,6 +610,28 @@ class AppManager(
         dispatchToRust(AppAction.OpenChat(trimmed))
     }
 
+    /// Open a chat with a one-shot "scroll to this message" hint.
+    /// ChatScreen consumes it on first paint and resets via
+    /// `consumePendingScrollMessage`.
+    fun openChatAtMessage(chatId: String, messageId: String) {
+        val trimmedChat = chatId.trim()
+        val trimmedMessage = messageId.trim()
+        if (trimmedChat.isEmpty() || trimmedMessage.isEmpty()) {
+            return
+        }
+        pendingScrollMessageState.value = trimmedMessage
+        dispatchToRust(AppAction.OpenChat(trimmedChat))
+    }
+
+    fun consumePendingScrollMessage() {
+        if (pendingScrollMessageState.value != null) {
+            pendingScrollMessageState.value = null
+        }
+    }
+
+    private val pendingScrollMessageState = MutableStateFlow<String?>(null)
+    val pendingScrollMessage: StateFlow<String?> = pendingScrollMessageState.asStateFlow()
+
     fun pushScreen(screen: Screen) {
         dispatchToRust(AppAction.PushScreen(screen))
     }

@@ -123,6 +123,7 @@ fn updates_group() -> adw::PreferencesGroup {
     let version = adw::ActionRow::builder()
         .title("Current version")
         .subtitle(iris_chat_core::app_version())
+        .subtitle_selectable(true)
         .build();
     group.add(&version);
 
@@ -583,6 +584,7 @@ fn about_group(state: &AppState) -> adw::PreferencesGroup {
     let version = adw::ActionRow::builder()
         .title("Version")
         .subtitle(iris_chat_core::app_version())
+        .subtitle_selectable(true)
         .build();
     group.add(&version);
 

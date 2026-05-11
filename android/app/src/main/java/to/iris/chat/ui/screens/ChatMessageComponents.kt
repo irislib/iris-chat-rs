@@ -103,6 +103,7 @@ import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.TextButton
@@ -1204,10 +1205,13 @@ private fun MessageInfoDialog(
         },
         title = { Text("Message Details") },
         text = {
+            // Long-press anywhere in the details dialog to copy an
+            // identifier (message id, source event id, sender hex,
+            // reactor pubkeys, …). Buttons inside still route taps.
+            SelectionContainer(modifier = Modifier.heightIn(max = 520.dp)) {
             Column(
                 modifier =
                     Modifier
-                        .heightIn(max = 520.dp)
                         .verticalScroll(rememberScrollState())
                         .testTag("messageInfoDialog"),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -1354,6 +1358,7 @@ private fun MessageInfoDialog(
                         modifier = Modifier.testTag("messageInfoRumorCopyButton"),
                     ) { Text("Copy rumor JSON") }
                 }
+            }
             }
         },
     )

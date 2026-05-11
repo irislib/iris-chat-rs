@@ -115,6 +115,17 @@ private final class MockRustApp: RustAppClient {
         onDispatch?(action)
     }
 
+    func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot {
+        SearchResultSnapshot(
+            query: query,
+            scopeChatId: scopeChatId,
+            contacts: [],
+            groups: [],
+            messages: [],
+            shortcut: nil
+        )
+    }
+
     func ingestNearbyEventJson(eventJson: String) -> Bool {
         true
     }

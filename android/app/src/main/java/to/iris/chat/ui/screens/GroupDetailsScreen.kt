@@ -276,7 +276,8 @@ fun GroupDetailsScreen(
                                                     !member.isAdmin,
                                                 )
                                             },
-                                    color = IrisTheme.palette.accent,
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    fontWeight = FontWeight.SemiBold,
                                     style = MaterialTheme.typography.labelLarge,
                                 )
                                 Text(

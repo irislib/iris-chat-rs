@@ -1505,6 +1505,11 @@ private struct DirectChatInfoSheet: View {
                 .padding(.horizontal, 18)
                 .padding(.bottom, 24)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                // Direct-chat info exposes the peer's npub + hex
+                // pubkey, profile debug counters, and so on — all
+                // copy-worthy. Same long-press-to-select gesture as
+                // settings/message-details.
+                .textSelection(.enabled)
             }
             .background(palette.background)
             .toolbar {
@@ -1942,6 +1947,16 @@ struct ChatListScreen: View {
     @ObservedObject var manager: AppManager
     let onOpenNearby: () -> Void
     @State private var searchText: String = ""
+    // Cached search response so we only call into the Rust core when
+    // the query string itself changes. Previously the body grabbed a
+    // fresh `manager.search(...)` snapshot on every SwiftUI body
+    // re-eval, which fires on every state push (incoming relay
+    // event, typing indicator, message delivery flip, …). On a busy
+    // chat that turned into hundreds of FFI calls / SQLite-mutex
+    // acquires per second and was visible on iPhone as a warming
+    // device. The .task below now refreshes the cache once per
+    // searchText edit.
+    @State private var cachedSearchResults: SearchResultSnapshot?
 
     init(manager: AppManager, onOpenNearby: @escaping () -> Void = {}) {
         self.manager = manager
@@ -1962,12 +1977,13 @@ struct ChatListScreen: View {
                 ChatListSearchField(text: $searchText)
 
                 if searchActive {
-                    let results = manager.search(trimmedQuery)
-                    SearchResultsList(
-                        manager: manager,
-                        results: results,
-                        relativeNow: relativeNow
-                    )
+                    if let results = cachedSearchResults {
+                        SearchResultsList(
+                            manager: manager,
+                            results: results,
+                            relativeNow: relativeNow
+                        )
+                    }
                 } else {
 #if os(iOS) || os(macOS)
                     NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
@@ -1998,6 +2014,14 @@ struct ChatListScreen: View {
         .background(palette.background)
         .irisOnChange(of: searchText) { _ in
             autoProceedIfShortcut()
+        }
+        .task(id: trimmedQuery) {
+            // Refresh the search cache once per query change. Body
+            // re-runs on every state push otherwise — the cache turns
+            // an O(state-push) FTS5 query into an O(keystroke) one.
+            cachedSearchResults = trimmedQuery.isEmpty
+                ? nil
+                : manager.search(trimmedQuery)
         }
     }
 
@@ -2139,7 +2163,7 @@ private struct ChatInputShortcutRow: View {
             HStack(spacing: 12) {
                 Image(systemName: descriptor.systemImage)
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(palette.accent)
+                    .foregroundStyle(palette.textPrimary)
                     .frame(width: 36, height: 36)
                     .background(palette.panelAlt)
                     .clipShape(Circle())
@@ -2234,7 +2258,7 @@ private struct MessageSearchHitRow: View {
             preferences: preferences,
             manager: manager,
             onTap: {
-                manager.dispatch(.openChat(chatId: hit.chatId))
+                manager.openChatAtMessage(chatId: hit.chatId, messageId: hit.messageId)
             }
         )
         .accessibilityIdentifier("messageHit-\(String(hit.messageId.prefix(12)))")
@@ -2257,6 +2281,9 @@ private struct InChatSearchSheet: View {
     let target: InChatSearchTarget
     let onClose: () -> Void
     @State private var query: String = ""
+    // Same query-keyed cache as ChatListScreen so a state push
+    // (e.g. an incoming message) doesn't re-run the FTS5 query.
+    @State private var cachedResults: SearchResultSnapshot?
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -2299,8 +2326,7 @@ private struct InChatSearchSheet: View {
                         .foregroundStyle(palette.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 48)
-                } else {
-                    let results = manager.search(trimmed, scopeChatId: target.chatId)
+                } else if let results = cachedResults {
                     if results.messages.isEmpty {
                         Text("No matches")
                             .font(.system(.body, design: .rounded))
@@ -2324,7 +2350,10 @@ private struct InChatSearchSheet: View {
                                     preferences: preferences,
                                     manager: manager,
                                     onTap: {
-                                        manager.dispatch(.openChat(chatId: hit.chatId))
+                                        manager.openChatAtMessage(
+                                            chatId: hit.chatId,
+                                            messageId: hit.messageId
+                                        )
                                         onClose()
                                     }
                                 )
@@ -2336,6 +2365,12 @@ private struct InChatSearchSheet: View {
         }
         .background(palette.background)
         .onAppear { isFocused = true }
+        .task(id: query.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            cachedResults = trimmed.isEmpty
+                ? nil
+                : manager.search(trimmed, scopeChatId: target.chatId)
+        }
     }
 }
 
@@ -3533,7 +3568,7 @@ struct NewGroupScreen: View {
                         }
                         Spacer()
                         Image(systemName: selectedOwners.contains(chat.chatId) ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(selectedOwners.contains(chat.chatId) ? palette.accent : palette.muted)
+                            .foregroundStyle(selectedOwners.contains(chat.chatId) ? palette.textPrimary : palette.muted)
                     }
                     .contentShape(Rectangle())
                 }
@@ -4188,6 +4223,17 @@ struct SettingsScreen: View {
     @State private var editingRelayDraft = ""
 
     var body: some View {
+        // Settings is full of inspectable identifiers — version,
+        // npub, hex pubkey, relay URLs, build summary. Default
+        // SwiftUI Text is not selectable; flipping textSelection on
+        // at the root means a long-press anywhere on the page can
+        // pull values onto the clipboard. Buttons and Links still
+        // route their taps; only inert Text picks up selection.
+        scrollBody.textSelection(.enabled)
+    }
+
+    @ViewBuilder
+    private var scrollBody: some View {
         ZStack {
             BackgroundFill()
 
