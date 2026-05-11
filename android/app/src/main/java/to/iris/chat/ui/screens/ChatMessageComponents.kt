@@ -377,18 +377,26 @@ internal fun MessageBubble(
                                     } else {
                                         MaterialTheme.colorScheme.onSurface
                                     },
-                                linkColor =
-                                    if (message.isOutgoing) {
-                                        MaterialTheme.colorScheme.onPrimary
-                                    } else {
-                                        IrisTheme.palette.accent
-                                    },
+                                // One link colour on both bubble sides — the
+                                // outgoing-vs-incoming swap was making the same
+                                // URL flicker between two "this is clickable"
+                                // cues when it got quoted back. accentAlt
+                                // (orange) reads against both the brand purple
+                                // of outgoing bubbles and the neutral surface
+                                // of incoming ones.
+                                linkColor = IrisTheme.palette.accentAlt,
+                                // Toggle was previously palette.accent (purple)
+                                // on the incoming side, which violates the
+                                // "no purple text/icons" rule. Mute it the
+                                // same way iOS does: bubble's own foreground
+                                // colour at reduced opacity, so it reads as a
+                                // quiet affordance rather than an accent CTA.
                                 toggleColor =
-                                    if (message.isOutgoing) {
+                                    (if (message.isOutgoing) {
                                         MaterialTheme.colorScheme.onPrimary
                                     } else {
-                                        IrisTheme.palette.accent
-                                    },
+                                        MaterialTheme.colorScheme.onSurface
+                                    }).copy(alpha = 0.85f),
                             )
                         }
                         message.attachments.forEach { attachment ->

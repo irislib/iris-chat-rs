@@ -22,9 +22,14 @@
                        Foreground="White"
                        FontSize="14"
                        TextWrapping="Wrap" />
+            <!-- Foreground is plain white (not Accent purple) — text and
+                 icons are never the brand purple. Opacity matches the
+                 timestamp/meta row so the toggle reads as a subtle
+                 affordance attached to the bubble, not a separate accent. -->
             <TextBlock x:Name="ShowMoreLink"
                        Visibility="Collapsed"
-                       Foreground="{StaticResource Accent}"
+                       Foreground="White"
+                       Opacity="0.85"
                        FontSize="12"
                        FontWeight="SemiBold"
                        Margin="0,4,0,0"

@@ -800,7 +800,12 @@ fn append_truncatable_body(bubble: &gtk::Box, body_text: &str) {
 
     let toggle = gtk::Button::with_label("Show more");
     toggle.add_css_class("flat");
-    toggle.add_css_class("link");
+    // Intentionally NOT `.link`: Adwaita's `.link` style colours the
+    // button with `@accent_color`, which in our palette is the brand
+    // purple. Text/icons in chat content are never purple — the
+    // toggle stays as a plain flat button and inherits the bubble's
+    // muted foreground via the `.bubble-toggle` rule in main.rs.
+    toggle.add_css_class("bubble-toggle");
     toggle.set_halign(gtk::Align::Start);
 
     let expanded = Rc::new(std::cell::Cell::new(false));

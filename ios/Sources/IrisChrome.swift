@@ -138,6 +138,13 @@ enum IrisLayout {
     static let chromeMaxWidth: CGFloat = 1240
     static let scrollMaxWidth: CGFloat = 1100
     static let chatMaxWidth: CGFloat = 1240
+    /// Per-message bubble width cap on macOS. Without this, a single
+    /// long message could stretch most of the chat pane (~830pt) which
+    /// looks weird in a chat UI — every other desktop messenger keeps
+    /// the bubble at ~half the column. Short bubbles still hug content
+    /// because the bubble is rendered inside a fixedSize+frame trick;
+    /// only the wrap point shifts.
+    static let chatBubbleMaxWidth: CGFloat = 480
     static let topBarCornerRadius: CGFloat = 18
     static let sectionCornerRadius: CGFloat = 22
     static let inputCornerRadius: CGFloat = 14
@@ -152,6 +159,9 @@ enum IrisLayout {
     static let chromeMaxWidth: CGFloat? = nil
     static let scrollMaxWidth: CGFloat? = nil
     static let chatMaxWidth: CGFloat? = nil
+    /// iOS phone screens are narrow enough that natural row sizing
+    /// already keeps bubbles in a reasonable range — no cap.
+    static let chatBubbleMaxWidth: CGFloat? = nil
     static let topBarCornerRadius: CGFloat = 24
     static let sectionCornerRadius: CGFloat = 26
     static let inputCornerRadius: CGFloat = 18

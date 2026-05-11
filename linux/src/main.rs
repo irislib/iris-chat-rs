@@ -86,6 +86,26 @@ const CUSTOM_CSS: &str = r#"
     font-size: 0.78em;
     opacity: 0.72;
 }
+/* Show more/less toggle inside a bubble. We dropped Adwaita's
+ * `.link` class to keep the toggle from rendering in brand purple
+ * (which violates the "no purple text/icons" rule), so we have to
+ * paint it ourselves. `color: inherit` picks up the bubble's
+ * on-bubble foreground; opacity matches `.bubble-meta` so the
+ * toggle reads as a quiet affordance attached to the message. */
+.bubble-toggle {
+    color: inherit;
+    background: transparent;
+    box-shadow: none;
+    padding: 2px 4px;
+    margin-top: 2px;
+    font-size: 0.82em;
+    font-weight: 600;
+    opacity: 0.85;
+}
+.bubble-toggle:hover {
+    background: transparent;
+    opacity: 1.0;
+}
 .chat-day {
     font-size: 0.8em;
     opacity: 0.55;

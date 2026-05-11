@@ -799,6 +799,22 @@ private struct ChatMessageRow: View, Equatable {
         irisPostReactionSuggestionEmojis(reactions)
     }
 
+    // Hover-revealed quick-action row. Lives here as a helper so
+    // the overlay below can position it on either side of the
+    // bubble without duplicating the closure wiring.
+    @ViewBuilder
+    private func actionDock() -> some View {
+        ChatMessageActionDock(
+            onShowReactionPicker: { showReactionPicker = true },
+            onReply: onReply,
+            onCopy: {
+                PlatformClipboard.setString(copyableMessageText(message))
+            },
+            onInfo: onInfo,
+            onDelete: onDelete
+        )
+    }
+
     var body: some View {
         // Hoist a couple of computed values that are read 3-4 times in this
         // body so we don't pay for parsing/struct construction on every
@@ -849,17 +865,6 @@ private struct ChatMessageRow: View, Equatable {
                     if message.isOutgoing {
                         Spacer(minLength: 56)
                     }
-                    if showActionDock && message.isOutgoing {
-                        ChatMessageActionDock(
-                            onShowReactionPicker: { showReactionPicker = true },
-                            onReply: onReply,
-                            onCopy: {
-                                PlatformClipboard.setString(copyableMessageText(message))
-                            },
-                            onInfo: onInfo,
-                            onDelete: onDelete
-                        )
-                    }
 
                     VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 8) {
                         if let reply = parsed.reply {
@@ -873,7 +878,14 @@ private struct ChatMessageRow: View, Equatable {
                             TruncatableMessageBody(
                                 attributed: linkedMessageAttributedString(
                                     parsed.body,
-                                    linkColor: message.isOutgoing ? palette.onBubbleMine : palette.accentAlt
+                                    // One link colour on both bubble types so
+                                    // a chat doesn't toggle between two
+                                    // different "this is clickable" cues just
+                                    // because the same URL got quoted back.
+                                    // accentAlt (orange) reads against both
+                                    // the brand purple of outgoing bubbles
+                                    // and the neutral grey of incoming ones.
+                                    linkColor: palette.accentAlt
                                 ),
                                 isOutgoing: message.isOutgoing
                             )
@@ -916,12 +928,23 @@ private struct ChatMessageRow: View, Equatable {
                     )
                     .clipShape(bubble)
                     .contentShape(bubble)
+                    // Long-press → actions sheet is an iOS-only
+                    // gesture (desktop has the hover-revealed action
+                    // dock instead). Attaching it on macOS — even
+                    // with a no-op closure — captures the mouse
+                    // press, which swallows AttributedString link
+                    // clicks and prevents SwiftUI from drawing the
+                    // pointing-hand cursor over URL spans. Gating it
+                    // here is the actual fix for "link clicks dead +
+                    // no link cursor" on the macOS chat view.
+#if os(iOS)
                     .onLongPressGesture(minimumDuration: 0.4) {
                         if !IrisLayout.usesDesktopChrome {
                             PlatformHaptics.messageMenuOpened()
                             showActionsSheet = true
                         }
                     }
+#endif
                     .sheet(isPresented: $showActionsSheet) {
                         ChatMessageActionsSheet(
                             message: message,
@@ -973,17 +996,35 @@ private struct ChatMessageRow: View, Equatable {
                     // scroll — matches Signal's UIPanGestureRecognizer
                     // attached to the cell's bubble subview.
                     .applyMessageBubbleSwipe(onReply: onReply, onInfo: onInfo)
-
-                    if showActionDock && !message.isOutgoing {
-                        ChatMessageActionDock(
-                            onShowReactionPicker: { showReactionPicker = true },
-                            onReply: onReply,
-                            onCopy: {
-                                PlatformClipboard.setString(copyableMessageText(message))
-                            },
-                            onInfo: onInfo,
-                            onDelete: onDelete
-                        )
+                    // Cap bubble width on desktop and float the hover
+                    // action dock as an overlay. Both are about the
+                    // same regression: on macOS the bubble would
+                    // stretch the full pane (~830pt) and the action
+                    // dock — when it appeared on hover — sat as an
+                    // HStack sibling, shrinking the bubble and
+                    // visibly jittering its width. Frame caps wrap
+                    // point; overlay puts the dock outside the
+                    // layout flow so its visibility never resizes
+                    // the bubble. On iOS chatBubbleMaxWidth is nil
+                    // (phone widths already keep bubbles in range)
+                    // and showActionDock is gated to desktop chrome,
+                    // so both modifiers are no-ops there.
+                    .frame(
+                        maxWidth: IrisLayout.chatBubbleMaxWidth,
+                        alignment: message.isOutgoing ? .trailing : .leading
+                    )
+                    .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
+                        if showActionDock {
+                            if message.isOutgoing {
+                                actionDock()
+                                    .fixedSize()
+                                    .alignmentGuide(.leading) { d in d[.trailing] + 6 }
+                            } else {
+                                actionDock()
+                                    .fixedSize()
+                                    .alignmentGuide(.trailing) { d in d[.leading] - 6 }
+                            }
+                        }
                     }
                     if !message.isOutgoing {
                         Spacer(minLength: 56)
