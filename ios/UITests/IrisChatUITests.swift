@@ -61,8 +61,8 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "messageMoreButton").waitForExistence(timeout: 5))
         element(app, "messageMoreButton").tap()
 #endif
-        XCTAssertTrue(app.buttons["Message details"].waitForExistence(timeout: 5))
-        app.buttons["Message details"].tap()
+        XCTAssertTrue(app.buttons["Message Details"].waitForExistence(timeout: 5))
+        app.buttons["Message Details"].tap()
         XCTAssertTrue(element(app, "messageInfoSheet").waitForExistence(timeout: 5))
         XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
     }

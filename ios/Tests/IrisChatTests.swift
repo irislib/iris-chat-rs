@@ -291,7 +291,8 @@ private func makeChatThread(
         unreadCount: unreadCount,
         isTyping: false,
         isMuted: false,
-        isPinned: false
+        isPinned: false,
+        draft: ""
     )
 }
 
