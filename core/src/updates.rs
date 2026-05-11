@@ -109,6 +109,13 @@ pub(crate) enum InternalEvent {
         result: Result<String, String>,
     },
     SyncComplete,
+    // Heavy tail of `open_chat` — DB page load, identity republish,
+    // persist, protocol refresh. Runs on the same event loop as a
+    // queued follow-up so subsequent UI actions (back, switch chat)
+    // can interleave between the screen flip and the load.
+    OpenChatFinalize {
+        chat_id: String,
+    },
 }
 
 #[derive(Debug)]

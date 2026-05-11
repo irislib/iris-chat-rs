@@ -88,6 +88,7 @@ impl AppCore {
             cached_mobile_push: MobilePushSyncSnapshot::default(),
             // First rebuild populates the cache.
             mobile_push_dirty: true,
+            suspended: false,
         })
     }
 
@@ -131,6 +132,7 @@ impl AppCore {
                     "ProfilePictureUploadFinished"
                 }
                 InternalEvent::SyncComplete => "SyncComplete",
+                InternalEvent::OpenChatFinalize { .. } => "OpenChatFinalize",
             },
             CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
@@ -229,6 +231,12 @@ impl AppCore {
     }
 
     pub(super) fn prepare_for_suspend(&mut self) {
+        // Set the gate first so any relay/internal events that arrive in
+        // the FFI queue after this point (whether already-queued or sent
+        // by an in-flight tokio task before disconnect lands) are dropped
+        // without touching SQLite. The persist below is the only write we
+        // want before iOS suspends us.
+        self.suspended = true;
         self.push_debug_log("app.suspend", "pausing network and flushing storage");
         self.stop_pending_linked_device();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
@@ -422,6 +430,13 @@ impl AppCore {
     }
 
     pub(super) fn handle_internal(&mut self, event: InternalEvent) {
+        if self.suspended {
+            // Drop queued background work while iOS is taking us down. We
+            // don't want any further SQLite writes once the suspend
+            // checkpoint has run. Foregrounding clears the gate and
+            // re-establishes subscriptions so dropped events are re-fetched.
+            return;
+        }
         match event {
             InternalEvent::RelayEvent(event) => {
                 self.handle_relay_event_with_channel(event, "message servers");
@@ -562,6 +577,9 @@ impl AppCore {
                 self.state.busy.syncing_network = false;
                 self.rebuild_state();
                 self.emit_state();
+            }
+            InternalEvent::OpenChatFinalize { chat_id } => {
+                self.open_chat_finalize(&chat_id);
             }
         }
     }
