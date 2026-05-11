@@ -136,9 +136,10 @@ fn present_message_info(
     parent: Option<&gtk::Window>,
     message: &ChatMessageSnapshot,
     chat: &CurrentChatSnapshot,
+    manager: &Rc<AppManager>,
 ) {
     let dialog = adw::Dialog::builder()
-        .title("Message details")
+        .title("Message Details")
         .content_width(420)
         .content_height(560)
         .build();
@@ -342,6 +343,33 @@ fn present_message_info(
         }
         content.append(&react_section);
     }
+
+    // Inner rumor — synthesized from the snapshot so the same shape
+    // shows up across platforms. The `id` field matches the rumor hash
+    // for messages received as runtime rumors; pubkey is best-effort.
+    let rumor_section = info_section("Inner rumor");
+    let rumor_json = synthesize_message_rumor_json(message, chat, &manager.current_state());
+    let rumor_label = gtk::Label::new(Some(&rumor_json));
+    rumor_label.set_wrap(true);
+    rumor_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+    rumor_label.set_xalign(0.0);
+    rumor_label.add_css_class("monospace");
+    rumor_label.set_selectable(true);
+    rumor_label.set_margin_start(12);
+    rumor_label.set_margin_end(12);
+    rumor_label.set_margin_bottom(8);
+    rumor_section.append(&rumor_label);
+    let rumor_copy = gtk::Button::with_label("Copy rumor JSON");
+    rumor_copy.add_css_class("flat");
+    rumor_copy.set_halign(gtk::Align::Start);
+    rumor_copy.set_margin_start(12);
+    rumor_copy.set_margin_bottom(12);
+    let rumor_for_copy = rumor_json.clone();
+    rumor_copy.connect_clicked(move |_| {
+        crate::platform::clipboard::copy(&rumor_for_copy);
+    });
+    rumor_section.append(&rumor_copy);
+    content.append(&rumor_section);
 
     scroll.set_child(Some(&content));
     dialog.set_child(Some(&scroll));
@@ -870,15 +898,21 @@ fn build_message_popover(
     });
     column.append(&copy);
 
-    let info_btn = gtk::Button::with_label("Message details");
+    let info_btn = gtk::Button::with_label("Message Details");
     info_btn.add_css_class("flat");
     info_btn.set_halign(gtk::Align::Fill);
     let popover_for_info = popover.clone();
     let info_message = message.clone();
     let info_chat = chat.clone();
+    let manager_for_info = manager.clone();
     info_btn.connect_clicked(move |btn| {
         let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-        present_message_info(parent.as_ref(), &info_message, &info_chat);
+        present_message_info(
+            parent.as_ref(),
+            &info_message,
+            &info_chat,
+            &manager_for_info,
+        );
         popover_for_info.popdown();
     });
     column.append(&info_btn);
@@ -1182,6 +1216,57 @@ fn message_info_text(message: &ChatMessageSnapshot, chat: Option<&CurrentChatSna
         );
     }
     lines.join("\n")
+}
+
+fn synthesize_message_rumor_json(
+    message: &ChatMessageSnapshot,
+    chat: &CurrentChatSnapshot,
+    state: &iris_chat_core::AppState,
+) -> String {
+    let pubkey = if message.is_outgoing {
+        state
+            .account
+            .as_ref()
+            .map(|account| account.public_key_hex.clone())
+            .unwrap_or_default()
+    } else if matches!(chat.kind, ChatKind::Direct) {
+        chat.chat_id.clone()
+    } else {
+        String::new()
+    };
+
+    let mut tags: Vec<serde_json::Value> = Vec::new();
+    if let Some(expires) = message.expires_at_secs {
+        tags.push(serde_json::json!(["expiration", expires.to_string()]));
+    }
+    for attachment in &message.attachments {
+        tags.push(serde_json::json!(["imeta", format!("url {}", attachment.htree_url)]));
+    }
+
+    let mut content = message.body.clone();
+    if !message.attachments.is_empty() {
+        let urls: Vec<String> = message
+            .attachments
+            .iter()
+            .map(|attachment| attachment.htree_url.clone())
+            .collect();
+        let joined = urls.join("\n");
+        content = if content.is_empty() {
+            joined
+        } else {
+            format!("{}\n{}", content, joined)
+        };
+    }
+
+    let rumor = serde_json::json!({
+        "id": message.id,
+        "pubkey": pubkey,
+        "created_at": message.created_at_secs,
+        "kind": 14,
+        "tags": tags,
+        "content": content,
+    });
+    serde_json::to_string_pretty(&rumor).unwrap_or_else(|_| String::from("{}"))
 }
 
 fn message_info_kind(message: &ChatMessageSnapshot) -> &'static str {

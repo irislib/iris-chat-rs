@@ -135,7 +135,7 @@ public partial class MessageBubble : UserControl
         copy.Click += OnCopyText;
         menu.Items.Add(copy);
 
-        var info = new MenuItem { Header = "Message details" };
+        var info = new MenuItem { Header = "Message Details" };
         info.Click += OnShowInfo;
         menu.Items.Add(info);
 

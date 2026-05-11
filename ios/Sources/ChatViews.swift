@@ -1019,6 +1019,7 @@ private struct MessageInfoSheet: View {
                     idsSection
                     attachmentSection
                     reactionSection
+                    rumorSection
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 16)
@@ -1026,7 +1027,7 @@ private struct MessageInfoSheet: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .background(palette.background)
-            .navigationTitle("Message details")
+            .navigationTitle("Message Details")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     IrisModalCloseButton(action: onClose)
@@ -1188,6 +1189,86 @@ private struct MessageInfoSheet: View {
             }
         }
     }
+
+    private var rumorJson: String {
+        synthesizeMessageRumorJson(
+            message: message,
+            chat: chat,
+            account: manager.state.account
+        )
+    }
+
+    private var rumorSection: some View {
+        MessageInfoSection(title: "Inner rumor") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(rumorJson)
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(palette.textPrimary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                IrisCopyButton(
+                    label: "Copy rumor JSON",
+                    value: rumorJson,
+                    compact: true
+                )
+                .accessibilityIdentifier("messageInfoRumorCopyButton")
+            }
+        }
+    }
+}
+
+// Synthesizes a Nostr-rumor-shaped JSON from the snapshot. `pubkey` is a
+// best-effort lookup: account.publicKeyHex for outgoing, the direct
+// chat_id for incoming direct chats, and empty for groups (where the
+// snapshot doesn't carry the sender's owner pubkey hex). The `id` field
+// matches the rumor hash for messages that arrived as runtime rumors.
+private func synthesizeMessageRumorJson(
+    message: ChatMessageSnapshot,
+    chat: CurrentChatSnapshot?,
+    account: AccountSnapshot?
+) -> String {
+    let pubkey: String = {
+        if message.isOutgoing, let account {
+            return account.publicKeyHex
+        }
+        if let chat, chat.kind == .direct {
+            return chat.chatId
+        }
+        return ""
+    }()
+
+    var tags: [[String]] = []
+    if let expiresAtSecs = message.expiresAtSecs {
+        tags.append(["expiration", String(expiresAtSecs)])
+    }
+    for attachment in message.attachments {
+        tags.append(["imeta", "url \(attachment.htreeUrl)"])
+    }
+
+    var content = message.body
+    if !message.attachments.isEmpty {
+        let urls = message.attachments.map { $0.htreeUrl }.joined(separator: "\n")
+        content = content.isEmpty ? urls : content + "\n" + urls
+    }
+
+    let rumor: [String: Any] = [
+        "id": message.id,
+        "pubkey": pubkey,
+        "created_at": message.createdAtSecs,
+        "kind": 14,
+        "tags": tags,
+        "content": content,
+    ]
+
+    if let data = try? JSONSerialization.data(
+        withJSONObject: rumor,
+        options: [.prettyPrinted, .sortedKeys]
+    ),
+        let text = String(data: data, encoding: .utf8)
+    {
+        return text
+    }
+    return "{}"
 }
 
 private struct ParticipantInfo {
@@ -1479,7 +1560,7 @@ private struct ChatMessageActionDock: View {
             dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
             Menu {
                 Button("Copy text", action: onCopy)
-                Button("Message details", action: onInfo)
+                Button("Message Details", action: onInfo)
                 Button("Delete message", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis")
@@ -1629,7 +1710,7 @@ private struct ChatMessageActionsSheet: View {
             VStack(spacing: 0) {
                 actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
                 actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
-                actionRow(icon: "info.circle", label: "Message details", action: onInfo)
+                actionRow(icon: "info.circle", label: "Message Details", action: onInfo)
                 actionRow(icon: "trash", label: "Delete locally", destructive: true, action: onDelete)
             }
             .background(

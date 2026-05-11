@@ -16,7 +16,7 @@ public class MessageInfoWindow : Window
     public MessageInfoWindow(ChatMessageSnapshot message)
     {
         _message = message;
-        Title = "Message details";
+        Title = "Message Details";
         Width = 460;
         Height = 600;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -53,9 +53,101 @@ public class MessageInfoWindow : Window
         {
             stack.Children.Add(BuildSection("Reactions", BuildReactionRows()));
         }
+        stack.Children.Add(BuildRumorSection());
 
         scroll.Content = stack;
         return scroll;
+    }
+
+    private FrameworkElement BuildRumorSection()
+    {
+        var border = new Border
+        {
+            Background = (Brush)Application.Current.Resources["Panel"],
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(16, 12, 16, 12),
+            Margin = new Thickness(0, 0, 0, 10),
+        };
+        var stack = new StackPanel { Orientation = Orientation.Vertical };
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Inner rumor",
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["TextPrimary"],
+            Margin = new Thickness(0, 0, 0, 6),
+        });
+        var rumorJson = SynthesizeRumorJson(_message);
+        stack.Children.Add(new TextBlock
+        {
+            Text = rumorJson,
+            FontFamily = new FontFamily("Consolas"),
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["TextPrimary"],
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 8),
+        });
+        var copy = new Button
+        {
+            Content = "Copy rumor JSON",
+            Padding = new Thickness(10, 4, 10, 4),
+            HorizontalAlignment = HorizontalAlignment.Left,
+        };
+        copy.Click += (_, _) =>
+        {
+            try { Clipboard.SetText(rumorJson); }
+            catch { /* clipboard contention */ }
+        };
+        stack.Children.Add(copy);
+        border.Child = stack;
+        return border;
+    }
+
+    private static string SynthesizeRumorJson(ChatMessageSnapshot message)
+    {
+        var chat = App.CurrentManager.CurrentChat;
+        var account = App.CurrentManager.Account;
+        string pubkey =
+            (message.isOutgoing ? account?.publicKeyHex : null)
+            ?? (chat?.kind == ChatKind.Direct ? chat.chatId : null)
+            ?? string.Empty;
+
+        var tags = new List<object[]>();
+        if (message.expiresAtSecs.HasValue)
+        {
+            tags.Add(new object[] { "expiration", message.expiresAtSecs.Value.ToString() });
+        }
+        if (message.attachments != null)
+        {
+            foreach (var attachment in message.attachments)
+            {
+                tags.Add(new object[] { "imeta", $"url {attachment.htreeUrl}" });
+            }
+        }
+
+        var sb = new StringBuilder();
+        if (!string.IsNullOrEmpty(message.body)) sb.Append(message.body);
+        if (message.attachments != null && message.attachments.Length > 0)
+        {
+            foreach (var attachment in message.attachments)
+            {
+                if (sb.Length > 0) sb.Append('\n');
+                sb.Append(attachment.htreeUrl);
+            }
+        }
+
+        var rumor = new Dictionary<string, object?>
+        {
+            ["id"] = message.id,
+            ["pubkey"] = pubkey,
+            ["created_at"] = (long)message.createdAtSecs,
+            ["kind"] = 14,
+            ["tags"] = tags,
+            ["content"] = sb.ToString(),
+        };
+        return System.Text.Json.JsonSerializer.Serialize(
+            rumor,
+            new System.Text.Json.JsonSerializerOptions { WriteIndented = true }
+        );
     }
 
     private FrameworkElement BuildHeader()

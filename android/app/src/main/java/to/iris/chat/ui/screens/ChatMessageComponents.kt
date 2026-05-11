@@ -561,7 +561,7 @@ private fun MessageActionDock(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Message details") },
+                        text = { Text("Message Details") },
                         onClick = {
                             menuOpen = false
                             onInfo()
@@ -651,7 +651,7 @@ private fun MessageActionsSheet(
                 )
                 MessageActionRow(
                     icon = Icons.Rounded.Info,
-                    label = "Message details",
+                    label = "Message Details",
                     onClick = onInfo,
                 )
                 MessageActionRow(
@@ -1198,11 +1198,11 @@ private fun MessageInfoDialog(
         dismissButton = {
             TextButton(
                 onClick = {
-                    clipboard.setText("Message details", messageInfoText(message, chat))
+                    clipboard.setText("Message Details", messageInfoText(message, chat))
                 },
             ) { Text("Copy info") }
         },
-        title = { Text("Message details") },
+        title = { Text("Message Details") },
         text = {
             Column(
                 modifier =
@@ -1337,9 +1337,68 @@ private fun MessageInfoDialog(
                         }
                     }
                 }
+
+                val rumorJson = remember(message, chat?.chatId, account?.publicKeyHex) {
+                    synthesizeMessageRumorJson(message, chat, account)
+                }
+                MessageInfoSection(title = "Inner rumor") {
+                    Text(
+                        text = rumorJson,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    TextButton(
+                        onClick = { clipboard.setText("Inner rumor", rumorJson) },
+                        modifier = Modifier.testTag("messageInfoRumorCopyButton"),
+                    ) { Text("Copy rumor JSON") }
+                }
             }
         },
     )
+}
+
+private fun synthesizeMessageRumorJson(
+    message: ChatMessageSnapshot,
+    chat: CurrentChatSnapshot?,
+    account: AccountSnapshot?,
+): String {
+    val pubkey = when {
+        message.isOutgoing && account != null -> account.publicKeyHex
+        chat?.kind == ChatKind.DIRECT -> chat.chatId
+        else -> ""
+    }
+
+    val tags = org.json.JSONArray()
+    message.expiresAtSecs?.let {
+        tags.put(org.json.JSONArray().apply {
+            put("expiration"); put(it.toString())
+        })
+    }
+    message.attachments.forEach { attachment ->
+        tags.put(org.json.JSONArray().apply {
+            put("imeta"); put("url ${attachment.htreeUrl}")
+        })
+    }
+
+    val content = buildString {
+        append(message.body)
+        if (message.attachments.isNotEmpty()) {
+            if (isNotEmpty()) append('\n')
+            append(message.attachments.joinToString("\n") { it.htreeUrl })
+        }
+    }
+
+    val rumor = org.json.JSONObject().apply {
+        put("id", message.id)
+        put("pubkey", pubkey)
+        put("created_at", message.createdAtSecs.toLong())
+        put("kind", 14)
+        put("tags", tags)
+        put("content", content)
+    }
+    return rumor.toString(2)
 }
 
 @Composable
