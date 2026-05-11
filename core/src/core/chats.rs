@@ -239,12 +239,26 @@ impl AppCore {
             return;
         };
 
-        // Flip the screen first and emit, then queue the heavy load
-        // / persist / network work as a follow-up InternalEvent on
-        // the same event loop. Any UI action enqueued in the
-        // meantime (back tap, switch chat, …) interleaves between
-        // the screen flip and the finalize, so navigation never
-        // sits behind a cold chat's tail.
+        // Flip the screen first and emit, then queue the heavy work
+        // (subscriptions, identity republish, persist) as a follow-up
+        // InternalEvent on the same event loop. Any UI action enqueued
+        // in the meantime (back tap, switch chat, …) interleaves
+        // between the screen flip and the finalize, so navigation
+        // never sits behind a cold chat's tail.
+        //
+        // The cheap bits — making sure a thread row exists and pulling
+        // the latest page of messages out of SQLite — run inline. They
+        // matter for the iOS notification-tap path: the NSE writes a
+        // preview message row while the app is suspended, but the
+        // in-memory `threads` map doesn't know about it, so without
+        // this `current_chat` would be `None` on the first emit and
+        // the UI would sit on "Loading chat…" until the finalize
+        // landed. With the row stubbed + messages loaded here,
+        // `current_chat` is populated immediately and the chat paints
+        // its history on the same render that flips the screen.
+        let now = unix_now().get();
+        self.ensure_thread_record(&chat_id, now).unread_count = 0;
+        self.load_latest_message_page_for_chat(&chat_id);
         self.active_chat_id = Some(chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
             chat_id: chat_id.clone(),
@@ -273,8 +287,10 @@ impl AppCore {
         }
         let now = unix_now().get();
         self.prune_expired_messages(now);
-        self.ensure_thread_record(chat_id, now).unread_count = 0;
-        self.load_latest_message_page_for_chat(chat_id);
+        // `open_chat` already stubbed the thread and loaded its latest
+        // page so the UI could paint without a "Loading chat…" flash;
+        // the finalize only needs to handle the rest (republish
+        // identity, subscriptions, persist, schedule peer catch-up).
         self.republish_local_identity_artifacts();
         self.persist_best_effort();
         self.request_protocol_subscription_refresh();

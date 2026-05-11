@@ -5950,6 +5950,72 @@ fn retry_batch_self_synced_direct_message_updates_open_chat_projection() {
     assert_eq!(stored_message_count(&core), 1);
 }
 
+/// Notification-tap regression: when the iOS Notification Service
+/// Extension writes a preview row to SQLite while the app is
+/// suspended, the in-memory `threads` map doesn't know about that
+/// chat. Tapping the notification used to flip the screen to
+/// `Screen::Chat { chat_id }` before any thread record existed, so
+/// `state.current_chat` came back `None` on the first paint and the
+/// SwiftUI ChatScreen sat on its "Loading chat…" placeholder until
+/// the deferred `OpenChatFinalize` event landed.
+///
+/// `open_chat` now stubs the thread record + loads its persisted
+/// page inline, so `current_chat` is populated on the same emit that
+/// flips the screen.
+#[test]
+fn open_chat_populates_current_chat_for_preview_only_thread() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("open-chat-preview", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+
+    // Simulate the NSE preview-write side-effect: a message row lives
+    // in SQLite under the peer's chat_id without any in-memory thread
+    // record yet (the running core only learns about it on next relay
+    // event ingest, which the suspended app didn't have a chance to
+    // run).
+    let preview = ChatMessageSnapshot {
+        id: "1".to_string(),
+        chat_id: chat_id.clone(),
+        kind: ChatMessageKind::User,
+        author: peer.public_key().to_hex(),
+        body: "ping from nse".to_string(),
+        attachments: Vec::new(),
+        reactions: Vec::new(),
+        reactors: Vec::new(),
+        is_outgoing: false,
+        created_at_secs: 1_777_159_500,
+        expires_at_secs: None,
+        delivery: DeliveryState::Received,
+        recipient_deliveries: Vec::new(),
+        delivery_trace: Default::default(),
+        source_event_id: Some("0".repeat(64)),
+    };
+    core.app_store
+        .upsert_notification_preview_message(&chat_id, 1, 1_777_159_500, &preview)
+        .expect("preview upsert");
+    assert!(core.threads.get(&chat_id).is_none(), "preconditions");
+
+    core.open_chat(&chat_id);
+
+    // First emit after open_chat must already carry `current_chat` —
+    // that's what stops the SwiftUI shell from rendering "Loading
+    // chat…" while the (background) `OpenChatFinalize` runs.
+    let current = core
+        .state
+        .current_chat
+        .as_ref()
+        .expect("current_chat present on first paint");
+    assert_eq!(current.chat_id, chat_id);
+    assert_eq!(current.messages.len(), 1, "preview message loaded inline");
+    assert_eq!(current.messages[0].body, "ping from nse");
+    assert!(matches!(
+        core.state.router.screen_stack.last(),
+        Some(Screen::Chat { chat_id: shown }) if shown == &chat_id
+    ));
+}
+
 #[test]
 fn self_synced_direct_message_updates_existing_local_outgoing_without_duplicate() {
     let owner = Keys::generate();
