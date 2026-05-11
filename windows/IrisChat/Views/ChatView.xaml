@@ -17,11 +17,19 @@
                 Padding="14,10">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                     <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <chrome:Avatar x:Name="HeaderAvatar" Grid.Column="0" Size="36" />
+                <Border Grid.Column="0"
+                        Background="Transparent"
+                        Cursor="Hand"
+                        MouseLeftButtonUp="OnHeaderTap">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+                        <chrome:Avatar x:Name="HeaderAvatar" Grid.Column="0" Size="36" />
                 <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
                     <TextBlock x:Name="HeaderTitle"
                                Foreground="{StaticResource TextPrimary}"
@@ -61,7 +69,9 @@
                                    TextTrimming="CharacterEllipsis" />
                     </StackPanel>
                 </StackPanel>
-                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    </Grid>
+                </Border>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                     <Button Style="{StaticResource GhostButton}"
                             Click="OnToggleMute"
                             x:Name="MuteChatButton"

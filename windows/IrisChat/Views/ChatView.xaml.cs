@@ -185,6 +185,16 @@ public partial class ChatView : UserControl
         }
     }
 
+    private void OnHeaderTap(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var chat = App.CurrentManager.CurrentChat;
+        if (chat?.groupId is { } gid)
+        {
+            App.CurrentManager.Push(new Screen.GroupDetails(gid));
+        }
+        e.Handled = true;
+    }
+
     private void OnDeleteChat(object sender, RoutedEventArgs e)
     {
         var chat = App.CurrentManager.CurrentChat;
