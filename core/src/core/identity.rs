@@ -126,3 +126,10 @@ pub(super) fn unix_now() -> UnixSeconds {
             .as_secs(),
     )
 }
+
+pub(super) fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
+}

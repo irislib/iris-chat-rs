@@ -29,8 +29,35 @@ pub(super) const RESUBSCRIBE_CATCH_UP_DELAY_SECS: u64 = 5;
 pub(super) const GROUP_CHAT_PREFIX: &str = "group:";
 pub(super) const CHAT_INVITE_ROOT_URL: &str = "https://chat.iris.to/";
 pub(super) const DEBUG_SNAPSHOT_FILENAME: &str = "iris_chat_runtime_debug.json";
+/// Minimum wall-clock millis between debug-snapshot file rebuilds.
+/// The snapshot fans out into a SessionManager clone × N known
+/// users (see `support::build_runtime_debug_snapshot`); without
+/// this floor every relay event triggered a rebuild — the macOS CPU
+/// loop and the sluggish-over-time UX regression both traced back
+/// here. 5 s is well under the multi-second poll budget every
+/// harness test uses, so this stays invisible to tests.
+pub(super) const DEBUG_SNAPSHOT_MIN_INTERVAL_MS: u64 = 5_000;
 pub(super) const MAX_DEBUG_LOG_ENTRIES: usize = 128;
 pub(super) const PERSISTED_STATE_VERSION: u32 = 12;
+
+/// Whether the core should keep `iris_chat_runtime_debug.json`
+/// on disk. The file is only ever read by harness tests
+/// (`core/tests/cli_interop`, iOS `InteropHarnessTests`, Android
+/// `RealRelayHarnessTest`) — production builds never touch it
+/// (the user-facing support bundle rebuilds the snapshot
+/// in-memory at export time). Enabled in debug builds for the
+/// instrumentation lanes that read the file; release builds can
+/// opt in via `IRIS_RUNTIME_DEBUG_SNAPSHOT=1` for the rare
+/// release-flavoured test lane.
+pub(crate) fn debug_snapshot_file_writes_enabled() -> bool {
+    if cfg!(debug_assertions) {
+        return true;
+    }
+    matches!(
+        std::env::var("IRIS_RUNTIME_DEBUG_SNAPSHOT").ok().as_deref(),
+        Some("1") | Some("true") | Some("TRUE")
+    )
+}
 
 pub(crate) fn configured_relays() -> Vec<String> {
     let compiled_defaults = compiled_default_relays();

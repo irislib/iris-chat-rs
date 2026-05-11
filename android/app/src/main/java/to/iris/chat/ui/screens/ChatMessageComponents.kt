@@ -74,6 +74,7 @@ import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -377,14 +378,6 @@ internal fun MessageBubble(
                                     } else {
                                         MaterialTheme.colorScheme.onSurface
                                     },
-                                // One link colour on both bubble sides — the
-                                // outgoing-vs-incoming swap was making the same
-                                // URL flicker between two "this is clickable"
-                                // cues when it got quoted back. accentAlt
-                                // (orange) reads against both the brand purple
-                                // of outgoing bubbles and the neutral surface
-                                // of incoming ones.
-                                linkColor = IrisTheme.palette.accentAlt,
                                 // Toggle was previously palette.accent (purple)
                                 // on the incoming side, which violates the
                                 // "no purple text/icons" rule. Mute it the
@@ -1083,15 +1076,14 @@ private fun TruncatableMessageBody(
     text: String,
     style: TextStyle,
     color: Color,
-    linkColor: Color,
     toggleColor: Color,
 ) {
     val collapsedMaxLines = 14
     val collapsedMaxHeight = 320.dp
     var isExpanded by remember(text) { mutableStateOf(false) }
     var didOverflow by remember(text) { mutableStateOf(false) }
-    val annotated = remember(text, linkColor) {
-        linkedMessageAnnotatedString(text, linkColor)
+    val annotated = remember(text) {
+        linkedMessageAnnotatedString(text)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1128,10 +1120,10 @@ private fun TruncatableMessageBody(
     }
 }
 
-private fun linkedMessageAnnotatedString(
-    text: String,
-    linkColor: Color,
-): AnnotatedString =
+// Signal-style link styling: inherit the bubble's body text color
+// and just underline. No accent tint, so the same URL doesn't shift
+// hue between incoming and outgoing bubbles.
+private fun linkedMessageAnnotatedString(text: String): AnnotatedString =
     buildAnnotatedString {
         var index = 0
         for (match in MessageUrlRegex.findAll(text)) {
@@ -1147,7 +1139,7 @@ private fun linkedMessageAnnotatedString(
             addLink(
                 LinkAnnotation.Url(
                     url = url,
-                    styles = TextLinkStyles(style = SpanStyle(color = linkColor)),
+                    styles = TextLinkStyles(style = SpanStyle(textDecoration = TextDecoration.Underline)),
                 ),
                 start,
                 length,

@@ -78,6 +78,8 @@ impl AppCore {
             debug_snapshot_write_generation: 0,
             debug_snapshot_write_inflight: false,
             debug_snapshot_write_dirty: false,
+            debug_snapshot_last_built_at_ms: 0,
+            debug_snapshot_build_count: 0,
             batch_depth: 0,
             batch_dirty_state: false,
             batch_dirty_persist: false,
@@ -146,6 +148,7 @@ impl AppCore {
             CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
             CoreMsg::PeerProfileDebug { .. } => "PeerProfileDebug",
+            CoreMsg::CorePerfCounters(_) => "CorePerfCounters",
             CoreMsg::PrepareForSuspend(_) => "PrepareForSuspend",
             CoreMsg::Shutdown(_) => "Shutdown",
         };
@@ -178,6 +181,11 @@ impl AppCore {
             CoreMsg::PrepareForSuspend(reply_tx) => {
                 self.prepare_for_suspend();
                 let _ = reply_tx.send(());
+            }
+            CoreMsg::CorePerfCounters(reply_tx) => {
+                let _ = reply_tx.send(crate::updates::CorePerfCountersSnapshot {
+                    debug_snapshot_builds: self.debug_snapshot_build_count(),
+                });
             }
             CoreMsg::Shutdown(reply_tx) => {
                 self.shutdown();

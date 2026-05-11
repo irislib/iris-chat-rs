@@ -38,7 +38,18 @@ pub(crate) enum CoreMsg {
         reply_tx: Sender<Option<PeerProfileDebugSnapshot>>,
     },
     PrepareForSuspend(Sender<()>),
+    /// Snapshot of core-internal perf counters (debug-snapshot
+    /// rebuild count etc.) — read by `FfiApp::core_perf_counters()`
+    /// so the release-gate budget tests can assert on internal hot
+    /// loops, not just FFI surface traffic.
+    CorePerfCounters(Sender<CorePerfCountersSnapshot>),
     Shutdown(Option<Sender<()>>),
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct CorePerfCountersSnapshot {
+    /// `build_runtime_debug_snapshot` calls since core start.
+    pub debug_snapshot_builds: u64,
 }
 
 #[derive(Debug)]

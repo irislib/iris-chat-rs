@@ -177,6 +177,19 @@ pub struct AppCore {
     debug_snapshot_write_generation: u64,
     debug_snapshot_write_inflight: bool,
     debug_snapshot_write_dirty: bool,
+    /// Wall-clock millis of the last debug-snapshot file write. The
+    /// snapshot is purely a test harness fixture (only `core/tests`,
+    /// iOS InteropHarnessTests, and the Android RealRelayHarnessTest
+    /// read it) — never read in production. We throttle to one
+    /// rebuild per `DEBUG_SNAPSHOT_MIN_INTERVAL_MS` so a busy chat
+    /// can't rebuild a full SessionManager clone × N known users on
+    /// every relay event (the macOS CPU loop and the
+    /// sluggish-over-time regression both traced back here).
+    debug_snapshot_last_built_at_ms: u64,
+    /// Cumulative call count of `build_runtime_debug_snapshot`. Read
+    /// by `core_perf_counters()` so the release gate can budget core
+    /// hot-loop work, not just FFI surface traffic.
+    debug_snapshot_build_count: u64,
     /// Reentrancy guard: while > 0, `rebuild_state` / `emit_state` /
     /// `persist_best_effort` only set the matching dirty flag. The outermost
     /// `exit_batch()` call performs a single rebuild + persist + emit so a

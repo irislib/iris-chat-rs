@@ -873,17 +873,7 @@ private struct ChatMessageRow: View, Equatable {
                         }
                         if !parsed.body.isEmpty {
                             TruncatableMessageBody(
-                                attributed: linkedMessageAttributedString(
-                                    parsed.body,
-                                    // One link colour on both bubble types so
-                                    // a chat doesn't toggle between two
-                                    // different "this is clickable" cues just
-                                    // because the same URL got quoted back.
-                                    // accentAlt (orange) reads against both
-                                    // the brand purple of outgoing bubbles
-                                    // and the neutral grey of incoming ones.
-                                    linkColor: palette.accentAlt
-                                ),
+                                attributed: linkedMessageAttributedString(parsed.body),
                                 isOutgoing: message.isOutgoing
                             )
                         }
@@ -2906,7 +2896,10 @@ private func replySnippet(for message: ChatMessageSnapshot) -> String {
 
 private let replyMessagePrefix = "↩ "
 
-private func linkedMessageAttributedString(_ text: String, linkColor: Color) -> AttributedString {
+// Signal-style link styling: inherit the bubble's body text color
+// and just underline. No accent tint, so the same URL doesn't shift
+// hue between incoming and outgoing bubbles.
+private func linkedMessageAttributedString(_ text: String) -> AttributedString {
     var attributed = AttributedString()
     var cursor = text.startIndex
     for match in messageURLMatches(in: text) {
@@ -2915,7 +2908,6 @@ private func linkedMessageAttributedString(_ text: String, linkColor: Color) -> 
         }
         var linked = AttributedString(String(text[match.range]))
         linked.link = match.url
-        linked.foregroundColor = linkColor
         linked.underlineStyle = .single
         attributed.append(linked)
         cursor = match.range.upperBound

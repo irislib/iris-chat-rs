@@ -702,49 +702,66 @@ impl ProtocolEngine {
         authors
     }
 
-    pub(super) fn message_session_debug_snapshots(
-        &self,
+    /// `SessionManager::snapshot` clones every user record + every
+    /// device state — the runtime debug builder fans out per known
+    /// user, so callers that hit multiple owners in one pass must
+    /// share a single snapshot via the `_with_snapshot` helpers
+    /// below instead of paying that clone cost per owner.
+    pub(super) fn session_manager_snapshot(&self) -> SessionManagerSnapshot {
+        self.session_manager.snapshot()
+    }
+
+    pub(super) fn message_session_debug_snapshots_with_snapshot(
+        snapshot: &SessionManagerSnapshot,
         owner_pubkey: PublicKey,
     ) -> Vec<ProtocolMessageSessionDebugSnapshot> {
         let owner = ndr_owner(owner_pubkey);
-        self.session_manager
-            .snapshot()
+        snapshot
             .users
-            .into_iter()
+            .iter()
             .filter(|user| user.owner_pubkey == owner)
-            .flat_map(|user| user.devices.into_iter())
+            .flat_map(|user| user.devices.iter())
             .flat_map(|device| {
                 device
                     .active_session
-                    .into_iter()
-                    .chain(device.inactive_sessions)
-                    .collect::<Vec<_>>()
+                    .iter()
+                    .chain(device.inactive_sessions.iter())
             })
             .map(|state| {
                 let mut tracked = HashSet::new();
-                collect_expected_sender_pubkeys(&state, &mut tracked);
+                collect_expected_sender_pubkeys(state, &mut tracked);
                 let mut tracked_sender_pubkeys = tracked.into_iter().collect::<Vec<_>>();
                 tracked_sender_pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
                 ProtocolMessageSessionDebugSnapshot {
                     has_receiving_capability: state.receiving_chain_key.is_some()
                         || state.their_current_nostr_public_key.is_some(),
-                    state,
+                    state: state.clone(),
                     tracked_sender_pubkeys,
                 }
             })
             .collect()
     }
 
-    pub(super) fn active_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
+    pub(super) fn active_session_count_for_owner_with_snapshot(
+        snapshot: &SessionManagerSnapshot,
+        owner_pubkey: PublicKey,
+    ) -> usize {
         let owner = ndr_owner(owner_pubkey);
-        self.session_manager
-            .snapshot()
+        snapshot
             .users
-            .into_iter()
+            .iter()
             .filter(|user| user.owner_pubkey == owner)
-            .flat_map(|user| user.devices.into_iter())
+            .flat_map(|user| user.devices.iter())
             .filter(|device| device.active_session.is_some())
             .count()
+    }
+
+    #[cfg(test)]
+    pub(super) fn active_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
+        Self::active_session_count_for_owner_with_snapshot(
+            &self.session_manager.snapshot(),
+            owner_pubkey,
+        )
     }
 
     pub(super) fn queued_message_diagnostics(&self, message_id: Option<&str>) -> Vec<String> {

@@ -137,6 +137,65 @@ fn search_keystrokes_fire_one_search_call_each() {
     );
 }
 
+/// The debug runtime snapshot is a test-only fixture (only this
+/// repo's harness tests read it); production never does. It used
+/// to rebuild on every relay event + protocol persist — a
+/// SessionManager clone × N known users + a JSON disk write — which
+/// pinned the macOS app at ~28% CPU after extended use and
+/// surfaced as "UI gets sluggish after going back and forth
+/// between chats". The fix throttles rebuilds to
+/// `DEBUG_SNAPSHOT_MIN_INTERVAL_MS` (5 s) and only does the work
+/// in debug builds / under `IRIS_RUNTIME_DEBUG_SNAPSHOT=1`. This
+/// asserts the throttle: sending five messages back-to-back must
+/// not produce five rebuilds.
+///
+/// Budget: 2 rebuilds covers the initial post-account build plus
+/// a single throttle-window rebuild during the burst. Anything
+/// approaching one-per-event means the throttle regressed.
+#[test]
+fn debug_snapshot_rebuilds_stay_under_budget_during_message_burst() {
+    let dir = TempDir::new().unwrap();
+    let app = FfiApp::new(
+        dir.path().to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    );
+    let inbox = ReconcilerInbox::install(&app);
+    app.dispatch(AppAction::CreateAccount {
+        name: "Alice".to_string(),
+    });
+    inbox.wait_until(Duration::from_secs(5), |state| state.account.is_some());
+
+    let bob_npub = ensure_account(&TempDir::new().unwrap(), "Bob");
+    app.dispatch(AppAction::CreateChat {
+        peer_input: bob_npub,
+    });
+    inbox.wait_until(Duration::from_secs(5), |state| state.current_chat.is_some());
+    let chat_id = inbox.snapshot().current_chat.unwrap().chat_id;
+
+    let before = app.core_perf_counters();
+    for index in 0..5 {
+        app.dispatch(AppAction::SendMessage {
+            chat_id: chat_id.clone(),
+            text: format!("burst {index}"),
+        });
+    }
+    inbox.wait_until(Duration::from_secs(5), |state| {
+        state
+            .current_chat
+            .as_ref()
+            .map(|chat| chat.messages.len() >= 5)
+            .unwrap_or(false)
+    });
+    let after = app.core_perf_counters();
+
+    let rebuilds = after.debug_snapshot_builds - before.debug_snapshot_builds;
+    assert!(
+        rebuilds <= 2,
+        "debug_snapshot rebuilt {rebuilds} times for 5 messages; throttle regressed (was per-event before the fix). before={before:?} after={after:?}",
+    );
+}
+
 /// Receiving messages must not pull anything new across the FFI
 /// boundary — relay events flow into the core via the internal
 /// CoreMsg channel, not through FFI entry points. The shell sees

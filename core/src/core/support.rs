@@ -16,13 +16,28 @@ impl AppCore {
             } else {
                 (None, None, None)
             };
+        // Snapshot the SessionManager once and reuse it for every
+        // known user. Each `SessionManager::snapshot()` clones every
+        // user record + every ratchet state; the previous code
+        // snapshot()ed 2× per known user inside
+        // `peer_debug_session_counts`, so a relay event with N
+        // known users did 2N full clones — the macOS CPU loop and
+        // the sluggish-over-time regression both traced back here.
+        let session_manager_snapshot = self
+            .protocol_engine
+            .as_ref()
+            .map(ProtocolEngine::session_manager_snapshot);
         let known_users = self
             .app_keys
             .values()
             .map(|known| {
                 let owner_pubkey = PublicKey::parse(&known.owner_pubkey_hex).ok();
                 let counts = owner_pubkey
-                    .map(|owner| self.peer_debug_session_counts(owner))
+                    .and_then(|owner| {
+                        session_manager_snapshot.as_ref().map(|snapshot| {
+                            Self::peer_debug_session_counts_with_snapshot(snapshot, owner)
+                        })
+                    })
                     .unwrap_or_default();
                 RuntimeKnownUserDebug {
                     owner_pubkey_hex: known.owner_pubkey_hex.clone(),
@@ -255,8 +270,16 @@ impl AppCore {
         let Some(protocol_engine) = self.protocol_engine.as_ref() else {
             return PeerDebugSessionCounts::default();
         };
+        let snapshot = protocol_engine.session_manager_snapshot();
+        Self::peer_debug_session_counts_with_snapshot(&snapshot, owner_pubkey)
+    }
 
-        let sessions = protocol_engine.message_session_debug_snapshots(owner_pubkey);
+    fn peer_debug_session_counts_with_snapshot(
+        snapshot: &SessionManagerSnapshot,
+        owner_pubkey: PublicKey,
+    ) -> PeerDebugSessionCounts {
+        let sessions =
+            ProtocolEngine::message_session_debug_snapshots_with_snapshot(snapshot, owner_pubkey);
         let tracked_sender_count = sessions
             .iter()
             .flat_map(|session| session.tracked_sender_pubkeys.iter())
@@ -264,7 +287,8 @@ impl AppCore {
             .collect::<HashSet<_>>()
             .len() as u64;
         let active_session_count =
-            protocol_engine.active_session_count_for_owner(owner_pubkey) as u64;
+            ProtocolEngine::active_session_count_for_owner_with_snapshot(snapshot, owner_pubkey)
+                as u64;
 
         PeerDebugSessionCounts {
             active_session_count,

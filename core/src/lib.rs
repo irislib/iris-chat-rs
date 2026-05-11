@@ -87,6 +87,19 @@ pub struct FfiPerfCountersSnapshot {
     pub prepare_for_suspend: u64,
 }
 
+/// Core-internal hot-loop counters. FFI surface counters can only
+/// catch shells that re-enter the core in a loop — the
+/// build_runtime_debug_snapshot regression that caused the macOS CPU
+/// loop was entirely internal (relay events fanned out through
+/// `persist_best_effort_inner` → `persist_debug_snapshot_best_effort`
+/// → full SessionManager clone × N known users). The release-gate
+/// budget tests assert on this snapshot too so the next time core
+/// work explodes per event, CI catches it before a device does.
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq, Default)]
+pub struct CorePerfCountersSnapshot {
+    pub debug_snapshot_builds: u64,
+}
+
 #[derive(uniffi::Object)]
 pub struct FfiApp {
     core_tx: Sender<CoreMsg>,
@@ -154,6 +167,30 @@ impl FfiApp {
             peer_profile_debug: self.perf.peer_profile_debug.load(Ordering::Relaxed),
             prepare_for_suspend: self.perf.prepare_for_suspend.load(Ordering::Relaxed),
         }
+    }
+
+    /// Snapshot of core-internal hot-loop counters. Used by
+    /// `tests/perf_budgets.rs` to budget work that happens entirely
+    /// inside the core thread — the FFI surface counters above can't
+    /// see those. Default snapshot on timeout so a wedged core can't
+    /// pin the test on a perpetual wait.
+    pub fn core_perf_counters(&self) -> CorePerfCountersSnapshot {
+        ffi_or("ffiapp.core_perf_counters", CorePerfCountersSnapshot::default(), || {
+            let (reply_tx, reply_rx) = flume::bounded(1);
+            if self
+                .core_tx
+                .send(CoreMsg::CorePerfCounters(reply_tx))
+                .is_err()
+            {
+                return CorePerfCountersSnapshot::default();
+            }
+            match reply_rx.recv_timeout(Duration::from_secs(2)) {
+                Ok(snapshot) => CorePerfCountersSnapshot {
+                    debug_snapshot_builds: snapshot.debug_snapshot_builds,
+                },
+                Err(_) => CorePerfCountersSnapshot::default(),
+            }
+        })
     }
 
     /// Grouped Signal-style search: filters the in-memory chat list

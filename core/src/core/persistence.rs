@@ -73,11 +73,35 @@ impl AppCore {
         if self.logged_in.is_none() {
             return;
         }
+        // The on-disk snapshot is a test-harness fixture (only read
+        // by `core/tests`, iOS `InteropHarnessTests`, Android
+        // `RealRelayHarnessTest`). Production never reads it; the
+        // user-facing support bundle rebuilds it in-memory at export
+        // time via `build_support_bundle()`. So we gate the
+        // continuous file write to debug builds + an explicit env
+        // override for the rare release-build test lane.
+        if !debug_snapshot_file_writes_enabled() {
+            return;
+        }
         if self.debug_snapshot_write_inflight {
             self.debug_snapshot_write_dirty = true;
             return;
         }
+        // Throttle: even in debug builds, every relay event /
+        // protocol persist used to fan out into a full SessionManager
+        // clone × N known users + a JSON write. Tests poll the file
+        // with multi-second budgets, so a 5s floor is invisible to
+        // them and stops the loop the release sample caught.
+        let now_ms = unix_now_ms();
+        if now_ms.saturating_sub(self.debug_snapshot_last_built_at_ms)
+            < DEBUG_SNAPSHOT_MIN_INTERVAL_MS
+        {
+            self.debug_snapshot_write_dirty = true;
+            return;
+        }
         let snapshot = self.build_runtime_debug_snapshot();
+        self.debug_snapshot_build_count = self.debug_snapshot_build_count.saturating_add(1);
+        self.debug_snapshot_last_built_at_ms = now_ms;
         let path = self.debug_snapshot_path();
         let data_dir = self.data_dir.clone();
 
@@ -108,6 +132,12 @@ impl AppCore {
                 )));
             });
         }
+    }
+
+    /// Read by `FfiApp::core_perf_counters` so the release gate can
+    /// budget core-internal hot loops, not just FFI surface traffic.
+    pub(crate) fn debug_snapshot_build_count(&self) -> u64 {
+        self.debug_snapshot_build_count
     }
 
     #[cfg(not(target_os = "ios"))]
