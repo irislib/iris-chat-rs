@@ -74,11 +74,7 @@ fun DeviceRosterScreen(
         topBar = {
             IrisTopBar(
                 title = "Manage devices",
-                onBack = {
-                    appManager.dispatch(
-                        AppAction.UpdateScreenStack(appState.router.screenStack.dropLast(1)),
-                    )
-                },
+                onBack = { appManager.dispatch(AppAction.NavigateBack) },
             )
         },
     ) { padding ->

@@ -503,11 +503,7 @@ private fun ScaffoldScreen(
         topBar = {
             IrisTopBar(
                 title = title,
-                onBack = {
-                    appManager.dispatch(
-                        AppAction.UpdateScreenStack(appState.router.screenStack.dropLast(1)),
-                    )
-                },
+                onBack = { appManager.dispatch(AppAction.NavigateBack) },
             )
         },
     ) { padding ->

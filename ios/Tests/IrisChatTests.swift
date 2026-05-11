@@ -1014,7 +1014,7 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
-    func testNavigateBackDispatchesUpdateScreenStack() async {
+    func testNavigateBackDispatchesNavigateBack() async {
         let rust = MockRustApp(
             state: makeAppState(
                 rev: 1,
@@ -1037,7 +1037,7 @@ final class IrisChatTests: XCTestCase {
         guard let first = rust.dispatchedActions.first else {
             return XCTFail("expected navigation action")
         }
-        XCTAssertEqual(first, .updateScreenStack(stack: [.chatList]))
+        XCTAssertEqual(first, .navigateBack)
     }
 
     @MainActor

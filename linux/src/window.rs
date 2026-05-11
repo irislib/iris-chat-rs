@@ -71,9 +71,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     {
         let manager = manager.clone();
         back_button.connect_clicked(move |_| {
-            let mut stack = manager.current_state().router.screen_stack;
-            stack.pop();
-            manager.dispatch(AppAction::UpdateScreenStack { stack });
+            manager.dispatch(AppAction::NavigateBack);
         });
     }
     header.pack_start(&back_button);

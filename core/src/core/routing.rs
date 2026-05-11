@@ -112,6 +112,16 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn navigate_back(&mut self) {
+        if self.screen_stack.pop().is_none() {
+            return;
+        }
+        self.sync_active_chat_from_router();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn update_screen_stack(&mut self, stack: Vec<Screen>) {
         if self.state.account.is_none() {
             self.screen_stack = stack

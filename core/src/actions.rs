@@ -195,6 +195,11 @@ pub enum AppAction {
     PushScreen {
         screen: Screen,
     },
+    // Pop the top of the navigation stack. Replaces "UI reads the
+    // stack, computes the pop, dispatches UpdateScreenStack with the
+    // new array" — the core owns the screen stack, the UI just signals
+    // the intent.
+    NavigateBack,
     UpdateScreenStack {
         stack: Vec<Screen>,
     },

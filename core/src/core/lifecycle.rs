@@ -99,6 +99,7 @@ impl AppCore {
                 AppAction::OpenChat { .. } => "OpenChat",
                 AppAction::SendMessage { .. } => "SendMessage",
                 AppAction::PushScreen { .. } => "PushScreen",
+                AppAction::NavigateBack => "NavigateBack",
                 AppAction::UpdateScreenStack { .. } => "UpdateScreenStack",
                 AppAction::AppForegrounded => "AppForegrounded",
                 AppAction::MarkMessagesSeen { .. } => "MarkMessagesSeen",
@@ -425,6 +426,7 @@ impl AppCore {
             }
             AppAction::AcknowledgeRevokedDevice => self.acknowledge_revoked_device(),
             AppAction::PushScreen { screen } => self.push_screen(screen),
+            AppAction::NavigateBack => self.navigate_back(),
             AppAction::UpdateScreenStack { stack } => self.update_screen_stack(stack),
         }
     }

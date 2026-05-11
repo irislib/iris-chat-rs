@@ -941,12 +941,7 @@ final class AppManager: ObservableObject {
     }
 
     func navigateBack() {
-        guard !state.router.screenStack.isEmpty else {
-            return
-        }
-        var stack = state.router.screenStack
-        _ = stack.removeLast()
-        dispatchToRust(.updateScreenStack(stack: stack))
+        dispatchToRust(.navigateBack)
     }
 
     func dispatch(_ action: AppAction) {
