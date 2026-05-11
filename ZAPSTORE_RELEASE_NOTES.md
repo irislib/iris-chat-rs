@@ -1,5 +1,5 @@
-# Iris Chat 2026.5.11.5
+# Iris Chat 2026.5.11.6
 
-- Signal-style search across the chat list: tap the field at the top and grouped Contacts / Groups / Messages results appear, with the messages section backed by a real SQLite FTS5 index so it's fast even on long histories. Pasting an npub or invite URL into the search field auto-opens the chat or accepts the invite — no extra tap.
-- Search-in-chat: the magnifying-glass icon in a chat or group header opens a sheet that searches only that conversation's messages.
-- iOS: smoother send animation — the message log no longer flickers when you fire off a quick message. The chat timeline used to issue a dozen scroll-to-bottom calls per send; it now coalesces to one.
+- Notification tap now opens the chat instantly instead of sitting on "Loading chat…" — the running core stubs the thread record + loads its persisted page inline, so `current_chat` is populated on the same render that flips the screen.
+- iOS message bubbles get their breathing room back. Consecutive same-author messages had collapsed to a ~4pt gap once the dark theme moved to pure-black panels; bumped to ~8pt so each bubble still reads as its own message without breaking the cluster grouping.
+- Drafts now stick. The composer's unsent text is saved per-chat in the local database (Signal-style), so leaving the chat, backgrounding the app, or relaunching all preserve what you were typing. The chat list shows "Draft: …" for any thread with an unsent message.
