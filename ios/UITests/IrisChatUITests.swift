@@ -52,7 +52,23 @@ final class IrisChatUITests: XCTestCase {
         typeText("hello from ios ui test", into: element(app, "chatMessageInput"), app: app)
         element(app, "chatSendButton").tap()
 
-        XCTAssertTrue(app.staticTexts["hello from ios ui test"].waitForExistence(timeout: 15))
+        let messageText = app.staticTexts["hello from ios ui test"].firstMatch
+        XCTAssertTrue(messageText.waitForExistence(timeout: 15))
+
+        // Regression guard for a TruncatableMessageBody bug that made
+        // single-line bubbles render half-screen tall: SwiftUI promoted
+        // the .frame(maxHeight:320) proposed to ViewThatFits into an
+        // enforced height, and the inner Text stretched to match. The
+        // staticText accessibility frame surfaces the rendered text
+        // size — when the bubble blows up to 320pt, the wrapped Text
+        // does too, so 60pt is a comfortable ceiling above one line
+        // (~25pt) and far below the broken state.
+        XCTAssertLessThan(
+            messageText.frame.height,
+            60,
+            "Single-line bubble text rendered \(messageText.frame.height)pt tall — should be ~25pt"
+        )
+
 #if os(iOS)
         app.staticTexts["hello from ios ui test"].press(forDuration: 0.6)
         XCTAssertTrue(element(app, "messageActionsSheet").waitForExistence(timeout: 5))

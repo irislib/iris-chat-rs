@@ -1043,47 +1043,44 @@ private struct ChatMessageRow: View, Equatable {
     }
 }
 
-// Caps tall message bubbles behind a Show more/less toggle. Uses
-// ViewThatFits — a rendered-size check — so weird unicode that
-// renders unusually tall but has few visible newlines still gets
-// caught.
+// Caps tall message bubbles behind a Show more/less toggle.
+// Mirrors the Android implementation: lineLimit caps the visible
+// lines, and the toggle only appears when newline count or
+// character count crosses the same thresholds Android uses. The
+// previous ViewThatFits-with-outer-.frame approach worked on
+// paper but in practice SwiftUI ended up promoting the
+// .frame(maxHeight:) proposal into a force — short messages got
+// rendered as half-screen-tall bubbles. Caught by the
+// `single-line bubble height` UI assertion.
 private struct TruncatableMessageBody: View {
     let attributed: AttributedString
     let isOutgoing: Bool
     @Environment(\.irisPalette) private var palette
     @State private var isExpanded = false
 
-    private let collapsedMaxHeight: CGFloat = 320
-    private let toggleReserve: CGFloat = 30
+    private let collapsedLineLimit = 14
+    private let longBodyCharThreshold = 800
 
-    var body: some View {
-        if isExpanded {
-            VStack(alignment: .leading, spacing: 4) {
-                bodyText
-                toggleButton(label: "Show less")
-            }
-        } else {
-            ViewThatFits(in: .vertical) {
-                bodyText
-                VStack(alignment: .leading, spacing: 4) {
-                    bodyText
-                        .frame(
-                            maxHeight: collapsedMaxHeight - toggleReserve,
-                            alignment: .topLeading
-                        )
-                        .clipped()
-                    toggleButton(label: "Show more")
-                }
-            }
-            .frame(maxHeight: collapsedMaxHeight, alignment: .topLeading)
+    private var needsTruncation: Bool {
+        let plain = String(attributed.characters)
+        if plain.count > longBodyCharThreshold { return true }
+        let newlines = plain.reduce(into: 0) { count, ch in
+            if ch == "\n" { count += 1 }
         }
+        return newlines >= collapsedLineLimit
     }
 
-    private var bodyText: some View {
-        Text(attributed)
-            .font(.system(.body, design: .rounded))
-            .multilineTextAlignment(.leading)
-            .fixedSize(horizontal: false, vertical: true)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(attributed)
+                .font(.system(.body, design: .rounded))
+                .multilineTextAlignment(.leading)
+                .lineLimit(isExpanded ? nil : collapsedLineLimit)
+                .fixedSize(horizontal: false, vertical: true)
+            if needsTruncation {
+                toggleButton(label: isExpanded ? "Show less" : "Show more")
+            }
+        }
     }
 
     private func toggleButton(label: String) -> some View {
