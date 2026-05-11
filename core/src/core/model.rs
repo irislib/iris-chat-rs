@@ -23,6 +23,11 @@ pub(super) struct ThreadRecord {
     pub(super) unread_count: u64,
     pub(super) updated_at_secs: u64,
     pub(super) messages: Vec<ChatMessageSnapshot>,
+    /// Unsent composer text the user typed in this thread. Saved to
+    /// SQLite on every keystroke (debounced by the UI) so reopening
+    /// the chat — or the app — restores the draft, matching Signal's
+    /// behaviour. Empty string when no draft.
+    pub(super) draft: String,
 }
 
 impl ThreadRecord {
@@ -410,6 +415,8 @@ pub(super) struct PersistedThread {
     #[serde(default)]
     pub(super) updated_at_secs: u64,
     pub(super) messages: Vec<PersistedMessage>,
+    #[serde(default)]
+    pub(super) draft: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

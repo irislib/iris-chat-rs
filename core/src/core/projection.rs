@@ -116,6 +116,7 @@ impl AppCore {
                     is_typing: self.thread_has_typing_indicator(&thread.chat_id),
                     is_muted,
                     is_pinned,
+                    draft: thread.draft.clone(),
                 }
             })
             .collect();
@@ -161,6 +162,7 @@ impl AppCore {
                     is_muted,
                     messages: thread.messages.clone(),
                     typing_indicators: self.typing_indicator_snapshots(&thread.chat_id),
+                    draft: thread.draft.clone(),
                 }
             });
 

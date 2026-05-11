@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 11;
+const SCHEMA_VERSION: u32 = 12;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -61,7 +61,8 @@ CREATE TABLE IF NOT EXISTS chat_message_ttls (
 CREATE TABLE IF NOT EXISTS threads (
     chat_id TEXT PRIMARY KEY,
     unread_count INTEGER NOT NULL DEFAULT 0,
-    updated_at_secs INTEGER NOT NULL DEFAULT 0
+    updated_at_secs INTEGER NOT NULL DEFAULT 0,
+    draft TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS messages (
@@ -315,6 +316,12 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         tx.execute_batch(
             "INSERT OR IGNORE INTO messages_fts(rowid, body, chat_id, message_id)
              SELECT rowid, body, chat_id, id FROM messages;",
+        )?;
+    }
+    if current < 12 && !column_exists(&tx, "threads", "draft")? {
+        tx.execute_batch(
+            "ALTER TABLE threads
+             ADD COLUMN draft TEXT NOT NULL DEFAULT '';",
         )?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;

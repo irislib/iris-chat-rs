@@ -3707,6 +3707,8 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
                 delivery_trace: Default::default(),
                 source_event_id: Some(outer_event_id.clone()),
             }],
+
+            draft: String::new(),
         },
     );
     core.persist_best_effort_inner();
@@ -5529,6 +5531,8 @@ fn queued_runtime_publish_completion_uses_inner_message_id() {
                 delivery_trace: Default::default(),
                 source_event_id: None,
             }],
+
+            draft: String::new(),
         },
     );
 
@@ -6016,6 +6020,49 @@ fn open_chat_populates_current_chat_for_preview_only_thread() {
     ));
 }
 
+/// Draft persistence (Signal-iOS parity): SetChatDraft saves the
+/// composer's unsent text on the thread record, send_message clears
+/// it. Both states survive a reload by way of the regular persist
+/// pipeline, but the in-memory snapshot is enough for the contract.
+#[test]
+fn set_chat_draft_persists_until_send() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("draft-persist", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+
+    core.set_chat_draft(&chat_id, "ping…");
+    let snap = core
+        .threads
+        .get(&chat_id)
+        .expect("draft stubs a thread record");
+    assert_eq!(snap.draft, "ping…");
+    assert_eq!(
+        core.state
+            .chat_list
+            .iter()
+            .find(|c| c.chat_id == chat_id)
+            .map(|c| c.draft.as_str()),
+        Some("ping…")
+    );
+
+    // Idempotent: same text is a no-op (no extra emit) so the chat
+    // list stays equal.
+    let rev_before = core.state.rev;
+    core.set_chat_draft(&chat_id, "ping…");
+    assert_eq!(core.state.rev, rev_before);
+
+    // Sending wipes the draft.
+    core.send_message(&chat_id, "ping…", None);
+    assert!(core
+        .threads
+        .get(&chat_id)
+        .expect("thread still present after send")
+        .draft
+        .is_empty());
+}
+
 #[test]
 fn self_synced_direct_message_updates_existing_local_outgoing_without_duplicate() {
     let owner = Keys::generate();
@@ -6250,6 +6297,7 @@ fn first_received_message_clears_typing_indicator_in_open_chat() {
             unread_count: 0,
             updated_at_secs: 0,
             messages: Vec::new(),
+            draft: String::new(),
         },
     );
     core.set_typing_indicator(chat_id.clone(), sender_hex.clone(), 100);
@@ -7107,6 +7155,8 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                         source_event_id: None,
                     },
                 ],
+
+                draft: String::new(),
             },
         );
         core.threads.insert(
@@ -7132,6 +7182,8 @@ fn appcore_restart_restores_threads_groups_and_seen_events() {
                     delivery_trace: Default::default(),
                     source_event_id: None,
                 }],
+
+                draft: String::new(),
             },
         );
         core.seen_event_order.push_back("evt-1".to_string());
@@ -7287,6 +7339,8 @@ fn delete_chat_removes_thread_and_navigates_back() {
                 delivery_trace: Default::default(),
                 source_event_id: None,
             }],
+
+            draft: String::new(),
         },
     );
     core.chat_message_ttl_seconds.insert(chat_id.clone(), 3600);
@@ -7351,6 +7405,8 @@ fn pinning_chat_moves_it_above_newer_unpinned_chats_and_persists() {
                 10,
                 false,
             )],
+
+            draft: String::new(),
         },
     );
     core.threads.insert(
@@ -7366,6 +7422,8 @@ fn pinning_chat_moves_it_above_newer_unpinned_chats_and_persists() {
                 20,
                 false,
             )],
+
+            draft: String::new(),
         },
     );
     core.rebuild_state();
@@ -7400,6 +7458,8 @@ fn set_chat_unread_toggles_local_unread_count() {
             unread_count: 0,
             updated_at_secs: 10,
             messages: vec![test_chat_message(&chat_id, "m1", "hello", 10, false)],
+
+            draft: String::new(),
         },
     );
 
@@ -7484,6 +7544,8 @@ fn redelivered_persisted_message_after_restart_does_not_increment_unread() {
             unread_count: 0,
             updated_at_secs: 200,
             messages: vec![old_message, latest_message.clone()],
+
+            draft: String::new(),
         },
     );
     core.persist_best_effort_inner();
@@ -7563,6 +7625,8 @@ fn prune_expired_messages_removes_loaded_messages_and_sqlite_rows() {
                     source_event_id: None,
                 },
             ],
+
+            draft: String::new(),
         },
     );
     core.persist_best_effort_inner();
@@ -7699,6 +7763,8 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
                     source_event_id: None,
                 },
             ],
+
+            draft: String::new(),
         },
     );
     core.persist_best_effort_inner();

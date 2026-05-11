@@ -68,6 +68,7 @@ impl AppCore {
                 unread_count: 0,
                 updated_at_secs,
                 messages: Vec::new(),
+                draft: String::new(),
             });
         if thread.updated_at_secs == 0 {
             thread.updated_at_secs = updated_at_secs;
@@ -107,6 +108,7 @@ impl AppCore {
                 unread_count: 0,
                 updated_at_secs: source.updated_at_secs,
                 messages: Vec::new(),
+                draft: String::new(),
             });
 
         for mut message in source.messages.drain(..) {
@@ -224,6 +226,31 @@ impl AppCore {
         parse_peer_input(chat_id)
             .ok()
             .map(|(normalized, _)| normalized)
+    }
+
+    pub(super) fn set_chat_draft(&mut self, chat_id: &str, text: &str) {
+        let Some(chat_id) = self.normalize_chat_id(chat_id) else {
+            return;
+        };
+        let next = text.to_string();
+        // No-op when nothing changed — keeps the per-keystroke
+        // dispatch from rewriting the threads row on every tick when
+        // a debounce window expired with no actual edit (e.g., the
+        // user pressed and released a modifier key).
+        if self
+            .threads
+            .get(&chat_id)
+            .is_some_and(|thread| thread.draft == next)
+        {
+            return;
+        }
+        let now = unix_now().get();
+        // Stub a thread record for brand-new chats so a first-time
+        // draft survives a relaunch even before any messages exist.
+        self.ensure_thread_record(&chat_id, now).draft = next;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
     }
 
     pub(super) fn open_chat(&mut self, chat_id: &str) {
@@ -364,7 +391,14 @@ impl AppCore {
         self.screen_stack = vec![Screen::Chat {
             chat_id: normalized_chat_id.clone(),
         }];
-        self.ensure_thread_record(&normalized_chat_id, now.get());
+        let thread = self.ensure_thread_record(&normalized_chat_id, now.get());
+        // The draft is what the user typed and just sent — clear it
+        // from the persisted thread so a relaunch doesn't re-fill the
+        // composer with text we've already shipped. Matches Signal's
+        // `clearTextMessage` + `updateWithDraft(nil)` flow.
+        if !thread.draft.is_empty() {
+            thread.draft.clear();
+        }
         let expires_at_secs = expires_at_secs.or_else(|| {
             self.chat_message_ttl_seconds
                 .get(&normalized_chat_id)
@@ -857,6 +891,7 @@ impl AppCore {
                 unread_count: 0,
                 updated_at_secs: created_at_secs,
                 messages: Vec::new(),
+                draft: String::new(),
             })
             .insert_message_sorted(message.clone());
         if let Some(thread) = self.threads.get_mut(chat_id) {
@@ -940,6 +975,7 @@ impl AppCore {
                     unread_count: 0,
                     updated_at_secs: created_at_secs,
                     messages: Vec::new(),
+                    draft: String::new(),
                 });
             if should_count_unread {
                 thread.unread_count = thread.unread_count.saturating_add(1);
@@ -978,6 +1014,7 @@ impl AppCore {
                 unread_count: 0,
                 updated_at_secs: created_at_secs,
                 messages: Vec::new(),
+                draft: String::new(),
             });
         if thread
             .messages

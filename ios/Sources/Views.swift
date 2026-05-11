@@ -2399,11 +2399,17 @@ private struct ChatListRowContainer: View {
     }
 
     private var chatRow: some View {
-        IrisChatRow(
+        let trimmedDraft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let preview: String = {
+            if chat.isTyping { return "Typing" }
+            if !trimmedDraft.isEmpty { return "Draft: \(trimmedDraft)" }
+            return chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"
+        }()
+        return IrisChatRow(
             title: chat.displayName,
             isMuted: chat.isMuted,
             isPinned: chat.isPinned,
-            preview: chat.isTyping ? "Typing" : (chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"),
+            preview: preview,
             subtitle: nil,
             timeLabel: timeLabel,
             unreadCount: chat.unreadCount,

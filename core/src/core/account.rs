@@ -642,6 +642,7 @@ impl AppCore {
                                     }
                                 })
                                 .collect(),
+                            draft: thread.draft.clone(),
                         },
                     )
                 })

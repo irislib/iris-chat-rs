@@ -422,8 +422,11 @@ fn row_for(
     }
     row.add_prefix(&avatar);
 
+    let draft = chat.draft.trim();
     let subtitle = if chat.is_typing {
         "Typing…".to_string()
+    } else if !draft.is_empty() {
+        format!("Draft: {draft}")
     } else {
         chat.last_message_preview
             .clone()

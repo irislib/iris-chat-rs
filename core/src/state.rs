@@ -254,6 +254,11 @@ pub struct ChatThreadSnapshot {
     pub is_typing: bool,
     pub is_muted: bool,
     pub is_pinned: bool,
+    /// Unsent composer text the user typed in this thread, persisted
+    /// across navigation / suspend / relaunch. Chat list rows render
+    /// "Draft: …" in place of the last message preview when this is
+    /// non-empty (Signal pattern).
+    pub draft: String,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -269,6 +274,9 @@ pub struct CurrentChatSnapshot {
     pub is_muted: bool,
     pub messages: Vec<ChatMessageSnapshot>,
     pub typing_indicators: Vec<TypingIndicatorSnapshot>,
+    /// Same persisted draft text exposed on `ChatThreadSnapshot`. The
+    /// chat screen pre-fills its composer with this on first appear.
+    pub draft: String,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

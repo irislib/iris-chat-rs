@@ -29,6 +29,8 @@ struct ChatScreen: View {
     @State private var sentTypingIndicator = false
     @State private var messageInfoSelection: MessageInfoSelection?
     @State private var reactorsSelection: MessageReactorsSelection?
+    @State private var lastPersistedDraft: String?
+    @State private var draftFlushWork: DispatchWorkItem?
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -446,6 +448,22 @@ struct ChatScreen: View {
         }
         .onDisappear {
             stopTypingIfNeeded()
+            flushDraftImmediately()
+        }
+        .task(id: chatId) {
+            // First arrival at this chat (or chatId rebind in a split
+            // shell): seed the composer from the persisted thread
+            // draft so unsent text survives navigation + relaunch.
+            // We only paste it once per chat appearance; subsequent
+            // user keystrokes own the buffer.
+            let initial = manager.state.currentChat?.draft ?? ""
+            if !initial.isEmpty {
+                draft = initial
+            }
+            lastPersistedDraft = initial
+        }
+        .irisOnChange(of: draft) { newValue in
+            scheduleDraftFlush(text: newValue)
         }
         .task(id: seenReceiptToken(for: chat)) {
             guard let chat else { return }
@@ -455,6 +473,31 @@ struct ChatScreen: View {
             guard !incomingIds.isEmpty else { return }
             manager.dispatch(.markMessagesSeen(chatId: chat.chatId, messageIds: incomingIds))
         }
+    }
+
+    /// Debounce composer writes so a fast typist generates one
+    /// SQLite-row update every ~500ms instead of one per keystroke.
+    /// On disappear / send we flush eagerly so the latest text always
+    /// hits disk before the view goes away.
+    private func scheduleDraftFlush(text: String) {
+        draftFlushWork?.cancel()
+        if lastPersistedDraft == text {
+            return
+        }
+        let work = DispatchWorkItem {
+            manager.dispatch(.setChatDraft(chatId: chatId, text: text))
+            lastPersistedDraft = text
+        }
+        draftFlushWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    private func flushDraftImmediately() {
+        draftFlushWork?.cancel()
+        draftFlushWork = nil
+        guard lastPersistedDraft != draft else { return }
+        manager.dispatch(.setChatDraft(chatId: chatId, text: draft))
+        lastPersistedDraft = draft
     }
 
     private func sendTypingIfNeeded() {
@@ -931,7 +974,14 @@ private struct ChatMessageRow: View, Equatable {
             .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
             .contentShape(Rectangle())
             .onHover { isHovering = $0 }
-            .padding(.top, isFirstInCluster ? 10 : 4)
+            // Within-cluster gap was 4pt (top=4, bottom=0) — visually
+            // smushed once the dark theme moved to pure-black panels,
+            // because the thin slice of background between two
+            // similarly-coloured bubbles read as zero. Bumped to
+            // ~8pt so consecutive same-author messages stay obviously
+            // distinct without losing the visual grouping. Between
+            // clusters stays at the previous ~20pt.
+            .padding(.top, isFirstInCluster ? 10 : 8)
             .padding(.bottom, isLastInCluster ? 10 : 0)
             }
         }

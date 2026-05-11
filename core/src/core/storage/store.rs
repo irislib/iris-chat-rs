@@ -579,11 +579,12 @@ impl SavePlan {
         }
         if !self.threads_to_write.is_empty() {
             let mut thread_stmt = tx.prepare_cached(
-                "INSERT INTO threads(chat_id, unread_count, updated_at_secs)
-                 VALUES (?1, ?2, ?3)
+                "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft)
+                 VALUES (?1, ?2, ?3, ?4)
                  ON CONFLICT(chat_id) DO UPDATE SET
                     unread_count = excluded.unread_count,
-                    updated_at_secs = excluded.updated_at_secs",
+                    updated_at_secs = excluded.updated_at_secs,
+                    draft = excluded.draft",
             )?;
             for chat_id in self.threads_to_write.keys() {
                 let thread = snapshot
@@ -594,6 +595,7 @@ impl SavePlan {
                     chat_id,
                     thread.unread_count as i64,
                     thread.updated_at_secs as i64,
+                    thread.draft,
                 ])?;
                 for message in &thread.messages {
                     upsert_message_row(tx, chat_id, message)?;
@@ -727,6 +729,7 @@ fn hash_thread(thread: &ThreadRecord) -> u64 {
     let mut hasher = DefaultHasher::new();
     thread.unread_count.hash(&mut hasher);
     thread.updated_at_secs.hash(&mut hasher);
+    thread.draft.hash(&mut hasher);
     for message in &thread.messages {
         message.id.hash(&mut hasher);
         message.author.hash(&mut hasher);
@@ -1131,19 +1134,20 @@ fn load_threads(
     active_chat_id: Option<&str>,
 ) -> anyhow::Result<Vec<PersistedThread>> {
     let mut threads_stmt =
-        conn.prepare("SELECT chat_id, unread_count, updated_at_secs FROM threads")?;
+        conn.prepare("SELECT chat_id, unread_count, updated_at_secs, draft FROM threads")?;
     let thread_rows = threads_stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
             row.get::<_, i64>(1)? as u64,
             row.get::<_, i64>(2)? as u64,
+            row.get::<_, String>(3)?,
         ))
     })?;
 
     let mut by_chat: HashMap<String, PersistedThread> = HashMap::new();
     let mut order: Vec<String> = Vec::new();
     for row in thread_rows {
-        let (chat_id, unread_count, updated_at_secs) = row?;
+        let (chat_id, unread_count, updated_at_secs, draft) = row?;
         order.push(chat_id.clone());
         by_chat.insert(
             chat_id.clone(),
@@ -1152,6 +1156,7 @@ fn load_threads(
                 unread_count,
                 updated_at_secs,
                 messages: Vec::new(),
+                draft,
             },
         );
     }
@@ -1527,6 +1532,7 @@ mod tests {
                 .map(|message| message.created_at_secs)
                 .unwrap_or(0),
             messages,
+            draft: String::new(),
         }
     }
 
@@ -1663,6 +1669,8 @@ mod tests {
                 unread_count: 2,
                 updated_at_secs: 100,
                 messages: vec![sample_message("m1", "hi", 99)],
+
+                draft: String::new(),
             },
         );
         let preferences = PreferencesSnapshot::default();
@@ -1724,6 +1732,8 @@ mod tests {
                 unread_count: 0,
                 updated_at_secs: 99,
                 messages: vec![message],
+
+                draft: String::new(),
             },
         );
         let snapshot = empty_snapshot(
@@ -1928,6 +1938,8 @@ mod tests {
                 unread_count: 7,
                 updated_at_secs: 10,
                 messages: vec![existing],
+
+                draft: String::new(),
             },
         );
         let snapshot = empty_snapshot(
@@ -2043,6 +2055,8 @@ mod tests {
                 unread_count: 0,
                 updated_at_secs: 1,
                 messages: vec![sample_message("m1", "hello", 1)],
+
+                draft: String::new(),
             },
         );
         let seen_events = VecDeque::new();
@@ -2084,6 +2098,8 @@ mod tests {
                 unread_count: 0,
                 updated_at_secs: 1,
                 messages: vec![sample_message("m1", "hello", 1)],
+
+                draft: String::new(),
             },
         );
         threads.insert(
@@ -2093,6 +2109,8 @@ mod tests {
                 unread_count: 0,
                 updated_at_secs: 2,
                 messages: vec![sample_message("m2", "world", 2)],
+
+                draft: String::new(),
             },
         );
 
@@ -2149,6 +2167,8 @@ mod tests {
                 unread_count: 0,
                 updated_at_secs: 1,
                 messages: vec![sample_message("m1", "stay", 1)],
+
+                draft: String::new(),
             },
         );
         threads.insert(
@@ -2158,6 +2178,8 @@ mod tests {
                 unread_count: 0,
                 updated_at_secs: 2,
                 messages: vec![sample_message("m2", "go", 2)],
+
+                draft: String::new(),
             },
         );
 
@@ -2214,6 +2236,8 @@ mod tests {
                     sample_message_for_chat("chat-a", "m1", "Hello there, world", 100),
                     sample_message_for_chat("chat-a", "m2", "good morning sunshine", 200),
                 ],
+
+                draft: String::new(),
             },
         );
         threads.insert(
@@ -2228,6 +2252,8 @@ mod tests {
                     "Hello again from b",
                     300,
                 )],
+
+                draft: String::new(),
             },
         );
         let snapshot = empty_snapshot(

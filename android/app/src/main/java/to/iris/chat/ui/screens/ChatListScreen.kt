@@ -322,15 +322,16 @@ fun ChatListScreen(
                             },
                             onDeleteRequest = { pendingDeleteChat = chat },
                         ) {
+                            val draftPreview = chat.draft.trim()
                             IrisChatListRow(
                                 title = chat.displayName,
                                 isMuted = chat.isMuted,
                                 isPinned = chat.isPinned,
                                 preview =
-                                    if (chat.isTyping) {
-                                        "Typing"
-                                    } else {
-                                        chat.lastMessagePreview ?: subtitle.orEmpty()
+                                    when {
+                                        chat.isTyping -> "Typing"
+                                        draftPreview.isNotEmpty() -> "Draft: $draftPreview"
+                                        else -> chat.lastMessagePreview ?: subtitle.orEmpty()
                                     },
                                 timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
                                 imageUrl = avatarUrl,

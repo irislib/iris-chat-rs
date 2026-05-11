@@ -43,6 +43,7 @@ import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.MobilePushNotificationResolution
+import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.MobilePushSyncSnapshot
 import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
@@ -531,6 +532,7 @@ class AppManagerContractTest {
             isMuted = false,
             messages = emptyList(),
             typingIndicators = emptyList(),
+            draft = "",
         )
 
     private fun makeLoggedInState(rev: ULong): AppState =
@@ -595,6 +597,16 @@ private class MockRustAppClient(
         dispatchError?.let { throw it }
         dispatchedActions += action
     }
+
+    override fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot =
+        SearchResultSnapshot(
+            query = query,
+            scopeChatId = scopeChatId,
+            contacts = emptyList(),
+            groups = emptyList(),
+            messages = emptyList(),
+            shortcut = null,
+        )
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = true
 

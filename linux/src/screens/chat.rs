@@ -1435,6 +1435,14 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     entry.set_placeholder_text(Some("Message"));
     entry.set_hexpand(true);
     entry.set_height_request(40);
+    // Seed the composer with the persisted draft so unsent text
+    // survives navigation + relaunch. set_text is silent vs.
+    // user-typed `connect_changed` for our purposes because the core
+    // dedups on the draft string anyway.
+    if !chat.draft.is_empty() {
+        entry.set_text(&chat.draft);
+        entry.set_position(-1);
+    }
     row.append(&entry);
 
     let emoji_btn = gtk::Button::from_icon_name("face-smile-symbolic");
@@ -1469,7 +1477,8 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
         let manager_for_typing = manager.clone();
         let chat_id_for_typing = chat.chat_id.clone();
         entry.connect_changed(move |e| {
-            if e.text().is_empty() {
+            let text = e.text().to_string();
+            if text.is_empty() {
                 manager_for_typing.dispatch(AppAction::StopTyping {
                     chat_id: chat_id_for_typing.clone(),
                 });
@@ -1478,6 +1487,15 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
                     chat_id: chat_id_for_typing.clone(),
                 });
             }
+            // Persist the unsent draft on every change. The core
+            // checks against the previous value and short-circuits
+            // identical writes, so the per-keystroke dispatch is
+            // cheap and matches Signal-iOS's "save on every edit"
+            // contract without any debounce timer on this side.
+            manager_for_typing.dispatch(AppAction::SetChatDraft {
+                chat_id: chat_id_for_typing.clone(),
+                text,
+            });
         });
     }
 

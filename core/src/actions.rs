@@ -204,4 +204,12 @@ pub enum AppAction {
     // the intent. Appended at the end of the enum so adding it doesn't
     // shift existing variants' uniffi tags on still-stale bindings.
     NavigateBack,
+    /// Persist the unsent composer text for a chat. Shells dispatch
+    /// this on composer change (debounced) and on send-or-leave so
+    /// the draft survives navigation, app suspend, and relaunch —
+    /// same shape as Signal's `updateWithDraft`. Empty string clears.
+    SetChatDraft {
+        chat_id: String,
+        text: String,
+    },
 }

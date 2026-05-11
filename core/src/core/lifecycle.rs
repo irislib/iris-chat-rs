@@ -436,6 +436,7 @@ impl AppCore {
             AppAction::PushScreen { screen } => self.push_screen(screen),
             AppAction::NavigateBack => self.navigate_back(),
             AppAction::UpdateScreenStack { stack } => self.update_screen_stack(stack),
+            AppAction::SetChatDraft { chat_id, text } => self.set_chat_draft(&chat_id, &text),
         }
     }
 
