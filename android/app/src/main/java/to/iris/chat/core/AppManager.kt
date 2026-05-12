@@ -257,6 +257,15 @@ data class PendingShare(
     val attachments: List<OutgoingAttachment>,
 )
 
+private data class AndroidMobilePushSyncInput(
+    val enabled: Boolean,
+    val ownerPubkeyHex: String?,
+    val ownerSecretAvailable: Boolean,
+    val messageAuthorPubkeys: List<String>,
+    val inviteResponsePubkeys: List<String>,
+    val serverOverride: String,
+)
+
 class AppManager(
     context: Context,
     private val applicationScope: CoroutineScope,
@@ -284,6 +293,8 @@ class AppManager(
 
     private var lastRevApplied: ULong = 0u
     private var restoreCheckComplete = false
+    private var cachedAccountBundle: StoredAccountBundle? = null
+    private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
 
     private val mutableState = MutableStateFlow(rust.state())
     private val mutableForegroundedAtSecs = MutableStateFlow(currentTimeSeconds())
@@ -876,7 +887,7 @@ class AppManager(
                             deviceNsec = update.deviceNsec,
                         )
                     persistBundle(bundle)
-                    mobilePushRuntime.sync(
+                    scheduleMobilePushSyncIfNeeded(
                         mutableState.value,
                         bundle.ownerNsec,
                     )
@@ -905,9 +916,7 @@ class AppManager(
                         "toast=${update.v1.toast.orEmpty()}",
                 )
                 publishState(update.v1)
-                applicationScope.launch(ioDispatcher) {
-                    mobilePushRuntime.sync(update.v1, loadPersistedBundle()?.ownerNsec)
-                }
+                scheduleMobilePushSyncIfNeeded(update.v1, cachedAccountBundle?.ownerNsec)
             }
         }
     }
@@ -971,6 +980,7 @@ class AppManager(
         restoreCheckComplete = true
         val bundle = StoredAccountBundle.fromJson(decrypted)
         if (bundle != null) {
+            cachedAccountBundle = bundle
             Log.d(TAG, "restoreSessionFromSecureStore dispatch bundle restore")
             dispatchToRust(
                 AppAction.RestoreAccountBundle(
@@ -1052,6 +1062,7 @@ class AppManager(
             preferences[SECRET_CIPHERTEXT] = encrypted.cipherText.toBase64()
             preferences[SECRET_IV] = encrypted.iv.toBase64()
         }
+        cachedAccountBundle = bundle
     }
 
     private suspend fun loadPersistedBundle(): StoredAccountBundle? {
@@ -1085,7 +1096,43 @@ class AppManager(
             preferences.remove(SECRET_CIPHERTEXT)
             preferences.remove(SECRET_IV)
         }
+        cachedAccountBundle = null
+        lastMobilePushSyncInput = null
     }
+
+    private fun scheduleMobilePushSyncIfNeeded(
+        state: AppState,
+        ownerNsec: String?,
+    ) {
+        val input = mobilePushSyncInput(state, ownerNsec)
+        if (input.ownerPubkeyHex == null) {
+            lastMobilePushSyncInput = null
+            return
+        }
+        if (input == lastMobilePushSyncInput) {
+            return
+        }
+        lastMobilePushSyncInput = input
+        applicationScope.launch(ioDispatcher) {
+            mobilePushRuntime.sync(state, ownerNsec)
+        }
+    }
+
+    private fun mobilePushSyncInput(
+        state: AppState,
+        ownerNsec: String?,
+    ): AndroidMobilePushSyncInput =
+        AndroidMobilePushSyncInput(
+            enabled = state.preferences.desktopNotificationsEnabled,
+            ownerPubkeyHex = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null },
+            ownerSecretAvailable = !ownerNsec.isNullOrBlank(),
+            messageAuthorPubkeys = state.mobilePush.messageAuthorPubkeys,
+            inviteResponsePubkeys = state.mobilePush.inviteResponsePubkeys,
+            serverOverride =
+                state.preferences.mobilePushServerUrl
+                    .trim()
+                    .ifEmpty { BuildConfig.MOBILE_PUSH_SERVER_URL.trim() },
+        )
 
     private fun replaceRustCoreAfterReset() {
         val previous = rust

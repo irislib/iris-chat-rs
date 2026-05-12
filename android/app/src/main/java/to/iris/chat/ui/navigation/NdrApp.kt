@@ -34,6 +34,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlin.math.max
 import kotlinx.coroutines.delay
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
@@ -121,9 +122,17 @@ fun NdrApp(
                 offlineSinceSecs != null
         } == true
     LaunchedEffect(allRelaysOffline, offlineSinceSecs, foregroundedAtSecs) {
-        while (allRelaysOffline) {
-            offlineNowSecs = System.currentTimeMillis() / 1_000L
-            delay(1_000L)
+        val current = currentTimeSeconds()
+        offlineNowSecs = current
+        val deadline =
+            offlineBannerDeadlineSecs(
+                allRelaysOffline = allRelaysOffline,
+                offlineSinceSecs = offlineSinceSecs,
+                foregroundedAtSecs = foregroundedAtSecs,
+            )
+        if (deadline != null && current < deadline) {
+            delay((deadline - current) * 1_000L)
+            offlineNowSecs = currentTimeSeconds()
         }
     }
     val offlineBannerState =
@@ -511,5 +520,21 @@ private val nearbyWifiOnStatuses =
 
 private fun Long.saturatingSubtract(other: Long): Long =
     if (this >= other) this - other else 0L
+
+private fun currentTimeSeconds(): Long = System.currentTimeMillis() / 1_000L
+
+private fun offlineBannerDeadlineSecs(
+    allRelaysOffline: Boolean,
+    offlineSinceSecs: Long?,
+    foregroundedAtSecs: Long,
+): Long? {
+    if (!allRelaysOffline || offlineSinceSecs == null) {
+        return null
+    }
+    return max(
+        offlineSinceSecs + OFFLINE_BANNER_GRACE_SECS,
+        foregroundedAtSecs + OFFLINE_BANNER_GRACE_SECS,
+    )
+}
 
 private const val OFFLINE_BANNER_GRACE_SECS = 30L
