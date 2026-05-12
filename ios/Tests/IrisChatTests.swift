@@ -1137,6 +1137,7 @@ final class IrisChatTests: XCTestCase {
             return XCTFail("expected navigation action")
         }
         XCTAssertEqual(first, .updateScreenStack(stack: [.chatList]))
+        XCTAssertEqual(manager.state.router.screenStack, [.chatList])
     }
 
     @MainActor
@@ -1163,6 +1164,62 @@ final class IrisChatTests: XCTestCase {
 
         XCTAssertEqual(manager.state.router.screenStack, [.chatList])
         XCTAssertNil(manager.toasts.message)
+    }
+
+    @MainActor
+    func testNavigateBackKeepsLocalRouteWhileRustCatchesUp() async {
+        let chatId = "chat-1"
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)])
+            )
+        )
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.navigateBack()
+
+        XCTAssertEqual(manager.state.router.screenStack, [])
+        XCTAssertEqual(manager.activeScreen, .chatList)
+        XCTAssertNil(manager.state.currentChat)
+
+        rust.emit(
+            .fullState(
+                makeLargeFixtureState(
+                    rev: 2,
+                    router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)])
+                )
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(manager.state.rev, 2)
+        XCTAssertEqual(manager.state.router.screenStack, [])
+        XCTAssertEqual(manager.activeScreen, .chatList)
+        XCTAssertNil(manager.state.currentChat)
+
+        rust.emit(
+            .fullState(
+                makeLargeFixtureState(
+                    rev: 3,
+                    router: Router(defaultScreen: .chatList, screenStack: [])
+                )
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(manager.state.rev, 3)
+        XCTAssertEqual(manager.state.router.screenStack, [])
+        XCTAssertEqual(manager.activeScreen, .chatList)
     }
 
     @MainActor

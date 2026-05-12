@@ -814,6 +814,7 @@ final class AppManager: ObservableObject {
     private static let activeChatSeenIdleLimit: TimeInterval = 5 * 60
     private static let maxClientDebugLogEntries = 50
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
+    private static let navigationOverrideTTL: TimeInterval = 2
     private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
     private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
@@ -830,6 +831,12 @@ final class AppManager: ObservableObject {
     /// Stays nil for normal `openChat` taps so we don't re-scroll on
     /// every chat-open.
     @Published private(set) var pendingScrollMessageId: String?
+
+    // Keeps user-driven navigation stable while queued Rust snapshots catch up.
+    private struct PendingNavigationOverride {
+        let stack: [Screen]
+        let expiresAt: Date
+    }
 
     // Domain-scoped sub-controllers — split out of the previous fat
     // ObservableObject so views that only care about toasts or the desktop
@@ -863,6 +870,7 @@ final class AppManager: ObservableObject {
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
+    private var pendingNavigationOverride: PendingNavigationOverride?
     private var backgroundSuspendPrepared = false
     private var storedAccountBundle: StoredAccountBundle?
     private var nearbySettingsWasOpened = false
@@ -1033,25 +1041,18 @@ final class AppManager: ObservableObject {
             return
         }
         let nextStack = Array(currentStack.dropLast())
+        pendingNavigationOverride = PendingNavigationOverride(
+            stack: nextStack,
+            expiresAt: Date().addingTimeInterval(Self.navigationOverrideTTL)
+        )
+        applyLocalScreenStack(nextStack)
         let dispatched = dispatchToRust(
             .updateScreenStack(stack: nextStack),
-            showsToastOnFailure: false
+            showsToastOnFailure: false,
+            preservesPendingNavigation: true
         )
         if !dispatched {
-            applyLocalScreenStack(nextStack)
-            return
-        }
-        Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            guard let self,
-                  self.state.router.screenStack == currentStack else {
-                return
-            }
-            self.applyLocalScreenStack(nextStack)
-            self.appendClientDebugLog(
-                category: "navigation.local_fallback",
-                detail: "Applied local back fallback"
-            )
+            pendingNavigationOverride = nil
         }
     }
 
@@ -1915,19 +1916,20 @@ final class AppManager: ObservableObject {
             guard nextState.rev > lastRevApplied else {
                 return
             }
+            let reconciledState = stateByReconcilingPendingNavigation(nextState)
             let oldState = state
             lastRevApplied = nextState.rev
-            postDesktopNotifications(from: oldState, to: nextState)
-            state = nextState
+            postDesktopNotifications(from: oldState, to: reconciledState)
+            state = reconciledState
 #if os(iOS) || os(macOS)
-            syncNearbyBluetoothPreference(from: oldState, to: nextState)
-            syncNearbyLanPreference(from: oldState, to: nextState)
+            syncNearbyBluetoothPreference(from: oldState, to: reconciledState)
+            syncNearbyLanPreference(from: oldState, to: reconciledState)
 #endif
 #if os(iOS)
-            syncIosStateSideEffects(for: nextState)
+            syncIosStateSideEffects(for: reconciledState)
 #endif
             bootstrapInFlight = false
-            if let toast = nextState.toast, !toast.isEmpty {
+            if let toast = reconciledState.toast, !toast.isEmpty {
                 showToast(toast)
             }
             runPendingTestSeedIfNeeded()
@@ -1982,8 +1984,31 @@ final class AppManager: ObservableObject {
         )
     }
 
+    private func stateByReconcilingPendingNavigation(_ nextState: AppState) -> AppState {
+        guard let pending = pendingNavigationOverride else {
+            return nextState
+        }
+        guard nextState.account != nil else {
+            pendingNavigationOverride = nil
+            return nextState
+        }
+        if nextState.router.screenStack == pending.stack {
+            pendingNavigationOverride = nil
+            return nextState
+        }
+        guard Date() < pending.expiresAt else {
+            pendingNavigationOverride = nil
+            return nextState
+        }
+        return stateByApplyingLocalScreenStack(pending.stack, to: nextState)
+    }
+
     private func applyLocalScreenStack(_ stack: [Screen]) {
-        var nextState = state
+        state = stateByApplyingLocalScreenStack(stack, to: state)
+    }
+
+    private func stateByApplyingLocalScreenStack(_ stack: [Screen], to baseState: AppState) -> AppState {
+        var nextState = baseState
         nextState.router = Router(defaultScreen: nextState.router.defaultScreen, screenStack: stack)
         let activeScreen = stack.last ?? nextState.router.defaultScreen
         switch activeScreen {
@@ -2000,7 +2025,7 @@ final class AppManager: ObservableObject {
             nextState.currentChat = nil
             nextState.groupDetails = nil
         }
-        state = nextState
+        return nextState
     }
 
 #if os(iOS) || os(macOS)
@@ -2033,8 +2058,12 @@ final class AppManager: ObservableObject {
     @discardableResult
     private func dispatchToRust(
         _ action: AppAction,
-        showsToastOnFailure: Bool = true
+        showsToastOnFailure: Bool = true,
+        preservesPendingNavigation: Bool = false
     ) -> Bool {
+        if !preservesPendingNavigation, actionClearsPendingNavigation(action) {
+            pendingNavigationOverride = nil
+        }
         do {
             try rust.dispatch(action: action)
             return true
@@ -2043,6 +2072,25 @@ final class AppManager: ObservableObject {
             if showsToastOnFailure {
                 showToast(Self.dispatchFailureToast)
             }
+            return false
+        }
+    }
+
+    private func actionClearsPendingNavigation(_ action: AppAction) -> Bool {
+        switch action {
+        case .openChat,
+             .pushScreen,
+             .updateScreenStack,
+             .navigateBack,
+             .createChat,
+             .createGroup,
+             .createGroupWithPicture,
+             .acceptInvite,
+             .logout,
+             .restoreSession,
+             .restoreAccountBundle:
+            return true
+        default:
             return false
         }
     }
