@@ -448,6 +448,7 @@ private struct ShareTargetSheet: View {
     @ObservedObject var manager: AppManager
     let share: PendingShare
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.irisPalette) private var palette
     @State private var searchText = ""
     @State private var selectedChatIds = Set<String>()
 
@@ -498,6 +499,13 @@ private struct ShareTargetSheet: View {
                 }
             }
             .navigationTitle("Choose recipients")
+#if os(iOS)
+            .safeAreaInset(edge: .bottom) {
+                if !manager.state.chatList.isEmpty {
+                    sendBar
+                }
+            }
+#endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
@@ -505,23 +513,47 @@ private struct ShareTargetSheet: View {
                         dismiss()
                     }
                 }
+#if os(macOS)
                 if !manager.state.chatList.isEmpty {
                     ToolbarItem(placement: .confirmationAction) {
                         Button {
-                            manager.sendPendingShare(
-                                to: manager.state.chatList
-                                    .map(\.chatId)
-                                    .filter { selectedChatIds.contains($0) }
-                            )
-                            dismiss()
+                            sendSelectedAndDismiss()
                         } label: {
-                            Text(selectedChatIds.count > 1 ? "Send (\(selectedChatIds.count))" : "Send")
+                            Text(sendButtonTitle)
                         }
                         .disabled(selectedChatIds.isEmpty)
                     }
                 }
+#endif
             }
         }
+    }
+
+    private var sendButtonTitle: String {
+        selectedChatIds.count > 1 ? "Send (\(selectedChatIds.count))" : "Send"
+    }
+
+#if os(iOS)
+    private var sendBar: some View {
+        Button(sendButtonTitle) {
+            sendSelectedAndDismiss()
+        }
+        .buttonStyle(IrisPrimaryButtonStyle())
+        .disabled(selectedChatIds.isEmpty)
+        .padding(.horizontal, 16)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+        .background(.regularMaterial)
+    }
+#endif
+
+    private func sendSelectedAndDismiss() {
+        manager.sendPendingShare(
+            to: manager.state.chatList
+                .map(\.chatId)
+                .filter { selectedChatIds.contains($0) }
+        )
+        dismiss()
     }
 
     private func shareTargetRow(_ chat: ChatThreadSnapshot) -> some View {
@@ -534,6 +566,10 @@ private struct ShareTargetSheet: View {
             }
         } label: {
             HStack(spacing: 12) {
+                Image(systemName: selected ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 23, weight: .semibold))
+                    .foregroundStyle(selected ? palette.accent : palette.muted)
+                    .frame(width: 28, height: 28)
                 IrisAvatar(
                     label: chat.displayName,
                     size: 38,
@@ -553,22 +589,23 @@ private struct ShareTargetSheet: View {
                     }
                 }
                 Spacer()
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
+        .accessibilityLabel("\(chat.displayName), \(selected ? "selected" : "not selected")")
     }
 
     private func preselectSuggestedChat() {
-        guard selectedChatIds.isEmpty,
-              let suggested = share.suggestedChatId,
-              manager.state.chatList.contains(where: { $0.chatId == suggested }) else {
+        guard selectedChatIds.isEmpty else {
             return
         }
-        selectedChatIds.insert(suggested)
+        let suggested = Set(share.suggestedTargetChatIds)
+        let available = manager.state.chatList
+            .map(\.chatId)
+            .filter { suggested.contains($0) }
+        selectedChatIds.formUnion(available)
     }
 }
 #endif
