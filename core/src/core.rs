@@ -18,7 +18,8 @@ use nostr_double_ratchet::{
     GroupManagerSnapshot, GroupPendingFanout, GroupPreparedPublish, GroupPreparedSend,
     GroupProtocol, GroupSenderKeyHandleResult, GroupSenderKeyMessage, GroupSnapshot, Invite,
     MessageEnvelope, OwnerPubkey as NdrOwnerPubkey, PreparedSend, ProtocolContext, RelayGap,
-    SessionManager, SessionManagerSnapshot, SessionState, UnixSeconds as NdrUnixSeconds,
+    SenderKeyRepairRequest, SessionManager, SessionManagerSnapshot, SessionState,
+    UnixSeconds as NdrUnixSeconds,
 };
 use nostr_double_ratchet_nostr::{
     apply_app_keys_snapshot_with_required_device, is_app_keys_event, AppKeys, DeviceEntry,

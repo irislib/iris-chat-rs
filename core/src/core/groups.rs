@@ -544,6 +544,7 @@ impl AppCore {
                     ),
                 );
             }
+            GroupIncomingEvent::SenderKeyRepairRequested(_) => {}
         }
     }
 

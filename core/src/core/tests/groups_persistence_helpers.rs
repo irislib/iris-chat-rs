@@ -327,6 +327,60 @@ fn deliver_protocol_effects_to_engine(
     group_events
 }
 
+fn apply_protocol_event_to_engine_once(
+    engine: &mut ProtocolEngine,
+    event: &Event,
+) -> (Vec<GroupIncomingEvent>, Vec<ProtocolEffect>) {
+    if parse_group_sender_key_message_event(event).is_ok() {
+        let result = engine
+            .process_group_outer_event(event)
+            .expect("process sender-key outer event");
+        return (result.events, result.effects);
+    }
+
+    if parse_message_event(event).is_ok() {
+        let decrypted = match engine.process_direct_message_event(event) {
+            Ok(decrypted) => decrypted,
+            Err(error)
+                if error.to_string().contains("Invalid header")
+                    || error.to_string().contains("invalid header")
+                    || error
+                        .to_string()
+                        .contains("Failed to decrypt header with available keys") =>
+            {
+                None
+            }
+            Err(error) => panic!("process pairwise protocol event: {error}"),
+        };
+        if let Some(decrypted) = decrypted {
+            let result = engine
+                .process_group_pairwise_payload(
+                    decrypted.content.as_bytes(),
+                    decrypted.sender,
+                    decrypted.sender_device,
+                )
+                .expect("process group pairwise payload");
+            return (result.events, result.effects);
+        }
+    }
+
+    (Vec::new(), Vec::new())
+}
+
+fn deliver_protocol_effects_to_engine_once(
+    engine: &mut ProtocolEngine,
+    effects: &[ProtocolEffect],
+) -> (Vec<GroupIncomingEvent>, Vec<ProtocolEffect>) {
+    let mut group_events = Vec::new();
+    let mut followup_effects = Vec::new();
+    for event in ordered_protocol_events(effects) {
+        let (events, effects) = apply_protocol_event_to_engine_once(engine, &event);
+        group_events.extend(events);
+        followup_effects.extend(effects);
+    }
+    (group_events, followup_effects)
+}
+
 fn group_events_contain_body(
     events: &[GroupIncomingEvent],
     group_id: &str,
@@ -548,6 +602,224 @@ fn appcore_sender_key_outer_before_distribution_retries_after_control_state() {
     assert!(
         retry.group_result.events.is_empty(),
         "applied pending sender-key outer must not replay on later retry"
+    );
+}
+
+#[test]
+fn appcore_sender_key_missing_rotated_distribution_repairs_and_applies_pending_outer() {
+    let mut devices = sender_key_matrix_devices(3);
+    let alice = 0;
+    let bob = 1;
+    let carol = 2;
+    let bob_owner = devices[bob].owner.public_key();
+    let carol_owner = devices[carol].owner.public_key();
+    let alice_owner = devices[alice].owner.public_key();
+    let alice_device = devices[alice].device.public_key();
+
+    let created = devices[alice]
+        .engine
+        .create_group(
+            "sender-key repair".to_string(),
+            vec![bob_owner, carol_owner],
+            UnixSeconds(200),
+        )
+        .expect("create sender-key group");
+    let group_id = created.snapshot.expect("created group").group_id;
+    deliver_protocol_effects_to_engine(&mut devices[bob].engine, &created.effects);
+    deliver_protocol_effects_to_engine(&mut devices[carol].engine, &created.effects);
+
+    let removed = devices[alice]
+        .engine
+        .remove_group_member(&group_id, carol_owner)
+        .expect("remove carol and rotate sender key");
+    deliver_protocol_effects_to_engine(&mut devices[carol].engine, &removed.effects);
+
+    let sent = devices[alice]
+        .engine
+        .send_group_payload(
+            &group_id,
+            b"after missed rotation".to_vec(),
+            Some("sender-key-repair-inner".to_string()),
+        )
+        .expect("send with rotated sender key");
+    let outer = protocol_payload_events_for_result(&sent.effects, &sent.event_ids)
+        .into_iter()
+        .find(|event| parse_group_sender_key_message_event(event).is_ok())
+        .expect("sender-key outer event");
+
+    let pending = devices[bob]
+        .engine
+        .process_group_outer_event(outer)
+        .expect("process outer missing rotated key");
+    assert!(pending.pending);
+    assert_eq!(
+        devices[bob]
+            .engine
+            .debug_snapshot()
+            .pending_group_sender_key_message_count,
+        1
+    );
+    assert_eq!(
+        devices[bob]
+            .engine
+            .debug_snapshot()
+            .pending_group_sender_key_repair_count,
+        1
+    );
+    assert!(
+        !pending.effects.is_empty(),
+        "missing sender-key distribution should emit a repair request"
+    );
+
+    let (alice_events, repair_response_effects) =
+        deliver_protocol_effects_to_engine_once(&mut devices[alice].engine, &pending.effects);
+    assert!(
+        alice_events.is_empty(),
+        "repair request should not be surfaced as an app group event"
+    );
+    assert!(
+        !repair_response_effects.is_empty(),
+        "sender should answer repair request with pairwise key material"
+    );
+
+    let (bob_repaired_events, revision_request_effects) = deliver_protocol_effects_to_engine_once(
+        &mut devices[bob].engine,
+        &repair_response_effects,
+    );
+    assert!(
+        bob_repaired_events.is_empty(),
+        "key repair alone should not apply a message that still needs newer metadata"
+    );
+    assert!(
+        !revision_request_effects.is_empty(),
+        "decrypting with repaired key should request missing metadata revision"
+    );
+
+    let (_alice_events, metadata_response_effects) = deliver_protocol_effects_to_engine_once(
+        &mut devices[alice].engine,
+        &revision_request_effects,
+    );
+    assert!(
+        !metadata_response_effects.is_empty(),
+        "sender should answer revision repair request with current metadata"
+    );
+
+    let (bob_final_events, _followup) = deliver_protocol_effects_to_engine_once(
+        &mut devices[bob].engine,
+        &metadata_response_effects,
+    );
+    assert!(
+        group_events_contain_body(
+            &bob_final_events,
+            &group_id,
+            alice_owner,
+            alice_device,
+            b"after missed rotation"
+        ),
+        "pending sender-key outer should apply after key and metadata repair"
+    );
+    assert_eq!(
+        devices[bob]
+            .engine
+            .debug_snapshot()
+            .pending_group_sender_key_message_count,
+        0
+    );
+}
+
+#[test]
+fn appcore_sender_key_repair_request_survives_restart_and_throttles() {
+    let bob_storage =
+        Arc::new(nostr_double_ratchet_runtime::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let mut devices = (0..3)
+        .map(|_| SenderKeyMatrixDevice::new())
+        .collect::<Vec<_>>();
+    devices[1].engine = test_protocol_engine_with_storage(
+        &devices[1].owner,
+        &devices[1].device,
+        bob_storage.clone(),
+    );
+    observe_sender_key_matrix_protocol_state(&mut devices);
+    let alice = 0;
+    let bob = 1;
+    let carol = 2;
+    let bob_owner = devices[bob].owner.clone();
+    let bob_device = devices[bob].device.clone();
+    let bob_owner_pubkey = bob_owner.public_key();
+    let carol_owner_pubkey = devices[carol].owner.public_key();
+
+    let created = devices[alice]
+        .engine
+        .create_group(
+            "sender-key repair restart".to_string(),
+            vec![bob_owner_pubkey, carol_owner_pubkey],
+            UnixSeconds(304),
+        )
+        .expect("create sender-key group");
+    let group_id = created.snapshot.expect("created group").group_id;
+    deliver_protocol_effects_to_engine(&mut devices[bob].engine, &created.effects);
+    deliver_protocol_effects_to_engine(&mut devices[carol].engine, &created.effects);
+
+    let removed = devices[alice]
+        .engine
+        .remove_group_member(&group_id, carol_owner_pubkey)
+        .expect("remove carol and rotate sender key");
+    deliver_protocol_effects_to_engine(&mut devices[carol].engine, &removed.effects);
+
+    let sent = devices[alice]
+        .engine
+        .send_group_payload(
+            &group_id,
+            b"repair after restart".to_vec(),
+            Some("sender-key-repair-restart-inner".to_string()),
+        )
+        .expect("send with rotated sender key");
+    let outer = protocol_payload_events_for_result(&sent.effects, &sent.event_ids)
+        .into_iter()
+        .find(|event| parse_group_sender_key_message_event(event).is_ok())
+        .expect("sender-key outer event");
+    let pending = devices[bob]
+        .engine
+        .process_group_outer_event(outer)
+        .expect("process outer missing rotated key");
+    assert!(!pending.effects.is_empty());
+    let before_restart = devices[bob].engine.debug_snapshot();
+    assert_eq!(before_restart.pending_group_sender_key_repair_count, 1);
+    assert!(before_restart.pending_group_sender_key_repair_last_requested_at_secs > 0);
+
+    devices[bob].engine =
+        test_protocol_engine_with_storage(&bob_owner, &bob_device, bob_storage.clone());
+    let after_restart = devices[bob].engine.debug_snapshot();
+    assert_eq!(after_restart.pending_group_sender_key_repair_count, 1);
+    assert_eq!(
+        after_restart.pending_group_sender_key_repair_last_requested_at_secs,
+        before_restart.pending_group_sender_key_repair_last_requested_at_secs
+    );
+
+    let early = devices[bob]
+        .engine
+        .retry_pending_protocol(NdrUnixSeconds(
+            after_restart
+                .pending_group_sender_key_repair_last_requested_at_secs
+                .saturating_add(1),
+        ))
+        .expect("early retry");
+    assert!(
+        early.group_result.effects.is_empty(),
+        "repair request should be throttled before retry delay"
+    );
+
+    let late = devices[bob]
+        .engine
+        .retry_pending_protocol(NdrUnixSeconds(
+            after_restart
+                .pending_group_sender_key_repair_last_requested_at_secs
+                .saturating_add(31),
+        ))
+        .expect("late retry");
+    assert!(
+        !late.group_result.effects.is_empty(),
+        "repair request should be re-emitted after retry delay"
     );
 }
 

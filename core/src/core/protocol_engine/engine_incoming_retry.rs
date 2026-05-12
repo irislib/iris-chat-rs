@@ -105,6 +105,20 @@ impl ProtocolEngine {
 
         match result {
             Ok(Some(event)) => {
+                if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
+                    let (effects, queued_targets) = self.sender_key_repair_response_effects(
+                        repair.requester_owner,
+                        &repair.request,
+                        NdrUnixSeconds(unix_now().get()),
+                    )?;
+                    self.persist()?;
+                    return Ok(ProtocolGroupIncomingResult {
+                        effects,
+                        queued_targets,
+                        consumed: true,
+                        ..Default::default()
+                    });
+                }
                 let mut effects = Vec::new();
                 let mut queued_targets = Vec::new();
                 if sender_owner != self.local_owner {
@@ -497,7 +511,17 @@ impl ProtocolEngine {
             };
             match outcome {
                 Ok(Some(event)) => {
-                    result.events.push(event);
+                    if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
+                        let (effects, queued_targets) = self.sender_key_repair_response_effects(
+                            repair.requester_owner,
+                            &repair.request,
+                            now,
+                        )?;
+                        result.effects.extend(effects);
+                        result.queued_targets.extend(queued_targets);
+                    } else {
+                        result.events.push(event);
+                    }
                     persist_needed = true;
                 }
                 Ok(None) => {
@@ -531,6 +555,11 @@ impl ProtocolEngine {
             result.effects.extend(outcome.effects);
         }
         self.pending_group_sender_key_messages = still_sender_keys;
+        let repair_effects = self.retry_pending_group_sender_key_repairs(now)?;
+        if !repair_effects.is_empty() {
+            result.effects.extend(repair_effects);
+            persist_needed = true;
+        }
         if persist_needed || !result.events.is_empty() || !result.effects.is_empty() {
             self.persist()?;
         }
