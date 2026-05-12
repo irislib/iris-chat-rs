@@ -14,6 +14,7 @@ private struct StoredSharePayload: Codable {
     let text: String
     let attachments: [StoredShareAttachment]
     let suggestedChatId: String?
+    let suggestedChatIds: [String]?
 }
 
 private struct ShareSuggestionEntry: Codable {
@@ -30,14 +31,18 @@ final class ShareViewController: UIViewController {
     private let statusLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
     private let chatTable = UITableView(frame: .zero, style: .plain)
+    private let sendButton = UIButton(type: .system)
     private let openAppButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
     private let buttonStack = UIStackView()
+    private let secondaryButtonStack = UIStackView()
 
     private var suggestions: [ShareSuggestionEntry] = []
+    private var selectedChatIds = Set<String>()
     private var stagedShareID: String?
     private var stagedPayload: StoredSharePayload?
     private var didStart = false
+    private var isOpeningApp = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -74,13 +79,23 @@ final class ShareViewController: UIViewController {
         chatTable.dataSource = self
         chatTable.delegate = self
         chatTable.register(ShareChatCell.self, forCellReuseIdentifier: ShareChatCell.reuseId)
-        chatTable.rowHeight = 60
+        chatTable.rowHeight = 64
         chatTable.tableFooterView = UIView()
-        chatTable.separatorInset = UIEdgeInsets(top: 0, left: 70, bottom: 0, right: 0)
+        chatTable.separatorInset = UIEdgeInsets(top: 0, left: 108, bottom: 0, right: 0)
         chatTable.isHidden = true
         chatTable.translatesAutoresizingMaskIntoConstraints = false
 
-        openAppButton.setTitle("Open iris chat", for: .normal)
+        var sendConfig = UIButton.Configuration.filled()
+        sendConfig.title = "Send"
+        sendConfig.cornerStyle = .large
+        sendButton.configuration = sendConfig
+        sendButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
+        sendButton.addTarget(self, action: #selector(sendSelectedChats), for: .touchUpInside)
+        sendButton.isHidden = true
+        sendButton.isEnabled = false
+        sendButton.translatesAutoresizingMaskIntoConstraints = false
+
+        openAppButton.setTitle("Open Iris Chat", for: .normal)
         openAppButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
         openAppButton.addTarget(self, action: #selector(openMainApp), for: .touchUpInside)
         openAppButton.isHidden = true
@@ -90,11 +105,18 @@ final class ShareViewController: UIViewController {
         cancelButton.addTarget(self, action: #selector(cancelShare), for: .touchUpInside)
 
         buttonStack.axis = .vertical
-        buttonStack.alignment = .center
-        buttonStack.spacing = 4
-        buttonStack.addArrangedSubview(openAppButton)
-        buttonStack.addArrangedSubview(cancelButton)
+        buttonStack.alignment = .fill
+        buttonStack.spacing = 8
+        buttonStack.addArrangedSubview(sendButton)
+        buttonStack.addArrangedSubview(secondaryButtonStack)
         buttonStack.translatesAutoresizingMaskIntoConstraints = false
+
+        secondaryButtonStack.axis = .horizontal
+        secondaryButtonStack.alignment = .fill
+        secondaryButtonStack.distribution = .fillEqually
+        secondaryButtonStack.spacing = 12
+        secondaryButtonStack.addArrangedSubview(cancelButton)
+        secondaryButtonStack.addArrangedSubview(openAppButton)
 
         let header = UIStackView(arrangedSubviews: [titleLabel, activityIndicator, statusLabel])
         header.axis = .vertical
@@ -119,6 +141,8 @@ final class ShareViewController: UIViewController {
             buttonStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             buttonStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
             buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+
+            sendButton.heightAnchor.constraint(equalToConstant: 44),
         ])
     }
 
@@ -148,16 +172,21 @@ final class ShareViewController: UIViewController {
         await MainActor.run {
             activityIndicator.stopAnimating()
             suggestions = loaded
+            selectedChatIds.removeAll()
             if loaded.isEmpty {
                 titleLabel.text = "Send to…"
-                statusLabel.text = "Open iris chat to choose a chat."
+                statusLabel.text = "Open Iris Chat to choose a chat."
                 chatTable.isHidden = true
+                sendButton.isHidden = true
             } else {
+                titleLabel.text = "Choose recipients"
                 statusLabel.text = nil
                 chatTable.isHidden = false
+                sendButton.isHidden = false
                 chatTable.reloadData()
             }
             openAppButton.isHidden = false
+            updateActionButtons()
         }
     }
 
@@ -169,28 +198,93 @@ final class ShareViewController: UIViewController {
         complete()
     }
 
-    private func openMainApp(autoSend: Bool) async {
-        guard let url = shareURL(autoSend: autoSend) else {
-            return
-        }
-        let opened = await extensionContext?.open(url) ?? false
-        if opened {
-            complete()
-        }
-    }
-
-    private func sendToChat(_ entry: ShareSuggestionEntry) {
+    @objc private func sendSelectedChats() {
         guard let payload = stagedPayload else { return }
+        let selectedIds = suggestions
+            .map(\.chatId)
+            .filter { selectedChatIds.contains($0) }
+        guard !selectedIds.isEmpty else { return }
+
         let updated = StoredSharePayload(
             id: payload.id,
             text: payload.text,
             attachments: payload.attachments,
-            suggestedChatId: entry.chatId
+            suggestedChatId: selectedIds.first,
+            suggestedChatIds: selectedIds
         )
         stagedPayload = updated
         rewritePayloadOnDisk(updated)
-        donateChatInteraction(entry)
+        suggestions
+            .filter { selectedChatIds.contains($0.chatId) }
+            .forEach(donateChatInteraction)
         Task { await openMainApp(autoSend: true) }
+    }
+
+    private func openMainApp(autoSend: Bool) async {
+        guard let url = shareURL(autoSend: autoSend) else {
+            return
+        }
+        await MainActor.run {
+            isOpeningApp = true
+            activityIndicator.startAnimating()
+            statusLabel.text = "Opening Iris Chat…"
+            updateActionButtons()
+        }
+        let opened = await openURLFromExtension(url)
+        if opened {
+            await MainActor.run {
+                complete()
+            }
+        } else {
+            await MainActor.run {
+                isOpeningApp = false
+                activityIndicator.stopAnimating()
+                statusLabel.text = "Could not open Iris Chat."
+                updateActionButtons()
+            }
+        }
+    }
+
+    private func toggleChatSelection(_ entry: ShareSuggestionEntry, at indexPath: IndexPath) {
+        if selectedChatIds.contains(entry.chatId) {
+            selectedChatIds.remove(entry.chatId)
+        } else {
+            selectedChatIds.insert(entry.chatId)
+        }
+        chatTable.reloadRows(at: [indexPath], with: .none)
+        updateActionButtons()
+    }
+
+    private func updateActionButtons() {
+        let count = selectedChatIds.count
+        var sendConfig = sendButton.configuration ?? UIButton.Configuration.filled()
+        sendConfig.title = count > 1 ? "Send (\(count))" : "Send"
+        sendButton.configuration = sendConfig
+        sendButton.isEnabled = !isOpeningApp && count > 0 && stagedPayload != nil
+        openAppButton.isEnabled = !isOpeningApp && stagedPayload != nil
+        cancelButton.isEnabled = !isOpeningApp
+    }
+
+    private func openURLFromExtension(_ url: URL) async -> Bool {
+        if await extensionContext?.open(url) == true {
+            return true
+        }
+        return await MainActor.run {
+            openURLViaResponderChain(url)
+        }
+    }
+
+    @MainActor private func openURLViaResponderChain(_ url: URL) -> Bool {
+        let selector = NSSelectorFromString("openURL:")
+        var responder: UIResponder? = self
+        while let current = responder {
+            if current.responds(to: selector) {
+                _ = current.perform(selector, with: url)
+                return true
+            }
+            responder = current.next
+        }
+        return false
     }
 
     private func shareURL(autoSend: Bool) -> URL? {
@@ -261,7 +355,8 @@ final class ShareViewController: UIViewController {
             id: shareID,
             text: text,
             attachments: collected.attachments,
-            suggestedChatId: suggestedChatId
+            suggestedChatId: suggestedChatId,
+            suggestedChatIds: suggestedChatId.map { [$0] }
         )
         do {
             let data = try JSONEncoder().encode(payload)
@@ -439,25 +534,36 @@ extension ShareViewController: UITableViewDataSource, UITableViewDelegate {
             withIdentifier: ShareChatCell.reuseId,
             for: indexPath
         ) as? ShareChatCell ?? ShareChatCell(style: .default, reuseIdentifier: ShareChatCell.reuseId)
-        cell.configure(with: suggestions[indexPath.row])
+        let entry = suggestions[indexPath.row]
+        cell.configure(with: entry, selected: selectedChatIds.contains(entry.chatId))
         return cell
     }
 
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        sendToChat(suggestions[indexPath.row])
+        toggleChatSelection(suggestions[indexPath.row], at: indexPath)
     }
 }
 
 private final class ShareChatCell: UITableViewCell {
     static let reuseId = "ShareChatCell"
 
+    private let checkboxView = UIImageView()
     private let avatarLabel = UILabel()
     private let nameLabel = UILabel()
     private let subtitleLabel = UILabel()
 
     override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
+
+        selectionStyle = .none
+
+        checkboxView.contentMode = .scaleAspectFit
+        checkboxView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+            pointSize: 24,
+            weight: .semibold
+        )
+        checkboxView.translatesAutoresizingMaskIntoConstraints = false
 
         avatarLabel.textAlignment = .center
         avatarLabel.textColor = .white
@@ -473,12 +579,18 @@ private final class ShareChatCell: UITableViewCell {
         subtitleLabel.textColor = .secondaryLabel
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        contentView.addSubview(checkboxView)
         contentView.addSubview(avatarLabel)
         contentView.addSubview(nameLabel)
         contentView.addSubview(subtitleLabel)
 
         NSLayoutConstraint.activate([
-            avatarLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            checkboxView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            checkboxView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            checkboxView.widthAnchor.constraint(equalToConstant: 28),
+            checkboxView.heightAnchor.constraint(equalToConstant: 28),
+
+            avatarLabel.leadingAnchor.constraint(equalTo: checkboxView.trailingAnchor, constant: 12),
             avatarLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
             avatarLabel.widthAnchor.constraint(equalToConstant: 44),
             avatarLabel.heightAnchor.constraint(equalToConstant: 44),
@@ -497,7 +609,7 @@ private final class ShareChatCell: UITableViewCell {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func configure(with entry: ShareSuggestionEntry) {
+    func configure(with entry: ShareSuggestionEntry, selected: Bool) {
         let trimmed = entry.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let display = trimmed.isEmpty ? "Chat" : trimmed
         nameLabel.text = display
@@ -508,6 +620,9 @@ private final class ShareChatCell: UITableViewCell {
         let firstChar = display.unicodeScalars.first.map { String($0).uppercased() } ?? "?"
         avatarLabel.text = firstChar
         avatarLabel.backgroundColor = avatarColor(for: entry.chatId)
+        checkboxView.image = UIImage(systemName: selected ? "checkmark.square.fill" : "square")
+        checkboxView.tintColor = selected ? tintColor : .tertiaryLabel
+        accessibilityLabel = "\(display), \(selected ? "selected" : "not selected")"
     }
 
     private func avatarColor(for seed: String) -> UIColor {

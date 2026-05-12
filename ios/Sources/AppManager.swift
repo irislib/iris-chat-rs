@@ -39,6 +39,21 @@ struct PendingShare: Codable, Identifiable, Equatable {
     let text: String
     let attachments: [PendingShareAttachment]
     let suggestedChatId: String?
+    let suggestedChatIds: [String]?
+
+    var suggestedTargetChatIds: [String] {
+        var seen = Set<String>()
+        var result = [String]()
+        for raw in (suggestedChatIds ?? []) + [suggestedChatId].compactMap({ $0 }) {
+            let chatId = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if chatId.isEmpty || seen.contains(chatId) {
+                continue
+            }
+            seen.insert(chatId)
+            result.append(chatId)
+        }
+        return result
+    }
 }
 
 #if os(iOS)
@@ -1096,10 +1111,9 @@ final class AppManager: ObservableObject {
             pendingShare = share
             try? fileManager.removeItem(at: url)
             dispatchToRust(.updateScreenStack(stack: []))
-            if autoSend,
-               let chatId = share.suggestedChatId?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !chatId.isEmpty {
-                sendPendingShare(to: chatId)
+            let suggestedTargets = share.suggestedTargetChatIds
+            if autoSend, !suggestedTargets.isEmpty {
+                sendPendingShare(to: suggestedTargets)
             }
         } catch {
             showToast("Sharing unavailable")
