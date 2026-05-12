@@ -30,14 +30,35 @@ val androidSdkDir =
 val androidAppId = "to.iris.chat"
 val androidNdkDir = file("$androidSdkDir/ndk/$ndkVersionValue")
 val cargoBinary = file("${System.getProperty("user.home")}/.cargo/bin/cargo")
+
+// Keep Rust artifacts out of the repo tree even when a long-lived Gradle daemon
+// started without the user's shell environment. Override with -Pcargo.targetDir
+// or android/local.properties: cargo.targetDir=/path/to/target.
+fun nonBlankBuildValue(propertyName: String, envName: String): String? =
+    providers.gradleProperty(propertyName).orNull?.takeIf { it.isNotBlank() }
+        ?: localProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
+        ?: providers.environmentVariable(envName).orNull?.takeIf { it.isNotBlank() }
+        ?: System.getenv(envName)?.takeIf { it.isNotBlank() }
+
+fun pathWithExpandedHome(rawPath: String): String {
+    val home = System.getProperty("user.home")
+    return when {
+        rawPath == "~" -> home
+        rawPath.startsWith("~/") -> "$home/${rawPath.removePrefix("~/")}"
+        else -> rawPath
+    }
+}
+
+fun rustRelativeOrAbsoluteFile(rawPath: String) =
+    file(pathWithExpandedHome(rawPath)).let { candidate ->
+        if (candidate.isAbsolute) candidate else rustAppDir.resolve(candidate.path)
+    }
+
 val cargoTargetDir =
-    System.getenv("CARGO_TARGET_DIR")
-        ?.takeIf { it.isNotBlank() }
-        ?.let {
-            val candidate = file(it)
-            if (candidate.isAbsolute) candidate else rustAppDir.resolve(it)
-        }
-        ?: rustAppDir.resolve("target")
+    rustRelativeOrAbsoluteFile(
+        nonBlankBuildValue("cargo.targetDir", "CARGO_TARGET_DIR")
+            ?: "${System.getProperty("user.home")}/.cache/cargo-target",
+    )
 val publicRelayFallbackCsv = "wss://relay.damus.io,wss://nos.lol,wss://relay.primal.net,wss://relay.snort.social,wss://temp.iris.to"
 
 fun configValue(propertyName: String, envName: String): String? =
@@ -249,6 +270,7 @@ val buildRustHostDebug by tasks.registering(Exec::class) {
     group = "rust"
     description = "Build the host Rust library for UniFFI binding generation."
     workingDir = rustAppDir
+    environment("CARGO_TARGET_DIR", cargoTargetDir.absolutePath)
     environment("IRIS_APP_VERSION", appVersionName)
     environment("IRIS_BUILD_CHANNEL", "debug")
     environment("IRIS_BUILD_GIT_SHA", buildGitSha)
@@ -272,6 +294,7 @@ val buildRustHostDebug by tasks.registering(Exec::class) {
     inputs.property("ndrDefaultRelays", debugRelayConfig.relaysCsv)
     inputs.property("ndrRelaySetId", debugRelayConfig.relaySetId)
     inputs.property("ndrTrustedTestBuild", debugRelayConfig.trustedTestBuild)
+    inputs.property("cargoTargetDir", cargoTargetDir.absolutePath)
     outputs.file(hostLibraryFile)
 }
 
@@ -280,6 +303,7 @@ val generateRustBindings by tasks.registering(Exec::class) {
     description = "Generate Kotlin bindings from the shared Rust UniFFI crate."
     dependsOn(buildRustHostDebug)
     workingDir = rustAppDir
+    environment("CARGO_TARGET_DIR", cargoTargetDir.absolutePath)
     doFirst {
         generatedUniffiDir.get().asFile.deleteRecursively()
         generatedUniffiDir.get().asFile.mkdirs()
@@ -304,6 +328,7 @@ val generateRustBindings by tasks.registering(Exec::class) {
     )
     inputs.file(rustAppDir.resolve("uniffi.toml"))
     inputs.file(hostLibraryFile)
+    inputs.property("cargoTargetDir", cargoTargetDir.absolutePath)
     outputs.dir(generatedUniffiDir)
 }
 
@@ -322,6 +347,7 @@ fun registerRustAndroidTask(
             generatedJniDir.get().asFile.deleteRecursively()
             generatedJniDir.get().asFile.mkdirs()
         }
+        environment("CARGO_TARGET_DIR", cargoTargetDir.absolutePath)
         environment("ANDROID_HOME", androidSdkDir)
         environment("ANDROID_SDK_ROOT", androidSdkDir)
         environment("ANDROID_NDK_HOME", androidNdkDir.absolutePath)
@@ -361,6 +387,7 @@ fun registerRustAndroidTask(
         inputs.property("ndrDefaultRelays", relayConfig.relaysCsv)
         inputs.property("ndrRelaySetId", relayConfig.relaySetId)
         inputs.property("ndrTrustedTestBuild", relayConfig.trustedTestBuild)
+        inputs.property("cargoTargetDir", cargoTargetDir.absolutePath)
         outputs.dir(generatedJniDir)
     }
 
