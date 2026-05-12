@@ -38,6 +38,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -57,7 +58,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import java.util.concurrent.ConcurrentHashMap
 import to.iris.chat.core.AppManager
@@ -93,14 +93,16 @@ fun ChatListScreen(
     var searchQuery by remember { mutableStateOf("") }
     val trimmedQuery = searchQuery.trim()
     val searchActive = trimmedQuery.isNotEmpty()
+    var expandedSearchSections by remember(trimmedQuery) { mutableStateOf(emptySet<SearchSection>()) }
+    var messageSearchLimit by remember(trimmedQuery) { mutableStateOf(50u) }
     // Re-evaluate whenever the query, chat list, or revision change so
     // an incoming message shows up in matched contacts immediately. The
     // search() call is sub-millisecond against FTS5 and only inspects
     // in-memory state for the contacts/groups buckets.
-    val searchResults: SearchResultSnapshot? by remember(searchQuery, appState.rev) {
+    val searchResults: SearchResultSnapshot? by remember(searchQuery, appState.rev, messageSearchLimit) {
         derivedStateOf {
             if (searchActive) {
-                appManager.search(trimmedQuery)
+                appManager.search(trimmedQuery, limit = messageSearchLimit)
             } else {
                 null
             }
@@ -232,32 +234,78 @@ fun ChatListScreen(
                     }
                     if (results.contacts.isNotEmpty()) {
                         item(key = "section-contacts") { SearchSectionHeader("Contacts") }
-                        items(results.contacts, key = { "c:${it.chatId}" }) { chat ->
+                        val contacts = visibleSearchRows(
+                            rows = results.contacts,
+                            section = SearchSection.Contacts,
+                            expandedSections = expandedSearchSections,
+                            initialCount = 7,
+                        )
+                        items(contacts, key = { "c:${it.chatId}" }) { chat ->
                             SearchChatRow(
                                 appManager = appManager,
                                 appState = appState,
                                 chat = chat,
                             )
+                        }
+                        if (results.contacts.size > contacts.size) {
+                            item(key = "section-contacts-more") {
+                                SearchViewMoreRow {
+                                    expandedSearchSections = expandedSearchSections + SearchSection.Contacts
+                                }
+                            }
                         }
                     }
                     if (results.groups.isNotEmpty()) {
                         item(key = "section-groups") { SearchSectionHeader("Groups") }
-                        items(results.groups, key = { "g:${it.chatId}" }) { chat ->
+                        val groups = visibleSearchRows(
+                            rows = results.groups,
+                            section = SearchSection.Groups,
+                            expandedSections = expandedSearchSections,
+                            initialCount = 7,
+                        )
+                        items(groups, key = { "g:${it.chatId}" }) { chat ->
                             SearchChatRow(
                                 appManager = appManager,
                                 appState = appState,
                                 chat = chat,
                             )
                         }
+                        if (results.groups.size > groups.size) {
+                            item(key = "section-groups-more") {
+                                SearchViewMoreRow {
+                                    expandedSearchSections = expandedSearchSections + SearchSection.Groups
+                                }
+                            }
+                        }
                     }
                     if (results.messages.isNotEmpty()) {
                         item(key = "section-messages") { SearchSectionHeader("Messages") }
-                        items(results.messages, key = { "m:${it.chatId}:${it.messageId}" }) { hit ->
+                        val messages = visibleSearchRows(
+                            rows = results.messages,
+                            section = SearchSection.Messages,
+                            expandedSections = expandedSearchSections,
+                            initialCount = 20,
+                        )
+                        items(messages, key = { "m:${it.chatId}:${it.messageId}" }) { hit ->
                             MessageSearchHitRow(
                                 appManager = appManager,
                                 appState = appState,
                                 hit = hit,
                             )
+                        }
+                        val canShowFetchedMessages = results.messages.size > messages.size
+                        val canFetchMoreMessages = SearchSection.Messages in expandedSearchSections &&
+                            results.messages.size >= messageSearchLimit.toInt()
+                        if (canShowFetchedMessages || canFetchMoreMessages) {
+                            item(key = "section-messages-more") {
+                                SearchViewMoreRow {
+                                    if (SearchSection.Messages in expandedSearchSections) {
+                                        messageSearchLimit += 50u
+                                    } else {
+                                        expandedSearchSections = expandedSearchSections + SearchSection.Messages
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -380,6 +428,19 @@ fun ChatListScreen(
         }
     }
 }
+
+private enum class SearchSection {
+    Contacts,
+    Groups,
+    Messages,
+}
+
+private fun <T> visibleSearchRows(
+    rows: List<T>,
+    section: SearchSection,
+    expandedSections: Set<SearchSection>,
+    initialCount: Int,
+): List<T> = if (section in expandedSections) rows else rows.take(initialCount)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -539,16 +600,7 @@ private fun NearbyChatListItem(
     service: IrisNearbyService,
     onClick: () -> Unit,
 ) {
-    var tick by remember { mutableStateOf(0) }
-
-    LaunchedEffect(service) {
-        while (true) {
-            delay(1_000L)
-            tick += 1
-        }
-    }
-
-    val snapshot = tick.let { service.snapshot }
+    val snapshot by rememberNearbySnapshotState(service)
     Column(modifier = Modifier.fillMaxWidth()) {
         IrisChatListRow(
             title = "Nearby",
@@ -784,6 +836,31 @@ private fun SearchSectionHeader(title: String) {
         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
         color = IrisTheme.palette.muted,
     )
+}
+
+@Composable
+private fun SearchViewMoreRow(onClick: () -> Unit) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = Icons.Filled.KeyboardArrowDown,
+            contentDescription = null,
+            tint = IrisTheme.palette.muted,
+            modifier = Modifier.size(32.dp),
+        )
+        Spacer(modifier = Modifier.width(12.dp))
+        Text(
+            text = "View more",
+            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+    }
 }
 
 @Composable

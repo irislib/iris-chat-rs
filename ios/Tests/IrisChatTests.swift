@@ -1075,7 +1075,7 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
-    func testNavigateBackDispatchesNavigateBack() async {
+    func testNavigateBackDispatchesExplicitStack() async {
         let rust = MockRustApp(
             state: makeAppState(
                 rev: 1,
@@ -1098,7 +1098,33 @@ final class IrisChatTests: XCTestCase {
         guard let first = rust.dispatchedActions.first else {
             return XCTFail("expected navigation action")
         }
-        XCTAssertEqual(first, .navigateBack)
+        XCTAssertEqual(first, .updateScreenStack(stack: [.chatList]))
+    }
+
+    @MainActor
+    func testNavigateBackFallsBackLocallyWhenDispatchFails() async {
+        let rust = MockRustApp(
+            state: makeAppState(
+                rev: 1,
+                router: Router(defaultScreen: .welcome, screenStack: [.chatList, .newChat])
+            )
+        )
+        rust.dispatchError = MockRustAppError.dispatchFailed
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.navigateBack()
+
+        XCTAssertEqual(manager.state.router.screenStack, [.chatList])
+        XCTAssertNil(manager.toasts.message)
     }
 
     @MainActor

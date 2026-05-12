@@ -2041,6 +2041,12 @@ struct ChatListScreen: View {
     // device. The .task below now refreshes the cache once per
     // searchText edit.
     @State private var cachedSearchResults: SearchResultSnapshot?
+    @State private var expandedSearchSections: Set<ChatListSearchSection> = []
+    @State private var searchMessageLimit: UInt32 = 50
+    @State private var lastExpansionQuery: String = ""
+
+    private static let initialMessageSearchLimit: UInt32 = 50
+    private static let messageSearchLimitStep: UInt32 = 50
 
     init(manager: AppManager, onOpenNearby: @escaping () -> Void = {}) {
         self.manager = manager
@@ -2052,6 +2058,10 @@ struct ChatListScreen: View {
     }
 
     private var searchActive: Bool { !trimmedQuery.isEmpty }
+
+    private var searchRequestToken: String {
+        "\(trimmedQuery)|\(searchMessageLimit)"
+    }
 
     var body: some View {
         let relativeNow = Date()
@@ -2065,7 +2075,10 @@ struct ChatListScreen: View {
                         SearchResultsList(
                             manager: manager,
                             results: results,
-                            relativeNow: relativeNow
+                            relativeNow: relativeNow,
+                            expandedSections: expandedSearchSections,
+                            messageLimit: searchMessageLimit,
+                            onViewMore: viewMoreSearchResults
                         )
                     }
                 } else {
@@ -2081,7 +2094,7 @@ struct ChatListScreen: View {
                             .padding(.vertical, 20)
                     } else {
                         let preferences = manager.state.preferences
-                        ForEach(Array(manager.state.chatList.enumerated()), id: \.element.chatId) { index, chat in
+                        ForEach(manager.state.chatList, id: \.chatId) { chat in
                             ChatListRowContainer(
                                 manager: manager,
                                 chat: chat,
@@ -2097,15 +2110,35 @@ struct ChatListScreen: View {
         }
         .background(palette.background)
         .irisOnChange(of: searchText) { _ in
+            resetSearchExpansionIfNeeded()
             autoProceedIfShortcut()
         }
-        .task(id: trimmedQuery) {
+        .task(id: searchRequestToken) {
             // Refresh the search cache once per query change. Body
             // re-runs on every state push otherwise — the cache turns
             // an O(state-push) FTS5 query into an O(keystroke) one.
             cachedSearchResults = trimmedQuery.isEmpty
                 ? nil
-                : manager.search(trimmedQuery)
+                : manager.search(trimmedQuery, limit: searchMessageLimit)
+        }
+    }
+
+    private func resetSearchExpansionIfNeeded() {
+        let query = trimmedQuery
+        guard query != lastExpansionQuery else {
+            return
+        }
+        lastExpansionQuery = query
+        expandedSearchSections.removeAll()
+        searchMessageLimit = Self.initialMessageSearchLimit
+    }
+
+    private func viewMoreSearchResults(_ section: ChatListSearchSection) {
+        if section == .messages, expandedSearchSections.contains(section) {
+            let nextLimit = searchMessageLimit.addingReportingOverflow(Self.messageSearchLimitStep)
+            searchMessageLimit = nextLimit.overflow ? UInt32.max : nextLimit.partialValue
+        } else {
+            expandedSearchSections.insert(section)
         }
     }
 
@@ -2127,6 +2160,12 @@ struct ChatListScreen: View {
             manager.dispatch(.acceptInvite(inviteInput: inviteInput))
         }
     }
+}
+
+private enum ChatListSearchSection: Hashable {
+    case contacts
+    case groups
+    case messages
 }
 
 /// Always-visible search field at the top of the chat list. Drives the
@@ -2174,9 +2213,15 @@ private struct ChatListSearchField: View {
 
 private struct SearchResultsList: View {
     @Environment(\.irisPalette) private var palette
-    @ObservedObject var manager: AppManager
+    let manager: AppManager
     let results: SearchResultSnapshot
     let relativeNow: Date
+    let expandedSections: Set<ChatListSearchSection>
+    let messageLimit: UInt32
+    let onViewMore: (ChatListSearchSection) -> Void
+
+    private let initialChatRows = 7
+    private let initialMessageRows = 20
 
     var body: some View {
         let preferences = manager.state.preferences
@@ -2192,24 +2237,39 @@ private struct SearchResultsList: View {
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 28)
         } else {
-            VStack(alignment: .leading, spacing: 0) {
+            LazyVStack(alignment: .leading, spacing: 0) {
                 if let shortcut = results.shortcut {
                     ChatInputShortcutRow(manager: manager, shortcut: shortcut)
                 }
                 if !results.contacts.isEmpty {
                     SearchSectionHeader(title: "Contacts")
-                    ForEach(results.contacts, id: \.chatId) { chat in
+                    let contacts = visibleRows(
+                        results.contacts,
+                        section: .contacts,
+                        initialCount: initialChatRows
+                    )
+                    ForEach(contacts, id: \.chatId) { chat in
                         ChatListRowContainer(
                             manager: manager,
                             chat: chat,
                             timeLabel: irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow),
                             preferences: preferences
                         )
+                    }
+                    if shouldShowMore(results.contacts, visibleRows: contacts, section: .contacts) {
+                        SearchViewMoreRow {
+                            onViewMore(.contacts)
+                        }
                     }
                 }
                 if !results.groups.isEmpty {
                     SearchSectionHeader(title: "Groups")
-                    ForEach(results.groups, id: \.chatId) { chat in
+                    let groups = visibleRows(
+                        results.groups,
+                        section: .groups,
+                        initialCount: initialChatRows
+                    )
+                    ForEach(groups, id: \.chatId) { chat in
                         ChatListRowContainer(
                             manager: manager,
                             chat: chat,
@@ -2217,10 +2277,20 @@ private struct SearchResultsList: View {
                             preferences: preferences
                         )
                     }
+                    if shouldShowMore(results.groups, visibleRows: groups, section: .groups) {
+                        SearchViewMoreRow {
+                            onViewMore(.groups)
+                        }
+                    }
                 }
                 if !results.messages.isEmpty {
                     SearchSectionHeader(title: "Messages")
-                    ForEach(results.messages, id: \.messageId) { hit in
+                    let messages = visibleRows(
+                        results.messages,
+                        section: .messages,
+                        initialCount: initialMessageRows
+                    )
+                    ForEach(messages, id: \.messageId) { hit in
                         MessageSearchHitRow(
                             manager: manager,
                             hit: hit,
@@ -2228,15 +2298,45 @@ private struct SearchResultsList: View {
                             preferences: preferences
                         )
                     }
+                    if shouldShowMoreMessages(visibleRows: messages) {
+                        SearchViewMoreRow {
+                            onViewMore(.messages)
+                        }
+                    }
                 }
             }
         }
+    }
+
+    private func visibleRows<T>(
+        _ rows: [T],
+        section: ChatListSearchSection,
+        initialCount: Int
+    ) -> [T] {
+        expandedSections.contains(section) ? rows : Array(rows.prefix(initialCount))
+    }
+
+    private func shouldShowMore<T>(
+        _ rows: [T],
+        visibleRows: [T],
+        section: ChatListSearchSection
+    ) -> Bool {
+        !expandedSections.contains(section) && rows.count > visibleRows.count
+    }
+
+    private func shouldShowMoreMessages(visibleRows: [MessageSearchHit]) -> Bool {
+        let mayHaveMoreFetchedRows = !expandedSections.contains(.messages)
+            && results.messages.count > visibleRows.count
+        let mayHaveMoreRemoteRows = expandedSections.contains(.messages)
+            && results.messages.count >= Int(messageLimit)
+            && messageLimit < UInt32.max
+        return mayHaveMoreFetchedRows || mayHaveMoreRemoteRows
     }
 }
 
 private struct ChatInputShortcutRow: View {
     @Environment(\.irisPalette) private var palette
-    @ObservedObject var manager: AppManager
+    let manager: AppManager
     let shortcut: ChatInputShortcut
 
     var body: some View {
@@ -2323,8 +2423,34 @@ private struct SearchSectionHeader: View {
     }
 }
 
+private struct SearchViewMoreRow: View {
+    @Environment(\.irisPalette) private var palette
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: "chevron.down.circle.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .frame(width: 36, height: 36)
+                Text("View more")
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier("chatListSearchViewMore")
+    }
+}
+
 private struct MessageSearchHitRow: View {
-    @ObservedObject var manager: AppManager
+    let manager: AppManager
     let hit: MessageSearchHit
     let relativeNow: Date
     let preferences: PreferencesSnapshot
@@ -2361,7 +2487,7 @@ struct InChatSearchTarget: Identifiable, Hashable {
 /// hit dismisses the sheet and opens the chat at that conversation.
 private struct InChatSearchSheet: View {
     @Environment(\.irisPalette) private var palette
-    @ObservedObject var manager: AppManager
+    let manager: AppManager
     let target: InChatSearchTarget
     let onClose: () -> Void
     @State private var query: String = ""

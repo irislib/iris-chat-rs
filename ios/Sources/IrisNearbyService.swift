@@ -41,7 +41,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static let nonIrisBackoff: TimeInterval = 60
     private static let helloInterval: TimeInterval = 5
     private static let inventoryResendInterval: TimeInterval = 60
-    private static let peerSweepInterval: TimeInterval = 1
+    private static let peerSweepInterval: TimeInterval = 2
     private static let peerTTL: TimeInterval = 15
     private static let dedupeReconnectBackoff: TimeInterval = 30
     private static let maxSimultaneousPeripherals = 4
@@ -565,7 +565,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         let timer = Timer(timeInterval: Self.peerSweepInterval, repeats: true) { [weak self] _ in
             self?.runMaintenance()
         }
-        timer.tolerance = 0.2
+        timer.tolerance = 0.5
         RunLoop.main.add(timer, forMode: .common)
         maintenanceTimer = timer
         runMaintenance()

@@ -17,11 +17,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -50,14 +47,7 @@ fun NearbyIrisSheet(
     onLocalNetworkVisibleChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var tick by remember { mutableIntStateOf(0) }
-    LaunchedEffect(service) {
-        while (true) {
-            delay(1_000L)
-            tick += 1
-        }
-    }
-    val snapshot = tick.let { service.snapshot }
+    val snapshot by rememberNearbySnapshotState(service)
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -140,6 +130,20 @@ fun NearbyIrisSheet(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+internal fun rememberNearbySnapshotState(service: IrisNearbyService) = produceState(
+    initialValue = service.snapshot,
+    key1 = service,
+) {
+    while (true) {
+        delay(2_000L)
+        val next = service.snapshot
+        if (next != value) {
+            value = next
         }
     }
 }

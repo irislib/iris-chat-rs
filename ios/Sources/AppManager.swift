@@ -1026,7 +1026,31 @@ final class AppManager: ObservableObject {
     }
 
     func navigateBack() {
-        dispatchToRust(.navigateBack)
+        let currentStack = state.router.screenStack
+        guard !currentStack.isEmpty else {
+            return
+        }
+        let nextStack = Array(currentStack.dropLast())
+        let dispatched = dispatchToRust(
+            .updateScreenStack(stack: nextStack),
+            showsToastOnFailure: false
+        )
+        if !dispatched {
+            applyLocalScreenStack(nextStack)
+            return
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            guard let self,
+                  self.state.router.screenStack == currentStack else {
+                return
+            }
+            self.applyLocalScreenStack(nextStack)
+            self.appendClientDebugLog(
+                category: "navigation.local_fallback",
+                detail: "Applied local back fallback"
+            )
+        }
     }
 
     func dispatch(_ action: AppAction) {
@@ -1954,6 +1978,27 @@ final class AppManager: ObservableObject {
                 deviceNsec: bundle.deviceNsec
             )
         )
+    }
+
+    private func applyLocalScreenStack(_ stack: [Screen]) {
+        var nextState = state
+        nextState.router = Router(defaultScreen: nextState.router.defaultScreen, screenStack: stack)
+        let activeScreen = stack.last ?? nextState.router.defaultScreen
+        switch activeScreen {
+        case .chat(let chatId):
+            if nextState.currentChat?.chatId != chatId {
+                nextState.currentChat = nil
+            }
+            nextState.groupDetails = nil
+        case .groupDetails(let groupId):
+            if nextState.groupDetails?.groupId != groupId {
+                nextState.groupDetails = nil
+            }
+        default:
+            nextState.currentChat = nil
+            nextState.groupDetails = nil
+        }
+        state = nextState
     }
 
 #if os(iOS) || os(macOS)
