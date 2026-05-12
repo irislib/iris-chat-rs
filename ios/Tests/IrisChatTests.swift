@@ -116,14 +116,18 @@ private final class MockRustApp: RustAppClient {
     }
 
     func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot {
-        SearchResultSnapshot(
+        var result = buildLargeTestSearchResult(
             query: query,
-            scopeChatId: scopeChatId,
-            contacts: [],
-            groups: [],
-            messages: [],
-            shortcut: nil
+            contactCount: 25,
+            groupCount: 9,
+            messageCount: max(UInt32(120), limit)
         )
+        result.scopeChatId = scopeChatId
+        if scopeChatId != nil {
+            result.contacts = []
+            result.groups = []
+        }
+        return result
     }
 
     func ingestNearbyEventJson(eventJson: String) -> Bool {
@@ -275,6 +279,53 @@ private func makeAppState(
     )
 }
 
+private func makeLargeFixtureState(
+    rev: UInt64 = 1,
+    router: Router? = nil,
+    account: AccountSnapshot? = nil,
+    chatList: [ChatThreadSnapshot]? = nil,
+    currentChat: CurrentChatSnapshot? = nil,
+    mobilePush: MobilePushSyncSnapshot? = nil,
+    preferences: PreferencesSnapshot? = nil,
+    toast: String? = nil
+) -> AppState {
+    var state = buildLargeTestAppState(
+        directChatCount: 80,
+        groupChatCount: 20,
+        messagesInCurrentChat: 240
+    )
+    state.rev = rev
+    state.preferences.nearbyBluetoothEnabled = false
+    state.preferences.nearbyLanEnabled = false
+    if let router {
+        state.router = router
+    }
+    if let account {
+        state.account = account
+    }
+    if let chatList {
+        state.chatList = chatList
+    }
+    if let currentChat {
+        state.currentChat = currentChat
+    }
+    if let mobilePush {
+        state.mobilePush = mobilePush
+    }
+    if let preferences {
+        state.preferences = preferences
+    }
+    state.toast = toast
+    return state
+}
+
+private func makeLargeChatList(replacingFirstWith chat: ChatThreadSnapshot) -> [ChatThreadSnapshot] {
+    var rows = makeLargeFixtureState().chatList
+    rows.removeAll { $0.chatId == chat.chatId }
+    rows.insert(chat, at: 0)
+    return rows
+}
+
 private func makeAccount() -> AccountSnapshot {
     AccountSnapshot(
         publicKeyHex: "owner",
@@ -365,15 +416,15 @@ final class IrisChatTests: XCTestCase {
 #if os(iOS)
     func testIosStateSideEffectGateIgnoresUnrelatedFullStateChanges() {
         var gate = IosStateSideEffectGate()
-        let chatList = [makeChatThread(unreadCount: 0)]
+        let chatList = makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 0))
         let push = MobilePushSyncSnapshot(
             ownerPubkeyHex: "owner",
             messageAuthorPubkeys: ["author-1"],
             inviteResponsePubkeys: ["invite-1"],
             sessions: []
         )
-        let first = makeAppState(rev: 1, chatList: chatList, mobilePush: push)
-        let unrelated = makeAppState(rev: 2, chatList: chatList, mobilePush: push, toast: "Synced")
+        let first = makeLargeFixtureState(rev: 1, chatList: chatList, mobilePush: push)
+        let unrelated = makeLargeFixtureState(rev: 2, chatList: chatList, mobilePush: push, toast: "Synced")
 
         XCTAssertTrue(gate.shouldSyncShareSuggestions(chatList: first.chatList))
         XCTAssertFalse(gate.shouldSyncShareSuggestions(chatList: unrelated.chatList))
@@ -389,7 +440,7 @@ final class IrisChatTests: XCTestCase {
             inviteResponsePubkeys: [],
             sessions: []
         )
-        let state = makeAppState(rev: 1, mobilePush: push)
+        let state = makeLargeFixtureState(rev: 1, mobilePush: push)
 
         XCTAssertTrue(gate.shouldSyncMobilePush(state: state, ownerNsec: nil))
         XCTAssertTrue(gate.shouldSyncMobilePush(state: state, ownerNsec: "secret"))
@@ -409,14 +460,14 @@ final class IrisChatTests: XCTestCase {
         UserDefaults.standard.removeObject(forKey: attemptedKey)
         UserDefaults.standard.removeObject(forKey: grantedKey)
 
-        var preferences = makeAppState().preferences
+        var preferences = makeLargeFixtureState().preferences
         preferences.nearbyLanEnabled = true
         let dataDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dataDir) }
 
         let manager = AppManager(
-            rust: MockRustApp(state: makeAppState(preferences: preferences)),
+            rust: MockRustApp(state: makeLargeFixtureState(preferences: preferences)),
             secretStore: InMemorySecretStore(),
             dataDir: dataDir,
             environment: [:]
@@ -441,17 +492,17 @@ final class IrisChatTests: XCTestCase {
         let dataDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dataDir) }
-        let rust = MockRustApp(state: makeAppState(rev: 1))
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1))
         let manager = AppManager(
             rust: rust,
             secretStore: InMemorySecretStore(),
             dataDir: dataDir,
             environment: [:]
         )
-        var preferences = makeAppState().preferences
+        var preferences = makeLargeFixtureState().preferences
         preferences.nearbyLanEnabled = true
 
-        rust.emit(.fullState(makeAppState(rev: 2, preferences: preferences)))
+        rust.emit(.fullState(makeLargeFixtureState(rev: 2, preferences: preferences)))
         await Task.yield()
 
         XCTAssertTrue(manager.state.preferences.nearbyLanEnabled)
@@ -584,7 +635,7 @@ final class IrisChatTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dataDir) }
         let manager = AppManager(
             rust: MockRustApp(
-                state: makeAppState(
+                state: makeLargeFixtureState(
                     router: Router(defaultScreen: .chat(chatId: "chat-1"), screenStack: [])
                 )
             ),
@@ -609,7 +660,7 @@ final class IrisChatTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dataDir) }
         let manager = AppManager(
             rust: MockRustApp(
-                state: makeAppState(
+                state: makeLargeFixtureState(
                     router: Router(defaultScreen: .chat(chatId: "chat-1"), screenStack: [])
                 )
             ),
@@ -636,10 +687,10 @@ final class IrisChatTests: XCTestCase {
     @MainActor
     func testDesktopNotificationPostedForNewUnreadIncomingMessage() async {
         let rust = MockRustApp(
-            state: makeAppState(
+            state: makeLargeFixtureState(
                 rev: 1,
                 account: makeAccount(),
-                chatList: [makeChatThread(unreadCount: 0)]
+                chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 0))
             )
         )
         let notifications = MockDesktopNotificationPoster()
@@ -649,10 +700,10 @@ final class IrisChatTests: XCTestCase {
             desktopNotifications: notifications
         )
 
-        rust.emit(.fullState(makeAppState(
+        rust.emit(.fullState(makeLargeFixtureState(
             rev: 2,
             account: makeAccount(),
-            chatList: [makeChatThread(unreadCount: 1, preview: "new text")]
+            chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 1, preview: "new text"))
         )))
 
         let posted = await waitUntil { notifications.posts.count == 1 }
@@ -666,11 +717,11 @@ final class IrisChatTests: XCTestCase {
     func testDesktopNotificationSuppressedForActiveChatRoute() async {
         let activeRoute = Router(defaultScreen: .chat(chatId: "chat-1"), screenStack: [])
         let rust = MockRustApp(
-            state: makeAppState(
+            state: makeLargeFixtureState(
                 rev: 1,
                 router: activeRoute,
                 account: makeAccount(),
-                chatList: [makeChatThread(unreadCount: 0)]
+                chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 0))
             )
         )
         let notifications = MockDesktopNotificationPoster()
@@ -680,11 +731,11 @@ final class IrisChatTests: XCTestCase {
             desktopNotifications: notifications
         )
 
-        rust.emit(.fullState(makeAppState(
+        rust.emit(.fullState(makeLargeFixtureState(
             rev: 2,
             router: activeRoute,
             account: makeAccount(),
-            chatList: [makeChatThread(unreadCount: 1, preview: "new text")]
+            chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 1, preview: "new text"))
         )))
 
         XCTAssertTrue(notifications.posts.isEmpty)
@@ -693,28 +744,14 @@ final class IrisChatTests: XCTestCase {
 
     @MainActor
     func testDesktopNotificationPreferenceSuppressesNewUnreadMessages() async {
+        var preferences = makeLargeFixtureState().preferences
+        preferences.desktopNotificationsEnabled = false
         let rust = MockRustApp(
-            state: makeAppState(
+            state: makeLargeFixtureState(
                 rev: 1,
                 account: makeAccount(),
-                chatList: [makeChatThread(unreadCount: 0)],
-                preferences: PreferencesSnapshot(
-                    sendTypingIndicators: true,
-                    sendReadReceipts: true,
-                    desktopNotificationsEnabled: false,
-                    inviteAcceptanceNotificationsEnabled: true,
-                    startupAtLoginEnabled: false,
-                    nearbyBluetoothEnabled: false,
-                    nearbyLanEnabled: false,
-                    nostrRelayUrls: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://relay.snort.social", "wss://temp.iris.to"],
-                    imageProxyEnabled: true,
-                    imageProxyUrl: "https://imgproxy.iris.to",
-                    imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
-                    imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
-                    mutedChatIds: [],
-                    pinnedChatIds: [],
-                    mobilePushServerUrl: ""
-                )
+                chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 0)),
+                preferences: preferences
             )
         )
         let notifications = MockDesktopNotificationPoster()
@@ -724,27 +761,11 @@ final class IrisChatTests: XCTestCase {
             desktopNotifications: notifications
         )
 
-        rust.emit(.fullState(makeAppState(
+        rust.emit(.fullState(makeLargeFixtureState(
             rev: 2,
             account: makeAccount(),
-            chatList: [makeChatThread(unreadCount: 1, preview: "new text")],
-            preferences: PreferencesSnapshot(
-                sendTypingIndicators: true,
-                sendReadReceipts: true,
-                desktopNotificationsEnabled: false,
-                inviteAcceptanceNotificationsEnabled: true,
-                startupAtLoginEnabled: false,
-                nearbyBluetoothEnabled: false,
-                nearbyLanEnabled: false,
-                nostrRelayUrls: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://relay.snort.social", "wss://temp.iris.to"],
-                imageProxyEnabled: true,
-                imageProxyUrl: "https://imgproxy.iris.to",
-                imageProxyKeyHex: "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
-                imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
-                mutedChatIds: [],
-                pinnedChatIds: [],
-                mobilePushServerUrl: ""
-            )
+            chatList: makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 1, preview: "new text")),
+            preferences: preferences
         )))
 
         _ = await waitUntil(timeoutNanoseconds: 50_000_000) { notifications.posts.count == 1 }
@@ -780,6 +801,19 @@ final class IrisChatTests: XCTestCase {
 #else
         let service = "to.iris.chat.tests.\(UUID().uuidString)"
         let account = "stored-account-bundle"
+        let probeQuery: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: "\(account)-probe",
+            kSecValueData: Data()
+        ]
+        let probeStatus = SecItemAdd(probeQuery as CFDictionary, nil)
+        if probeStatus == errSecMissingEntitlement {
+            throw XCTSkip("unsigned simulator test bundle cannot access Keychain")
+        }
+        XCTAssertEqual(probeStatus, errSecSuccess)
+        SecItemDelete(probeQuery as CFDictionary)
+
         let expected = StoredAccountBundle(
             ownerNsec: "nsec1owner",
             ownerPubkeyHex: "owner-hex",
@@ -936,8 +970,12 @@ final class IrisChatTests: XCTestCase {
             environment: [:]
         )
 
-        let newer = makeAppState(rev: 2, router: Router(defaultScreen: .chatList, screenStack: []), toast: "synced")
-        let older = makeAppState(rev: 1)
+        let newer = makeLargeFixtureState(
+            rev: 2,
+            router: Router(defaultScreen: .chatList, screenStack: []),
+            toast: "synced"
+        )
+        let older = makeLargeFixtureState(rev: 1)
 
         rust.emit(.fullState(newer))
         await Task.yield()
@@ -951,7 +989,7 @@ final class IrisChatTests: XCTestCase {
 
     @MainActor
     func testPersistAccountBundleSideEffectAppliesEvenWhenRevIsStale() async {
-        let rust = MockRustApp(state: makeAppState(rev: 5))
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 5))
         let store = InMemorySecretStore()
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
@@ -1038,7 +1076,7 @@ final class IrisChatTests: XCTestCase {
 
     @MainActor
     func testLogoutClearsSecretStoreAndLocalDataDirectory() async {
-        let rust = MockRustApp(state: makeAppState(rev: 1))
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1))
         rust.onDispatch = { action in
             if action == .logout {
                 rust.currentState = makeAppState(rev: 2)
@@ -1077,7 +1115,7 @@ final class IrisChatTests: XCTestCase {
     @MainActor
     func testNavigateBackDispatchesExplicitStack() async {
         let rust = MockRustApp(
-            state: makeAppState(
+            state: makeLargeFixtureState(
                 rev: 1,
                 router: Router(defaultScreen: .welcome, screenStack: [.chatList, .newChat])
             )
@@ -1104,7 +1142,7 @@ final class IrisChatTests: XCTestCase {
     @MainActor
     func testNavigateBackFallsBackLocallyWhenDispatchFails() async {
         let rust = MockRustApp(
-            state: makeAppState(
+            state: makeLargeFixtureState(
                 rev: 1,
                 router: Router(defaultScreen: .welcome, screenStack: [.chatList, .newChat])
             )

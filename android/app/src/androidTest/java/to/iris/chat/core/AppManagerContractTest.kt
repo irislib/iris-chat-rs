@@ -43,12 +43,14 @@ import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.MobilePushNotificationResolution
-import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.MobilePushSyncSnapshot
 import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.Router
+import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.Screen
+import to.iris.chat.rust.buildLargeTestAppState
+import to.iris.chat.rust.buildLargeTestSearchResult
 
 @RunWith(AndroidJUnit4::class)
 class AppManagerContractTest {
@@ -115,7 +117,7 @@ class AppManagerContractTest {
 
     @Test
     fun active_chat_notification_suppression_matches_direct_sender() {
-        rustFactory.initialStates += makeAppState(
+        rustFactory.initialStates += makeLargeFixtureState(
             currentChat = makeCurrentChat(chatId = "ABCDEF", kind = ChatKind.DIRECT),
         )
         val appManager = createManager()
@@ -134,7 +136,7 @@ class AppManagerContractTest {
 
     @Test
     fun active_chat_notification_suppression_matches_group_payload_id() {
-        rustFactory.initialStates += makeAppState(
+        rustFactory.initialStates += makeLargeFixtureState(
             currentChat = makeCurrentChat(
                 chatId = "group:Group-123",
                 kind = ChatKind.GROUP,
@@ -245,11 +247,16 @@ class AppManagerContractTest {
 
     @Test
     fun stale_full_state_updates_are_dropped() {
-        rustFactory.initialStates += makeAppState(rev = 1u)
+        rustFactory.initialStates += makeLargeFixtureState(rev = 1u)
         val appManager = createManager()
         val rust = rustFactory.instances.single()
-        val newer = makeAppState(rev = 2u, router = Router(Screen.ChatList, emptyList()), toast = "synced")
-        val older = makeAppState(rev = 1u, toast = "stale")
+        val newer =
+            makeLargeFixtureState(
+                rev = 2u,
+                router = Router(Screen.ChatList, emptyList()),
+                toast = "synced",
+            )
+        val older = makeLargeFixtureState(rev = 1u, toast = "stale")
 
         rust.emit(AppUpdate.FullState(newer))
         waitFor("newer snapshot applied") {
@@ -264,7 +271,7 @@ class AppManagerContractTest {
 
     @Test
     fun persist_account_bundle_side_effect_applies_even_when_stale() {
-        rustFactory.initialStates += makeAppState(rev = 5u)
+        rustFactory.initialStates += makeLargeFixtureState(rev = 5u)
         createManager()
         val rust = rustFactory.instances.single()
 
@@ -515,6 +522,27 @@ class AppManagerContractTest {
             toast = toast,
         )
 
+    private fun makeLargeFixtureState(
+        rev: ULong = 1u,
+        router: Router? = null,
+        toast: String? = null,
+        account: AccountSnapshot? = null,
+        currentChat: CurrentChatSnapshot? = null,
+    ): AppState =
+        buildLargeTestAppState(
+            directChatCount = 80u,
+            groupChatCount = 20u,
+            messagesInCurrentChat = 240u,
+        ).also { state ->
+            state.rev = rev
+            state.preferences.nearbyBluetoothEnabled = false
+            state.preferences.nearbyLanEnabled = false
+            router?.let { state.router = it }
+            account?.let { state.account = it }
+            currentChat?.let { state.currentChat = it }
+            state.toast = toast
+        }
+
     private fun makeCurrentChat(
         chatId: String,
         kind: ChatKind,
@@ -536,7 +564,7 @@ class AppManagerContractTest {
         )
 
     private fun makeLoggedInState(rev: ULong): AppState =
-        makeAppState(
+        makeLargeFixtureState(
             rev = rev,
             router = Router(Screen.ChatList, emptyList()),
             account =
@@ -598,15 +626,21 @@ private class MockRustAppClient(
         dispatchedActions += action
     }
 
-    override fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot =
-        SearchResultSnapshot(
+    override fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot {
+        val messageCount = if (limit > 120u) limit else 120u
+        return buildLargeTestSearchResult(
             query = query,
-            scopeChatId = scopeChatId,
-            contacts = emptyList(),
-            groups = emptyList(),
-            messages = emptyList(),
-            shortcut = null,
-        )
+            contactCount = 25u,
+            groupCount = 9u,
+            messageCount = messageCount,
+        ).also { result ->
+            result.scopeChatId = scopeChatId
+            if (scopeChatId != null) {
+                result.contacts = emptyList()
+                result.groups = emptyList()
+            }
+        }
+    }
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = true
 

@@ -313,14 +313,16 @@ final class KeychainSecretStore: AccountSecretStore {
             update[kSecAttrAccessible] = accessibility
         }
         let updateStatus = SecItemUpdate(query as CFDictionary, update as CFDictionary)
-        if updateStatus == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData] = data
-            if let accessibility {
-                insert[kSecAttrAccessible] = accessibility
-            }
-            SecItemAdd(insert as CFDictionary, nil)
+        guard updateStatus != errSecSuccess else {
+            return
         }
+
+        var insert = query
+        insert[kSecValueData] = data
+        if let accessibility {
+            insert[kSecAttrAccessible] = accessibility
+        }
+        SecItemAdd(insert as CFDictionary, nil)
     }
 
     func clear() {

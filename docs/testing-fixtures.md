@@ -10,6 +10,11 @@ These are deterministic and capped so UI/perf tests can safely ask for large
 datasets. They are exposed through UniFFI for shell tests and also usable from
 Rust integration tests.
 
+Shell contract tests should default to these builders for logged-in app states
+and search mocks. Hand-build a tiny `AppState` only when the behavior under test
+depends on an exact empty/login/reset state or on a narrow field transition that
+would be hidden by fixture data.
+
 Use the local relay for protocol and persistence behavior. The in-process Rust
 fixture is `iris_chat_core::local_relay::TestRelay`; the standalone binary is:
 
