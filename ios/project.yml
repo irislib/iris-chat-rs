@@ -15,6 +15,21 @@ settings:
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: 5.0
 
+schemes:
+  IrisChat:
+    build:
+      targets:
+        IrisChat: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - IrisChatTests
+        - IrisChatUITests
+    archive:
+      config: Release
+
 targets:
   IrisChat:
     type: application
