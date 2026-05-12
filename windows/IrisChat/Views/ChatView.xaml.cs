@@ -46,7 +46,7 @@ public partial class ChatView : UserControl
 
     private void OnChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
 
-    private void OnUserActivity(object sender, InputEventArgs e)
+    private void OnUserActivity(object? sender, InputEventArgs e)
     {
         App.CurrentManager.RecordUserActivity();
     }
