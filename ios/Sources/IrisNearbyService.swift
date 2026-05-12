@@ -172,6 +172,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return Self.wifiStatusLabel(lanStatus)
     }
 
+    var shouldRestartLanAfterFailure: Bool {
+        isLanVisible && Self.isRecoverableLanFailure(lanStatus)
+    }
+
     var bluetoothPeers: [IrisNearbyPeer] {
         let peerIDs = recentBluetoothPeerIDs
         return peers.filter { peerIDs.contains($0.id) }
@@ -285,6 +289,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
+    private static func isRecoverableLanFailure(_ status: String) -> Bool {
+        switch status {
+        case "Local network failed", "Local network unavailable":
+            return true
+        default:
+            return false
+        }
+    }
+
     private static func wifiStatusLabel(_ status: String) -> String {
         switch status {
         case "No local network access":
@@ -337,6 +350,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
     func setLanVisible(_ visible: Bool) {
         guard visible != isLanVisible else {
             if visible {
+                if Self.isRecoverableLanFailure(lanStatus) {
+                    lanStatus = "Starting"
+                    lanService?.restart()
+                    startMaintenance()
+                }
                 announceToConnectedPeers()
             }
             return

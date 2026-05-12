@@ -1422,7 +1422,9 @@ final class AppManager: ObservableObject {
            nearbyIris.bluetoothPermissionGranted {
             nearbyIris.setVisible(true)
         }
-        if state.preferences.nearbyLanEnabled, !nearbyIris.isLanVisible, canAutoStartNearbyLan {
+        if state.preferences.nearbyLanEnabled,
+           canAutoStartNearbyLan,
+           (!nearbyIris.isLanVisible || nearbyIris.shouldRestartLanAfterFailure) {
             nearbyIris.setLanVisible(true)
         }
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
@@ -1971,7 +1973,8 @@ final class AppManager: ObservableObject {
         let wasEnabled = oldState.preferences.nearbyLanEnabled
         let isEnabled = nextState.preferences.nearbyLanEnabled
         if isEnabled {
-            if !nearbyIris.isLanVisible, canAutoStartNearbyLan {
+            if canAutoStartNearbyLan,
+               (!nearbyIris.isLanVisible || nearbyIris.shouldRestartLanAfterFailure) {
                 nearbyIris.setLanVisible(true)
             }
         } else if wasEnabled, nearbyIris.isLanVisible {

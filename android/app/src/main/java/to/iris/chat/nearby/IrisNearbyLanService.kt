@@ -8,6 +8,7 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import java.io.EOFException
 import java.net.Inet4Address
@@ -24,6 +25,7 @@ import java.util.concurrent.Executor
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class IrisNearbyLanService(
@@ -63,26 +65,58 @@ class IrisNearbyLanService(
     private var registrationListener: NsdManager.RegistrationListener? = null
     private var multicastLock: WifiManager.MulticastLock? = null
     private var resolving = false
+    private var startupAttempt = 0L
+    private var settleDeadlineMillis = 0L
+    private var settleRetries = 0
+    private var retryJob: Job? = null
+    private var serviceRegistered = false
+    private var discoveryStarted = false
     @Volatile private var localNetwork: Network? = null
     private val directExecutor = Executor { command -> command.run() }
 
     fun start() {
         if (enabled) {
+            if (status in RETRYABLE_STARTUP_STATUSES) {
+                restartStartupWindow()
+            }
             return
         }
         enabled = true
+        settleDeadlineMillis = SystemClock.elapsedRealtime() + SETTLE_WINDOW_MILLIS
+        settleRetries = 0
+        retryJob?.cancel()
+        retryJob = null
+        startAttempt()
+    }
+
+    private fun startAttempt() {
+        if (!enabled) {
+            return
+        }
+        retryJob = null
+        val attempt = ++startupAttempt
+        serviceRegistered = false
+        discoveryStarted = false
         status = "Starting"
-        if (!startServer()) {
-            enabled = false
+        if (!startServer(attempt)) {
             return
         }
         acquireMulticastLock()
-        startDiscovery()
+        startDiscovery(attempt)
     }
 
     fun stop() {
         enabled = false
+        startupAttempt += 1
+        settleDeadlineMillis = 0L
+        settleRetries = 0
+        retryJob?.cancel()
+        retryJob = null
         status = "Off"
+        closeRunningResources()
+    }
+
+    private fun closeRunningResources() {
         discoveryListener?.let { listener ->
             runCatching { nsdManager?.stopServiceDiscovery(listener) }
         }
@@ -105,6 +139,25 @@ class IrisNearbyLanService(
         synchronized(resolveLock) {
             resolveQueue.clear()
             resolving = false
+        }
+        serviceRegistered = false
+        discoveryStarted = false
+    }
+
+    private fun restartStartupWindow() {
+        startupAttempt += 1
+        settleDeadlineMillis = SystemClock.elapsedRealtime() + SETTLE_WINDOW_MILLIS
+        settleRetries = 0
+        retryJob?.cancel()
+        retryJob = null
+        closeRunningResources()
+        startAttempt()
+    }
+
+    private fun markStartupStableIfReady() {
+        if (serviceRegistered && discoveryStarted) {
+            settleDeadlineMillis = 0L
+            settleRetries = 0
         }
     }
 
@@ -146,9 +199,9 @@ class IrisNearbyLanService(
 
     fun peerIds(): Set<String> = connections.values.mapNotNullTo(mutableSetOf()) { it.peerId }
 
-    private fun startServer(): Boolean {
+    private fun startServer(attempt: Long): Boolean {
         val binding = localNearbyBinding(connectivityManager) ?: run {
-            status = "Local network unavailable"
+            reportFailureOrRetry("Local network unavailable", attempt)
             return false
         }
         localNetwork = binding.network
@@ -160,11 +213,13 @@ class IrisNearbyLanService(
                 }
             }.getOrElse { error ->
                 Log.w(TAG, "LAN server failed", error)
-                status = "Local network unavailable"
+                reportFailureOrRetry("Local network unavailable", attempt)
                 return false
             }
         serverSocket = server
-        registerService(server.localPort)
+        if (!registerService(server.localPort, attempt)) {
+            return false
+        }
         acceptJob =
             applicationScope.launch {
                 while (enabled) {
@@ -216,10 +271,18 @@ class IrisNearbyLanService(
         multicastLock = null
     }
 
-    private fun registerService(port: Int) {
+    private fun registerService(
+        port: Int,
+        attempt: Long,
+    ): Boolean {
         val listener =
             object : NsdManager.RegistrationListener {
                 override fun onServiceRegistered(serviceInfo: NsdServiceInfo) {
+                    if (attempt != startupAttempt) {
+                        return
+                    }
+                    serviceRegistered = true
+                    markStartupStableIfReady()
                     status = if (connections.isEmpty()) "Visible" else "Connected"
                 }
 
@@ -227,8 +290,11 @@ class IrisNearbyLanService(
                     serviceInfo: NsdServiceInfo,
                     errorCode: Int,
                 ) {
+                    if (attempt != startupAttempt) {
+                        return
+                    }
                     Log.w(TAG, "LAN registration failed $errorCode")
-                    status = "Local network failed"
+                    reportFailureOrRetry("Local network failed", attempt)
                 }
 
                 override fun onServiceUnregistered(serviceInfo: NsdServiceInfo) = Unit
@@ -246,18 +312,25 @@ class IrisNearbyLanService(
                 runCatching { setAttribute("v", "1") }
             }
         registrationListener = listener
-        runCatching {
+        return runCatching {
             nsdManager?.registerService(serviceInfo, NsdManager.PROTOCOL_DNS_SD, listener)
+            true
         }.onFailure { error ->
             Log.w(TAG, "LAN service registration failed", error)
-            status = "Local network failed"
-        }
+            reportFailureOrRetry("Local network failed", attempt)
+        }.getOrDefault(false)
     }
 
-    private fun startDiscovery() {
+    private fun startDiscovery(attempt: Long): Boolean {
         val listener =
             object : NsdManager.DiscoveryListener {
-                override fun onDiscoveryStarted(serviceType: String) = Unit
+                override fun onDiscoveryStarted(serviceType: String) {
+                    if (attempt != startupAttempt) {
+                        return
+                    }
+                    discoveryStarted = true
+                    markStartupStableIfReady()
+                }
 
                 override fun onServiceFound(serviceInfo: NsdServiceInfo) {
                     if (normalizeServiceType(serviceInfo.serviceType) != SERVICE_TYPE ||
@@ -276,8 +349,11 @@ class IrisNearbyLanService(
                     serviceType: String,
                     errorCode: Int,
                 ) {
+                    if (attempt != startupAttempt) {
+                        return
+                    }
                     Log.w(TAG, "LAN discovery failed $errorCode")
-                    status = "Local network failed"
+                    reportFailureOrRetry("Local network failed", attempt)
                 }
 
                 override fun onStopDiscoveryFailed(
@@ -286,12 +362,45 @@ class IrisNearbyLanService(
                 ) = Unit
             }
         discoveryListener = listener
-        runCatching {
+        return runCatching {
             nsdManager?.discoverServices(SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, listener)
+            true
         }.onFailure { error ->
             Log.w(TAG, "LAN discovery start failed", error)
-            status = "Local network failed"
+            reportFailureOrRetry("Local network failed", attempt)
+        }.getOrDefault(false)
+    }
+
+    private fun reportFailureOrRetry(
+        failureStatus: String,
+        attempt: Long,
+    ) {
+        if (attempt != startupAttempt || !enabled) {
+            return
         }
+        val nowMillis = SystemClock.elapsedRealtime()
+        val canRetry =
+            failureStatus in RETRYABLE_STARTUP_STATUSES &&
+                nowMillis < settleDeadlineMillis &&
+                settleRetries < MAX_SETTLE_RETRIES
+        if (!canRetry) {
+            status = failureStatus
+            settleDeadlineMillis = 0L
+            return
+        }
+        settleRetries += 1
+        startupAttempt += 1
+        status = "Starting"
+        closeRunningResources()
+        val retryAttempt = startupAttempt
+        retryJob?.cancel()
+        retryJob =
+            applicationScope.launch {
+                delay(SETTLE_RETRY_DELAY_MILLIS)
+                if (enabled && retryAttempt == startupAttempt) {
+                    startAttempt()
+                }
+            }
     }
 
     private fun enqueueResolve(serviceInfo: NsdServiceInfo) {
@@ -428,6 +537,14 @@ class IrisNearbyLanService(
         const val NEARBY_FRAME_HEADER_BYTES = 13
         const val MAX_FRAME_BODY_BYTES = 256 * 1024
         const val CONNECT_TIMEOUT_MILLIS = 5_000
+        const val SETTLE_WINDOW_MILLIS = 6_000L
+        const val SETTLE_RETRY_DELAY_MILLIS = 750L
+        const val MAX_SETTLE_RETRIES = 4
+        val RETRYABLE_STARTUP_STATUSES =
+            setOf(
+                "Local network unavailable",
+                "Local network failed",
+            )
 
         private fun normalizeServiceType(type: String?): String =
             type?.trim('.', ' ')?.removePrefix("_")?.let { "_$it" } ?: ""

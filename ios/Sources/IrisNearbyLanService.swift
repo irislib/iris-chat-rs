@@ -46,11 +46,19 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     // start and need to toggle Nearby off+on to recover. Retry silently
     // up to `maxSettleRetries` times within `settleWindow` before
     // surfacing a generic failure.
-    private static let settleWindow: DispatchTimeInterval = .seconds(4)
-    private static let settleRetryDelay: DispatchTimeInterval = .milliseconds(500)
-    private static let maxSettleRetries: Int = 2
+    private static let settleWindow: DispatchTimeInterval = .seconds(6)
+    private static let settleRetryDelay: DispatchTimeInterval = .milliseconds(750)
+    private static let maxSettleRetries: Int = 4
+    private static let retryableFailureStatuses: Set<String> = [
+        "Local network failed",
+        "Local network unavailable"
+    ]
     private var settleDeadline: DispatchTime?
     private var settleRetries: Int = 0
+    private var startGeneration: UInt64 = 0
+    private var lastStatus = "Off"
+    private var servicePublished = false
+    private var browserReady = false
 
     init(
         peerID: String,
@@ -67,21 +75,54 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
 
     func start() {
         queue.async { [weak self] in
-            guard let self, !self.enabled else { return }
+            guard let self else { return }
+            if self.enabled {
+                if Self.retryableFailureStatuses.contains(self.lastStatus) {
+                    self.restartOnQueue()
+                }
+                return
+            }
             self.enabled = true
-            self.settleDeadline = .now() + Self.settleWindow
-            self.settleRetries = 0
-            self.updateStatus("Starting")
-            self.startListener()
-            self.startBrowser()
+            self.startGeneration &+= 1
+            self.startOnQueue(generation: self.startGeneration)
         }
+    }
+
+    func restart() {
+        queue.async { [weak self] in
+            self?.restartOnQueue()
+        }
+    }
+
+    private func restartOnQueue() {
+        enabled = true
+        startGeneration &+= 1
+        cancelRuntime()
+        startOnQueue(generation: startGeneration)
+    }
+
+    private func startOnQueue(generation: UInt64) {
+        settleDeadline = .now() + Self.settleWindow
+        settleRetries = 0
+        servicePublished = false
+        browserReady = false
+        updateStatus("Starting")
+        startListener(generation: generation)
+        startBrowser(generation: generation)
+    }
+
+    private func markStartupStableIfReady() {
+        guard servicePublished, browserReady else { return }
+        settleDeadline = nil
+        settleRetries = 0
     }
 
     /// Report a failure status, or — if we're still inside the cold-start
     /// settle window — tear the listener/browser down and reattempt
     /// silently. Permission errors (`No local network access`) bypass
     /// the retry path; they need user action, not patience.
-    private func reportFailureOrRetry(_ status: String) {
+    private func reportFailureOrRetry(_ status: String, generation: UInt64) {
+        guard enabled, generation == startGeneration else { return }
         let isPermissionDenied = status == "No local network access"
         if !isPermissionDenied,
            let deadline = settleDeadline,
@@ -89,22 +130,18 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
            settleRetries < Self.maxSettleRetries
         {
             settleRetries += 1
-            listener?.cancel()
-            browser?.cancel()
-            listener = nil
-            browser = nil
-            let captureService = netService
-            netService = nil
-            if let captureService {
-                DispatchQueue.main.async { captureService.stop() }
-            }
+            startGeneration &+= 1
+            let retryGeneration = startGeneration
+            cancelRuntime()
+            updateStatus("Starting")
             queue.asyncAfter(deadline: .now() + Self.settleRetryDelay) { [weak self] in
-                guard let self, self.enabled else { return }
-                self.startListener()
-                self.startBrowser()
+                guard let self, self.enabled, self.startGeneration == retryGeneration else { return }
+                self.startListener(generation: retryGeneration)
+                self.startBrowser(generation: retryGeneration)
             }
             return
         }
+        settleDeadline = nil
         updateStatus(status)
     }
 
@@ -112,21 +149,30 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
         queue.async { [weak self] in
             guard let self else { return }
             self.enabled = false
-            self.listener?.cancel()
-            self.browser?.cancel()
-            let service = self.netService
-            self.listener = nil
-            self.browser = nil
-            self.netService = nil
-            self.endpointIDs.removeAll()
-            for slot in self.connections.values {
-                slot.connection.cancel()
-            }
-            self.connections.removeAll()
-            DispatchQueue.main.async {
-                service?.stop()
-            }
+            self.startGeneration &+= 1
+            self.settleDeadline = nil
+            self.settleRetries = 0
+            self.cancelRuntime()
             self.updateStatus("Off")
+        }
+    }
+
+    private func cancelRuntime() {
+        listener?.cancel()
+        browser?.cancel()
+        let service = netService
+        listener = nil
+        browser = nil
+        netService = nil
+        servicePublished = false
+        browserReady = false
+        endpointIDs.removeAll()
+        for slot in connections.values {
+            slot.connection.cancel()
+        }
+        connections.removeAll()
+        DispatchQueue.main.async {
+            service?.stop()
         }
     }
 
@@ -172,7 +218,7 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
         }
     }
 
-    private func startListener() {
+    private func startListener(generation: UInt64) {
         do {
             let listener = try NWListener(using: tcpParameters(), on: .any)
             listener.newConnectionHandler = { [weak self] connection in
@@ -188,17 +234,17 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
             }
             listener.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
+                guard self.enabled, generation == self.startGeneration else { return }
                 switch state {
                 case .ready:
                     guard let port = listener.port else {
-                        self.reportFailureOrRetry("Local network failed")
+                        self.reportFailureOrRetry("Local network failed", generation: generation)
                         return
                     }
-                    self.settleDeadline = nil
-                    self.publishService(port: port.rawValue)
+                    self.publishService(port: port.rawValue, generation: generation)
                     self.updateStatus(self.connections.isEmpty ? "Visible" : "Connected")
                 case .failed(let error):
-                    self.reportFailureOrRetry(Self.failureStatus(for: error))
+                    self.reportFailureOrRetry(Self.failureStatus(for: error), generation: generation)
                 case .cancelled:
                     break
                 default:
@@ -208,11 +254,11 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
             listener.start(queue: queue)
             self.listener = listener
         } catch {
-            reportFailureOrRetry(Self.failureStatus(for: error, fallback: "Local network unavailable"))
+            reportFailureOrRetry(Self.failureStatus(for: error, fallback: "Local network unavailable"), generation: generation)
         }
     }
 
-    private func publishService(port: UInt16) {
+    private func publishService(port: UInt16, generation: UInt64) {
         let previous = netService
         let service = NetService(
             domain: "local.",
@@ -223,6 +269,7 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
         service.includesPeerToPeer = false
         service.delegate = self
         service.schedule(in: .main, forMode: .common)
+        guard generation == startGeneration else { return }
         netService = service
         DispatchQueue.main.async {
             previous?.stop()
@@ -232,27 +279,40 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
 
     func netServiceDidPublish(_ sender: NetService) {
         NSLog("Iris nearby LAN: published \(sender.name).\(sender.type) port \(sender.port)")
+        queue.async { [weak self] in
+            guard let self, self.enabled, sender === self.netService else { return }
+            self.servicePublished = true
+            self.markStartupStableIfReady()
+        }
     }
 
     func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
         NSLog("Iris nearby LAN: publish failed \(errorDict)")
         queue.async { [weak self] in
-            self?.reportFailureOrRetry("Local network failed")
+            guard let self, sender === self.netService else { return }
+            self.reportFailureOrRetry("Local network failed", generation: self.startGeneration)
         }
     }
 
-    private func startBrowser() {
+    private func startBrowser(generation: UInt64) {
         let browser = NWBrowser(for: .bonjour(type: Self.serviceType, domain: nil), using: tcpParameters())
         browser.browseResultsChangedHandler = { [weak self] results, _ in
-            guard let self, self.enabled else { return }
+            guard let self, self.enabled, generation == self.startGeneration else { return }
             for result in results {
                 self.connectIfNeeded(to: result.endpoint)
             }
         }
         browser.stateUpdateHandler = { [weak self] state in
             guard let self else { return }
-            if case .failed(let error) = state {
-                self.reportFailureOrRetry(Self.failureStatus(for: error))
+            guard self.enabled, generation == self.startGeneration else { return }
+            switch state {
+            case .ready:
+                self.browserReady = true
+                self.markStartupStableIfReady()
+            case .failed(let error):
+                self.reportFailureOrRetry(Self.failureStatus(for: error), generation: generation)
+            default:
+                break
             }
         }
         browser.start(queue: queue)
@@ -325,6 +385,7 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     }
 
     private func updateStatus(_ status: String) {
+        lastStatus = status
         DispatchQueue.main.async {
             self.onStatus(status)
         }
