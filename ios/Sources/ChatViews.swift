@@ -873,7 +873,12 @@ private struct ChatMessageRow: View, Equatable {
                         }
                         if !parsed.body.isEmpty {
                             TruncatableMessageBody(
-                                attributed: linkedMessageAttributedString(parsed.body),
+                                attributed: linkedMessageAttributedString(
+                                    parsed.body,
+                                    foreground: message.isOutgoing
+                                        ? palette.onBubbleMine
+                                        : palette.onBubbleTheirs
+                                ),
                                 isOutgoing: message.isOutgoing
                             )
                         }
@@ -2896,10 +2901,12 @@ private func replySnippet(for message: ChatMessageSnapshot) -> String {
 
 private let replyMessagePrefix = "↩ "
 
-// Signal-style link styling: inherit the bubble's body text color
-// and just underline. No accent tint, so the same URL doesn't shift
-// hue between incoming and outgoing bubbles.
-private func linkedMessageAttributedString(_ text: String) -> AttributedString {
+// Signal-style link styling: force the body text colour (the
+// foreground attribute overrides SwiftUI's default link tint) and
+// underline. Without the explicit foregroundColor, AttributedString
+// still rendered links in the system accent / blue on iOS, which
+// shifted hue between incoming and outgoing bubbles.
+private func linkedMessageAttributedString(_ text: String, foreground: Color) -> AttributedString {
     var attributed = AttributedString()
     var cursor = text.startIndex
     for match in messageURLMatches(in: text) {
@@ -2909,6 +2916,7 @@ private func linkedMessageAttributedString(_ text: String) -> AttributedString {
         var linked = AttributedString(String(text[match.range]))
         linked.link = match.url
         linked.underlineStyle = .single
+        linked.foregroundColor = foreground
         attributed.append(linked)
         cursor = match.range.upperBound
     }

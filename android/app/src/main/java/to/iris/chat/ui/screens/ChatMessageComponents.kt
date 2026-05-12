@@ -1082,8 +1082,8 @@ private fun TruncatableMessageBody(
     val collapsedMaxHeight = 320.dp
     var isExpanded by remember(text) { mutableStateOf(false) }
     var didOverflow by remember(text) { mutableStateOf(false) }
-    val annotated = remember(text) {
-        linkedMessageAnnotatedString(text)
+    val annotated = remember(text, color) {
+        linkedMessageAnnotatedString(text, color)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1120,11 +1120,13 @@ private fun TruncatableMessageBody(
     }
 }
 
-// Signal-style link styling: inherit the bubble's body text color
-// and just underline. No accent tint, so the same URL doesn't shift
-// hue between incoming and outgoing bubbles.
-private fun linkedMessageAnnotatedString(text: String): AnnotatedString =
+// Signal-style link styling: force the bubble's body text colour
+// (Material 3's default link tint is brand-primary purple, which
+// shifted URL hue between incoming and outgoing bubbles), and
+// underline.
+private fun linkedMessageAnnotatedString(text: String, color: Color): AnnotatedString =
     buildAnnotatedString {
+        val linkStyle = SpanStyle(color = color, textDecoration = TextDecoration.Underline)
         var index = 0
         for (match in MessageUrlRegex.findAll(text)) {
             val range = trimTrailingUrlPunctuation(match.value)
@@ -1139,7 +1141,7 @@ private fun linkedMessageAnnotatedString(text: String): AnnotatedString =
             addLink(
                 LinkAnnotation.Url(
                     url = url,
-                    styles = TextLinkStyles(style = SpanStyle(textDecoration = TextDecoration.Underline)),
+                    styles = TextLinkStyles(style = linkStyle),
                 ),
                 start,
                 length,
