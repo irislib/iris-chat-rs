@@ -1,6 +1,7 @@
 package to.iris.chat.core
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import androidx.datastore.core.DataStore
@@ -258,6 +259,11 @@ data class PendingShare(
     val attachments: List<OutgoingAttachment>,
 )
 
+private data class PendingNavigationOverride(
+    val stack: List<Screen>,
+    val expiresAtMs: Long,
+)
+
 private data class AndroidMobilePushSyncInput(
     val enabled: Boolean,
     val ownerPubkeyHex: String?,
@@ -296,6 +302,7 @@ class AppManager(
     private var restoreCheckComplete = false
     private var cachedAccountBundle: StoredAccountBundle? = null
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
+    private var pendingNavigationOverride: PendingNavigationOverride? = null
 
     private val mutableState = MutableStateFlow(rust.state())
     private val mutableAppForegrounded = MutableStateFlow(false)
@@ -430,6 +437,10 @@ class AppManager(
     }
 
     fun dispatch(action: AppAction) {
+        if (action is AppAction.NavigateBack) {
+            navigateBack()
+            return
+        }
         dispatchToRust(action)
     }
 
@@ -667,6 +678,29 @@ class AppManager(
 
     fun pushScreen(screen: Screen) {
         dispatchToRust(AppAction.PushScreen(screen))
+    }
+
+    fun navigateBack() {
+        val currentStack = mutableState.value.router.screenStack
+        if (currentStack.isEmpty()) {
+            return
+        }
+        val nextStack = currentStack.dropLast(1)
+        pendingNavigationOverride =
+            PendingNavigationOverride(
+                stack = nextStack,
+                expiresAtMs = SystemClock.elapsedRealtime() + NAVIGATION_OVERRIDE_TTL_MS,
+            )
+        publishState(stateByApplyingLocalScreenStack(nextStack, mutableState.value))
+        val dispatched =
+            dispatchToRust(
+                AppAction.UpdateScreenStack(nextStack),
+                showsToastOnFailure = false,
+                preservesPendingNavigation = true,
+            )
+        if (!dispatched) {
+            pendingNavigationOverride = null
+        }
     }
 
     fun receiveShare(
@@ -930,15 +964,16 @@ class AppManager(
                 if (update.v1.rev <= lastRevApplied) {
                     return
                 }
+                val reconciledState = stateByReconcilingPendingNavigation(update.v1)
                 lastRevApplied = update.v1.rev
                 Log.d(
                     TAG,
-                    "reconcile rev=${update.v1.rev} screen=${update.v1.router.defaultScreen} " +
-                        "chatList=${update.v1.chatList.size} activeChat=${update.v1.currentChat?.chatId.orEmpty()} " +
-                        "toast=${update.v1.toast.orEmpty()}",
+                    "reconcile rev=${reconciledState.rev} screen=${reconciledState.router.defaultScreen} " +
+                        "chatList=${reconciledState.chatList.size} activeChat=${reconciledState.currentChat?.chatId.orEmpty()} " +
+                        "toast=${reconciledState.toast.orEmpty()}",
                 )
-                publishState(update.v1)
-                scheduleMobilePushSyncIfNeeded(update.v1, cachedAccountBundle?.ownerNsec)
+                publishState(reconciledState)
+                scheduleMobilePushSyncIfNeeded(reconciledState, cachedAccountBundle?.ownerNsec)
             }
         }
     }
@@ -946,8 +981,12 @@ class AppManager(
     private fun dispatchToRust(
         action: AppAction,
         showsToastOnFailure: Boolean = true,
+        preservesPendingNavigation: Boolean = false,
     ): Boolean =
         runCatching {
+            if (!preservesPendingNavigation && actionClearsPendingNavigation(action)) {
+                pendingNavigationOverride = null
+            }
             rust.dispatch(action)
         }.fold(
             onSuccess = { true },
@@ -959,6 +998,71 @@ class AppManager(
                 false
             },
         )
+
+    private fun stateByReconcilingPendingNavigation(nextState: AppState): AppState {
+        val pending = pendingNavigationOverride ?: return nextState
+        if (nextState.account == null) {
+            pendingNavigationOverride = null
+            return nextState
+        }
+        if (nextState.router.screenStack == pending.stack) {
+            pendingNavigationOverride = null
+            return nextState
+        }
+        if (SystemClock.elapsedRealtime() >= pending.expiresAtMs) {
+            pendingNavigationOverride = null
+            return nextState
+        }
+        return stateByApplyingLocalScreenStack(pending.stack, nextState)
+    }
+
+    private fun stateByApplyingLocalScreenStack(
+        stack: List<Screen>,
+        baseState: AppState,
+    ): AppState {
+        val activeScreen = stack.lastOrNull() ?: baseState.router.defaultScreen
+        var currentChat = baseState.currentChat
+        var groupDetails = baseState.groupDetails
+        when (activeScreen) {
+            is Screen.Chat -> {
+                if (currentChat?.chatId != activeScreen.chatId) {
+                    currentChat = null
+                }
+                groupDetails = null
+            }
+            is Screen.GroupDetails -> {
+                if (groupDetails?.groupId != activeScreen.groupId) {
+                    groupDetails = null
+                }
+            }
+            else -> {
+                currentChat = null
+                groupDetails = null
+            }
+        }
+        return baseState.copy(
+            router = Router(baseState.router.defaultScreen, stack),
+            currentChat = currentChat,
+            groupDetails = groupDetails,
+        )
+    }
+
+    private fun actionClearsPendingNavigation(action: AppAction): Boolean =
+        when (action) {
+            is AppAction.OpenChat,
+            is AppAction.PushScreen,
+            is AppAction.UpdateScreenStack,
+            is AppAction.NavigateBack,
+            is AppAction.CreateChat,
+            is AppAction.CreateGroup,
+            is AppAction.CreateGroupWithPicture,
+            is AppAction.AcceptInvite,
+            is AppAction.Logout,
+            is AppAction.RestoreSession,
+            is AppAction.RestoreAccountBundle,
+            -> true
+            else -> false
+        }
 
     private fun publishShellToast(message: String) {
         val current = mutableState.value
@@ -1278,6 +1382,7 @@ class AppManager(
         const val TAG = "NdrDebug"
         const val DATASTORE_NAME = "iris_chat_secure_store.preferences_pb"
         const val DISPATCH_FAILURE_TOAST = "Action failed. Copy support bundle in Settings."
+        const val NAVIGATION_OVERRIDE_TTL_MS = 2_000L
         const val DOWNLOADED_ATTACHMENT_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
         val SECRET_CIPHERTEXT = stringPreferencesKey("secret_ciphertext")
         val SECRET_IV = stringPreferencesKey("secret_iv")

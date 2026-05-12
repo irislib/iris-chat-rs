@@ -99,7 +99,7 @@ fun GroupDetailsScreen(
         topBar = {
             IrisTopBar(
                 title = details?.name ?: "Group details",
-                onBack = { appManager.dispatch(AppAction.NavigateBack) },
+                onBack = { appManager.navigateBack() },
             )
         },
     ) { padding ->

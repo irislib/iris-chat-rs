@@ -270,6 +270,68 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun navigate_back_dispatches_explicit_stack_and_updates_shell_immediately() {
+        val chatScreen = Screen.Chat("chat-1")
+        val initial = makeLoggedInState(rev = 1u).also { state ->
+            state.router = Router(Screen.ChatList, listOf(chatScreen))
+            state.currentChat = makeCurrentChat(chatId = "chat-1", kind = ChatKind.DIRECT)
+        }
+        rustFactory.initialStates += initial
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+
+        appManager.navigateBack()
+
+        val updateAction = rust.dispatchedActions.filterIsInstance<AppAction.UpdateScreenStack>().single()
+        assertEquals(emptyList<Screen>(), updateAction.stack)
+        assertEquals(emptyList<Screen>(), appManager.state.value.router.screenStack)
+        assertNull(appManager.state.value.currentChat)
+    }
+
+    @Test
+    fun navigate_back_keeps_local_route_while_rust_catches_up() {
+        val chatScreen = Screen.Chat("chat-1")
+        val initial = makeLoggedInState(rev = 1u).also { state ->
+            state.router = Router(Screen.ChatList, listOf(chatScreen))
+            state.currentChat = makeCurrentChat(chatId = "chat-1", kind = ChatKind.DIRECT)
+        }
+        rustFactory.initialStates += initial
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+
+        appManager.navigateBack()
+        rust.emit(
+            AppUpdate.FullState(
+                makeLoggedInState(rev = 2u).also { state ->
+                    state.router = Router(Screen.ChatList, listOf(chatScreen))
+                    state.currentChat = makeCurrentChat(chatId = "chat-1", kind = ChatKind.DIRECT)
+                },
+            ),
+        )
+        waitFor("stale route reconciled with local back") {
+            appManager.state.value.rev == 2uL
+        }
+
+        assertEquals(emptyList<Screen>(), appManager.state.value.router.screenStack)
+        assertNull(appManager.state.value.currentChat)
+
+        rust.emit(
+            AppUpdate.FullState(
+                makeLoggedInState(rev = 3u).also { state ->
+                    state.router = Router(Screen.ChatList, emptyList())
+                    state.currentChat = null
+                },
+            ),
+        )
+        waitFor("rust catches up to local back") {
+            appManager.state.value.rev == 3uL
+        }
+
+        assertEquals(emptyList<Screen>(), appManager.state.value.router.screenStack)
+        assertNull(appManager.state.value.currentChat)
+    }
+
+    @Test
     fun persist_account_bundle_side_effect_applies_even_when_stale() {
         rustFactory.initialStates += makeLargeFixtureState(rev = 5u)
         createManager()

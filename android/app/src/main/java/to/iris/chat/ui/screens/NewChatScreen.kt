@@ -129,11 +129,7 @@ fun NewChatScreen(
         topBar = {
             IrisTopBar(
                 title = "New chat",
-                onBack = {
-                    appManager.dispatch(
-                        AppAction.UpdateScreenStack(appState.router.screenStack.dropLast(1)),
-                    )
-                },
+                onBack = { appManager.navigateBack() },
             )
         },
     ) { padding ->

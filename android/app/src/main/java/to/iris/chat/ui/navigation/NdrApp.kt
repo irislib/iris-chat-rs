@@ -153,7 +153,7 @@ fun NdrApp(
     val activeScreen = router.screenStack.lastOrNull() ?: router.defaultScreen
 
     BackHandler(enabled = bootstrapState != AccountBootstrapState.Loading && router.screenStack.isNotEmpty()) {
-        appManager.dispatch(AppAction.NavigateBack)
+        appManager.navigateBack()
     }
 
     CompositionLocalProvider(LocalIrisOfflineBannerState provides offlineBannerState) {
@@ -273,9 +273,7 @@ fun NdrApp(
                                     onNearbyLanChange = onNearbyLanVisibilityChange,
                                     onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },
                                     onLogout = { appManager.logout() },
-                                    onDismiss = {
-                                        appManager.dispatch(AppAction.NavigateBack)
-                                    },
+                                    onDismiss = { appManager.navigateBack() },
                                 )
                             }
                         }

@@ -392,11 +392,7 @@ fun ChatScreen(
                         chat?.isMuted == true -> IrisIcons.NotificationsOff
                         else -> null
                     },
-                onBack = {
-                    appManager.dispatch(
-                        AppAction.UpdateScreenStack(router.screenStack.dropLast(1)),
-                    )
-                },
+                onBack = { appManager.navigateBack() },
                 backBadgeCount = backUnreadCount,
                 titleAccessoryLeading =
                     if (chat != null) {

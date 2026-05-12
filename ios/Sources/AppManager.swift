@@ -40,6 +40,7 @@ struct PendingShare: Codable, Identifiable, Equatable {
     let attachments: [PendingShareAttachment]
     let suggestedChatId: String?
     let suggestedChatIds: [String]?
+    let autoSend: Bool?
 
     var suggestedTargetChatIds: [String] {
         var seen = Set<String>()
@@ -53,6 +54,21 @@ struct PendingShare: Codable, Identifiable, Equatable {
             result.append(chatId)
         }
         return result
+    }
+
+    var shouldAutoSend: Bool {
+        autoSend == true
+    }
+
+    func withAutoSend(_ enabled: Bool) -> PendingShare {
+        PendingShare(
+            id: id,
+            text: text,
+            attachments: attachments,
+            suggestedChatId: suggestedChatId,
+            suggestedChatIds: suggestedChatIds,
+            autoSend: autoSend == true || enabled
+        )
     }
 }
 
@@ -851,6 +867,7 @@ final class AppManager: ObservableObject {
     private let desktopNotifications: DesktopNotificationPosting
     private let dataDir: URL
     private let fileManager: FileManager
+    private let sharedContainerOverride: URL?
 #if os(macOS)
     private let currentAppVersion: String
 #endif
@@ -871,6 +888,7 @@ final class AppManager: ObservableObject {
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
     private var pendingNavigationOverride: PendingNavigationOverride?
+    private var pendingSharePayloadURLs: [String: URL] = [:]
     private var backgroundSuspendPrepared = false
     private var storedAccountBundle: StoredAccountBundle?
     private var nearbySettingsWasOpened = false
@@ -896,6 +914,8 @@ final class AppManager: ObservableObject {
         appVersion: String = AppPaths.appVersion()
     ) {
         self.fileManager = fileManager
+        self.sharedContainerOverride = environment["IRIS_SHARE_CONTAINER_DIR"]
+            .flatMap { $0.isEmpty ? nil : URL(fileURLWithPath: $0, isDirectory: true) }
         let resolvedDataDir = dataDir ?? AppPaths.dataDir(fileManager: fileManager, environment: environment)
         let resolvedSecretStore = secretStore ?? AppPaths.secretStore(
             dataDir: resolvedDataDir,
@@ -948,6 +968,9 @@ final class AppManager: ObservableObject {
         }
 #if os(iOS)
         syncShareSuggestionsIfNeeded(chatList: initialState.chatList)
+#endif
+#if os(iOS)
+        processPendingShareFilesIfNeeded()
 #endif
 
 #if os(iOS) || os(macOS)
@@ -1057,6 +1080,10 @@ final class AppManager: ObservableObject {
     }
 
     func dispatch(_ action: AppAction) {
+        if case .navigateBack = action {
+            navigateBack()
+            return
+        }
         dispatchToRust(action)
     }
 
@@ -1122,6 +1149,11 @@ final class AppManager: ObservableObject {
     }
 
     func clearPendingShare() {
+#if os(iOS)
+        if let pendingShare {
+            removePendingShareFiles(for: pendingShare)
+        }
+#endif
         pendingShare = nil
     }
 
@@ -1137,11 +1169,12 @@ final class AppManager: ObservableObject {
         guard !targets.isEmpty else {
             return
         }
+        var dispatchedAll = true
         for chatId in targets {
             if share.attachments.isEmpty {
-                dispatchToRust(.sendMessage(chatId: chatId, text: share.text))
+                dispatchedAll = dispatchToRust(.sendMessage(chatId: chatId, text: share.text)) && dispatchedAll
             } else {
-                dispatchToRust(
+                dispatchedAll = dispatchToRust(
                     .sendAttachments(
                         chatId: chatId,
                         attachments: share.attachments.map {
@@ -1149,14 +1182,20 @@ final class AppManager: ObservableObject {
                         },
                         caption: share.text
                     )
-                )
+                ) && dispatchedAll
             }
         }
-        dispatchToRust(.openChat(chatId: targets[0]))
+        dispatchedAll = dispatchToRust(.openChat(chatId: targets[0])) && dispatchedAll
+        guard dispatchedAll else {
+            return
+        }
 #if os(iOS)
         shareSuggestionDonor.donateSelectedChats(
             state.chatList.filter { targets.contains($0.chatId) }
         )
+#endif
+#if os(iOS)
+        removePendingShareFiles(for: share)
 #endif
         pendingShare = nil
     }
@@ -1176,32 +1215,103 @@ final class AppManager: ObservableObject {
     }
 
     private func loadPendingShare(id: String, autoSend: Bool = false) {
-#if os(iOS) || os(macOS)
-        guard let dir = fileManager
-            .containerURL(forSecurityApplicationGroupIdentifier: AppPaths.appGroupIdentifier)?
-            .appendingPathComponent("pending-shares", isDirectory: true) else {
+#if os(iOS)
+        guard let dir = pendingSharesDirectory() else {
             showToast("Sharing unavailable")
             return
         }
         let url = dir.appendingPathComponent(id).appendingPathExtension("json")
-        do {
-            let data = try Data(contentsOf: url)
-            let share = try JSONDecoder().decode(PendingShare.self, from: data)
-            pendingShare = share
-            try? fileManager.removeItem(at: url)
-            dispatchToRust(.updateScreenStack(stack: []))
-            let suggestedTargets = share.suggestedTargetChatIds
-            if autoSend, !suggestedTargets.isEmpty {
-                sendPendingShare(to: suggestedTargets)
-            }
-        } catch {
-            showToast("Sharing unavailable")
+        guard loadPendingShare(from: url, autoSend: autoSend, showsToast: true) else {
+            return
         }
 #else
         _ = id
         _ = autoSend
 #endif
     }
+
+#if os(iOS)
+    private func processPendingShareFilesIfNeeded() {
+        guard pendingShare == nil,
+              let dir = pendingSharesDirectory(),
+              let urls = try? fileManager.contentsOfDirectory(
+                at: dir,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+              ) else {
+            processPendingShareIfReady()
+            return
+        }
+        let payloadURLs = urls
+            .filter { $0.pathExtension == "json" }
+            .sorted { lhs, rhs in
+                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return lhsDate < rhsDate
+            }
+        for url in payloadURLs {
+            if loadPendingShare(from: url, autoSend: nil, showsToast: false) {
+                return
+            }
+        }
+        processPendingShareIfReady()
+    }
+
+    @discardableResult
+    private func loadPendingShare(from url: URL, autoSend: Bool?, showsToast: Bool) -> Bool {
+        do {
+            let data = try Data(contentsOf: url)
+            let decoded = try JSONDecoder().decode(PendingShare.self, from: data)
+            let share = decoded.withAutoSend(autoSend == true)
+            pendingShare = share
+            pendingSharePayloadURLs[share.id] = url
+            dispatchToRust(.updateScreenStack(stack: []))
+            processPendingShareIfReady()
+            return true
+        } catch {
+            if showsToast {
+                showToast("Sharing unavailable")
+            }
+            return false
+        }
+    }
+
+    private func processPendingShareIfReady() {
+        guard let share = pendingShare,
+              share.shouldAutoSend,
+              !share.suggestedTargetChatIds.isEmpty,
+              state.account?.authorizationState == .authorized else {
+            return
+        }
+        sendPendingShare(to: share.suggestedTargetChatIds)
+    }
+
+    private func removePendingShareFiles(for share: PendingShare) {
+        if let url = pendingSharePayloadURLs.removeValue(forKey: share.id) {
+            try? fileManager.removeItem(at: url)
+        } else if let url = pendingShareURL(id: share.id) {
+            try? fileManager.removeItem(at: url)
+        }
+        if let filesURL = pendingSharesDirectory()?.appendingPathComponent("\(share.id)-files", isDirectory: true) {
+            try? fileManager.removeItem(at: filesURL)
+        }
+    }
+
+    private func pendingShareURL(id: String) -> URL? {
+        pendingSharesDirectory()?.appendingPathComponent(id).appendingPathExtension("json")
+    }
+
+    private func pendingSharesDirectory() -> URL? {
+        shareContainerURL()?.appendingPathComponent("pending-shares", isDirectory: true)
+    }
+
+    private func shareContainerURL() -> URL? {
+        if let sharedContainerOverride {
+            return sharedContainerOverride
+        }
+        return fileManager.containerURL(forSecurityApplicationGroupIdentifier: AppPaths.appGroupIdentifier)
+    }
+#endif
 
 #if os(iOS)
     func foregroundPushPresentationOptions(
@@ -1454,6 +1564,9 @@ final class AppManager: ObservableObject {
            (!nearbyIris.isLanVisible || nearbyIris.shouldRestartLanAfterFailure) {
             nearbyIris.setLanVisible(true)
         }
+#if os(iOS)
+        processPendingShareFilesIfNeeded()
+#endif
         UNUserNotificationCenter.current().removeAllDeliveredNotifications()
 #endif
     }
@@ -1933,6 +2046,9 @@ final class AppManager: ObservableObject {
                 showToast(toast)
             }
             runPendingTestSeedIfNeeded()
+#if os(iOS)
+            processPendingShareFilesIfNeeded()
+#endif
         }
     }
 

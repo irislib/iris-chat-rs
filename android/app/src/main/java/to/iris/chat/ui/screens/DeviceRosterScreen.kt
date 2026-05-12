@@ -29,7 +29,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import to.iris.chat.core.AppManager
 import to.iris.chat.qr.DeviceApprovalQr
-import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.DeviceEntrySnapshot
 import to.iris.chat.rust.isValidPeerInput
@@ -74,7 +73,7 @@ fun DeviceRosterScreen(
         topBar = {
             IrisTopBar(
                 title = "Manage devices",
-                onBack = { appManager.dispatch(AppAction.NavigateBack) },
+                onBack = { appManager.navigateBack() },
             )
         },
     ) { padding ->

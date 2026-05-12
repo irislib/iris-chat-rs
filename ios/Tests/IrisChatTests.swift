@@ -393,6 +393,40 @@ private func makeIsolatedUserDefaults() -> (defaults: UserDefaults, suiteName: S
     return (defaults, suiteName)
 }
 
+private func makeShareContainer() throws -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("IrisChatShare-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: url.appendingPathComponent("pending-shares", isDirectory: true),
+        withIntermediateDirectories: true
+    )
+    return url
+}
+
+private func writePendingShare(
+    id: String,
+    text: String,
+    chatIds: [String],
+    to shareContainer: URL,
+    autoSend: Bool
+) throws -> URL {
+    let payload = PendingShare(
+        id: id,
+        text: text,
+        attachments: [],
+        suggestedChatId: chatIds.first,
+        suggestedChatIds: chatIds,
+        autoSend: autoSend
+    )
+    let url = shareContainer
+        .appendingPathComponent("pending-shares", isDirectory: true)
+        .appendingPathComponent(id)
+        .appendingPathExtension("json")
+    let data = try JSONEncoder().encode(payload)
+    try data.write(to: url, options: .atomic)
+    return url
+}
+
 final class IrisChatTests: XCTestCase {
     func testLaunchRecoveryDefaultsAreClearedWithoutAffectingAuthStartup() {
         let (defaults, suiteName) = makeIsolatedUserDefaults()
@@ -532,6 +566,84 @@ final class IrisChatTests: XCTestCase {
         try await Task.sleep(nanoseconds: 50_000_000)
         XCTAssertEqual(rust.prepareForSuspendCallCount, 2)
         XCTAssertEqual(rust.dispatchedActions.last, .appForegrounded)
+    }
+
+    @MainActor
+    func testPendingShareUrlWaitsForAuthorizedRestoreBeforeAutoSend() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let shareContainer = try makeShareContainer()
+        defer {
+            try? FileManager.default.removeItem(at: dataDir)
+            try? FileManager.default.removeItem(at: shareContainer)
+        }
+        let shareID = UUID().uuidString
+        let rust = MockRustApp(state: makeAppState(rev: 1))
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(bundle: StoredAccountBundle(
+                ownerNsec: "nsec1owner",
+                ownerPubkeyHex: "owner",
+                deviceNsec: "nsec1device"
+            )),
+            dataDir: dataDir,
+            environment: ["IRIS_SHARE_CONTAINER_DIR": shareContainer.path]
+        )
+        let payloadURL = try writePendingShare(
+            id: shareID,
+            text: "hello from share",
+            chatIds: ["owner"],
+            to: shareContainer,
+            autoSend: true
+        )
+
+        XCTAssertTrue(manager.handleShareURL(URL(string: "irischat://share/\(shareID)?send=1")!))
+        XCTAssertNotNil(manager.pendingShare)
+        XCTAssertFalse(rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "hello from share")))
+
+        rust.emit(.fullState(makeLargeFixtureState(rev: 2, account: makeAccount())))
+
+        let sentAfterRestore = await waitUntil {
+            rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "hello from share"))
+        }
+        XCTAssertTrue(sentAfterRestore)
+        XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: "owner")))
+        XCTAssertNil(manager.pendingShare)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: payloadURL.path))
+    }
+
+    @MainActor
+    func testPendingAutoShareOnDiskIsSentWhenAppStartsAuthorized() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let shareContainer = try makeShareContainer()
+        defer {
+            try? FileManager.default.removeItem(at: dataDir)
+            try? FileManager.default.removeItem(at: shareContainer)
+        }
+        let shareID = UUID().uuidString
+        let payloadURL = try writePendingShare(
+            id: shareID,
+            text: "queued while closed",
+            chatIds: ["owner"],
+            to: shareContainer,
+            autoSend: true
+        )
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: ["IRIS_SHARE_CONTAINER_DIR": shareContainer.path]
+        )
+
+        let sentOnLaunch = await waitUntil {
+            rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "queued while closed"))
+        }
+        XCTAssertTrue(sentOnLaunch)
+        XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: "owner")))
+        XCTAssertNil(manager.pendingShare)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: payloadURL.path))
     }
 
     @MainActor

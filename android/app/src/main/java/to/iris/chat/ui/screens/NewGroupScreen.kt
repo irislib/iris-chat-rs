@@ -40,7 +40,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
-import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatThreadSnapshot
@@ -503,7 +502,7 @@ private fun ScaffoldScreen(
         topBar = {
             IrisTopBar(
                 title = title,
-                onBack = { appManager.dispatch(AppAction.NavigateBack) },
+                onBack = { appManager.navigateBack() },
             )
         },
     ) { padding ->

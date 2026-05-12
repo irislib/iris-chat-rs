@@ -15,6 +15,7 @@ private struct StoredSharePayload: Codable {
     let attachments: [StoredShareAttachment]
     let suggestedChatId: String?
     let suggestedChatIds: [String]?
+    let autoSend: Bool?
 }
 
 private struct ShareSuggestionEntry: Codable {
@@ -195,6 +196,7 @@ final class ShareViewController: UIViewController {
     }
 
     @objc private func cancelShare() {
+        deleteStagedPayload()
         complete()
     }
 
@@ -210,7 +212,8 @@ final class ShareViewController: UIViewController {
             text: payload.text,
             attachments: payload.attachments,
             suggestedChatId: selectedIds.first,
-            suggestedChatIds: selectedIds
+            suggestedChatIds: selectedIds,
+            autoSend: true
         )
         stagedPayload = updated
         rewritePayloadOnDisk(updated)
@@ -221,6 +224,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func openMainApp(autoSend: Bool) async {
+        updateStagedPayload(autoSend: autoSend)
         guard let url = shareURL(autoSend: autoSend) else {
             return
         }
@@ -239,7 +243,7 @@ final class ShareViewController: UIViewController {
             await MainActor.run {
                 isOpeningApp = false
                 activityIndicator.stopAnimating()
-                statusLabel.text = "Could not open Iris Chat."
+                statusLabel.text = autoSend ? "Open Iris Chat to finish." : "Could not open Iris Chat."
                 updateActionButtons()
             }
         }
@@ -266,25 +270,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func openURLFromExtension(_ url: URL) async -> Bool {
-        if await extensionContext?.open(url) == true {
-            return true
-        }
-        return await MainActor.run {
-            openURLViaResponderChain(url)
-        }
-    }
-
-    @MainActor private func openURLViaResponderChain(_ url: URL) -> Bool {
-        let selector = NSSelectorFromString("openURL:")
-        var responder: UIResponder? = self
-        while let current = responder {
-            if current.responds(to: selector) {
-                _ = current.perform(selector, with: url)
-                return true
-            }
-            responder = current.next
-        }
-        return false
+        await extensionContext?.open(url) == true
     }
 
     private func shareURL(autoSend: Bool) -> URL? {
@@ -312,6 +298,36 @@ final class ShareViewController: UIViewController {
         if let data = try? JSONEncoder().encode(payload) {
             try? data.write(to: url, options: .atomic)
         }
+    }
+
+    private func updateStagedPayload(autoSend: Bool) {
+        guard let payload = stagedPayload else { return }
+        let updated = StoredSharePayload(
+            id: payload.id,
+            text: payload.text,
+            attachments: payload.attachments,
+            suggestedChatId: payload.suggestedChatId,
+            suggestedChatIds: payload.suggestedChatIds,
+            autoSend: payload.autoSend == true || autoSend
+        )
+        stagedPayload = updated
+        rewritePayloadOnDisk(updated)
+    }
+
+    private func deleteStagedPayload() {
+        guard let payload = stagedPayload else { return }
+        guard let container = FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: appGroupIdentifier
+        ) else {
+            return
+        }
+        let sharesDir = container.appendingPathComponent("pending-shares", isDirectory: true)
+        let payloadURL = sharesDir.appendingPathComponent(payload.id).appendingPathExtension("json")
+        let filesURL = sharesDir.appendingPathComponent("\(payload.id)-files", isDirectory: true)
+        try? FileManager.default.removeItem(at: payloadURL)
+        try? FileManager.default.removeItem(at: filesURL)
+        stagedPayload = nil
+        stagedShareID = nil
     }
 
     private func readSuggestions() -> [ShareSuggestionEntry] {
@@ -356,7 +372,8 @@ final class ShareViewController: UIViewController {
             text: text,
             attachments: collected.attachments,
             suggestedChatId: suggestedChatId,
-            suggestedChatIds: suggestedChatId.map { [$0] }
+            suggestedChatIds: suggestedChatId.map { [$0] },
+            autoSend: suggestedChatId != nil
         )
         do {
             let data = try JSONEncoder().encode(payload)

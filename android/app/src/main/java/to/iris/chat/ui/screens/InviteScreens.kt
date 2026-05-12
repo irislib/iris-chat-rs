@@ -65,11 +65,7 @@ fun CreateInviteScreen(
         topBar = {
             IrisTopBar(
                 title = "Invite",
-                onBack = {
-                    appManager.dispatch(
-                        AppAction.UpdateScreenStack(appState.router.screenStack.dropLast(1)),
-                    )
-                },
+                onBack = { appManager.navigateBack() },
             )
         },
     ) { padding ->
@@ -144,11 +140,7 @@ fun JoinInviteScreen(
         topBar = {
             IrisTopBar(
                 title = "Join chat",
-                onBack = {
-                    appManager.dispatch(
-                        AppAction.UpdateScreenStack(appState.router.screenStack.dropLast(1)),
-                    )
-                },
+                onBack = { appManager.navigateBack() },
             )
         },
     ) { padding ->
