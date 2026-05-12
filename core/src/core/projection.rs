@@ -31,7 +31,7 @@ impl AppCore {
         let t0 = crate::perflog::now_ms();
         self.state.account = self.build_account_snapshot();
         self.state.device_roster = self.build_device_roster_snapshot();
-        self.refresh_relay_connection_status();
+        self.refresh_relay_connection_status_from_cached_statuses();
         self.state.network_status = Some(self.build_network_status_snapshot());
         self.state.public_invite = self.build_public_invite_snapshot();
         self.state.link_device = self.build_link_device_snapshot();
@@ -605,7 +605,7 @@ impl AppCore {
     }
 }
 
-fn relay_connection_status(status: RelayStatus) -> &'static str {
+pub(crate) fn relay_connection_status(status: RelayStatus) -> &'static str {
     match status {
         RelayStatus::Connected => "connected",
         RelayStatus::Initialized | RelayStatus::Pending | RelayStatus::Connecting => "connecting",

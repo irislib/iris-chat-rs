@@ -120,7 +120,8 @@ fn ffi_search_returns_grouped_contacts_groups_and_messages() {
 
     let bob_chat = create_chat_and_send(&app, &inbox, &bob_npub, "hello there bob");
     let _carol_chat = create_chat_and_send(&app, &inbox, &carol_npub, "carol catch up later");
-    let group_chat = create_group_and_send(&app, &inbox, "Project Hello", &dora_npub, "kickoff agenda");
+    let group_chat =
+        create_group_and_send(&app, &inbox, "Project Hello", &dora_npub, "kickoff agenda");
     let _ = group_chat; // group chat id consumed for grouping assertions below
 
     let final_state = inbox.snapshot();
@@ -159,7 +160,10 @@ fn ffi_search_returns_grouped_contacts_groups_and_messages() {
     let scoped = app.search("hello".to_string(), Some(bob_chat.clone()), 20);
     assert!(scoped.contacts.is_empty());
     assert!(scoped.groups.is_empty());
-    assert!(scoped.shortcut.is_none(), "scoped search must not surface global shortcuts");
+    assert!(
+        scoped.shortcut.is_none(),
+        "scoped search must not surface global shortcuts"
+    );
     assert!(!scoped.messages.is_empty());
     for hit in &scoped.messages {
         assert_eq!(hit.chat_id, bob_chat);

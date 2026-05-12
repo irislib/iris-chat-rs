@@ -380,18 +380,36 @@ impl AppCore {
             self.relay_transport_runtime.next_retry_due_at = None;
             self.relay_transport_runtime.next_retry_reason = None;
         }
+        let mut failed_pending_count = 0usize;
+        self.enter_batch();
         for result in results {
-            self.handle_relay_publish_finished(
+            if self.handle_relay_publish_finished(
                 result.event_id,
                 result.message_id,
                 result.chat_id,
                 result.success,
                 result.relay_urls,
                 result.detail,
-            );
+            ) {
+                failed_pending_count += 1;
+            }
         }
+        if failed_pending_count > 0 {
+            self.schedule_relay_transport_retry("publish_failed");
+        }
+        self.exit_batch();
         if drain_dirty && !self.pending_relay_publishes.is_empty() {
-            self.retry_pending_relay_publishes("coalesced_drain");
+            if failed_pending_count == 0 {
+                self.retry_pending_relay_publishes("coalesced_drain");
+            } else {
+                self.push_debug_log(
+                    "relay.transport.drain",
+                    format!(
+                        "reason=coalesced_drain deferred=backoff failed={failed_pending_count} pending={}",
+                        self.pending_relay_publishes.len()
+                    ),
+                );
+            }
         }
     }
 
@@ -403,7 +421,7 @@ impl AppCore {
         success: bool,
         relay_urls: Vec<String>,
         detail: String,
-    ) {
+    ) -> bool {
         self.pending_relay_publish_inflight.remove(&event_id);
         self.push_debug_log("publish.runtime", detail.clone());
         let pending = self.pending_relay_publishes.get(&event_id).cloned();
@@ -411,6 +429,7 @@ impl AppCore {
             && pending
                 .as_ref()
                 .is_some_and(|pending| pending.label == APPCORE_PROTOCOL_BOOTSTRAP_LABEL);
+        let mut should_retry = false;
         if success {
             self.forget_pending_relay_publish(&event_id);
             if let (Some(message_id), Some(chat_id)) = (message_id.as_deref(), chat_id.as_deref()) {
@@ -433,7 +452,7 @@ impl AppCore {
             if let Err(error) = self.app_store.upsert_pending_relay_publish(pending) {
                 self.push_debug_log("publish.runtime.queue", format!("update_failed={error}"));
             }
-            self.schedule_relay_transport_retry("publish_failed");
+            should_retry = true;
         }
         if let (Some(message_id), Some(chat_id)) = (message_id, chat_id) {
             for relay_url in &relay_urls {
@@ -455,6 +474,7 @@ impl AppCore {
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();
+        should_retry
     }
 
     pub(super) fn should_delay_first_contact_payload_publish(

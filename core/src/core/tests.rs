@@ -435,6 +435,74 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
 }
 
 #[test]
+fn failed_publish_drain_batches_results_and_schedules_one_retry() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("publish-drain-fail-batch", &owner, &device);
+    core.relay_transport_runtime.publish_drain_token = 7;
+    core.relay_transport_runtime.publish_drain_in_flight = true;
+    core.relay_transport_runtime.publish_drain_dirty = true;
+
+    let mut results = Vec::new();
+    for index in 0..3 {
+        let event = EventBuilder::new(
+            Kind::from(MESSAGE_EVENT_KIND as u16),
+            format!("failed publish {index}"),
+        )
+        .sign_with_keys(&device)
+        .expect("event");
+        let event_id = event.id.to_string();
+        core.pending_relay_publishes.insert(
+            event_id.clone(),
+            PendingRelayPublish {
+                owner_pubkey_hex: owner.public_key().to_hex(),
+                event_id: event_id.clone(),
+                label: "test".to_string(),
+                event_json: serde_json::to_string(&event).expect("event json"),
+                inner_event_id: None,
+                target_owner_pubkey_hex: None,
+                target_device_id: None,
+                message_id: None,
+                chat_id: None,
+                created_at_secs: event.created_at.as_secs(),
+                attempt_count: 0,
+                last_error: None,
+            },
+        );
+        results.push(RelayPublishDrainResult {
+            event_id,
+            message_id: None,
+            chat_id: None,
+            success: false,
+            relay_urls: Vec::new(),
+            detail: "publish failed".to_string(),
+        });
+    }
+
+    let rev_before = core.state.rev;
+    core.handle_relay_publish_drain_finished(7, results);
+
+    assert_eq!(
+        core.relay_transport_runtime.retry_backoff_attempt, 1,
+        "one failed drain should schedule one transport retry, not one per event"
+    );
+    assert!(
+        core.protocol_subscription_runtime.liveness_due_at.is_some(),
+        "failed drain should schedule a retry wakeup"
+    );
+    assert!(!core.relay_transport_runtime.publish_drain_in_flight);
+    assert_eq!(
+        core.state.rev,
+        rev_before + 1,
+        "drain results should rebuild and emit one full state"
+    );
+    assert!(core
+        .pending_relay_publishes
+        .values()
+        .all(|pending| pending.attempt_count == 1));
+}
+
+#[test]
 fn app_keys_publish_uses_durable_pending_publish_queue() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -644,6 +712,67 @@ fn relay_status_events_match_normalized_relay_urls() {
         relay_status_log_count
     );
     assert_eq!(core.relay_connected_count, 1);
+}
+
+#[test]
+fn relay_status_bucket_only_changes_do_not_emit_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls = vec!["wss://relay.example".to_string()];
+    let device_id = device.public_key().to_hex();
+    let invite =
+        Invite::create_new(device.public_key(), Some(device_id), None).expect("local invite");
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner),
+        device_keys: device.clone(),
+        client: Client::new(device),
+        relay_urls: Vec::new(),
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+
+    while update_rx.try_recv().is_ok() {}
+    core.handle_relay_status_changed("wss://relay.example".to_string(), RelayStatus::Initialized);
+    assert!(
+        matches!(update_rx.try_recv(), Ok(AppUpdate::FullState(_))),
+        "offline -> connecting should still emit once"
+    );
+    while update_rx.try_recv().is_ok() {}
+    let rev = core.state.rev;
+    let relay_status_log_count = core
+        .debug_log
+        .iter()
+        .filter(|entry| entry.category == "relay.status")
+        .count();
+
+    core.handle_relay_status_changed("wss://relay.example".to_string(), RelayStatus::Pending);
+    core.handle_relay_status_changed("wss://relay.example".to_string(), RelayStatus::Connecting);
+
+    assert_eq!(
+        core.state.rev, rev,
+        "internal connecting-state churn must not push a new full state"
+    );
+    assert!(
+        update_rx.try_recv().is_err(),
+        "no FullState should be emitted for connecting -> connecting transitions"
+    );
+    assert_eq!(
+        core.debug_log
+            .iter()
+            .filter(|entry| entry.category == "relay.status")
+            .count(),
+        relay_status_log_count,
+        "suppressed transitions should not churn the visible debug summary"
+    );
 }
 
 #[test]

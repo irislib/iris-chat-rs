@@ -1596,10 +1596,7 @@ mod tests {
             rows.map(|r| r.unwrap()).collect()
         };
         let rows = read_rows();
-        assert_eq!(
-            rows,
-            vec![("evt-a".into(), 0_i64), ("evt-b".into(), 1_i64)]
-        );
+        assert_eq!(rows, vec![("evt-a".into(), 0_i64), ("evt-b".into(), 1_i64)]);
 
         // Append one new event id; the previous rows must keep their
         // sequences (no full rewrite) and the new row must get sequence 2.
@@ -2286,7 +2283,10 @@ mod tests {
         assert_eq!(hits[0].message_id, "m1");
 
         // Empty / whitespace query returns nothing instead of every row.
-        assert!(store.search_messages_fts("   ", None, 10).unwrap().is_empty());
+        assert!(store
+            .search_messages_fts("   ", None, 10)
+            .unwrap()
+            .is_empty());
 
         // Prefix matching (Signal-style live search): "hel" finds "Hello".
         let hits = store.search_messages_fts("hel", None, 10).unwrap();

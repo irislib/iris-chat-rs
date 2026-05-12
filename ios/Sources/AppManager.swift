@@ -180,6 +180,56 @@ private final class ShareSuggestionsExporter {
         }
     }
 }
+
+struct IosMobilePushSyncInput: Equatable {
+    let enabled: Bool
+    let ownerPubkeyHex: String?
+    let ownerSecretAvailable: Bool
+    let messageAuthorPubkeys: [String]
+    let inviteResponsePubkeys: [String]
+    let mobilePushServerUrl: String
+
+    init(state: AppState, ownerNsec: String?) {
+        self.enabled = state.preferences.desktopNotificationsEnabled
+        self.ownerPubkeyHex = nonEmptyTrimmedString(state.mobilePush.ownerPubkeyHex)
+        self.ownerSecretAvailable = nonEmptyTrimmedString(ownerNsec) != nil
+        self.messageAuthorPubkeys = state.mobilePush.messageAuthorPubkeys
+        self.inviteResponsePubkeys = state.mobilePush.inviteResponsePubkeys
+        self.mobilePushServerUrl = state.preferences.mobilePushServerUrl
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private func nonEmptyTrimmedString(_ value: String?) -> String? {
+    let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return trimmed.isEmpty ? nil : trimmed
+}
+
+struct IosStateSideEffectGate {
+    private var lastShareChatList: [ChatThreadSnapshot]?
+    private var lastMobilePushInput: IosMobilePushSyncInput?
+
+    mutating func shouldSyncShareSuggestions(chatList: [ChatThreadSnapshot]) -> Bool {
+        guard lastShareChatList != chatList else {
+            return false
+        }
+        lastShareChatList = chatList
+        return true
+    }
+
+    mutating func shouldSyncMobilePush(state: AppState, ownerNsec: String?) -> Bool {
+        let input = IosMobilePushSyncInput(state: state, ownerNsec: ownerNsec)
+        guard lastMobilePushInput != input else {
+            return false
+        }
+        lastMobilePushInput = input
+        return true
+    }
+
+    mutating func resetMobilePush() {
+        lastMobilePushInput = nil
+    }
+}
 #endif
 
 private struct ClientDebugLogEntry {
@@ -805,6 +855,7 @@ final class AppManager: ObservableObject {
     private let shareSuggestionsExporter = ShareSuggestionsExporter(
         appGroupIdentifier: AppPaths.appGroupIdentifier
     )
+    private var iosSideEffectGate = IosStateSideEffectGate()
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
@@ -884,8 +935,7 @@ final class AppManager: ObservableObject {
             syncStartupAtLoginPreference(initialState.preferences.startupAtLoginEnabled)
         }
 #if os(iOS)
-        shareSuggestionDonor.syncRecentChats(initialState.chatList)
-        shareSuggestionsExporter.export(chats: initialState.chatList)
+        syncShareSuggestionsIfNeeded(chatList: initialState.chatList)
 #endif
 
 #if os(iOS) || os(macOS)
@@ -1754,6 +1804,33 @@ final class AppManager: ObservableObject {
         apply(update: .fullState(rust.state()))
     }
 
+#if os(iOS)
+    private func syncShareSuggestionsIfNeeded(chatList: [ChatThreadSnapshot]) {
+        guard iosSideEffectGate.shouldSyncShareSuggestions(chatList: chatList) else {
+            return
+        }
+        shareSuggestionDonor.syncRecentChats(chatList)
+        shareSuggestionsExporter.export(chats: chatList)
+    }
+
+    private func syncMobilePushIfNeeded(state: AppState) {
+        guard nonEmptyTrimmedString(state.mobilePush.ownerPubkeyHex) != nil else {
+            iosSideEffectGate.resetMobilePush()
+            return
+        }
+        let ownerNsec = storedAccountBundle?.ownerNsec
+        guard iosSideEffectGate.shouldSyncMobilePush(state: state, ownerNsec: ownerNsec) else {
+            return
+        }
+        mobilePushRuntime.sync(state: state, ownerNsec: ownerNsec)
+    }
+
+    private func syncIosStateSideEffects(for state: AppState) {
+        syncShareSuggestionsIfNeeded(chatList: state.chatList)
+        syncMobilePushIfNeeded(state: state)
+    }
+#endif
+
     func apply(update: AppUpdate) {
         switch update {
         case .persistAccountBundle(_, let ownerNsec, let ownerPubkeyHex, let deviceNsec):
@@ -1765,6 +1842,9 @@ final class AppManager: ObservableObject {
             )
             secretStore.save(bundle)
             storedAccountBundle = bundle
+#if os(iOS)
+            syncMobilePushIfNeeded(state: state)
+#endif
         case .nearbyPublishedEvent(let eventID, let kind, let createdAtSecs, let eventJson):
 #if os(iOS) || os(macOS)
             nearbyIris.publish(
@@ -1793,9 +1873,7 @@ final class AppManager: ObservableObject {
             syncNearbyLanPreference(from: oldState, to: nextState)
 #endif
 #if os(iOS)
-            shareSuggestionDonor.syncRecentChats(nextState.chatList)
-            shareSuggestionsExporter.export(chats: nextState.chatList)
-            mobilePushRuntime.sync(state: nextState, ownerNsec: storedAccountBundle?.ownerNsec)
+            syncIosStateSideEffects(for: nextState)
 #endif
             bootstrapInFlight = false
             if let toast = nextState.toast, !toast.isEmpty {

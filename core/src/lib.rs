@@ -175,22 +175,26 @@ impl FfiApp {
     /// see those. Default snapshot on timeout so a wedged core can't
     /// pin the test on a perpetual wait.
     pub fn core_perf_counters(&self) -> CorePerfCountersSnapshot {
-        ffi_or("ffiapp.core_perf_counters", CorePerfCountersSnapshot::default(), || {
-            let (reply_tx, reply_rx) = flume::bounded(1);
-            if self
-                .core_tx
-                .send(CoreMsg::CorePerfCounters(reply_tx))
-                .is_err()
-            {
-                return CorePerfCountersSnapshot::default();
-            }
-            match reply_rx.recv_timeout(Duration::from_secs(2)) {
-                Ok(snapshot) => CorePerfCountersSnapshot {
-                    debug_snapshot_builds: snapshot.debug_snapshot_builds,
-                },
-                Err(_) => CorePerfCountersSnapshot::default(),
-            }
-        })
+        ffi_or(
+            "ffiapp.core_perf_counters",
+            CorePerfCountersSnapshot::default(),
+            || {
+                let (reply_tx, reply_rx) = flume::bounded(1);
+                if self
+                    .core_tx
+                    .send(CoreMsg::CorePerfCounters(reply_tx))
+                    .is_err()
+                {
+                    return CorePerfCountersSnapshot::default();
+                }
+                match reply_rx.recv_timeout(Duration::from_secs(2)) {
+                    Ok(snapshot) => CorePerfCountersSnapshot {
+                        debug_snapshot_builds: snapshot.debug_snapshot_builds,
+                    },
+                    Err(_) => CorePerfCountersSnapshot::default(),
+                }
+            },
+        )
     }
 
     /// Grouped Signal-style search: filters the in-memory chat list
@@ -403,7 +407,9 @@ impl FfiApp {
     }
 
     pub fn prepare_for_suspend(&self) {
-        self.perf.prepare_for_suspend.fetch_add(1, Ordering::Relaxed);
+        self.perf
+            .prepare_for_suspend
+            .fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.prepare_for_suspend", (), || {
             let (reply_tx, reply_rx) = flume::bounded(1);
             if self
@@ -741,7 +747,9 @@ fn enrich_message_hits(
                 .map(|chat| chat.display_name.clone())
                 .unwrap_or_else(|| short_chat_label(&hit.chat_id));
             let picture_url = parent.and_then(|chat| chat.picture_url.clone());
-            let kind = parent.map(|chat| chat.kind.clone()).unwrap_or(ChatKind::Direct);
+            let kind = parent
+                .map(|chat| chat.kind.clone())
+                .unwrap_or(ChatKind::Direct);
             MessageSearchHit {
                 chat_id: hit.chat_id,
                 message_id: hit.message_id,
@@ -854,9 +862,7 @@ pub fn is_valid_peer_input(input: String) -> bool {
 /// regular search-style text.
 #[uniffi::export]
 pub fn classify_chat_input(input: String) -> Option<ChatInputShortcut> {
-    ffi_or("classify_chat_input", None, || {
-        chat_input_shortcut(&input)
-    })
+    ffi_or("classify_chat_input", None, || chat_input_shortcut(&input))
 }
 
 fn chat_input_shortcut(raw: &str) -> Option<ChatInputShortcut> {
@@ -900,7 +906,10 @@ fn short_invite_display(invite: &str) -> String {
     // Strip the scheme + host so the row reads "iris.to/invite/…" not
     // a 120-char URL. We don't try to parse the bech32 payload; the
     // visible host is enough context for the user.
-    let after_scheme = invite.split_once("://").map(|(_, rest)| rest).unwrap_or(invite);
+    let after_scheme = invite
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(invite);
     if after_scheme.len() > 32 {
         format!("{}…", &after_scheme[..32])
     } else {

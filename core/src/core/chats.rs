@@ -293,11 +293,9 @@ impl AppCore {
         self.rebuild_state();
         self.emit_state();
 
-        let _ = self
-            .core_sender
-            .send(CoreMsg::Internal(Box::new(InternalEvent::OpenChatFinalize {
-                chat_id,
-            })));
+        let _ = self.core_sender.send(CoreMsg::Internal(Box::new(
+            InternalEvent::OpenChatFinalize { chat_id },
+        )));
     }
 
     pub(super) fn open_chat_finalize(&mut self, chat_id: &str) {
@@ -764,7 +762,10 @@ impl AppCore {
                         .iter()
                         .any(|existing| existing == channel)
                     {
-                        message.delivery_trace.transport_channels.push(channel.to_string());
+                        message
+                            .delivery_trace
+                            .transport_channels
+                            .push(channel.to_string());
                         changed = true;
                     }
                 }

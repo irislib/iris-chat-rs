@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::projection::relay_connection_status;
 
 const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
 const PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS: u64 = 8;
@@ -1138,18 +1139,27 @@ impl AppCore {
         {
             return;
         }
-        if self
-            .relay_status_by_url
-            .get(&normalized_relay_url)
+        let previous_status = self.relay_status_by_url.get(&normalized_relay_url).cloned();
+        if previous_status
+            .as_ref()
             .is_some_and(|existing| *existing == status)
         {
             return;
         }
+        let previous_visible_status = previous_status
+            .clone()
+            .map(relay_connection_status)
+            .unwrap_or("offline");
+        let next_visible_status = relay_connection_status(status.clone());
         let was_connected = self.relay_connected_count > 0;
         self.relay_status_by_url
             .insert(normalized_relay_url.clone(), status.clone());
         self.refresh_relay_connection_status_from_cached_statuses();
         let is_connected = self.relay_connected_count > 0;
+        let visible_status_changed = previous_visible_status != next_visible_status;
+        if !visible_status_changed && was_connected == is_connected {
+            return;
+        }
         self.push_debug_log(
             "relay.status",
             format!("url={normalized_relay_url} status={status}"),
@@ -1188,7 +1198,7 @@ impl AppCore {
         self.apply_relay_statuses(relay_statuses);
     }
 
-    fn refresh_relay_connection_status_from_cached_statuses(&mut self) {
+    pub(super) fn refresh_relay_connection_status_from_cached_statuses(&mut self) {
         let configured = self.configured_relay_url_set();
         let configured_relay_count = configured.len();
         self.relay_connected_count = self

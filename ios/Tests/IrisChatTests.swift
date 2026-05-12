@@ -217,6 +217,12 @@ private func makeAppState(
     account: AccountSnapshot? = nil,
     chatList: [ChatThreadSnapshot] = [],
     currentChat: CurrentChatSnapshot? = nil,
+    mobilePush: MobilePushSyncSnapshot = MobilePushSyncSnapshot(
+        ownerPubkeyHex: nil,
+        messageAuthorPubkeys: [],
+        inviteResponsePubkeys: [],
+        sessions: []
+    ),
     preferences: PreferencesSnapshot = PreferencesSnapshot(
         sendTypingIndicators: true,
         sendReadReceipts: true,
@@ -248,12 +254,7 @@ private func makeAppState(
         publicInvite: nil,
         linkDevice: nil,
         networkStatus: nil,
-        mobilePush: MobilePushSyncSnapshot(
-            ownerPubkeyHex: nil,
-            messageAuthorPubkeys: [],
-            inviteResponsePubkeys: [],
-            sessions: []
-        ),
+        mobilePush: mobilePush,
         preferences: preferences,
         toast: toast
     )
@@ -347,6 +348,39 @@ final class IrisChatTests: XCTestCase {
     }
 
 #if os(iOS)
+    func testIosStateSideEffectGateIgnoresUnrelatedFullStateChanges() {
+        var gate = IosStateSideEffectGate()
+        let chatList = [makeChatThread(unreadCount: 0)]
+        let push = MobilePushSyncSnapshot(
+            ownerPubkeyHex: "owner",
+            messageAuthorPubkeys: ["author-1"],
+            inviteResponsePubkeys: ["invite-1"],
+            sessions: []
+        )
+        let first = makeAppState(rev: 1, chatList: chatList, mobilePush: push)
+        let unrelated = makeAppState(rev: 2, chatList: chatList, mobilePush: push, toast: "Synced")
+
+        XCTAssertTrue(gate.shouldSyncShareSuggestions(chatList: first.chatList))
+        XCTAssertFalse(gate.shouldSyncShareSuggestions(chatList: unrelated.chatList))
+        XCTAssertTrue(gate.shouldSyncMobilePush(state: first, ownerNsec: "secret"))
+        XCTAssertFalse(gate.shouldSyncMobilePush(state: unrelated, ownerNsec: "secret"))
+    }
+
+    func testIosStateSideEffectGateTracksPushSecretAvailability() {
+        var gate = IosStateSideEffectGate()
+        let push = MobilePushSyncSnapshot(
+            ownerPubkeyHex: "owner",
+            messageAuthorPubkeys: ["author-1"],
+            inviteResponsePubkeys: [],
+            sessions: []
+        )
+        let state = makeAppState(rev: 1, mobilePush: push)
+
+        XCTAssertTrue(gate.shouldSyncMobilePush(state: state, ownerNsec: nil))
+        XCTAssertTrue(gate.shouldSyncMobilePush(state: state, ownerNsec: "secret"))
+        XCTAssertFalse(gate.shouldSyncMobilePush(state: state, ownerNsec: "secret"))
+    }
+
     @MainActor
     func testNearbyLanDoesNotAutoStartBeforeLocalNetworkGrant() async throws {
         let attemptedKey = "nearbyLanPermissionPromptAttempted"

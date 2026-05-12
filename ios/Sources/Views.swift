@@ -726,48 +726,50 @@ private struct OfflineStatusBanner: View {
     let appSceneIsActive: Bool
     let foregroundedAt: Date
     let onTap: () -> Void
+    @State private var now = Date()
 
     var body: some View {
+        let text = bannerText(at: now)
         Button(action: onTap) {
-            TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                let text = bannerText(at: timeline.date)
-                VStack(spacing: 0) {
-                    if let text {
-                        // Glass capsule with a small accentAlt offline
-                        // icon — the previous full-width orange bar
-                        // screamed at the user every time a relay
-                        // blipped. Carrying the warning in the icon
-                        // alone keeps the banner readable without
-                        // dominating the screen.
-                        HStack(spacing: 6) {
-                            Image(systemName: "wifi.slash")
-                                .font(.system(size: 11, weight: .bold))
-                                .foregroundStyle(palette.accentAlt)
-                            Text(text)
-                                .font(.system(.caption, design: .rounded, weight: .semibold))
-                                .foregroundStyle(palette.textPrimary)
-                                .lineLimit(1)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .irisGlassSurface(in: Capsule())
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(palette.border, lineWidth: 0.5)
-                        )
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, 4)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                        .accessibilityIdentifier("offlineStatusBanner")
+            VStack(spacing: 0) {
+                if let text {
+                    // Glass capsule with a small accentAlt offline
+                    // icon — the previous full-width orange bar
+                    // screamed at the user every time a relay
+                    // blipped. Carrying the warning in the icon
+                    // alone keeps the banner readable without
+                    // dominating the screen.
+                    HStack(spacing: 6) {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: 11, weight: .bold))
+                            .foregroundStyle(palette.accentAlt)
+                        Text(text)
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.textPrimary)
+                            .lineLimit(1)
                     }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .irisGlassSurface(in: Capsule())
+                    .overlay(
+                        Capsule()
+                            .strokeBorder(palette.border, lineWidth: 0.5)
+                    )
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 4)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .accessibilityIdentifier("offlineStatusBanner")
                 }
-                .clipped()
-                .animation(.easeInOut(duration: 0.22), value: text)
             }
+            .clipped()
+            .animation(.easeInOut(duration: 0.22), value: text)
         }
         .buttonStyle(.irisPlain)
         .accessibilityLabel("Open settings")
+        .task(id: refreshToken) {
+            await refreshBannerClockIfNeeded()
+        }
     }
 
     private func bannerText(at date: Date) -> String? {
@@ -783,6 +785,51 @@ private struct OfflineStatusBanner: View {
         let bluetoothStatus = nearbyService.isBluetoothOn ? "on" : "off"
         let wifiStatus = mobileWifiEnabled(nearbyService) ? "on" : "off"
         return "Offline, Bluetooth \(bluetoothStatus), Wi-Fi \(wifiStatus)"
+    }
+
+    private var refreshToken: String {
+        [
+            appSceneIsActive ? "active" : "inactive",
+            String(networkStatus?.connectedRelayCount ?? 0),
+            String(networkStatus?.allRelaysOfflineSinceSecs ?? 0),
+            String(foregroundedAt.timeIntervalSince1970),
+            nearbyService.isBluetoothOn ? "bt-on" : "bt-off",
+            mobileWifiEnabled(nearbyService) ? "wifi-on" : "wifi-off",
+        ].joined(separator: "|")
+    }
+
+    private func nextRefreshDate(at date: Date) -> Date? {
+        guard appSceneIsActive,
+              let status = networkStatus,
+              !status.relayUrls.isEmpty,
+              status.connectedRelayCount == 0,
+              let offlineSince = status.allRelaysOfflineSinceSecs else {
+            return nil
+        }
+        let offlineDeadline = Date(
+            timeIntervalSince1970: TimeInterval(offlineSince) + offlineBannerGraceInterval
+        )
+        let foregroundDeadline = foregroundedAt.addingTimeInterval(offlineBannerGraceInterval)
+        let deadline = max(offlineDeadline, foregroundDeadline)
+        return date < deadline ? deadline : nil
+    }
+
+    private func refreshBannerClockIfNeeded() async {
+        let current = Date()
+        await MainActor.run {
+            now = current
+        }
+        guard let deadline = nextRefreshDate(at: current) else {
+            return
+        }
+        let seconds = max(0, deadline.timeIntervalSince(current))
+        try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+        guard !Task.isCancelled else {
+            return
+        }
+        await MainActor.run {
+            now = Date()
+        }
     }
 }
 
