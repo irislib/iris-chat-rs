@@ -6,6 +6,7 @@ pub mod local_relay;
 pub mod perflog;
 mod qr;
 mod state;
+mod test_fixtures;
 mod updates;
 
 use std::any::Any;
@@ -20,6 +21,7 @@ use flume::{Receiver, Sender};
 pub use actions::AppAction;
 pub use qr::*;
 pub use state::*;
+pub use test_fixtures::*;
 pub use updates::*;
 
 use crate::core::AppCore;
