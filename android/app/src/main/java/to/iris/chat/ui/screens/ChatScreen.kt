@@ -87,11 +87,13 @@ import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.OutgoingAttachment
 import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.Screen
+import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisInlineAction
+import to.iris.chat.ui.components.IrisSearchViewMoreRow
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisChatListRow
 import to.iris.chat.ui.components.IrisTopBar
@@ -1056,21 +1058,22 @@ private fun InChatSearchSheet(
     chatDisplayName: String,
     onDismiss: () -> Unit,
 ) {
-    val appState by appManager.state.collectAsStateWithLifecycle()
     var query by remember(chatId) { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
     val trimmed = query.trim()
-    val results by remember(query, chatId, appState.rev) {
-        derivedStateOf {
+    var messageSearchLimit by remember(chatId, trimmed) { mutableStateOf(InitialMessageSearchLimit) }
+    var results by remember(chatId) { mutableStateOf<SearchResultSnapshot?>(null) }
+
+    LaunchedEffect(chatId, trimmed, messageSearchLimit) {
+        results =
             if (trimmed.isEmpty()) {
                 null
             } else {
-                appManager.search(trimmed, scopeChatId = chatId)
+                appManager.search(trimmed, scopeChatId = chatId, limit = messageSearchLimit)
             }
-        }
     }
 
     Dialog(
@@ -1129,7 +1132,7 @@ private fun InChatSearchSheet(
                         .padding(padding)
                         .background(MaterialTheme.colorScheme.background),
                 ) {
-                    val current = results
+                    val current = results?.takeIf { it.matchesSearchRequest(trimmed, scopeChatId = chatId) }
                     if (trimmed.isEmpty()) {
                         item {
                             Box(
@@ -1179,6 +1182,13 @@ private fun InChatSearchSheet(
                                     appManager.openChatAtMessage(hit.chatId, hit.messageId)
                                 },
                             )
+                        }
+                        if (current.messages.size.toUInt() >= messageSearchLimit) {
+                            item(key = "in-chat-search-more") {
+                                IrisSearchViewMoreRow {
+                                    messageSearchLimit = nextMessageSearchLimit(messageSearchLimit)
+                                }
+                            }
                         }
                     }
                 }

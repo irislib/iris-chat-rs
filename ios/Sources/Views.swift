@@ -2494,7 +2494,19 @@ private struct InChatSearchSheet: View {
     // Same query-keyed cache as ChatListScreen so a state push
     // (e.g. an incoming message) doesn't re-run the FTS5 query.
     @State private var cachedResults: SearchResultSnapshot?
+    @State private var messageSearchLimit: UInt32 = Self.initialMessageSearchLimit
     @FocusState private var isFocused: Bool
+
+    private static let initialMessageSearchLimit: UInt32 = 50
+    private static let messageSearchLimitStep: UInt32 = 50
+
+    private var trimmedQuery: String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var searchRequestToken: String {
+        "\(target.chatId)|\(trimmedQuery)|\(messageSearchLimit)"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -2528,7 +2540,7 @@ private struct InChatSearchSheet: View {
 
             Divider()
 
-            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmed = trimmedQuery
             ScrollView {
                 if trimmed.isEmpty {
                     Text("Type to search messages in this chat.")
@@ -2536,7 +2548,9 @@ private struct InChatSearchSheet: View {
                         .foregroundStyle(palette.muted)
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 48)
-                } else if let results = cachedResults {
+                } else if let results = cachedResults,
+                          results.query.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed,
+                          results.scopeChatId == target.chatId {
                     if results.messages.isEmpty {
                         Text("No matches")
                             .font(.system(.body, design: .rounded))
@@ -2568,6 +2582,11 @@ private struct InChatSearchSheet: View {
                                     }
                                 )
                             }
+                            if results.messages.count >= Int(messageSearchLimit) {
+                                SearchViewMoreRow {
+                                    viewMoreMessages()
+                                }
+                            }
                         }
                     }
                 }
@@ -2575,12 +2594,20 @@ private struct InChatSearchSheet: View {
         }
         .background(palette.background)
         .onAppear { isFocused = true }
-        .task(id: query.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        .irisOnChange(of: trimmedQuery) { _ in
+            messageSearchLimit = Self.initialMessageSearchLimit
+        }
+        .task(id: searchRequestToken) {
+            let trimmed = trimmedQuery
             cachedResults = trimmed.isEmpty
                 ? nil
-                : manager.search(trimmed, scopeChatId: target.chatId)
+                : manager.search(trimmed, scopeChatId: target.chatId, limit: messageSearchLimit)
         }
+    }
+
+    private func viewMoreMessages() {
+        let nextLimit = messageSearchLimit.addingReportingOverflow(Self.messageSearchLimitStep)
+        messageSearchLimit = nextLimit.overflow ? UInt32.max : nextLimit.partialValue
     }
 }
 

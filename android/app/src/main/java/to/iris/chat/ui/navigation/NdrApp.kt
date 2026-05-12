@@ -354,7 +354,8 @@ private fun ShareTargetDialog(
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    var selectedChatIds by remember(chats) { mutableStateOf(emptySet<String>()) }
+    var selectedChatIds by remember { mutableStateOf(emptySet<String>()) }
+    val availableChatIds = remember(chats) { chats.mapTo(mutableSetOf()) { it.chatId } }
     val filteredChats =
         remember(chats, query) {
             val normalized = query.trim().lowercase()
@@ -364,6 +365,13 @@ private fun ShareTargetDialog(
                 chats.filter { chat -> chat.matchesShareQuery(normalized) }
             }
         }
+
+    LaunchedEffect(availableChatIds) {
+        val prunedSelection = selectedChatIds.intersect(availableChatIds)
+        if (prunedSelection.size != selectedChatIds.size) {
+            selectedChatIds = prunedSelection
+        }
+    }
 
     if (chats.isEmpty()) {
         AlertDialog(

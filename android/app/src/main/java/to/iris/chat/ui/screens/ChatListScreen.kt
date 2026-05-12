@@ -38,11 +38,9 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -75,6 +73,7 @@ import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisChatListRow
 import to.iris.chat.ui.components.IrisIcons
+import to.iris.chat.ui.components.IrisSearchViewMoreRow
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
 import to.iris.chat.ui.theme.IrisTheme
@@ -94,19 +93,18 @@ fun ChatListScreen(
     val trimmedQuery = searchQuery.trim()
     val searchActive = trimmedQuery.isNotEmpty()
     var expandedSearchSections by remember(trimmedQuery) { mutableStateOf(emptySet<SearchSection>()) }
-    var messageSearchLimit by remember(trimmedQuery) { mutableStateOf(50u) }
-    // Re-evaluate whenever the query, chat list, or revision change so
-    // an incoming message shows up in matched contacts immediately. The
-    // search() call is sub-millisecond against FTS5 and only inspects
-    // in-memory state for the contacts/groups buckets.
-    val searchResults: SearchResultSnapshot? by remember(searchQuery, appState.rev, messageSearchLimit) {
-        derivedStateOf {
-            if (searchActive) {
-                appManager.search(trimmedQuery, limit = messageSearchLimit)
-            } else {
+    var messageSearchLimit by remember(trimmedQuery) { mutableStateOf(InitialMessageSearchLimit) }
+    var searchResults by remember { mutableStateOf<SearchResultSnapshot?>(null) }
+
+    // Keep Rust/SQLite work out of composition. Search is refreshed only for
+    // user-driven inputs: the query itself and explicit "view more" requests.
+    LaunchedEffect(trimmedQuery, messageSearchLimit) {
+        searchResults =
+            if (trimmedQuery.isEmpty()) {
                 null
+            } else {
+                appManager.search(trimmedQuery, limit = messageSearchLimit)
             }
-        }
     }
 
     // Mirrors NewChatScreen's auto-proceed behaviour: when the user
@@ -201,7 +199,7 @@ fun ChatListScreen(
                 )
             }
             if (searchActive) {
-                val results = searchResults
+                val results = searchResults?.takeIf { it.matchesSearchRequest(trimmedQuery) }
                 val emptyResults = results == null
                     || (results.contacts.isEmpty()
                         && results.groups.isEmpty()
@@ -249,7 +247,7 @@ fun ChatListScreen(
                         }
                         if (results.contacts.size > contacts.size) {
                             item(key = "section-contacts-more") {
-                                SearchViewMoreRow {
+                                IrisSearchViewMoreRow {
                                     expandedSearchSections = expandedSearchSections + SearchSection.Contacts
                                 }
                             }
@@ -272,7 +270,7 @@ fun ChatListScreen(
                         }
                         if (results.groups.size > groups.size) {
                             item(key = "section-groups-more") {
-                                SearchViewMoreRow {
+                                IrisSearchViewMoreRow {
                                     expandedSearchSections = expandedSearchSections + SearchSection.Groups
                                 }
                             }
@@ -295,12 +293,12 @@ fun ChatListScreen(
                         }
                         val canShowFetchedMessages = results.messages.size > messages.size
                         val canFetchMoreMessages = SearchSection.Messages in expandedSearchSections &&
-                            results.messages.size >= messageSearchLimit.toInt()
+                            results.messages.size.toUInt() >= messageSearchLimit
                         if (canShowFetchedMessages || canFetchMoreMessages) {
                             item(key = "section-messages-more") {
-                                SearchViewMoreRow {
+                                IrisSearchViewMoreRow {
                                     if (SearchSection.Messages in expandedSearchSections) {
-                                        messageSearchLimit += 50u
+                                        messageSearchLimit = nextMessageSearchLimit(messageSearchLimit)
                                     } else {
                                         expandedSearchSections = expandedSearchSections + SearchSection.Messages
                                     }
@@ -836,31 +834,6 @@ private fun SearchSectionHeader(title: String) {
         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
         color = IrisTheme.palette.muted,
     )
-}
-
-@Composable
-private fun SearchViewMoreRow(onClick: () -> Unit) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = 16.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            imageVector = Icons.Filled.KeyboardArrowDown,
-            contentDescription = null,
-            tint = IrisTheme.palette.muted,
-            modifier = Modifier.size(32.dp),
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-        Text(
-            text = "View more",
-            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-    }
 }
 
 @Composable
