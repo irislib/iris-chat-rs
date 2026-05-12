@@ -196,6 +196,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
         title_status_label: title_status_label.clone(),
         title_slot: title_slot.clone(),
     };
+    attach_user_activity_tracking(&window, &manager, &current);
     apply_state(&content_slot, &header_widgets, &manager, &current.borrow());
     show_toast_if_changed(&toast_overlay, &last_toast, &current.borrow().toast);
 
@@ -274,14 +275,82 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     });
 
     let manager_for_focus = manager.clone();
+    let current_for_focus = current.clone();
     window.connect_is_active_notify(move |w| {
-        if w.is_active() {
+        let active = w.is_active();
+        manager_for_focus.set_window_active(active);
+        if active {
             manager_for_focus.dispatch(AppAction::AppForegrounded);
+            let state = current_for_focus.borrow();
+            mark_active_chat_seen_if_allowed(&state, &manager_for_focus);
         }
     });
 
     if present_on_create {
         window.present();
+    }
+}
+
+fn attach_user_activity_tracking(
+    window: &adw::ApplicationWindow,
+    manager: &Rc<AppManager>,
+    current: &Rc<RefCell<AppState>>,
+) {
+    let motion = gtk::EventControllerMotion::new();
+    {
+        let manager = manager.clone();
+        let current = current.clone();
+        motion.connect_motion(move |_, _, _| {
+            record_user_activity_and_mark_seen(&manager, &current);
+        });
+    }
+    window.add_controller(motion);
+
+    let click = gtk::GestureClick::new();
+    {
+        let manager = manager.clone();
+        let current = current.clone();
+        click.connect_pressed(move |_, _, _, _| {
+            record_user_activity_and_mark_seen(&manager, &current);
+        });
+    }
+    window.add_controller(click);
+
+    let key = gtk::EventControllerKey::new();
+    {
+        let manager = manager.clone();
+        let current = current.clone();
+        key.connect_key_pressed(move |_, _, _, _| {
+            record_user_activity_and_mark_seen(&manager, &current);
+            glib::Propagation::Proceed
+        });
+    }
+    window.add_controller(key);
+
+    let scroll = gtk::EventControllerScroll::new(gtk::EventControllerScrollFlags::BOTH_AXES);
+    {
+        let manager = manager.clone();
+        let current = current.clone();
+        scroll.connect_scroll(move |_, _, _| {
+            record_user_activity_and_mark_seen(&manager, &current);
+            glib::Propagation::Proceed
+        });
+    }
+    window.add_controller(scroll);
+}
+
+fn record_user_activity_and_mark_seen(manager: &Rc<AppManager>, current: &Rc<RefCell<AppState>>) {
+    manager.record_user_activity();
+    let state = current.borrow();
+    mark_active_chat_seen_if_allowed(&state, manager);
+}
+
+fn mark_active_chat_seen_if_allowed(state: &AppState, manager: &Rc<AppManager>) {
+    if !matches!(current_screen(state), Screen::Chat { .. }) {
+        return;
+    }
+    if let Some(chat) = state.current_chat.as_ref() {
+        screens::chat::mark_visible_seen(chat, manager);
     }
 }
 

@@ -175,6 +175,7 @@ private class LiveRustAppClient(
 }
 
 private const val MOBILE_PUSH_GROUP_CHAT_PREFIX = "group:"
+private const val ACTIVE_CHAT_SEEN_IDLE_LIMIT_SECS = 5 * 60L
 
 private fun activeNotificationChatIds(
     currentChat: CurrentChatSnapshot?,
@@ -297,7 +298,9 @@ class AppManager(
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
 
     private val mutableState = MutableStateFlow(rust.state())
+    private val mutableAppForegrounded = MutableStateFlow(false)
     private val mutableForegroundedAtSecs = MutableStateFlow(currentTimeSeconds())
+    private val mutableLastUserActivityAtSecs = MutableStateFlow(currentTimeSeconds())
 
     /**
      * Whole-state flow for callers that genuinely need the consolidated
@@ -307,7 +310,9 @@ class AppManager(
      * relay event, even those that don't change anything the screen renders.
      */
     val state: StateFlow<AppState> = mutableState.asStateFlow()
+    val appForegrounded: StateFlow<Boolean> = mutableAppForegrounded.asStateFlow()
     val foregroundedAtSecs: StateFlow<Long> = mutableForegroundedAtSecs.asStateFlow()
+    val lastUserActivityAtSecs: StateFlow<Long> = mutableLastUserActivityAtSecs.asStateFlow()
 
     // Per-slice flows. Each derives from `mutableState` via
     // `map { ... }.distinctUntilChanged()` so a Compose subscriber only
@@ -502,12 +507,15 @@ class AppManager(
 
     fun appForegrounded() {
         appInForeground = true
+        mutableAppForegrounded.value = true
         mutableForegroundedAtSecs.value = currentTimeSeconds()
+        recordUserActivity()
         dispatchToRust(AppAction.AppForegrounded, showsToastOnFailure = false)
     }
 
     fun appBackgrounded() {
         appInForeground = false
+        mutableAppForegrounded.value = false
         runCatching {
             rust.prepareForSuspend()
         }.onFailure { error ->
@@ -549,6 +557,20 @@ class AppManager(
             dispatchToRust(AppAction.CreateGroup(trimmedName, trimmedMembers))
         }
     }
+
+    fun recordUserActivity() {
+        val now = currentTimeSeconds()
+        if (now != mutableLastUserActivityAtSecs.value) {
+            mutableLastUserActivityAtSecs.value = now
+        }
+    }
+
+    fun canMarkActiveChatSeen(
+        appForegrounded: Boolean = this.appInForeground,
+        lastUserActivityAtSecs: Long = this.mutableLastUserActivityAtSecs.value,
+    ): Boolean =
+        appForegrounded &&
+            currentTimeSeconds() - lastUserActivityAtSecs <= ACTIVE_CHAT_SEEN_IDLE_LIMIT_SECS
 
     fun updateGroupName(
         groupId: String,

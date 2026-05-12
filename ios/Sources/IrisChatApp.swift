@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+#endif
 
 @main
 struct IrisChatApp: App {
@@ -11,6 +14,9 @@ struct IrisChatApp: App {
     var body: some Scene {
         WindowGroup {
             RootView(manager: manager)
+#if os(iOS)
+                .background(IOSUserActivityMonitor(manager: manager))
+#endif
                 .onAppear {
                     appDelegate.manager = manager
                 }
@@ -37,3 +43,104 @@ struct IrisChatApp: App {
         }
     }
 }
+
+#if os(iOS)
+private struct IOSUserActivityMonitor: UIViewRepresentable {
+    @ObservedObject var manager: AppManager
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(manager: manager)
+    }
+
+    func makeUIView(context: Context) -> MonitorView {
+        let view = MonitorView()
+        view.onWindowChanged = { [weak coordinator = context.coordinator] window in
+            coordinator?.attach(to: window)
+        }
+        return view
+    }
+
+    func updateUIView(_ uiView: MonitorView, context: Context) {
+        context.coordinator.manager = manager
+        context.coordinator.attach(to: uiView.window)
+    }
+
+    final class MonitorView: UIView {
+        var onWindowChanged: ((UIWindow?) -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            onWindowChanged?(window)
+        }
+
+        override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+            false
+        }
+    }
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        weak var manager: AppManager?
+        private weak var attachedWindow: UIWindow?
+        private var recognizer: TouchActivityRecognizer?
+
+        init(manager: AppManager) {
+            self.manager = manager
+        }
+
+        func attach(to window: UIWindow?) {
+            guard attachedWindow !== window else { return }
+            if let recognizer, let attachedWindow {
+                attachedWindow.removeGestureRecognizer(recognizer)
+            }
+            attachedWindow = window
+            guard let window else {
+                recognizer = nil
+                return
+            }
+            let recognizer = TouchActivityRecognizer { [weak self] in
+                self?.manager?.recordUserActivity()
+            }
+            recognizer.cancelsTouchesInView = false
+            recognizer.delaysTouchesBegan = false
+            recognizer.delaysTouchesEnded = false
+            recognizer.delegate = self
+            window.addGestureRecognizer(recognizer)
+            self.recognizer = recognizer
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            true
+        }
+    }
+}
+
+private final class TouchActivityRecognizer: UIGestureRecognizer {
+    private let onActivity: () -> Void
+
+    init(onActivity: @escaping () -> Void) {
+        self.onActivity = onActivity
+        super.init(target: nil, action: nil)
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        onActivity()
+        state = .failed
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        onActivity()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        onActivity()
+        state = .failed
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .cancelled
+    }
+}
+#endif

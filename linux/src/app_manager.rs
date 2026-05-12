@@ -1,7 +1,8 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use iris_chat_core::{
     AppAction, AppReconciler, AppState, AppUpdate, DesktopNearbyObserver, DesktopNearbySnapshot,
@@ -9,6 +10,8 @@ use iris_chat_core::{
 };
 
 use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
+
+const ACTIVE_CHAT_SEEN_IDLE_LIMIT: Duration = Duration::from_secs(5 * 60);
 
 /// Chat-list search box state. Lives on the UI thread; queries are
 /// re-issued against the core whenever any field changes.
@@ -39,6 +42,8 @@ pub struct AppManager {
     staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
     last_focused_chat_id: RefCell<Option<String>>,
     search_ui: RefCell<SearchUiState>,
+    window_active: Cell<bool>,
+    last_user_activity: RefCell<Instant>,
 }
 
 struct Reconciler {
@@ -128,6 +133,8 @@ impl AppManager {
             staged_attachments: RefCell::new(HashMap::new()),
             last_focused_chat_id: RefCell::new(None),
             search_ui: RefCell::new(SearchUiState::default()),
+            window_active: Cell::new(false),
+            last_user_activity: RefCell::new(Instant::now()),
         }
     }
 
@@ -234,6 +241,22 @@ impl AppManager {
 
     pub fn dispatch(&self, action: AppAction) {
         self.ffi.dispatch(action);
+    }
+
+    pub fn set_window_active(&self, active: bool) {
+        self.window_active.set(active);
+        if active {
+            self.record_user_activity();
+        }
+    }
+
+    pub fn record_user_activity(&self) {
+        *self.last_user_activity.borrow_mut() = Instant::now();
+    }
+
+    pub fn can_mark_active_chat_seen(&self) -> bool {
+        self.window_active.get()
+            && self.last_user_activity.borrow().elapsed() <= ACTIVE_CHAT_SEEN_IDLE_LIMIT
     }
 
     pub fn prepare_nearby_for_user_tap(&self) {

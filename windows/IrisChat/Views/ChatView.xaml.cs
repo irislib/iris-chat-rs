@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using IrisChat.Bindings;
 using IrisChat.Chrome;
 
@@ -19,6 +20,11 @@ public partial class ChatView : UserControl
     public ChatView()
     {
         InitializeComponent();
+        PreviewKeyDown += OnUserActivity;
+        PreviewMouseDown += OnUserActivity;
+        PreviewMouseMove += OnUserActivity;
+        PreviewMouseWheel += OnUserActivity;
+        TouchDown += OnUserActivity;
         Loaded += (_, _) =>
         {
             App.CurrentManager.PropertyChanged += OnChanged;
@@ -39,6 +45,11 @@ public partial class ChatView : UserControl
     }
 
     private void OnChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
+
+    private void OnUserActivity(object sender, InputEventArgs e)
+    {
+        App.CurrentManager.RecordUserActivity();
+    }
 
     private void Refresh()
     {
@@ -124,9 +135,16 @@ public partial class ChatView : UserControl
             }
         }
 
-        // Mark as seen
+        MarkVisibleMessagesSeen(chat);
+    }
+
+    private static void MarkVisibleMessagesSeen(CurrentChatSnapshot chat)
+    {
+        if (!App.CurrentManager.CanMarkActiveChatSeen) return;
+
+        var messages = chat.messages ?? Array.Empty<ChatMessageSnapshot>();
         var unread = messages
-            .Where(m => !m.isOutgoing)
+            .Where(m => !m.isOutgoing && m.kind == ChatMessageKind.User && m.delivery != DeliveryState.Seen)
             .Select(m => m.id)
             .ToArray();
         if (unread.Length > 0)

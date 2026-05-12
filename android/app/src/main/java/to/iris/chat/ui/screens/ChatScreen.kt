@@ -142,6 +142,8 @@ fun ChatScreen(
     val busy by appManager.busy.collectAsStateWithLifecycle()
     val router by appManager.router.collectAsStateWithLifecycle()
     val chatListSnapshots by appManager.chatList.collectAsStateWithLifecycle()
+    val isAppForegrounded by appManager.appForegrounded.collectAsStateWithLifecycle()
+    val lastUserActivityAtSecs by appManager.lastUserActivityAtSecs.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
@@ -339,8 +341,11 @@ fun ChatScreen(
                 .orEmpty()
         }
 
-    LaunchedEffect(chatId, unseenIncomingIds) {
-        if (unseenIncomingIds.isNotEmpty()) {
+    LaunchedEffect(chatId, unseenIncomingIds, isAppForegrounded, lastUserActivityAtSecs) {
+        if (
+            unseenIncomingIds.isNotEmpty() &&
+                appManager.canMarkActiveChatSeen(isAppForegrounded, lastUserActivityAtSecs)
+        ) {
             appManager.dispatch(AppAction.MarkMessagesSeen(chatId, unseenIncomingIds))
         }
     }
@@ -709,7 +714,7 @@ fun ChatScreen(
                 )
             }
 
-            if (inChatSearchOpen && chat != null) {
+            if (inChatSearchOpen) {
                 InChatSearchSheet(
                     appManager = appManager,
                     chatId = chatId,

@@ -19,6 +19,7 @@ namespace IrisChat;
 public sealed class AppManager : INotifyPropertyChanged
 {
     private const string DispatchFailureToast = "Action failed. Copy support bundle in Settings.";
+    private static readonly TimeSpan ActiveChatSeenIdleLimit = TimeSpan.FromMinutes(5);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -40,6 +41,7 @@ public sealed class AppManager : INotifyPropertyChanged
     private bool _updateAvailable;
     private bool _autoCheckUpdates = UpdateService.LoadAutoCheckUpdates();
     private bool _autoInstallUpdates = UpdateService.LoadAutoInstallUpdates();
+    private DateTimeOffset _lastUserActivityUtc = DateTimeOffset.UtcNow;
     private string _updateVersion = "";
     private string _updateStatus = "";
 
@@ -247,6 +249,38 @@ public sealed class AppManager : INotifyPropertyChanged
     {
         DispatchToRust(new AppAction.AppForegrounded(), showToastOnFailure: false);
         StartDesktopUpdateChecks();
+    }
+
+    public void AppWindowActivated()
+    {
+        RecordUserActivity();
+        AppForegrounded();
+        Notify(nameof(CanMarkActiveChatSeen));
+    }
+
+    public void AppWindowDeactivated() =>
+        Notify(nameof(CanMarkActiveChatSeen));
+
+    public void RecordUserActivity()
+    {
+        var now = DateTimeOffset.UtcNow;
+        if (now - _lastUserActivityUtc < TimeSpan.FromMilliseconds(250)) return;
+        var wasEligible = CanMarkActiveChatSeen;
+        _lastUserActivityUtc = now;
+        if (!wasEligible)
+        {
+            Notify(nameof(CanMarkActiveChatSeen));
+        }
+    }
+
+    public bool CanMarkActiveChatSeen
+    {
+        get
+        {
+            var mainWindow = Application.Current?.MainWindow;
+            return mainWindow?.IsActive == true &&
+                   DateTimeOffset.UtcNow - _lastUserActivityUtc <= ActiveChatSeenIdleLimit;
+        }
     }
 
     // ───────────────────────── linked devices ─────────────────────────────────

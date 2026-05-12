@@ -12,6 +12,7 @@ struct IrisChatMacApp: App {
         WindowGroup {
             RootView(manager: manager)
                 .frame(minWidth: 980, minHeight: 640)
+                .modifier(MacUserActivityMonitor(manager: manager))
                 .onAppear {
                     appDelegate.configure(manager: manager, startInBackground: startInBackground)
                     manager.updates.runStartupCheckIfNeeded()
@@ -27,5 +28,42 @@ struct IrisChatMacApp: App {
         }
         .defaultSize(width: 1280, height: 820)
         .windowResizability(.automatic)
+    }
+}
+
+private struct MacUserActivityMonitor: ViewModifier {
+    @ObservedObject var manager: AppManager
+    @State private var monitor: Any?
+
+    func body(content: Content) -> some View {
+        content
+            .onAppear {
+                guard monitor == nil else { return }
+                monitor = NSEvent.addLocalMonitorForEvents(matching: [
+                    .leftMouseDown,
+                    .leftMouseUp,
+                    .rightMouseDown,
+                    .rightMouseUp,
+                    .otherMouseDown,
+                    .otherMouseUp,
+                    .mouseMoved,
+                    .leftMouseDragged,
+                    .rightMouseDragged,
+                    .otherMouseDragged,
+                    .scrollWheel,
+                    .keyDown,
+                    .keyUp,
+                    .flagsChanged
+                ]) { event in
+                    manager.recordUserActivity()
+                    return event
+                }
+            }
+            .onDisappear {
+                if let monitor {
+                    NSEvent.removeMonitor(monitor)
+                    self.monitor = nil
+                }
+            }
     }
 }

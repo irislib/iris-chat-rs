@@ -10,6 +10,8 @@ import android.os.Bundle
 import android.os.Parcelable
 import android.provider.Settings
 import android.util.Log
+import android.view.KeyEvent
+import android.view.MotionEvent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -81,6 +83,20 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleLaunchIntent(intent)
+    }
+
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (::container.isInitialized) {
+            container.appManager.recordUserActivity()
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (::container.isInitialized) {
+            container.appManager.recordUserActivity()
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     override fun onStart() {

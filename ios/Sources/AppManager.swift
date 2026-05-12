@@ -809,6 +809,7 @@ final class DesktopUpdateController: ObservableObject {
 @MainActor
 final class AppManager: ObservableObject {
     private static let downloadedAttachmentCacheLimitBytes = 128 * 1024 * 1024
+    private static let activeChatSeenIdleLimit: TimeInterval = 5 * 60
     private static let maxClientDebugLogEntries = 50
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
     private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
@@ -820,6 +821,7 @@ final class AppManager: ObservableObject {
     @Published private(set) var pendingShare: PendingShare?
     @Published private(set) var lastForegroundedAt = Date()
     @Published private(set) var appSceneIsActive = true
+    @Published private(set) var lastUserActivityAt = Date()
     /// Set when the user taps a hit in the search bar's Messages
     /// section — ChatScreen reads it on appear, scrolls the timeline
     /// to that message id, then clears via `consumePendingScroll()`.
@@ -1404,6 +1406,7 @@ final class AppManager: ObservableObject {
     func appForegrounded() {
         lastForegroundedAt = Date()
         appSceneIsActive = true
+        recordUserActivity()
         backgroundSuspendPrepared = false
         dispatchToRust(.appForegrounded)
 #if os(macOS)
@@ -1457,6 +1460,26 @@ final class AppManager: ObservableObject {
             }
         }
 #endif
+    }
+
+    func recordUserActivity() {
+        let now = Date()
+        guard !canMarkActiveChatSeen || now.timeIntervalSince(lastUserActivityAt) >= 5 else {
+            return
+        }
+        lastUserActivityAt = now
+    }
+
+    var canMarkActiveChatSeen: Bool {
+        appSceneIsActive &&
+            Date().timeIntervalSince(lastUserActivityAt) <= Self.activeChatSeenIdleLimit
+    }
+
+    var seenEligibilityToken: String {
+        [
+            appSceneIsActive ? "active" : "inactive",
+            String(Int(lastUserActivityAt.timeIntervalSince1970))
+        ].joined(separator: ":")
     }
 
 #if os(iOS) || os(macOS)

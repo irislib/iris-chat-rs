@@ -632,11 +632,18 @@ fn messages_view(
     scrolled.upcast()
 }
 
-fn mark_visible_seen(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) {
+pub(crate) fn mark_visible_seen(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) {
+    if !manager.can_mark_active_chat_seen() {
+        return;
+    }
     let unseen: Vec<String> = chat
         .messages
         .iter()
-        .filter(|m| !m.is_outgoing && matches!(m.kind, ChatMessageKind::User))
+        .filter(|m| {
+            !m.is_outgoing
+                && matches!(m.kind, ChatMessageKind::User)
+                && !matches!(m.delivery, DeliveryState::Seen)
+        })
         .map(|m| m.id.clone())
         .collect();
     if unseen.is_empty() {

@@ -485,6 +485,7 @@ struct ChatScreen: View {
         }
         .task(id: seenReceiptToken(for: chat)) {
             guard let chat else { return }
+            guard manager.canMarkActiveChatSeen else { return }
             let incomingIds = chat.messages
                 .filter { !$0.isOutgoing && $0.delivery != .seen }
                 .map(\.id)
@@ -556,10 +557,11 @@ struct ChatScreen: View {
 
     private func seenReceiptToken(for chat: CurrentChatSnapshot?) -> String {
         guard let chat else { return "" }
-        return chat.messages
+        let messageIds = chat.messages
             .filter { !$0.isOutgoing && $0.delivery != .seen }
             .map(\.id)
             .joined(separator: ",")
+        return [manager.seenEligibilityToken, messageIds].joined(separator: "|")
     }
 
     private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {

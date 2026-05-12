@@ -5987,6 +5987,56 @@ fn receipt_runtime_rumor_uses_authenticated_sender_chat_not_malicious_tags() {
 }
 
 #[test]
+fn self_synced_seen_receipt_marks_incoming_message_seen() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sibling_device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("self-sync-seen-receipt", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let message_id = "6".repeat(64);
+
+    core.push_incoming_message_from(
+        &chat_id,
+        Some(message_id.clone()),
+        "read on another device".to_string(),
+        1_777_159_492,
+        None,
+        Some(chat_id.clone()),
+        Some("outer-incoming".to_string()),
+    );
+    assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 1);
+
+    let (content, _) = runtime_rumor_json(
+        owner.public_key(),
+        RECEIPT_KIND,
+        "seen",
+        1_777_159_493,
+        vec![
+            vec!["e".to_string(), message_id.clone()],
+            vec!["p".to_string(), chat_id.clone()],
+        ],
+    );
+
+    core.apply_decrypted_runtime_message_with_metadata(
+        owner.public_key(),
+        Some(sibling_device.public_key()),
+        Some(peer.public_key()),
+        content,
+        Some("8".repeat(64)),
+    );
+
+    let thread = core.threads.get(&chat_id).expect("thread");
+    assert_eq!(thread.unread_count, 0);
+    let message = thread
+        .messages
+        .iter()
+        .find(|message| message.id == message_id)
+        .expect("incoming message");
+    assert_eq!(message.delivery, DeliveryState::Seen);
+}
+
+#[test]
 fn self_synced_direct_message_is_rendered_as_outgoing_on_linked_device() {
     let owner = Keys::generate();
     let device = Keys::generate();
