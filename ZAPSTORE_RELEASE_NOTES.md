@@ -1,5 +1,5 @@
-# Iris Chat 2026.5.12.1
+# Iris Chat 2026.5.13
 
-- Searches no longer redo message-index work just because the app state refreshed, which should keep busy chat lists and in-chat search calmer on phones.
-- In-chat search can now load more matching messages instead of stopping at the first batch.
-- Android share checkboxes stay selected while the chat list refreshes, so sending shared content to multiple chats is less fragile.
+- iOS back navigation now stays on the chat list without briefly reopening the previous chat.
+- iOS shares to a chat are kept until Iris can send them, so shares still go through if iOS keeps you in the source app.
+- Android chat navigation now ignores stale chat snapshots while the app catches up.
