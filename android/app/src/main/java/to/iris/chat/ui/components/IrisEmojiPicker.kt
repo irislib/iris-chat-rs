@@ -80,20 +80,7 @@ fun IrisEmojiPicker(
     val trimmed = query.trim()
     val visibleCategories =
         remember(trimmed, suggestedEmojis, recentEmojis) {
-            if (trimmed.isEmpty()) {
-                val postEmojis = uniqueReactionEmojis(suggestedEmojis)
-                val recent = uniqueReactionEmojis(recentEmojis).filterNot { it in postEmojis }
-                buildList {
-                    if (postEmojis.isNotEmpty()) add("On this post" to postEmojis)
-                    if (recent.isNotEmpty()) add("Recent" to recent)
-                    addAll(IrisEmojiCatalog)
-                }
-            } else {
-                IrisEmojiCatalog.mapNotNull { (name, emojis) ->
-                    val hits = emojis.filter { irisEmojiMatchesQuery(it, name, trimmed) }
-                    if (hits.isEmpty()) null else name to hits
-                }
-            }
+            irisEmojiPickerSections(trimmed, suggestedEmojis, recentEmojis)
         }
 
     fun pick(emoji: String) {
@@ -212,11 +199,29 @@ internal fun rememberRecentReactionEmoji(
     return values
 }
 
-internal fun irisReactionQuickChoices(
-    postSuggestions: List<String>,
+internal fun irisReactionQuickChoices(): List<String> = IrisDefaultReactionEmojis
+
+internal fun irisEmojiPickerSections(
+    query: String,
+    suggestedEmojis: List<String>,
     recentEmojis: List<String>,
-): List<String> =
-    uniqueReactionEmojis(postSuggestions + recentEmojis + IrisDefaultReactionEmojis).take(7)
+): List<Pair<String, List<String>>> {
+    val trimmed = query.trim()
+    if (trimmed.isNotEmpty()) {
+        return IrisEmojiCatalog.mapNotNull { (name, emojis) ->
+            val hits = emojis.filter { irisEmojiMatchesQuery(it, name, trimmed) }
+            if (hits.isEmpty()) null else name to hits
+        }
+    }
+
+    val messageEmojis = uniqueReactionEmojis(suggestedEmojis)
+    val recent = uniqueReactionEmojis(recentEmojis).filterNot { it in messageEmojis }
+    return buildList {
+        if (messageEmojis.isNotEmpty()) add("This message" to messageEmojis)
+        if (recent.isNotEmpty()) add("Recent" to recent)
+        addAll(IrisEmojiCatalog)
+    }
+}
 
 internal fun uniqueReactionEmojis(emojis: List<String>): List<String> {
     val seen = linkedSetOf<String>()

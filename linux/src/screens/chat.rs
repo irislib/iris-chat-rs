@@ -850,7 +850,7 @@ fn build_message_popover(
     column.set_margin_end(6);
 
     let reactions_row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
-    for emoji in reaction_picker_emojis(message) {
+    for emoji in reaction_picker_emojis() {
         let btn = gtk::Button::with_label(&emoji);
         btn.add_css_class("flat");
         btn.add_css_class("circular");
@@ -874,24 +874,8 @@ fn build_message_popover(
     more.add_css_class("flat");
     more.add_css_class("circular");
     more.set_tooltip_text(Some("More emoji"));
-    let chooser = gtk::EmojiChooser::new();
+    let chooser = build_reaction_emoji_popover(message, manager, &popover);
     chooser.set_parent(&more);
-    {
-        let manager = manager.clone();
-        let chat_id = message.chat_id.clone();
-        let message_id = message.id.clone();
-        let popover_for_close = popover.clone();
-        chooser.connect_emoji_picked(move |chooser, emoji_text| {
-            remember_reaction_emoji(emoji_text);
-            manager.dispatch(AppAction::ToggleReaction {
-                chat_id: chat_id.clone(),
-                message_id: message_id.clone(),
-                emoji: emoji_text.to_string(),
-            });
-            chooser.popdown();
-            popover_for_close.popdown();
-        });
-    }
     {
         let chooser_for_click = chooser.clone();
         more.connect_clicked(move |_| chooser_for_click.popup());
@@ -950,6 +934,125 @@ fn build_message_popover(
     popover
 }
 
+fn build_reaction_emoji_popover(
+    message: &ChatMessageSnapshot,
+    manager: &Rc<AppManager>,
+    owner_popover: &gtk::Popover,
+) -> gtk::Popover {
+    let popover = gtk::Popover::new();
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Top);
+
+    let scrolled = gtk::ScrolledWindow::new();
+    scrolled.set_min_content_width(280);
+    scrolled.set_min_content_height(320);
+    scrolled.set_max_content_height(420);
+    scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    column.set_margin_top(8);
+    column.set_margin_bottom(8);
+    column.set_margin_start(8);
+    column.set_margin_end(8);
+
+    let mut shown = Vec::new();
+    let message_emojis = message_reaction_emojis(message);
+    if !message_emojis.is_empty() {
+        append_reaction_emoji_section(
+            &column,
+            "This message",
+            &message_emojis,
+            message,
+            manager,
+            &popover,
+            owner_popover,
+        );
+        shown.extend(message_emojis);
+    }
+
+    let recent: Vec<String> = recent_reaction_emojis()
+        .into_iter()
+        .filter(|emoji| !shown.contains(emoji))
+        .collect();
+    if !recent.is_empty() {
+        append_reaction_emoji_section(
+            &column,
+            "Recent",
+            &recent,
+            message,
+            manager,
+            &popover,
+            owner_popover,
+        );
+        shown.extend(recent);
+    }
+
+    for (name, emojis) in REACTION_EMOJI_CATEGORIES {
+        let choices = emojis.iter().map(|emoji| (*emoji).to_string()).collect::<Vec<_>>();
+        append_reaction_emoji_section(
+            &column,
+            name,
+            &choices,
+            message,
+            manager,
+            &popover,
+            owner_popover,
+        );
+    }
+
+    scrolled.set_child(Some(&column));
+    popover.set_child(Some(&scrolled));
+    popover
+}
+
+fn append_reaction_emoji_section(
+    column: &gtk::Box,
+    title: &str,
+    emojis: &[String],
+    message: &ChatMessageSnapshot,
+    manager: &Rc<AppManager>,
+    picker_popover: &gtk::Popover,
+    owner_popover: &gtk::Popover,
+) {
+    let header = gtk::Label::new(Some(title));
+    header.add_css_class("caption");
+    header.add_css_class("dim-label");
+    header.set_xalign(0.0);
+    column.append(&header);
+
+    let flow = gtk::FlowBox::new();
+    flow.set_selection_mode(gtk::SelectionMode::None);
+    flow.set_max_children_per_line(7);
+    flow.set_min_children_per_line(4);
+    flow.set_row_spacing(2);
+    flow.set_column_spacing(2);
+
+    for emoji in emojis {
+        let btn = gtk::Button::with_label(emoji);
+        btn.add_css_class("flat");
+        btn.add_css_class("circular");
+        let manager = manager.clone();
+        let chat_id = message.chat_id.clone();
+        let message_id = message.id.clone();
+        let emoji = emoji.clone();
+        let picker_for_close = picker_popover.clone();
+        let owner_for_close = owner_popover.clone();
+        btn.connect_clicked(move |_| {
+            remember_reaction_emoji(&emoji);
+            manager.dispatch(AppAction::ToggleReaction {
+                chat_id: chat_id.clone(),
+                message_id: message_id.clone(),
+                emoji: emoji.clone(),
+            });
+            picker_for_close.popdown();
+            owner_for_close.popdown();
+        });
+        flow.insert(&btn, -1);
+    }
+
+    column.append(&flow);
+}
+
 fn reactions_row(
     message: &ChatMessageSnapshot,
     reactions: &[MessageReactionSnapshot],
@@ -988,24 +1091,49 @@ fn reactions_row(
 }
 
 const DEFAULT_REACTION_EMOJIS: [&str; 7] = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"];
+const REACTION_EMOJI_CATEGORIES: &[(&str, &[&str])] = &[
+    (
+        "Smileys",
+        &[
+            "😀", "😃", "😄", "😁", "😆", "😅", "😂", "🤣", "😊", "🙂", "🙃", "😉", "😍", "🥰",
+            "😘", "😎", "🤩", "🥳", "😏", "😌", "😴", "🤔", "😐", "🙄", "😬", "🥺", "😢", "😭",
+            "😠", "🤬", "😱", "🤗",
+        ],
+    ),
+    (
+        "Hearts",
+        &[
+            "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💖", "💗", "💓", "💕", "💔",
+            "❤️‍🔥", "❤️‍🩹",
+        ],
+    ),
+    (
+        "Hands",
+        &[
+            "👍", "👎", "👌", "✌️", "🤞", "🤟", "🤘", "🤙", "👈", "👉", "👆", "👇", "☝️", "✋",
+            "🤚", "👋", "🤝", "🙏", "👏", "🙌", "💪", "🫶",
+        ],
+    ),
+    (
+        "Symbols",
+        &[
+            "✅", "❌", "⭕", "🚫", "⚠️", "💯", "🔥", "✨", "⭐", "🌈", "☀️", "🌙", "⚡", "💥",
+            "🎉", "🎊", "🎁", "🏆", "💤", "💭",
+        ],
+    ),
+];
 const RECENT_REACTION_EMOJI_LIMIT: usize = 16;
 static RECENT_REACTION_EMOJIS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
 
-fn reaction_picker_emojis(message: &ChatMessageSnapshot) -> Vec<String> {
-    let mut owned = Vec::new();
-    for reaction in &message.reactions {
-        let my_count = if reaction.reacted_by_me { 1 } else { 0 };
-        if reaction.count > my_count {
-            owned.push(reaction.emoji.clone());
-        }
-    }
-    owned.extend(recent_reaction_emojis());
-    owned.extend(
-        DEFAULT_REACTION_EMOJIS
-            .iter()
-            .map(|emoji| (*emoji).to_string()),
-    );
-    unique_reaction_emojis(owned).into_iter().take(7).collect()
+fn reaction_picker_emojis() -> Vec<String> {
+    DEFAULT_REACTION_EMOJIS
+        .iter()
+        .map(|emoji| (*emoji).to_string())
+        .collect()
+}
+
+fn message_reaction_emojis(message: &ChatMessageSnapshot) -> Vec<String> {
+    unique_reaction_emojis(message.reactions.iter().map(|reaction| reaction.emoji.clone()))
 }
 
 fn unique_reaction_emojis(emojis: impl IntoIterator<Item = String>) -> Vec<String> {

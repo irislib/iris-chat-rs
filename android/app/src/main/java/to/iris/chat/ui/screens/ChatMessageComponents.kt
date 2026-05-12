@@ -97,10 +97,10 @@ import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.formatMessageClock
 import to.iris.chat.ui.components.irisReactionQuickChoices
 import to.iris.chat.ui.components.isSameTimelineDay
-import to.iris.chat.ui.components.loadRecentReactionEmojis
 import to.iris.chat.ui.components.messageBubbleShape
 import to.iris.chat.ui.components.rememberRecentReactionEmoji
 import to.iris.chat.ui.components.rememberIrisClipboard
+import to.iris.chat.ui.components.uniqueReactionEmojis
 import to.iris.chat.ui.theme.IrisTheme
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
@@ -176,7 +176,6 @@ internal fun MessageBubble(
                 isActionsSheetOpen = false
                 pickReaction(emoji)
             },
-            postReactionSuggestions = postReactionSuggestions,
             onShowFullReactionPicker = {
                 isActionsSheetOpen = false
                 isReactionPickerOpen = true
@@ -598,12 +597,7 @@ private fun ReactionPickerMenu(
 }
 
 internal fun postReactionSuggestionEmojis(reactions: List<MessageReactionSnapshot>): List<String> =
-    reactions
-        .filter { reaction ->
-            val count = reaction.count.toString().toLongOrNull() ?: 0L
-            count > if (reaction.reactedByMe) 1L else 0L
-        }
-        .map { it.emoji }
+    uniqueReactionEmojis(reactions.map { it.emoji })
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -613,7 +607,6 @@ private fun MessageActionsSheet(
     reactions: List<MessageReactionSnapshot>,
     onDismiss: () -> Unit,
     onReact: (String) -> Unit,
-    postReactionSuggestions: List<String>,
     onShowFullReactionPicker: () -> Unit,
     onReply: () -> Unit,
     onCopy: () -> Unit,
@@ -635,7 +628,6 @@ private fun MessageActionsSheet(
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
             QuickReactionRow(
-                postReactionSuggestions = postReactionSuggestions,
                 onPick = onReact,
                 onMore = onShowFullReactionPicker,
             )
@@ -669,15 +661,10 @@ private fun MessageActionsSheet(
 
 @Composable
 private fun QuickReactionRow(
-    postReactionSuggestions: List<String>,
     onPick: (String) -> Unit,
     onMore: () -> Unit,
 ) {
-    val context = LocalContext.current.applicationContext
-    val recentEmojis = remember { loadRecentReactionEmojis(context) }
-    val emojis = remember(postReactionSuggestions, recentEmojis) {
-        irisReactionQuickChoices(postReactionSuggestions, recentEmojis)
-    }
+    val emojis = remember { irisReactionQuickChoices() }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = IrisTheme.palette.panel,

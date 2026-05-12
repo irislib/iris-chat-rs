@@ -1714,11 +1714,7 @@ private struct ChatMessageActionDock: View {
 private let quickReactionEmojis: [String] = ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"]
 
 func irisPostReactionSuggestionEmojis(_ reactions: [MessageReactionSnapshot]) -> [String] {
-    reactions
-        .filter { reaction in
-            reaction.count > (reaction.reactedByMe ? UInt64(1) : UInt64(0))
-        }
-        .map(\.emoji)
+    irisUniqueEmojis(reactions.map(\.emoji))
 }
 
 private func irisUniqueEmojis(_ emojis: [String]) -> [String] {
@@ -1734,8 +1730,8 @@ private func irisUniqueEmojis(_ emojis: [String]) -> [String] {
     return result
 }
 
-private func irisReactionQuickChoices(postSuggestions: [String]) -> [String] {
-    Array(irisUniqueEmojis(postSuggestions + IrisRecentEmojiStore.emojis() + quickReactionEmojis).prefix(7))
+func irisReactionQuickChoices() -> [String] {
+    quickReactionEmojis
 }
 
 private enum IrisRecentEmojiStore {
@@ -1821,10 +1817,6 @@ private struct ChatMessageActionsSheet: View {
     let onInfo: () -> Void
     let onDelete: () -> Void
 
-    private var postReactionSuggestions: [String] {
-        irisPostReactionSuggestionEmojis(message.reactions)
-    }
-
     var body: some View {
         VStack(spacing: 12) {
             quickReactionRow
@@ -1850,7 +1842,7 @@ private struct ChatMessageActionsSheet: View {
 
     private var quickReactionRow: some View {
         HStack(spacing: 4) {
-            ForEach(irisReactionQuickChoices(postSuggestions: postReactionSuggestions), id: \.self) { emoji in
+            ForEach(irisReactionQuickChoices(), id: \.self) { emoji in
                 Button {
                     IrisRecentEmojiStore.remember(emoji)
                     onReact(emoji)
@@ -1992,7 +1984,7 @@ struct IrisEmojiPicker: View {
             var sections: [(String, String, [String])] = []
             let postEmojis = irisUniqueEmojis(suggestedEmojis)
             if !postEmojis.isEmpty {
-                sections.append(("On this post", "bubble.left.and.bubble.right.fill", postEmojis))
+                sections.append(("This message", "bubble.left.and.bubble.right.fill", postEmojis))
             }
             let recent = irisUniqueEmojis(recentEmojis).filter { !postEmojis.contains($0) }
             if !recent.isEmpty {

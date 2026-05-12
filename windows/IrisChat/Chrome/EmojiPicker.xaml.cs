@@ -15,6 +15,8 @@ public partial class EmojiPicker : UserControl
     /// recents store so the picker stays storage-agnostic.
     public IReadOnlyList<string> RecentEmojis { get; set; } = [];
 
+    public IReadOnlyList<string> MessageEmojis { get; set; } = [];
+
     private static readonly (string Name, string[] Emojis)[] Categories =
     {
         ("Smileys", new[] {
@@ -77,9 +79,15 @@ public partial class EmojiPicker : UserControl
         var lower = query.ToLowerInvariant();
         if (string.IsNullOrEmpty(query))
         {
-            if (RecentEmojis.Count > 0)
+            var messageEmojis = UniqueEmojis(MessageEmojis).ToArray();
+            if (messageEmojis.Length > 0)
             {
-                sections.Add(("Recent", RecentEmojis.ToArray()));
+                sections.Add(("This message", messageEmojis));
+            }
+            var recent = UniqueEmojis(RecentEmojis).Where(emoji => !messageEmojis.Contains(emoji)).ToArray();
+            if (recent.Length > 0)
+            {
+                sections.Add(("Recent", recent));
             }
             sections.AddRange(Categories);
         }
@@ -104,6 +112,19 @@ public partial class EmojiPicker : UserControl
         foreach (var (name, emojis) in sections)
         {
             SectionsHost.Items.Add(BuildSection(name, emojis));
+        }
+    }
+
+    private static IEnumerable<string> UniqueEmojis(IEnumerable<string> emojis)
+    {
+        var seen = new HashSet<string>();
+        foreach (var emoji in emojis)
+        {
+            var trimmed = emoji.Trim();
+            if (trimmed.Length > 0 && seen.Add(trimmed))
+            {
+                yield return trimmed;
+            }
         }
     }
 

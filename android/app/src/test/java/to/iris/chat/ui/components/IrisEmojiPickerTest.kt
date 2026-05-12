@@ -20,13 +20,22 @@ class IrisEmojiPickerTest {
     }
 
     @Test
-    fun quickChoicesPreferPostAndRecentEmojis() {
-        assertEquals(
-            listOf("🔥", "😂", "❤️", "👍", "😮", "😢", "🙏"),
-            irisReactionQuickChoices(
-                postSuggestions = listOf("🔥"),
-                recentEmojis = listOf("😂", "🔥"),
-            ),
-        )
+    fun quickChoicesUseBasicReactionSet() {
+        assertEquals(listOf("❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"), irisReactionQuickChoices())
+    }
+
+    @Test
+    fun emptyPickerShowsThisMessageSectionForMessageEmoji() {
+        val sections =
+            irisEmojiPickerSections(
+                query = "",
+                suggestedEmojis = listOf("🔥", "🔥", "😂"),
+                recentEmojis = listOf("😂", "🙏"),
+            )
+
+        assertEquals("This message", sections.first().first)
+        assertEquals(listOf("🔥", "😂"), sections.first().second)
+        assertEquals("Recent", sections[1].first)
+        assertEquals(listOf("🙏"), sections[1].second)
     }
 }

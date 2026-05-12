@@ -192,6 +192,21 @@ final class IrisEmojiPickerSearchTests: XCTestCase {
         XCTAssertTrue(irisEmojiMatchesSearch("😂", category: "Smileys", query: "laugh"))
         XCTAssertTrue(irisEmojiMatchesSearch("❤️", category: "Hearts", query: "love"))
     }
+
+    func testQuickReactionsUseBasicSet() {
+        XCTAssertEqual(irisReactionQuickChoices(), ["❤️", "👍", "😂", "😮", "😢", "🙏", "🔥"])
+    }
+
+    func testMessageReactionSuggestionsIncludeExistingMessageEmoji() {
+        XCTAssertEqual(
+            irisPostReactionSuggestionEmojis([
+                MessageReactionSnapshot(emoji: "🔥", count: 1, reactedByMe: true),
+                MessageReactionSnapshot(emoji: "🔥", count: 2, reactedByMe: true),
+                MessageReactionSnapshot(emoji: "😂", count: 1, reactedByMe: false),
+            ]),
+            ["🔥", "😂"]
+        )
+    }
 }
 
 private func makeBusyState() -> BusyState {

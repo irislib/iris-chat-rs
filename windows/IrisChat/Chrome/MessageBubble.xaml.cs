@@ -116,7 +116,7 @@ public partial class MessageBubble : UserControl
         if (message.kind != ChatMessageKind.System)
         {
             var react = new MenuItem { Header = "React" };
-            foreach (var emoji in ReactionPickerEmojis(message))
+            foreach (var emoji in ReactionPickerEmojis())
             {
                 var selected = emoji;
                 var item = new MenuItem { Header = selected };
@@ -148,6 +148,7 @@ public partial class MessageBubble : UserControl
         var picker = new EmojiPicker
         {
             RecentEmojis = RecentReactionEmojiSnapshot(),
+            MessageEmojis = MessageReactionEmojis(_message),
         };
         var popup = new System.Windows.Controls.Primitives.Popup
         {
@@ -174,25 +175,10 @@ public partial class MessageBubble : UserControl
         popup.IsOpen = true;
     }
 
-    private static IEnumerable<string> ReactionPickerEmojis(ChatMessageSnapshot message)
-    {
-        var values = new List<string>();
-        if (message.reactions != null)
-        {
-            foreach (var reaction in message.reactions)
-            {
-                var count = Convert.ToUInt64(reaction.count);
-                var mine = reaction.reactedByMe ? 1UL : 0UL;
-                if (count > mine)
-                {
-                    values.Add(reaction.emoji);
-                }
-            }
-        }
-        values.AddRange(RecentReactionEmojis);
-        values.AddRange(DefaultReactionEmojis);
-        return UniqueReactionEmojis(values).Take(7);
-    }
+    private static IEnumerable<string> ReactionPickerEmojis() => DefaultReactionEmojis;
+
+    private static IReadOnlyList<string> MessageReactionEmojis(ChatMessageSnapshot message) =>
+        UniqueReactionEmojis((message.reactions ?? []).Select(reaction => reaction.emoji)).ToArray();
 
     private static IEnumerable<string> UniqueReactionEmojis(IEnumerable<string> emojis)
     {
