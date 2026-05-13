@@ -1627,6 +1627,134 @@ fn appcore_sender_key_late_member_and_remove_member_enforce_membership_window() 
 }
 
 #[test]
+fn appcore_sender_key_existing_sender_handles_late_add_and_removed_member() {
+    let mut devices = sender_key_matrix_devices(4);
+    let alice = 0;
+    let bob = 1;
+    let carol = 2;
+    let dave = 3;
+    let bob_owner_pubkey = devices[bob].owner.public_key();
+    let carol_owner_pubkey = devices[carol].owner.public_key();
+    let dave_owner_pubkey = devices[dave].owner.public_key();
+    let bob_device_pubkey = devices[bob].device.public_key();
+
+    let created = devices[alice]
+        .engine
+        .create_group(
+            "sender-key non-actor membership".to_string(),
+            vec![bob_owner_pubkey, carol_owner_pubkey],
+            UnixSeconds(130),
+        )
+        .expect("create sender-key group");
+    let group_id = created.snapshot.expect("created group").group_id;
+    for recipient_index in [bob, carol] {
+        deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &created.effects);
+    }
+
+    let before_add = devices[bob]
+        .engine
+        .send_group_payload(
+            &group_id,
+            b"bob before dave".to_vec(),
+            Some("sender-key-bob-before-dave".to_string()),
+        )
+        .expect("bob sends before late member");
+    for recipient_index in [alice, carol] {
+        let events = deliver_protocol_effects_to_engine(
+            &mut devices[recipient_index].engine,
+            &before_add.effects,
+        );
+        assert!(
+            group_events_contain_body(
+                &events,
+                &group_id,
+                bob_owner_pubkey,
+                bob_device_pubkey,
+                b"bob before dave"
+            ),
+            "initial current member {recipient_index} should decrypt bob's sender-key message"
+        );
+    }
+
+    let add_dave = devices[alice]
+        .engine
+        .add_group_members(&group_id, vec![dave_owner_pubkey])
+        .expect("add late member");
+    for recipient_index in [bob, carol, dave] {
+        deliver_protocol_effects_to_engine(&mut devices[recipient_index].engine, &add_dave.effects);
+    }
+
+    let after_add = devices[bob]
+        .engine
+        .send_group_payload(
+            &group_id,
+            b"bob after dave".to_vec(),
+            Some("sender-key-bob-after-dave".to_string()),
+        )
+        .expect("existing member sends after late add");
+    let dave_events =
+        deliver_protocol_effects_to_engine(&mut devices[dave].engine, &after_add.effects);
+    assert!(
+        group_events_contain_body(
+            &dave_events,
+            &group_id,
+            bob_owner_pubkey,
+            bob_device_pubkey,
+            b"bob after dave"
+        ),
+        "late-added member should decrypt a later send from an existing non-actor member"
+    );
+
+    let remove_carol = devices[alice]
+        .engine
+        .remove_group_member(&group_id, carol_owner_pubkey)
+        .expect("remove original member");
+    for recipient_index in [bob, carol, dave] {
+        deliver_protocol_effects_to_engine(
+            &mut devices[recipient_index].engine,
+            &remove_carol.effects,
+        );
+    }
+
+    let after_remove = devices[bob]
+        .engine
+        .send_group_payload(
+            &group_id,
+            b"bob after carol removed".to_vec(),
+            Some("sender-key-bob-after-carol-removed".to_string()),
+        )
+        .expect("existing member sends after removal");
+    let carol_events =
+        deliver_protocol_effects_to_engine(&mut devices[carol].engine, &after_remove.effects);
+    assert!(
+        !group_events_contain_body(
+            &carol_events,
+            &group_id,
+            bob_owner_pubkey,
+            bob_device_pubkey,
+            b"bob after carol removed"
+        ),
+        "removed member must not decrypt future sends from a non-actor existing sender"
+    );
+    for recipient_index in [alice, dave] {
+        let events = deliver_protocol_effects_to_engine(
+            &mut devices[recipient_index].engine,
+            &after_remove.effects,
+        );
+        assert!(
+            group_events_contain_body(
+                &events,
+                &group_id,
+                bob_owner_pubkey,
+                bob_device_pubkey,
+                b"bob after carol removed"
+            ),
+            "remaining member {recipient_index} should decrypt bob's post-removal message"
+        );
+    }
+}
+
+#[test]
 fn appcore_sender_key_pending_outer_survives_restart_and_applies_once() {
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
