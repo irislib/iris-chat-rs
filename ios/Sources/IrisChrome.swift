@@ -119,12 +119,15 @@ extension View {
     /// Anchor a `ScrollView`'s initial offset to the bottom edge so a
     /// long chat opens already scrolled to the latest message — the
     /// SwiftUI equivalent of Signal's "measure all rows, then
-    /// `setContentOffset(maxY)` instantly" trick. Also keeps the
-    /// scroll pinned to the bottom as content grows. iOS 16/macOS 13
-    /// fall back to the manual `proxy.scrollTo(.bottom)` path.
+    /// `setContentOffset(maxY)` instantly" trick. Newer OS releases
+    /// scope this to the initial offset only, so content growth does
+    /// not fight a user's manual scroll. iOS 16/macOS 13 fall back to
+    /// the manual `proxy.scrollTo(.bottom)` path.
     @ViewBuilder
     func irisDefaultScrollAnchorBottom() -> some View {
-        if #available(iOS 17.0, macOS 14.0, *) {
+        if #available(iOS 18.0, macOS 15.0, *) {
+            self.defaultScrollAnchor(.bottom, for: .initialOffset)
+        } else if #available(iOS 17.0, macOS 14.0, *) {
             self.defaultScrollAnchor(.bottom)
         } else {
             self

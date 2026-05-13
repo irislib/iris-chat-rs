@@ -18,6 +18,7 @@ struct ChatScreen: View {
     @State private var shouldFollowLatest = true
     @State private var forceScrollToLatest = false
     @State private var pendingScrollSettle: DispatchWorkItem?
+    @State private var timelineAutoFollowSuppressedUntil: Date?
     @State private var timelineViewportMinY: CGFloat = 0
     @State private var timelineViewportMaxY: CGFloat = 0
     @State private var timelineTopMinY: CGFloat = -.greatestFiniteMagnitude
@@ -226,6 +227,12 @@ struct ChatScreen: View {
                                         }
                                     }
                                     .irisInteractiveKeyboardDismiss()
+                                    .simultaneousGesture(
+                                        DragGesture(minimumDistance: 3)
+                                            .onChanged { value in
+                                                handleTimelineDrag(value)
+                                            }
+                                    )
                                     .opacity(timelineReadyForDisplay ? 1 : 0)
                                     .allowsHitTesting(timelineReadyForDisplay)
                                 }
@@ -235,6 +242,7 @@ struct ChatScreen: View {
                                     isNearBottom = true
                                     shouldFollowLatest = true
                                     forceScrollToLatest = false
+                                    timelineAutoFollowSuppressedUntil = nil
                                     renderedMessageCount = 0
                                     pendingPrependAnchorMessageId = nil
                                     timelineTopMinY = -.greatestFiniteMagnitude
@@ -295,7 +303,9 @@ struct ChatScreen: View {
                                         timelineContentHeight = value
                                     }
                                     let grew = previous > 0 && value > previous + 1
-                                    if !initialScrollPending, shouldFollowLatest, grew {
+                                    let canAutoFollow = (shouldFollowLatest || isNearBottom)
+                                        && !timelineAutoFollowIsSuppressed()
+                                    if !initialScrollPending, canAutoFollow, grew {
                                         scrollToBottom(proxy: proxy, animated: false)
                                     }
                                 }
@@ -342,7 +352,11 @@ struct ChatScreen: View {
                                     }
                                     let shouldScroll = initialScrollPending
                                         || forceScrollToLatest
-                                        || (messageCountIncreased && shouldFollowLatest)
+                                        || (
+                                            messageCountIncreased
+                                                && (shouldFollowLatest || isNearBottom)
+                                                && !timelineAutoFollowIsSuppressed()
+                                        )
                                     renderedMessageCount = messageCount
                                     if shouldScroll {
                                         let wasInitialScroll = initialScrollPending
@@ -379,6 +393,7 @@ struct ChatScreen: View {
                                 if timelineReadyForDisplay && !isNearBottom && !chat.messages.isEmpty {
                                     Button {
                                         isComposerFocused = false
+                                        resumeTimelineAutoFollow()
                                         shouldFollowLatest = true
                                         scrollToBottom(proxy: proxy, animated: true)
                                     } label: {
@@ -461,6 +476,7 @@ struct ChatScreen: View {
                                         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
                                         guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
                                         stopTypingIfNeeded()
+                                        resumeTimelineAutoFollow()
                                         shouldFollowLatest = true
                                         forceScrollToLatest = true
                                         let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
@@ -525,6 +541,8 @@ struct ChatScreen: View {
             }
         }
         .onDisappear {
+            pendingScrollSettle?.cancel()
+            pendingScrollSettle = nil
             stopTypingIfNeeded()
             flushDraftImmediately()
         }
@@ -568,6 +586,32 @@ struct ChatScreen: View {
         if !manager.loadOlderMessages(chatId: chat.chatId) {
             pendingPrependAnchorMessageId = nil
         }
+    }
+
+    private func handleTimelineDrag(_ value: DragGesture.Value) {
+        let vertical = value.translation.height
+        let horizontal = value.translation.width
+        guard abs(vertical) > 6, abs(vertical) > abs(horizontal) else { return }
+
+        pendingScrollSettle?.cancel()
+        pendingScrollSettle = nil
+
+        if vertical > 0 {
+            shouldFollowLatest = false
+            timelineAutoFollowSuppressedUntil = Date().addingTimeInterval(1.2)
+        } else if isNearBottom {
+            resumeTimelineAutoFollow()
+            shouldFollowLatest = true
+        }
+    }
+
+    private func timelineAutoFollowIsSuppressed(now: Date = Date()) -> Bool {
+        guard let until = timelineAutoFollowSuppressedUntil else { return false }
+        return until > now
+    }
+
+    private func resumeTimelineAutoFollow() {
+        timelineAutoFollowSuppressedUntil = nil
     }
 
     private func chatTimelineScrollTaskToken(for chat: CurrentChatSnapshot) -> String {
@@ -745,8 +789,9 @@ struct ChatScreen: View {
         if isNearBottom != nearBottom {
             isNearBottom = nearBottom
         }
-        if messageCount == renderedMessageCount, shouldFollowLatest != nearBottom {
-            shouldFollowLatest = nearBottom
+        let nextShouldFollow = nearBottom && !timelineAutoFollowIsSuppressed()
+        if messageCount == renderedMessageCount, shouldFollowLatest != nextShouldFollow {
+            shouldFollowLatest = nextShouldFollow
         }
     }
 

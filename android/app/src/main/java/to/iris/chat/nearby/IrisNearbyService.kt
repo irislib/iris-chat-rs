@@ -611,7 +611,13 @@ class IrisNearbyService(
         val nonce = localNonce
         val cached = cachedHelloFrame?.takeIf { cachedHelloNonce == nonce }
         if (cached != null) {
-            sendFrame("hello", cached, excludingPeerId, onlyPeerId = null)
+            sendFrame(
+                type = "hello",
+                frame = cached,
+                excludingPeerId = excludingPeerId,
+                onlyPeerId = null,
+                allowBluetoothWhenLanPeer = true,
+            )
             return
         }
         val envelope =
@@ -626,7 +632,13 @@ class IrisNearbyService(
         }
         cachedHelloNonce = nonce
         cachedHelloFrame = frame
-        sendFrame("hello", frame, excludingPeerId, onlyPeerId = null)
+        sendFrame(
+            type = "hello",
+            frame = frame,
+            excludingPeerId = excludingPeerId,
+            onlyPeerId = null,
+            allowBluetoothWhenLanPeer = true,
+        )
     }
 
     private fun invalidateCachedHelloFrame() {
@@ -715,6 +727,7 @@ class IrisNearbyService(
         eventJson: String,
         excludingPeerId: String?,
         onlyPeerId: String?,
+        allowBluetoothWhenLanPeer: Boolean = false,
     ) {
         val eventId = StoredNearbyEvent.fromEventJson(eventJson)?.id
         val envelope =
@@ -724,7 +737,13 @@ class IrisNearbyService(
                 .put("event_json", eventJson)
         val frame = appManager.encodeNearbyFrame(envelope)
         if (frame != null && frame.size <= SINGLE_FRAME_BYTES) {
-            sendFrame("event", frame, excludingPeerId, onlyPeerId)
+            sendFrame(
+                type = "event",
+                frame = frame,
+                excludingPeerId = excludingPeerId,
+                onlyPeerId = onlyPeerId,
+                allowBluetoothWhenLanPeer = allowBluetoothWhenLanPeer,
+            )
         } else {
             StoredNearbyEvent.fromEventJson(eventJson)
                 ?.let { sendEventFragments(it, excludingPeerId, onlyPeerId) }
@@ -743,7 +762,12 @@ class IrisNearbyService(
                 profileEventId = ownProfileEventId,
         )
         if (eventJson.isNotBlank()) {
-            sendEventJson(eventJson, excludingPeerId = null, onlyPeerId = null)
+            sendEventJson(
+                eventJson = eventJson,
+                excludingPeerId = null,
+                onlyPeerId = null,
+                allowBluetoothWhenLanPeer = true,
+            )
         }
     }
 
@@ -823,6 +847,7 @@ class IrisNearbyService(
         frame: ByteArray,
         excludingPeerId: String?,
         onlyPeerId: String?,
+        allowBluetoothWhenLanPeer: Boolean = false,
     ) {
         if (!nearbyActive()) {
             return
@@ -836,7 +861,12 @@ class IrisNearbyService(
         }
         launchBluetooth("send frame") {
             sendMutex.withLock {
-                sendBluetoothFrame(frame, excludingPeerId, onlyPeerId)
+                sendBluetoothFrame(
+                    frame = frame,
+                    excludingPeerId = excludingPeerId,
+                    onlyPeerId = onlyPeerId,
+                    allowBluetoothWhenLanPeer = allowBluetoothWhenLanPeer,
+                )
             }
         }
     }
@@ -846,6 +876,7 @@ class IrisNearbyService(
         frame: ByteArray,
         excludingPeerId: String?,
         onlyPeerId: String?,
+        allowBluetoothWhenLanPeer: Boolean,
     ) {
         gattServer?.let { server ->
             val characteristic =
@@ -864,7 +895,13 @@ class IrisNearbyService(
                 if (!subscribedServerAddresses.contains(address)) {
                     return@forEach
                 }
-                if (!shouldSendViaServerBluetoothRoute(address, excludingPeerId, onlyPeerId)) {
+                if (!shouldSendViaServerBluetoothRoute(
+                        address = address,
+                        excludingPeerId = excludingPeerId,
+                        onlyPeerId = onlyPeerId,
+                        allowLanDuplicate = allowBluetoothWhenLanPeer,
+                    )
+                ) {
                     return@forEach
                 }
                 notifyDevice(server, device, characteristic, frame)
@@ -872,7 +909,13 @@ class IrisNearbyService(
         }
 
         writableCharacteristics.toList().forEach { (address, characteristic) ->
-            if (!shouldSendViaOutgoingBluetoothRoute(address, excludingPeerId, onlyPeerId)) {
+            if (!shouldSendViaOutgoingBluetoothRoute(
+                    address = address,
+                    excludingPeerId = excludingPeerId,
+                    onlyPeerId = onlyPeerId,
+                    allowLanDuplicate = allowBluetoothWhenLanPeer,
+                )
+            ) {
                 return@forEach
             }
             val gatt = gatts[address] ?: return@forEach
@@ -1427,6 +1470,7 @@ class IrisNearbyService(
         address: String,
         excludingPeerId: String?,
         onlyPeerId: String?,
+        allowLanDuplicate: Boolean,
     ): Boolean {
         val remotePeerId = peerIdsByAddress[address]
         if (remotePeerId == null) {
@@ -1438,7 +1482,7 @@ class IrisNearbyService(
         if (remotePeerId == excludingPeerId) {
             return false
         }
-        if (lanService.hasPeer(remotePeerId)) {
+        if (!allowLanDuplicate && lanService.hasPeer(remotePeerId)) {
             return false
         }
         if (hasOutgoingBluetoothRoute(remotePeerId) && hasServerBluetoothRoute(remotePeerId)) {
@@ -1451,6 +1495,7 @@ class IrisNearbyService(
         address: String,
         excludingPeerId: String?,
         onlyPeerId: String?,
+        allowLanDuplicate: Boolean,
     ): Boolean {
         val remotePeerId = peerIdsByAddress[address]
         if (remotePeerId == null) {
@@ -1462,7 +1507,7 @@ class IrisNearbyService(
         if (remotePeerId == excludingPeerId) {
             return false
         }
-        if (lanService.hasPeer(remotePeerId)) {
+        if (!allowLanDuplicate && lanService.hasPeer(remotePeerId)) {
             return false
         }
         if (hasOutgoingBluetoothRoute(remotePeerId) && hasServerBluetoothRoute(remotePeerId)) {

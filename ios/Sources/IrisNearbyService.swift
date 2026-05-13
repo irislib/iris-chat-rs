@@ -706,7 +706,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         lastHelloAt = now
         let nonce = localNonce
         if cachedHelloNonce == nonce, let cachedHelloFrame {
-            sendEncodedFrame(cachedHelloFrame, excludingPeerID: excludingPeerID, onlyPeerID: nil)
+            sendEncodedFrame(
+                cachedHelloFrame,
+                excludingPeerID: excludingPeerID,
+                onlyPeerID: nil,
+                allowBluetoothWhenLanPeer: true
+            )
             return
         }
         let envelope: [String: Any] = [
@@ -722,7 +727,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
                   let frame else { return }
             self.cachedHelloNonce = nonce
             self.cachedHelloFrame = frame
-            self.sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: nil)
+            self.sendEncodedFrame(
+                frame,
+                excludingPeerID: excludingPeerID,
+                onlyPeerID: nil,
+                allowBluetoothWhenLanPeer: true
+            )
         }
     }
 
@@ -807,7 +817,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         sendEventJson(record.eventJson, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
     }
 
-    private func sendEventJson(_ eventJson: String, excludingPeerID: String?, onlyPeerID: String?) {
+    private func sendEventJson(
+        _ eventJson: String,
+        excludingPeerID: String?,
+        onlyPeerID: String?,
+        allowBluetoothWhenLanPeer: Bool = false
+    ) {
         let eventID = IrisNearbyStoredEvent.fromEventJson(eventJson)?.id
         let envelope: [String: Any] = [
             "v": 1,
@@ -817,7 +832,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         encodeFrame(envelope) { [weak self] frame in
             guard let self, self.isNearbyActive else { return }
             if let frame, frame.count <= Self.singleFrameBytes {
-                self.sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
+                self.sendEncodedFrame(
+                    frame,
+                    excludingPeerID: excludingPeerID,
+                    onlyPeerID: onlyPeerID,
+                    allowBluetoothWhenLanPeer: allowBluetoothWhenLanPeer
+                )
             } else {
                 guard let record = IrisNearbyStoredEvent.fromEventJson(eventJson) else { return }
                 self.sendEventFragments(record, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
@@ -845,7 +865,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
                       self.isNearbyActive,
                       !eventJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 else { return }
-                self.sendEventJson(eventJson, excludingPeerID: nil, onlyPeerID: nil)
+                self.sendEventJson(
+                    eventJson,
+                    excludingPeerID: nil,
+                    onlyPeerID: nil,
+                    allowBluetoothWhenLanPeer: true
+                )
             }
         }
     }
@@ -902,7 +927,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
         guard isNearbyActive else { return }
         encodeFrame(object) { [weak self] frame in
             guard let self, self.isNearbyActive, let frame else { return }
-            self.sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
+            self.sendEncodedFrame(
+                frame,
+                excludingPeerID: excludingPeerID,
+                onlyPeerID: onlyPeerID
+            )
         }
     }
 
@@ -956,24 +985,49 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return "\(peripheral.identifier.uuidString) name=\(name)"
     }
 
-    private func sendEncodedFrame(_ frame: Data, excludingPeerID: String?, onlyPeerID: String?) {
+    private func sendEncodedFrame(
+        _ frame: Data,
+        excludingPeerID: String?,
+        onlyPeerID: String?,
+        allowBluetoothWhenLanPeer: Bool = false
+    ) {
         if isLanVisible {
             lanService?.send(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
         }
-        sendBluetoothFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
+        sendBluetoothFrame(
+            frame,
+            excludingPeerID: excludingPeerID,
+            onlyPeerID: onlyPeerID,
+            allowBluetoothWhenLanPeer: allowBluetoothWhenLanPeer
+        )
     }
 
-    private func sendBluetoothFrame(_ frame: Data, excludingPeerID: String?, onlyPeerID: String?) {
+    private func sendBluetoothFrame(
+        _ frame: Data,
+        excludingPeerID: String?,
+        onlyPeerID: String?,
+        allowBluetoothWhenLanPeer: Bool
+    ) {
         guard isVisible else { return }
         for (id, characteristic) in writableCharacteristics {
-            if !shouldSendViaOutgoingBluetoothRoute(peripheralID: id, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID) {
+            if !shouldSendViaOutgoingBluetoothRoute(
+                peripheralID: id,
+                excludingPeerID: excludingPeerID,
+                onlyPeerID: onlyPeerID,
+                allowLanDuplicate: allowBluetoothWhenLanPeer
+            ) {
                 continue
             }
             guard let peripheral = peripherals[id] else { continue }
             write(frame, to: peripheral, characteristic: characteristic)
         }
         for (id, channel) in subscribedCentrals {
-            if !shouldSendViaIncomingBluetoothRoute(centralID: id, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID) {
+            if !shouldSendViaIncomingBluetoothRoute(
+                centralID: id,
+                excludingPeerID: excludingPeerID,
+                onlyPeerID: onlyPeerID,
+                allowLanDuplicate: allowBluetoothWhenLanPeer
+            ) {
                 continue
             }
             notify(frame, to: channel)
@@ -1459,7 +1513,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private func shouldSendViaOutgoingBluetoothRoute(
         peripheralID: UUID,
         excludingPeerID: String?,
-        onlyPeerID: String?
+        onlyPeerID: String?,
+        allowLanDuplicate: Bool
     ) -> Bool {
         guard let remotePeerID = peerIDByPeripheral[peripheralID] else {
             return onlyPeerID == nil
@@ -1470,7 +1525,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if let excludingPeerID, remotePeerID == excludingPeerID {
             return false
         }
-        if lanService?.hasPeer(remotePeerID) == true {
+        if !allowLanDuplicate, lanService?.hasPeer(remotePeerID) == true {
             return false
         }
         if hasOutgoingBluetoothRoute(remotePeerID), hasIncomingBluetoothRoute(remotePeerID) {
@@ -1482,7 +1537,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private func shouldSendViaIncomingBluetoothRoute(
         centralID: UUID,
         excludingPeerID: String?,
-        onlyPeerID: String?
+        onlyPeerID: String?,
+        allowLanDuplicate: Bool
     ) -> Bool {
         guard let remotePeerID = peerIDByCentral[centralID] else {
             return onlyPeerID == nil
@@ -1493,7 +1549,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if let excludingPeerID, remotePeerID == excludingPeerID {
             return false
         }
-        if lanService?.hasPeer(remotePeerID) == true {
+        if !allowLanDuplicate, lanService?.hasPeer(remotePeerID) == true {
             return false
         }
         if hasOutgoingBluetoothRoute(remotePeerID), hasIncomingBluetoothRoute(remotePeerID) {
