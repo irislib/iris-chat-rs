@@ -379,6 +379,9 @@ class AppManagerContractTest {
 
         assertTrue(rust.dispatchedActions.contains(AppAction.OpenChat("chat-1")))
         assertEquals(listOf(Screen.Chat("chat-1")), appManager.state.value.router.screenStack)
+        waitFor("search hit page merge") {
+            appManager.state.value.currentChat?.messages.orEmpty().any { it.id == "25" }
+        }
         assertTrue(appManager.state.value.currentChat?.messages.orEmpty().any { it.id == "25" })
     }
 
