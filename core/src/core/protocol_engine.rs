@@ -756,7 +756,6 @@ impl ProtocolEngine {
             .count()
     }
 
-    #[cfg(test)]
     pub(super) fn active_session_count_for_owner(&self, owner_pubkey: PublicKey) -> usize {
         Self::active_session_count_for_owner_with_snapshot(
             &self.session_manager.snapshot(),

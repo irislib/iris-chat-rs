@@ -401,10 +401,26 @@ impl AppCore {
     }
 
     pub(super) fn build_link_device_snapshot(&self) -> Option<LinkDeviceSnapshot> {
-        let pending = self.pending_linked_device.as_ref()?;
+        if let Some(pending) = self.pending_linked_device.as_ref() {
+            return Some(LinkDeviceSnapshot {
+                url: pending.url.clone(),
+                device_input: pending.device_keys.public_key().to_bech32().ok()?,
+            });
+        }
+
+        let logged_in = self.logged_in.as_ref()?;
+        if logged_in.owner_keys.is_some()
+            || logged_in.authorization_state != LocalAuthorizationState::AwaitingApproval
+        {
+            return None;
+        }
+
+        let mut invite = logged_in.local_invite.clone();
+        invite.purpose = Some("link".to_string());
+        invite.owner_public_key = Some(logged_in.owner_pubkey);
         Some(LinkDeviceSnapshot {
-            url: pending.url.clone(),
-            device_input: pending.device_keys.public_key().to_bech32().ok()?,
+            url: nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL).ok()?,
+            device_input: logged_in.device_keys.public_key().to_bech32().ok()?,
         })
     }
 

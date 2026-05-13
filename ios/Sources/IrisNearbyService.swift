@@ -41,6 +41,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static let nonIrisBackoff: TimeInterval = 60
     private static let helloInterval: TimeInterval = 5
     private static let inventoryResendInterval: TimeInterval = 60
+    private static let presenceResendInterval: TimeInterval = 60
     private static let peerSweepInterval: TimeInterval = 2
     private static let peerTTL: TimeInterval = 15
     private static let dedupeReconnectBackoff: TimeInterval = 30
@@ -66,6 +67,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var peerIDByCentral: [UUID: String] = [:]
     private var bluetoothPeerLastSeen: [String: Date] = [:]
     private var peerInventorySentAt: [String: Date] = [:]
+    private var presenceSentAt: [String: Date] = [:]
     private var connectionNonces: [String: String] = [:]
     private var suppressedPeripheralReconnectUntil: [UUID: Date] = [:]
     private var peerNonces: [String: String] = [:]
@@ -745,6 +747,24 @@ final class IrisNearbyService: NSObject, ObservableObject {
         sendEventJson(eventJson, excludingPeerID: nil)
     }
 
+    private func sendPresenceIfNeeded(remoteNonce: String, responseKey: String, force: Bool) {
+        let key = "\(responseKey)|\(remoteNonce)"
+        let now = Date()
+        if !force,
+           let lastSent = presenceSentAt[key],
+           now.timeIntervalSince(lastSent) < Self.presenceResendInterval {
+            return
+        }
+        presenceSentAt[key] = now
+        prunePresenceSentAt(now: now)
+        sendPresence(remoteNonce: remoteNonce)
+    }
+
+    private func prunePresenceSentAt(now: Date = Date()) {
+        let cutoff = now.addingTimeInterval(-Self.presenceResendInterval * 2)
+        presenceSentAt = presenceSentAt.filter { $0.value >= cutoff }
+    }
+
     private func sendEventFragments(_ record: IrisNearbyStoredEvent, excludingPeerID: String?) {
         let bytes = Array(record.eventJson.utf8)
         let total = (bytes.count + Self.fragmentPayloadBytes - 1) / Self.fragmentPayloadBytes
@@ -1029,14 +1049,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 }
                 if let remoteNonce {
                     peerNonces[remotePeerID] = remoteNonce
-                    if wasNew || nonceChanged {
-                        sendPresence(remoteNonce: remoteNonce)
-                    }
+                    sendPresenceIfNeeded(
+                        remoteNonce: remoteNonce,
+                        responseKey: remotePeerID,
+                        force: wasNew || nonceChanged
+                    )
                 }
                 sendInventoryAfterHelloIfNeeded(remotePeerID: remotePeerID, force: wasNew || nonceChanged)
             } else if let remoteNonce {
-                sendPresence(remoteNonce: remoteNonce)
-                sendInventory(excludingPeerID: nil)
+                sendPresenceIfNeeded(remoteNonce: remoteNonce, responseKey: sourceKey, force: false)
+                sendInventoryAfterHelloIfNeeded(remotePeerID: sourceKey, force: false)
             }
         case "inv":
             handleInventory(envelope)
@@ -1210,6 +1232,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         for peerID in stalePeerIDs {
             bluetoothPeerLastSeen.removeValue(forKey: peerID)
             peerInventorySentAt.removeValue(forKey: peerID)
+            presenceSentAt = presenceSentAt.filter { !$0.key.hasPrefix("\(peerID)|") }
             peerNonces.removeValue(forKey: peerID)
         }
 

@@ -964,7 +964,14 @@ impl AppCore {
             .iter()
             .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(&device_hex));
         if registered {
-            return LocalAuthorizationState::Authorized;
+            let has_local_session = self
+                .protocol_engine
+                .as_ref()
+                .is_some_and(|engine| engine.active_session_count_for_owner(owner_pubkey) > 0);
+            if has_local_session {
+                return LocalAuthorizationState::Authorized;
+            }
+            return LocalAuthorizationState::AwaitingApproval;
         }
 
         if !allow_revoke && previous == Some(LocalAuthorizationState::Authorized) {

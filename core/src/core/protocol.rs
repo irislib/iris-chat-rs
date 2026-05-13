@@ -1506,9 +1506,6 @@ impl AppCore {
         connected_after: u64,
         filter_count: u64,
     ) {
-        if generation != self.protocol_reconnect_token {
-            return;
-        }
         if token != self.protocol_subscription_runtime.reconcile_token {
             return;
         }
@@ -1526,7 +1523,9 @@ impl AppCore {
         self.push_debug_log(
             "protocol.subscription.reconcile",
             format!(
-                "reason={reason} connected_before={connected_before} connected_after={connected_after} filters={filter_count} success={success} dirty={refresh_dirty} error={}",
+                "reason={reason} generation={} current_generation={} connected_before={connected_before} connected_after={connected_after} filters={filter_count} success={success} dirty={refresh_dirty} error={}",
+                generation,
+                self.protocol_reconnect_token,
                 error.as_deref().unwrap_or("")
             ),
         );

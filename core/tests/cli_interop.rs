@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 use std::{io::BufRead, io::BufReader};
 
 use iris_chat_core::local_relay::TestRelay;
+use iris_chat_core::{AppAction, AppState, DeviceAuthorizationState, FfiApp};
 use nostr::{Event, Keys};
 use nostr_double_ratchet::{Invite, ProtocolContext, Session, UnixSeconds};
 use nostr_double_ratchet_nostr::{
@@ -13,6 +14,43 @@ use nostr_double_ratchet_nostr::{
 };
 use serde_json::Value;
 use tempfile::TempDir;
+
+fn new_app(data_dir: &Path) -> Arc<FfiApp> {
+    FfiApp::new(
+        data_dir.to_string_lossy().to_string(),
+        String::new(),
+        "test".to_string(),
+    )
+}
+
+fn wait_for_app_state(
+    app: &FfiApp,
+    label: &str,
+    timeout: Duration,
+    predicate: impl Fn(&AppState) -> bool,
+) -> AppState {
+    let started = Instant::now();
+    let mut last = app.state();
+    while started.elapsed() < timeout {
+        last = app.state();
+        if predicate(&last) {
+            return last;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    panic!("timed out waiting for {label}; last_state={last:?}");
+}
+
+fn dispatch_and_wait_state(
+    app: &FfiApp,
+    action: AppAction,
+    label: &str,
+    timeout: Duration,
+    predicate: impl Fn(&AppState) -> bool,
+) -> AppState {
+    app.dispatch(action);
+    wait_for_app_state(app, label, timeout, predicate)
+}
 
 fn iris_binary() -> &'static PathBuf {
     static BIN: OnceLock<PathBuf> = OnceLock::new();
@@ -259,6 +297,88 @@ fn wait_for_decrypted_message(relay: &TestRelay, session: &mut Session, expected
         std::thread::sleep(Duration::from_millis(100));
     }
     panic!("timed out waiting for decrypted message {expected}");
+}
+
+#[test]
+fn device_linking_e2e_installs_local_sibling_session() {
+    let relay = TestRelay::start();
+    let owner_dir = TempDir::new().unwrap();
+    let linked_dir = TempDir::new().unwrap();
+    let owner = new_app(owner_dir.path());
+    let linked = new_app(linked_dir.path());
+
+    owner.dispatch(AppAction::SetNostrRelays {
+        relay_urls: vec![relay.url().to_string()],
+    });
+    let owner_state = dispatch_and_wait_state(
+        &owner,
+        AppAction::CreateAccount {
+            name: "Alice".to_string(),
+        },
+        "owner account",
+        Duration::from_secs(5),
+        |state| state.account.is_some(),
+    );
+    let owner_id = owner_state
+        .account
+        .as_ref()
+        .expect("owner account")
+        .public_key_hex
+        .clone();
+
+    linked.dispatch(AppAction::SetNostrRelays {
+        relay_urls: vec![relay.url().to_string()],
+    });
+    let linked_state = dispatch_and_wait_state(
+        &linked,
+        AppAction::StartLinkedDevice {
+            owner_input: String::new(),
+        },
+        "linked device link code",
+        Duration::from_secs(5),
+        |state| state.link_device.is_some(),
+    );
+    let link = linked_state
+        .link_device
+        .as_ref()
+        .expect("link snapshot")
+        .clone();
+
+    dispatch_and_wait_state(
+        &owner,
+        AppAction::AddAuthorizedDevice {
+            device_input: link.url.clone(),
+        },
+        "owner roster includes linked device",
+        Duration::from_secs(10),
+        |state| {
+            state.device_roster.as_ref().is_some_and(|roster| {
+                roster
+                    .devices
+                    .iter()
+                    .any(|device| device.device_npub == link.device_input)
+            })
+        },
+    );
+
+    let linked_authorized = wait_for_app_state(
+        &linked,
+        "linked device authorization",
+        Duration::from_secs(10),
+        |state| {
+            state.account.as_ref().is_some_and(|account| {
+                account.public_key_hex == owner_id
+                    && account.authorization_state == DeviceAuthorizationState::Authorized
+            })
+        },
+    );
+    assert!(
+        linked_authorized.link_device.is_none(),
+        "fully linked device should not keep showing link UI"
+    );
+
+    owner.shutdown();
+    linked.shutdown();
 }
 
 #[test]

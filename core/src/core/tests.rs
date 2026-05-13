@@ -4363,6 +4363,26 @@ fn linked_device_authorization_follows_app_keys() {
             device.public_key(),
             Some(LocalAuthorizationState::AwaitingApproval),
         ),
+        LocalAuthorizationState::AwaitingApproval
+    );
+
+    core.start_session(owner.public_key(), None, device.clone(), false, false)
+        .expect("linked session");
+    let approved_keys = known_app_keys_from_ndr(
+        owner.public_key(),
+        &AppKeys::new(vec![DeviceEntry::new(device.public_key(), 20)]),
+        20,
+    );
+    core.app_keys
+        .insert(owner.public_key().to_hex(), approved_keys);
+    install_local_sibling_session_for_test(&mut core, &owner, &device, &other_device);
+    assert_eq!(
+        core.local_authorization_state(
+            None,
+            owner.public_key(),
+            device.public_key(),
+            Some(LocalAuthorizationState::AwaitingApproval),
+        ),
         LocalAuthorizationState::Authorized
     );
 }
@@ -4410,6 +4430,49 @@ fn restored_authorized_linked_device_is_not_revoked_by_cached_roster() {
             Some(LocalAuthorizationState::Authorized),
         ),
         LocalAuthorizationState::Revoked
+    );
+}
+
+#[test]
+fn linked_device_missing_local_session_exposes_link_code() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.start_session(owner.public_key(), None, device.clone(), false, false)
+        .expect("linked session");
+    let app_keys = known_app_keys_from_ndr(
+        owner.public_key(),
+        &AppKeys::new(vec![DeviceEntry::new(device.public_key(), 20)]),
+        20,
+    );
+    core.app_keys.insert(owner.public_key().to_hex(), app_keys);
+    core.refresh_local_authorization_state();
+    core.rebuild_state();
+
+    let account = core.state.account.as_ref().expect("account");
+    assert_eq!(
+        account.authorization_state,
+        DeviceAuthorizationState::AwaitingApproval
+    );
+    let snapshot = core
+        .state
+        .link_device
+        .as_ref()
+        .expect("link-device snapshot");
+    let invite =
+        nostr_double_ratchet_nostr::parse_invite_url(&snapshot.url).expect("parse link invite");
+    assert_eq!(invite.purpose.as_deref(), Some("link"));
+    assert_eq!(invite.owner_public_key, Some(owner.public_key()));
+    assert_eq!(
+        invite.inviter.to_bech32().ok().as_deref(),
+        Some(snapshot.device_input.as_str())
     );
 }
 

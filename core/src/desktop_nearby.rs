@@ -22,6 +22,8 @@ const NEARBY_HEADER_BYTES: usize = 13;
 const MAX_FRAME_BODY_BYTES: usize = 256 * 1024;
 const SINGLE_FRAME_BYTES: usize = 16 * 1024;
 const HELLO_INTERVAL: Duration = Duration::from_secs(5);
+const PRESENCE_RESEND_INTERVAL: Duration = Duration::from_secs(60);
+const INVENTORY_RESEND_INTERVAL: Duration = Duration::from_secs(60);
 const PEER_TTL: Duration = Duration::from_secs(15);
 const MDNS_QUERY_INTERVAL: Duration = Duration::from_secs(5);
 const MDNS_ANNOUNCE_INTERVAL: Duration = Duration::from_secs(10);
@@ -46,6 +48,8 @@ struct DesktopNearbyInner {
     known_profiles: HashMap<String, NearbyProfileEvent>,
     peers: HashMap<String, DesktopNearbyPeer>,
     peer_nonces: HashMap<String, String>,
+    peer_inventory_sent_at: HashMap<String, Instant>,
+    presence_sent_at: HashMap<String, Instant>,
     connection_nonces: HashMap<String, String>,
     connections: HashMap<String, DesktopNearbyConnection>,
     endpoint_keys: HashSet<String>,
@@ -110,6 +114,8 @@ impl DesktopNearbyService {
                 known_profiles: HashMap::new(),
                 peers: HashMap::new(),
                 peer_nonces: HashMap::new(),
+                peer_inventory_sent_at: HashMap::new(),
+                presence_sent_at: HashMap::new(),
                 connection_nonces: HashMap::new(),
                 connections: HashMap::new(),
                 endpoint_keys: HashSet::new(),
@@ -353,6 +359,49 @@ impl DesktopNearbyService {
             author_pubkey_hex: None,
         };
         self.send_event(&record, None);
+    }
+
+    fn send_presence_if_needed(&self, remote_nonce: &str, response_key: &str, force: bool) {
+        let key = format!("{response_key}|{remote_nonce}");
+        let now = Instant::now();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if !force
+                && inner
+                    .presence_sent_at
+                    .get(&key)
+                    .is_some_and(|last| now.duration_since(*last) < PRESENCE_RESEND_INTERVAL)
+            {
+                return;
+            }
+            inner.presence_sent_at.insert(key, now);
+            inner
+                .presence_sent_at
+                .retain(|_, last| now.duration_since(*last) < PRESENCE_RESEND_INTERVAL * 2);
+        }
+        self.send_presence(remote_nonce);
+    }
+
+    fn send_inventory_after_hello_if_needed(&self, response_key: &str, force: bool) {
+        let now = Instant::now();
+        {
+            let mut inner = self.inner.lock().unwrap();
+            if !force
+                && inner
+                    .peer_inventory_sent_at
+                    .get(response_key)
+                    .is_some_and(|last| now.duration_since(*last) < INVENTORY_RESEND_INTERVAL)
+            {
+                return;
+            }
+            inner
+                .peer_inventory_sent_at
+                .insert(response_key.to_string(), now);
+            inner
+                .peer_inventory_sent_at
+                .retain(|_, last| now.duration_since(*last) < INVENTORY_RESEND_INTERVAL * 2);
+        }
+        self.send_inventory(None);
     }
 
     fn send_envelope(&self, envelope: &NearbyEnvelope, excluding_peer_id: Option<&str>) {
@@ -671,7 +720,7 @@ impl DesktopNearbyRuntime {
         remote_nonce: Option<String>,
         name: Option<&str>,
     ) {
-        let was_new = {
+        let (was_new, nonce_changed) = {
             let mut inner = self.inner.lock().unwrap();
             if let Some(nonce) = remote_nonce.as_ref() {
                 inner
@@ -689,23 +738,28 @@ impl DesktopNearbyRuntime {
                         .insert(remote_peer_id.to_string(), nonce.clone());
                 }
                 let was_new = remember_peer(&mut inner, remote_peer_id, name, None);
-                if was_new || (remote_nonce.is_some() && remote_nonce != previous_nonce) {
+                let nonce_changed = remote_nonce.is_some() && remote_nonce != previous_nonce;
+                if was_new || nonce_changed {
                     inner.status = nearby_status(&inner);
                 }
-                was_new
+                (was_new, nonce_changed)
             } else {
                 inner.status = nearby_status(&inner);
-                false
+                (false, false)
             }
         };
         if was_new {
             self.notify();
             self.send_hello(None);
         }
-        if let Some(nonce) = remote_nonce {
-            self.send_presence(&nonce);
+        if let Some(nonce) = remote_nonce.as_deref() {
+            let response_key = remote_peer_id.unwrap_or(connection_id);
+            self.send_presence_if_needed(nonce, response_key, was_new || nonce_changed);
         }
-        self.send_inventory(None);
+        self.send_inventory_after_hello_if_needed(
+            remote_peer_id.unwrap_or(connection_id),
+            was_new || nonce_changed,
+        );
     }
 
     fn handle_inventory(&self, id: &str, size: u64) {
@@ -882,6 +936,10 @@ impl DesktopNearbyRuntime {
             for peer_id in &stale {
                 inner.peers.remove(peer_id);
                 inner.peer_nonces.remove(peer_id);
+                inner.peer_inventory_sent_at.remove(peer_id);
+                inner
+                    .presence_sent_at
+                    .retain(|key, _| !key.starts_with(&format!("{peer_id}|")));
             }
             if !stale.is_empty() {
                 inner.status = nearby_status(&inner);
@@ -937,13 +995,22 @@ impl DesktopNearbyRuntime {
         service.send_event(record, excluding_peer_id);
     }
 
-    fn send_presence(&self, remote_nonce: &str) {
+    fn send_presence_if_needed(&self, remote_nonce: &str, response_key: &str, force: bool) {
         let service = DesktopNearbyService {
             app: self.app.clone(),
             observer: self.observer.clone(),
             inner: self.inner.clone(),
         };
-        service.send_presence(remote_nonce);
+        service.send_presence_if_needed(remote_nonce, response_key, force);
+    }
+
+    fn send_inventory_after_hello_if_needed(&self, response_key: &str, force: bool) {
+        let service = DesktopNearbyService {
+            app: self.app.clone(),
+            observer: self.observer.clone(),
+            inner: self.inner.clone(),
+        };
+        service.send_inventory_after_hello_if_needed(response_key, force);
     }
 }
 

@@ -139,6 +139,7 @@ impl AppCore {
                 match retry_results {
                     Ok(Some(results)) => {
                         self.process_protocol_engine_retry_batch("invite_response", results);
+                        self.refresh_local_authorization_state();
                     }
                     Ok(None) => {}
                     Err(error) => {
