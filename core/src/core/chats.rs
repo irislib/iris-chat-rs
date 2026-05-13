@@ -1602,7 +1602,7 @@ impl AppCore {
     }
 }
 
-fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
+pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
     let (body, parsed_attachments) = extract_message_attachments(&message.body);
     ChatMessageSnapshot {
         id: message.id.clone(),
@@ -1689,7 +1689,7 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
     values.push(value.to_string());
 }
 
-fn message_order(message: &ChatMessageSnapshot) -> (u64, u64, &str) {
+pub(super) fn message_order(message: &ChatMessageSnapshot) -> (u64, u64, &str) {
     (
         message.created_at_secs,
         message.id.parse::<u64>().unwrap_or(u64::MAX),

@@ -1,5 +1,7 @@
 use super::*;
 
+pub(super) const CATCH_UP_EVENT_PROCESS_CHUNK_SIZE: usize = 64;
+
 impl AppCore {
     #[cfg(test)]
     pub fn new(
@@ -512,19 +514,29 @@ impl AppCore {
             InternalEvent::PruneExpiredMessages { token } => {
                 self.handle_prune_expired_messages(token);
             }
-            InternalEvent::FetchCatchUpEvents(events) => {
+            InternalEvent::FetchCatchUpEvents(mut events) => {
                 // Coalesce: a catch-up burst of N events used to cause N
                 // rebuild_state + emit_state cycles, each pushing a fresh
                 // FullState to the UI. On Android debug builds that meant
                 // 16-19 recompositions in a row whenever the relay flushed
                 // a backlog and the screen could be unresponsive for
-                // seconds. Process all events inside one batch so the UI
-                // sees a single update at the end.
+                // seconds. Process bounded chunks inside batches so the UI
+                // still gets coalesced updates without starving user actions.
+                let remainder = if events.len() > CATCH_UP_EVENT_PROCESS_CHUNK_SIZE {
+                    Some(events.split_off(CATCH_UP_EVENT_PROCESS_CHUNK_SIZE))
+                } else {
+                    None
+                };
                 self.enter_batch();
                 for event in events {
                     self.handle_relay_event(event);
                 }
                 self.exit_batch();
+                if let Some(remainder) = remainder {
+                    let _ = self.core_sender.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::FetchCatchUpEvents(remainder),
+                    )));
+                }
             }
             InternalEvent::RelayStatusChanged {
                 relay_url,

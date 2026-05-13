@@ -2577,6 +2577,7 @@ private struct InChatSearchSheet: View {
                                         onClose()
                                     }
                                 )
+                                .accessibilityIdentifier("inChatMessageHit-\(String(hit.messageId.prefix(12)))")
                             }
                             if results.messages.count >= Int(messageSearchLimit) {
                                 SearchViewMoreRow {

@@ -19,7 +19,11 @@ namespace IrisChat;
 public sealed class AppManager : INotifyPropertyChanged
 {
     private const string DispatchFailureToast = "Action failed. Copy support bundle in Settings.";
+    private const uint RouteChatSnapshotLimit = 80;
     private static readonly TimeSpan ActiveChatSeenIdleLimit = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan NavigationOverrideTtl = TimeSpan.FromSeconds(10);
+
+    private sealed record PendingNavigationOverride(Screen[] Stack, DateTimeOffset ExpiresAt);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -48,6 +52,7 @@ public sealed class AppManager : INotifyPropertyChanged
     private AppState _state;
     private DesktopNearbySnapshot _nearbySnapshot;
     private ulong _lastRevApplied;
+    private PendingNavigationOverride? _pendingNavigationOverride;
 
     public AppManager(string dataDir, IDesktopNotificationPoster? notifier = null)
     {
@@ -189,11 +194,19 @@ public sealed class AppManager : INotifyPropertyChanged
         var stack = _state.router.screenStack ?? Array.Empty<Screen>();
         if (stack.Length == 0) return;
         var next = stack.Take(stack.Length - 1).ToArray();
-        DispatchToRust(new AppAction.UpdateScreenStack(next));
+        NavigateOptimistically(next, new AppAction.UpdateScreenStack(next), showToastOnFailure: false);
     }
 
-    public void Push(Screen screen) =>
-        DispatchToRust(new AppAction.PushScreen(screen));
+    public void Push(Screen screen)
+    {
+        var stack = StackByApplyingPushScreen(screen);
+        if (stack is null)
+        {
+            DispatchToRust(new AppAction.PushScreen(screen));
+            return;
+        }
+        NavigateOptimistically(stack, new AppAction.PushScreen(screen));
+    }
 
     // ───────────────────────────── account ────────────────────────────────────
 
@@ -316,8 +329,15 @@ public sealed class AppManager : INotifyPropertyChanged
         DispatchToRust(new AppAction.CreateChat(t));
     }
 
-    public void OpenChat(string chatId) =>
-        DispatchToRust(new AppAction.OpenChat(chatId));
+    public void OpenChat(string chatId)
+    {
+        var trimmed = chatId.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return;
+        NavigateOptimistically(
+            new Screen[] { new Screen.Chat(trimmed) },
+            new AppAction.OpenChat(trimmed)
+        );
+    }
 
     public void SendMessage(string chatId, string text)
     {
@@ -675,18 +695,19 @@ public sealed class AppManager : INotifyPropertyChanged
             case AppUpdate.FullState f:
                 if (f.v1.rev <= _lastRevApplied) return;
                 var prev = _state;
-                _state = f.v1;
+                var next = StateByReconcilingPendingNavigation(f.v1);
+                _state = next;
                 _lastRevApplied = f.v1.rev;
                 BootstrapInFlight = false;
 
-                SyncNearbyPreference(prev, f.v1);
-                PostDesktopNotifications(prev, f.v1);
+                SyncNearbyPreference(prev, next);
+                PostDesktopNotifications(prev, next);
 
                 NotifyAll();
 
-                if (!string.IsNullOrEmpty(f.v1.toast))
+                if (!string.IsNullOrEmpty(next.toast))
                 {
-                    ShowToast(f.v1.toast!);
+                    ShowToast(next.toast!);
                 }
                 break;
 
@@ -715,6 +736,139 @@ public sealed class AppManager : INotifyPropertyChanged
             _nearby.Start(LocalDeviceName());
         else if (!isEnabled && (wasEnabled || NearbySnapshot.visible))
             _nearby.Stop();
+    }
+
+    private Screen[]? StackByApplyingPushScreen(Screen screen)
+    {
+        if (_state.account == null)
+        {
+            return screen switch
+            {
+                Screen.Welcome => Array.Empty<Screen>(),
+                Screen.CreateAccount or Screen.RestoreAccount or Screen.AddDevice => new[] { screen },
+                _ => null,
+            };
+        }
+
+        switch (screen)
+        {
+            case Screen.ChatList:
+                return Array.Empty<Screen>();
+            case Screen.NewChat:
+            case Screen.NewGroup:
+            case Screen.CreateInvite:
+            case Screen.JoinInvite:
+            case Screen.Settings:
+            case Screen.DeviceRoster:
+                return new[] { screen };
+            case Screen.Chat chat:
+            {
+                var trimmed = chat.chatId.Trim();
+                return string.IsNullOrEmpty(trimmed) ? null : new Screen[] { new Screen.Chat(trimmed) };
+            }
+            case Screen.GroupDetails details:
+            {
+                var groupId = details.groupId.Trim();
+                if (string.IsNullOrEmpty(groupId)) return null;
+                var groupChatId = $"group:{groupId}";
+                var stack = ActiveChatId(_state) == groupChatId
+                    ? (_state.router.screenStack ?? Array.Empty<Screen>())
+                    : new Screen[] { new Screen.Chat(groupChatId) };
+                var detailsScreen = new Screen.GroupDetails(groupId);
+                return stack.LastOrDefault()?.Equals(detailsScreen) == true
+                    ? stack
+                    : stack.Append(detailsScreen).ToArray();
+            }
+            default:
+                return null;
+        }
+    }
+
+    private bool NavigateOptimistically(Screen[] stack, AppAction action, bool showToastOnFailure = true)
+    {
+        _pendingNavigationOverride = new PendingNavigationOverride(
+            stack,
+            DateTimeOffset.UtcNow.Add(NavigationOverrideTtl)
+        );
+        ApplyLocalScreenStack(stack);
+        var dispatched = DispatchToRust(
+            action,
+            showToastOnFailure: showToastOnFailure,
+            preservesPendingNavigation: true
+        );
+        if (!dispatched)
+        {
+            _pendingNavigationOverride = null;
+        }
+        return dispatched;
+    }
+
+    private AppState StateByReconcilingPendingNavigation(AppState next)
+    {
+        var pending = _pendingNavigationOverride;
+        if (pending == null) return next;
+        if (next.account == null)
+        {
+            _pendingNavigationOverride = null;
+            return next;
+        }
+        if (next.router.screenStack.SequenceEqual(pending.Stack))
+        {
+            _pendingNavigationOverride = null;
+            return next;
+        }
+        if (DateTimeOffset.UtcNow >= pending.ExpiresAt)
+        {
+            _pendingNavigationOverride = null;
+            return next;
+        }
+        return StateByApplyingLocalScreenStack(pending.Stack, next);
+    }
+
+    private void ApplyLocalScreenStack(Screen[] stack)
+    {
+        _state = StateByApplyingLocalScreenStack(stack, _state);
+        NotifyAll();
+    }
+
+    private AppState StateByApplyingLocalScreenStack(Screen[] stack, AppState baseState)
+    {
+        var active = stack.LastOrDefault() ?? baseState.router.defaultScreen;
+        var currentChat = baseState.currentChat;
+        var groupDetails = baseState.groupDetails;
+        switch (active)
+        {
+            case Screen.Chat chat:
+                if (currentChat?.chatId != chat.chatId)
+                {
+                    currentChat = _ffi.ChatSnapshot(chat.chatId, RouteChatSnapshotLimit);
+                }
+                groupDetails = null;
+                break;
+            case Screen.GroupDetails details:
+                if (groupDetails?.groupId != details.groupId) groupDetails = null;
+                break;
+            default:
+                currentChat = null;
+                groupDetails = null;
+                break;
+        }
+        return baseState with
+        {
+            router = new Router(baseState.router.defaultScreen, stack),
+            currentChat = currentChat,
+            groupDetails = groupDetails
+        };
+    }
+
+    private static string? ActiveChatId(AppState state)
+    {
+        var active = state.router.screenStack.LastOrDefault() ?? state.router.defaultScreen;
+        if (active is Screen.Chat chat)
+        {
+            return chat.chatId.Trim();
+        }
+        return state.currentChat?.chatId?.Trim();
     }
 
     private void ApplySafely(AppUpdate update)
@@ -779,8 +933,16 @@ public sealed class AppManager : INotifyPropertyChanged
         Notify(nameof(NearbySnapshot));
     }
 
-    private bool DispatchToRust(AppAction action, bool showToastOnFailure = true)
+    private bool DispatchToRust(
+        AppAction action,
+        bool showToastOnFailure = true,
+        bool preservesPendingNavigation = false
+    )
     {
+        if (!preservesPendingNavigation && ActionClearsPendingNavigation(action))
+        {
+            _pendingNavigationOverride = null;
+        }
         try
         {
             _ffi.Dispatch(action);
@@ -798,6 +960,19 @@ public sealed class AppManager : INotifyPropertyChanged
             return false;
         }
     }
+
+    private static bool ActionClearsPendingNavigation(AppAction action) =>
+        action is AppAction.OpenChat ||
+        action is AppAction.PushScreen ||
+        action is AppAction.UpdateScreenStack ||
+        action is AppAction.NavigateBack ||
+        action is AppAction.CreateChat ||
+        action is AppAction.CreateGroup ||
+        action is AppAction.CreateGroupWithPicture ||
+        action is AppAction.AcceptInvite ||
+        action is AppAction.Logout ||
+        action is AppAction.RestoreSession ||
+        action is AppAction.RestoreAccountBundle;
 
     private static string ActionLogName(AppAction action) =>
         action.GetType().Name;

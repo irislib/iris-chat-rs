@@ -259,6 +259,35 @@ impl AppStore {
         load_recent_messages(&conn, chat_id, limit)
     }
 
+    #[cfg(test)]
+    pub(crate) fn load_messages_before(
+        &self,
+        chat_id: &str,
+        before_message_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Vec<PersistedMessage>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        load_messages_before(&conn, chat_id, before_message_id, limit)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_messages_around(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+        before_limit: usize,
+        after_limit: usize,
+    ) -> anyhow::Result<Vec<PersistedMessage>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        load_messages_around(&conn, chat_id, message_id, before_limit, after_limit)
+    }
+
     pub(crate) fn message_exists(
         &self,
         chat_id: &str,
@@ -1314,7 +1343,7 @@ fn build_fts5_query(input: &str) -> Option<String> {
     )
 }
 
-fn load_recent_messages(
+pub(crate) fn load_recent_messages(
     conn: &rusqlite::Connection,
     chat_id: &str,
     limit: usize,
@@ -1340,6 +1369,140 @@ fn load_recent_messages(
     )?;
     let rows = stmt.query_map(params![chat_id, limit as i64], persisted_message_from_row)?;
     let mut messages = Vec::new();
+    for row in rows {
+        messages.push(row?);
+    }
+    Ok(messages)
+}
+
+pub(crate) fn load_messages_before(
+    conn: &rusqlite::Connection,
+    chat_id: &str,
+    before_message_id: &str,
+    limit: usize,
+) -> anyhow::Result<Vec<PersistedMessage>> {
+    if limit == 0 {
+        return Ok(Vec::new());
+    }
+    let mut stmt = conn.prepare(
+        "WITH anchor AS (
+             SELECT created_at_secs AS anchor_created,
+                    CASE
+                        WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
+                        ELSE 9223372036854775807
+                    END AS anchor_numeric,
+                    id AS anchor_id
+             FROM messages
+             WHERE chat_id = ?1 AND id = ?2
+             LIMIT 1
+         )
+         SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+                recipient_deliveries_json, delivery_trace_json
+         FROM (
+             SELECT m.chat_id, m.id, m.kind, m.author, m.body, m.is_outgoing,
+                    m.created_at_secs, m.expires_at_secs, m.delivery, m.attachments_json,
+                    m.reactions_json, m.reactors_json, m.source_event_id,
+                    m.recipient_deliveries_json, m.delivery_trace_json,
+                    CASE
+                        WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
+                        ELSE 9223372036854775807
+                    END AS numeric_id
+             FROM messages m, anchor
+             WHERE m.chat_id = ?1
+               AND (
+                    m.created_at_secs < anchor.anchor_created
+                    OR (
+                        m.created_at_secs = anchor.anchor_created
+                        AND (
+                            CASE
+                                WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
+                                ELSE 9223372036854775807
+                            END < anchor.anchor_numeric
+                            OR (
+                                CASE
+                                    WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
+                                    ELSE 9223372036854775807
+                                END = anchor.anchor_numeric
+                                AND m.id < anchor.anchor_id
+                            )
+                        )
+                    )
+               )
+             ORDER BY m.created_at_secs DESC, numeric_id DESC, m.id DESC
+             LIMIT ?3
+         )
+         ORDER BY created_at_secs ASC, numeric_id ASC, id ASC",
+    )?;
+    let rows = stmt.query_map(
+        params![chat_id, before_message_id, limit as i64],
+        persisted_message_from_row,
+    )?;
+    let mut messages = Vec::new();
+    for row in rows {
+        messages.push(row?);
+    }
+    Ok(messages)
+}
+
+pub(crate) fn load_messages_around(
+    conn: &rusqlite::Connection,
+    chat_id: &str,
+    message_id: &str,
+    before_limit: usize,
+    after_limit: usize,
+) -> anyhow::Result<Vec<PersistedMessage>> {
+    let before = load_messages_before(conn, chat_id, message_id, before_limit)?;
+    let mut stmt = conn.prepare(
+        "WITH anchor AS (
+             SELECT created_at_secs AS anchor_created,
+                    CASE
+                        WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
+                        ELSE 9223372036854775807
+                    END AS anchor_numeric,
+                    id AS anchor_id
+             FROM messages
+             WHERE chat_id = ?1 AND id = ?2
+             LIMIT 1
+         )
+         SELECT m.chat_id, m.id, m.kind, m.author, m.body, m.is_outgoing, m.created_at_secs,
+                m.expires_at_secs, m.delivery, m.attachments_json, m.reactions_json,
+                m.reactors_json, m.source_event_id, m.recipient_deliveries_json,
+                m.delivery_trace_json
+         FROM messages m, anchor
+         WHERE m.chat_id = ?1
+           AND (
+                m.created_at_secs > anchor.anchor_created
+                OR (
+                    m.created_at_secs = anchor.anchor_created
+                    AND (
+                        CASE
+                            WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
+                            ELSE 9223372036854775807
+                        END > anchor.anchor_numeric
+                        OR (
+                            CASE
+                                WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
+                                ELSE 9223372036854775807
+                            END = anchor.anchor_numeric
+                            AND m.id >= anchor.anchor_id
+                        )
+                    )
+                )
+           )
+         ORDER BY m.created_at_secs ASC,
+                  CASE
+                      WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
+                      ELSE 9223372036854775807
+                  END ASC,
+                  m.id ASC
+         LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(
+        params![chat_id, message_id, after_limit.saturating_add(1) as i64],
+        persisted_message_from_row,
+    )?;
+    let mut messages = before;
     for row in rows {
         messages.push(row?);
     }
@@ -1876,6 +2039,80 @@ mod tests {
             elapsed < std::time::Duration::from_millis(250),
             "large chat recent-message page took {elapsed:?}",
         );
+    }
+
+    #[test]
+    fn load_messages_before_returns_older_page_for_large_chat() {
+        let (_tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let messages = (1..=200)
+            .map(|idx| sample_message(&idx.to_string(), &format!("message {idx}"), idx as u64))
+            .collect::<Vec<_>>();
+        let mut threads = BTreeMap::new();
+        threads.insert("chat".to_string(), thread_from_messages("chat", messages));
+        let snapshot = empty_snapshot(
+            None,
+            201,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        let page = store.load_messages_before("chat", "121", 40).unwrap();
+
+        assert_eq!(page.len(), 40);
+        assert_eq!(page.first().unwrap().body, "message 81");
+        assert_eq!(page.last().unwrap().body, "message 120");
+        assert!(!page.iter().any(|message| message.id == "121"));
+    }
+
+    #[test]
+    fn load_messages_around_returns_search_hit_context_outside_recent_page() {
+        let (_tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let messages = (1..=200)
+            .map(|idx| sample_message(&idx.to_string(), &format!("message {idx}"), idx as u64))
+            .collect::<Vec<_>>();
+        let mut threads = BTreeMap::new();
+        threads.insert("chat".to_string(), thread_from_messages("chat", messages));
+        let snapshot = empty_snapshot(
+            None,
+            201,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        let recent = store.load_recent_messages("chat", 80).unwrap();
+        assert_eq!(recent.first().unwrap().body, "message 121");
+        assert!(!recent.iter().any(|message| message.id == "25"));
+
+        let page = store.load_messages_around("chat", "25", 10, 10).unwrap();
+
+        assert_eq!(page.len(), 21);
+        assert_eq!(page.first().unwrap().body, "message 15");
+        assert_eq!(page.last().unwrap().body, "message 35");
+        assert!(page.iter().any(|message| message.id == "25"));
     }
 
     #[test]

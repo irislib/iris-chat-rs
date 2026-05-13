@@ -43,6 +43,7 @@ import to.iris.chat.rust.AppReconciler
 import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.BusyState
+import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceRosterSnapshot
@@ -67,6 +68,17 @@ interface RustAppClient {
     fun dispatch(action: AppAction)
 
     fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot
+
+    fun chatSnapshot(chatId: String, limit: UInt): CurrentChatSnapshot?
+
+    fun chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt): CurrentChatSnapshot?
+
+    fun chatSnapshotAroundMessage(
+        chatId: String,
+        messageId: String,
+        beforeLimit: UInt,
+        afterLimit: UInt,
+    ): CurrentChatSnapshot?
 
     fun ingestNearbyEventJson(eventJson: String): Boolean
 
@@ -117,6 +129,25 @@ private class LiveRustAppClient(
 
     override fun search(query: String, scopeChatId: String?, limit: UInt): SearchResultSnapshot =
         ffi.search(query = query, scopeChatId = scopeChatId, limit = limit)
+
+    override fun chatSnapshot(chatId: String, limit: UInt): CurrentChatSnapshot? =
+        ffi.chatSnapshot(chatId = chatId, limit = limit)
+
+    override fun chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt): CurrentChatSnapshot? =
+        ffi.chatSnapshotBefore(chatId = chatId, beforeMessageId = beforeMessageId, limit = limit)
+
+    override fun chatSnapshotAroundMessage(
+        chatId: String,
+        messageId: String,
+        beforeLimit: UInt,
+        afterLimit: UInt,
+    ): CurrentChatSnapshot? =
+        ffi.chatSnapshotAroundMessage(
+            chatId = chatId,
+            messageId = messageId,
+            beforeLimit = beforeLimit,
+            afterLimit = afterLimit,
+        )
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = ffi.ingestNearbyEventJson(eventJson)
 
@@ -304,6 +335,9 @@ class AppManager(
     private var cachedAccountBundle: StoredAccountBundle? = null
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
     private var pendingNavigationOverride: PendingNavigationOverride? = null
+    private val olderChatPageLoads = mutableSetOf<String>()
+    private val exhaustedOlderChatPages = mutableSetOf<String>()
+    private val aroundChatPageLoads = mutableSetOf<String>()
 
     private val mutableState = MutableStateFlow(rust.state())
     private val mutableAppForegrounded = MutableStateFlow(false)
@@ -439,8 +473,7 @@ class AppManager(
     }
 
     fun dispatch(action: AppAction) {
-        if (action is AppAction.NavigateBack) {
-            navigateBack()
+        if (handleOptimisticNavigation(action)) {
             return
         }
         dispatchToRust(action)
@@ -653,7 +686,7 @@ class AppManager(
         if (trimmed.isEmpty()) {
             return
         }
-        dispatchToRust(AppAction.OpenChat(trimmed))
+        dispatch(AppAction.OpenChat(trimmed))
     }
 
     /// Open a chat with a one-shot "scroll to this message" hint.
@@ -666,7 +699,8 @@ class AppManager(
             return
         }
         pendingScrollMessageState.value = trimmedMessage
-        dispatchToRust(AppAction.OpenChat(trimmedChat))
+        dispatch(AppAction.OpenChat(trimmedChat))
+        loadChatAroundMessage(trimmedChat, trimmedMessage)
     }
 
     fun consumePendingScrollMessage() {
@@ -678,8 +712,70 @@ class AppManager(
     private val pendingScrollMessageState = MutableStateFlow<String?>(null)
     val pendingScrollMessage: StateFlow<String?> = pendingScrollMessageState.asStateFlow()
 
+    fun loadOlderMessages(chatId: String): Boolean {
+        val trimmedChat = chatId.trim()
+        val current = mutableState.value.currentChat
+        val firstMessage = current?.messages?.firstOrNull()
+        if (
+            trimmedChat.isEmpty() ||
+                trimmedChat in olderChatPageLoads ||
+                trimmedChat in exhaustedOlderChatPages ||
+                current?.chatId != trimmedChat ||
+                firstMessage == null
+        ) {
+            return false
+        }
+        olderChatPageLoads += trimmedChat
+        val page =
+            runCatching {
+                rust.chatSnapshotBefore(trimmedChat, firstMessage.id, CHAT_PAGE_SIZE)
+            }.getOrNull()
+        olderChatPageLoads -= trimmedChat
+        if (page == null) {
+            return false
+        }
+        if (page.messages.isEmpty() || page.messages.size.toUInt() < CHAT_PAGE_SIZE) {
+            exhaustedOlderChatPages += trimmedChat
+        }
+        if (page.messages.isEmpty()) {
+            return false
+        }
+        mergeCurrentChatSnapshot(page)
+        return true
+    }
+
+    fun loadChatAroundMessage(chatId: String, messageId: String) {
+        val trimmedChat = chatId.trim()
+        val trimmedMessage = messageId.trim()
+        if (trimmedChat.isEmpty() || trimmedMessage.isEmpty()) {
+            return
+        }
+        val current = mutableState.value.currentChat
+        if (current?.chatId == trimmedChat && current.messages.any { it.id == trimmedMessage }) {
+            return
+        }
+        val key = "$trimmedChat\u001F$trimmedMessage"
+        if (key in aroundChatPageLoads) {
+            return
+        }
+        aroundChatPageLoads += key
+        val page =
+            runCatching {
+                rust.chatSnapshotAroundMessage(
+                    chatId = trimmedChat,
+                    messageId = trimmedMessage,
+                    beforeLimit = CHAT_AROUND_BEFORE_LIMIT,
+                    afterLimit = CHAT_AROUND_AFTER_LIMIT,
+                )
+            }.getOrNull()
+        aroundChatPageLoads -= key
+        if (page != null) {
+            mergeCurrentChatSnapshot(page)
+        }
+    }
+
     fun pushScreen(screen: Screen) {
-        dispatchToRust(AppAction.PushScreen(screen))
+        dispatch(AppAction.PushScreen(screen))
     }
 
     fun navigateBack() {
@@ -688,16 +784,124 @@ class AppManager(
             return
         }
         val nextStack = currentStack.dropLast(1)
+        navigateOptimistically(
+            stack = nextStack,
+            action = AppAction.UpdateScreenStack(nextStack),
+            showsToastOnFailure = false,
+        )
+    }
+
+    private fun handleOptimisticNavigation(action: AppAction): Boolean =
+        when (action) {
+            is AppAction.NavigateBack -> {
+                navigateBack()
+                true
+            }
+            is AppAction.OpenChat -> {
+                val trimmed = action.chatId.trim()
+                if (trimmed.isNotEmpty()) {
+                    navigateOptimistically(
+                        stack = listOf(Screen.Chat(trimmed)),
+                        action = AppAction.OpenChat(trimmed),
+                    )
+                }
+                true
+            }
+            is AppAction.PushScreen -> {
+                val stack = stackByApplyingPushScreen(action.screen)
+                if (stack == null) {
+                    dispatchToRust(action)
+                } else {
+                    navigateOptimistically(stack = stack, action = action)
+                }
+                true
+            }
+            is AppAction.UpdateScreenStack -> {
+                navigateOptimistically(
+                    stack = action.stack,
+                    action = action,
+                    showsToastOnFailure = false,
+                )
+                true
+            }
+            else -> false
+        }
+
+    private fun stackByApplyingPushScreen(screen: Screen): List<Screen>? {
+        if (mutableState.value.account == null) {
+            return when (screen) {
+                is Screen.Welcome -> emptyList()
+                is Screen.CreateAccount,
+                is Screen.RestoreAccount,
+                is Screen.AddDevice,
+                -> listOf(screen)
+                else -> null
+            }
+        }
+
+        return when (screen) {
+            is Screen.ChatList -> emptyList()
+            is Screen.NewChat,
+            is Screen.NewGroup,
+            is Screen.CreateInvite,
+            is Screen.JoinInvite,
+            is Screen.Settings,
+            is Screen.DeviceRoster,
+            -> listOf(screen)
+            is Screen.Chat -> {
+                val trimmed = screen.chatId.trim()
+                if (trimmed.isEmpty()) null else listOf(Screen.Chat(trimmed))
+            }
+            is Screen.GroupDetails -> {
+                val trimmed = screen.groupId.trim()
+                if (trimmed.isEmpty()) {
+                    null
+                } else {
+                    val groupChatId = "$MOBILE_PUSH_GROUP_CHAT_PREFIX$trimmed"
+                    val current = mutableState.value
+                    val activeScreen =
+                        current.router.screenStack.lastOrNull() ?: current.router.defaultScreen
+                    val routeChatId = (activeScreen as? Screen.Chat)?.chatId?.trim()
+                    val currentChatId = current.currentChat?.chatId?.trim()
+                    val baseStack =
+                        if (routeChatId == groupChatId || currentChatId == groupChatId) {
+                            current.router.screenStack
+                        } else {
+                            listOf(Screen.Chat(groupChatId))
+                        }
+                    val details = Screen.GroupDetails(trimmed)
+                    if (baseStack.lastOrNull() == details) {
+                        baseStack
+                    } else {
+                        baseStack + details
+                    }
+                }
+            }
+            is Screen.CreateAccount,
+            is Screen.RestoreAccount,
+            is Screen.AddDevice,
+            is Screen.AwaitingDeviceApproval,
+            is Screen.DeviceRevoked,
+            is Screen.Welcome,
+            -> null
+        }
+    }
+
+    private fun navigateOptimistically(
+        stack: List<Screen>,
+        action: AppAction,
+        showsToastOnFailure: Boolean = true,
+    ) {
         pendingNavigationOverride =
             PendingNavigationOverride(
-                stack = nextStack,
+                stack = stack,
                 expiresAtMs = SystemClock.elapsedRealtime() + NAVIGATION_OVERRIDE_TTL_MS,
             )
-        publishState(stateByApplyingLocalScreenStack(nextStack, mutableState.value))
+        publishState(stateByApplyingLocalScreenStack(stack, mutableState.value))
         val dispatched =
             dispatchToRust(
-                AppAction.UpdateScreenStack(nextStack),
-                showsToastOnFailure = false,
+                action,
+                showsToastOnFailure = showsToastOnFailure,
                 preservesPendingNavigation = true,
             )
         if (!dispatched) {
@@ -966,7 +1170,11 @@ class AppManager(
                 if (update.v1.rev <= lastRevApplied) {
                     return
                 }
-                val reconciledState = stateByReconcilingPendingNavigation(update.v1)
+                val reconciledState =
+                    stateByPreservingVisibleChatPage(
+                        oldState = mutableState.value,
+                        nextState = stateByReconcilingPendingNavigation(update.v1),
+                    )
                 lastRevApplied = update.v1.rev
                 IrisDebugLog.d(
                     TAG,
@@ -1018,6 +1226,73 @@ class AppManager(
         return stateByApplyingLocalScreenStack(pending.stack, nextState)
     }
 
+    private fun stateByPreservingVisibleChatPage(
+        oldState: AppState,
+        nextState: AppState,
+    ): AppState {
+        val oldChat = oldState.currentChat ?: return nextState
+        val newChat = nextState.currentChat ?: return nextState
+        if (
+            oldChat.chatId != newChat.chatId ||
+                activeChatId(nextState) != newChat.chatId
+        ) {
+            return nextState
+        }
+        val newMessageIds = newChat.messages.mapTo(mutableSetOf()) { it.id }
+        if (oldChat.messages.all { it.id in newMessageIds }) {
+            return nextState
+        }
+        return nextState.copy(currentChat = mergeChatSnapshot(oldChat, newChat))
+    }
+
+    private fun mergeCurrentChatSnapshot(page: CurrentChatSnapshot) {
+        val current = mutableState.value
+        if (current.currentChat?.chatId != page.chatId) {
+            return
+        }
+        publishState(current.copy(currentChat = mergeChatSnapshot(current.currentChat, page)))
+    }
+
+    private fun mergeChatSnapshot(
+        existing: CurrentChatSnapshot?,
+        page: CurrentChatSnapshot,
+    ): CurrentChatSnapshot {
+        if (existing?.chatId != page.chatId) {
+            return page
+        }
+        val messagesById = LinkedHashMap<String, ChatMessageSnapshot>(existing.messages.size + page.messages.size)
+        existing.messages.forEach { message -> messagesById[message.id] = message }
+        page.messages.forEach { message -> messagesById[message.id] = message }
+        val mergedMessages = messagesById.values.sortedWith(::compareChatMessages)
+        return page.copy(
+            messages = mergedMessages,
+            typingIndicators = page.typingIndicators.ifEmpty { existing.typingIndicators },
+            draft = page.draft.ifEmpty { existing.draft },
+        )
+    }
+
+    private fun compareChatMessages(lhs: ChatMessageSnapshot, rhs: ChatMessageSnapshot): Int {
+        lhs.createdAtSecs.compareTo(rhs.createdAtSecs).takeIf { it != 0 }?.let { return it }
+        val lhsNumeric = lhs.id.toULongOrNull()
+        val rhsNumeric = rhs.id.toULongOrNull()
+        if (lhsNumeric != null && rhsNumeric != null && lhsNumeric != rhsNumeric) {
+            return lhsNumeric.compareTo(rhsNumeric)
+        }
+        if (lhsNumeric != null && rhsNumeric == null) {
+            return -1
+        }
+        if (lhsNumeric == null && rhsNumeric != null) {
+            return 1
+        }
+        return lhs.id.compareTo(rhs.id)
+    }
+
+    private fun activeChatId(state: AppState): String? =
+        when (val active = state.router.screenStack.lastOrNull() ?: state.router.defaultScreen) {
+            is Screen.Chat -> active.chatId
+            else -> null
+        }
+
     private fun stateByApplyingLocalScreenStack(
         stack: List<Screen>,
         baseState: AppState,
@@ -1028,7 +1303,9 @@ class AppManager(
         when (activeScreen) {
             is Screen.Chat -> {
                 if (currentChat?.chatId != activeScreen.chatId) {
-                    currentChat = null
+                    currentChat = runCatching {
+                        rust.chatSnapshot(activeScreen.chatId, CHAT_PAGE_SIZE)
+                    }.getOrNull()
                 }
                 groupDetails = null
             }
@@ -1385,7 +1662,10 @@ class AppManager(
         const val TAG = "NdrDebug"
         const val DATASTORE_NAME = "iris_chat_secure_store.preferences_pb"
         const val DISPATCH_FAILURE_TOAST = "Action failed. Copy support bundle in Settings."
-        const val NAVIGATION_OVERRIDE_TTL_MS = 2_000L
+        const val NAVIGATION_OVERRIDE_TTL_MS = 10_000L
+        const val CHAT_PAGE_SIZE = 80u
+        const val CHAT_AROUND_BEFORE_LIMIT = 40u
+        const val CHAT_AROUND_AFTER_LIMIT = 40u
         const val DOWNLOADED_ATTACHMENT_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
         val SECRET_CIPHERTEXT = stringPreferencesKey("secret_ciphertext")
         val SECRET_IV = stringPreferencesKey("secret_iv")

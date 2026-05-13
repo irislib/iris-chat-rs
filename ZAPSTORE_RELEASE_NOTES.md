@@ -1,3 +1,13 @@
+# Iris Chat 2026.5.13.5
+
+- Navigation now updates immediately across shells while Rust remains the source of truth, so protocol backlog cannot make chat taps look dead.
+- Rust now services user actions ahead of relay/nearby backlog and chunks catch-up processing to keep the app responsive.
+- Nearby frame work moved off the iOS main thread and repeated peer updates are deduplicated more aggressively.
+- iOS protocol catch-up now coalesces repeated fetches, reducing relay CPU churn and phone heating.
+- Duplicate invite events no longer rebuild expensive debug snapshots while replaying queued sends.
+- Queued protocol fetches now run single-flight with bounded retry timing instead of overlapping relay requests.
+- Group and linked-device recovery still subscribes to your own keys while avoiding useless repeated backfill.
+
 # Iris Chat 2026.5.13.4
 
 - iOS share sends now queue from the share sheet instead of depending on Iris opening right away.

@@ -40,6 +40,8 @@ private final class MockRustApp: RustAppClient {
     var peerDebug: PeerProfileDebugSnapshot?
     var dispatchError: Error?
     var onDispatch: ((AppAction) -> Void)?
+    var pagesBefore: [String: CurrentChatSnapshot] = [:]
+    var pagesAround: [String: CurrentChatSnapshot] = [:]
     private var prepareForSuspendCalls = 0
     private let prepareForSuspendLock = NSLock()
     private var reconciler: AppReconciler?
@@ -131,6 +133,38 @@ private final class MockRustApp: RustAppClient {
         return result
     }
 
+    func chatSnapshot(chatId: String, limit: UInt32) -> CurrentChatSnapshot? {
+        let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, currentState.account != nil else { return nil }
+        if currentState.currentChat?.chatId == trimmed {
+            return currentState.currentChat
+        }
+        let thread = currentState.chatList.first { $0.chatId == trimmed }
+        let groupId = trimmed.hasPrefix("group:") ? String(trimmed.dropFirst("group:".count)) : nil
+        return CurrentChatSnapshot(
+            chatId: trimmed,
+            kind: thread?.kind ?? (groupId == nil ? .direct : .group),
+            displayName: thread?.displayName ?? trimmed,
+            subtitle: thread?.subtitle,
+            pictureUrl: thread?.pictureUrl,
+            groupId: groupId,
+            memberCount: thread?.memberCount ?? 0,
+            messageTtlSeconds: nil,
+            isMuted: thread?.isMuted ?? false,
+            messages: [],
+            typingIndicators: [],
+            draft: thread?.draft ?? ""
+        )
+    }
+
+    func chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot? {
+        pagesBefore["\(chatId.trimmingCharacters(in: .whitespacesAndNewlines))|\(beforeMessageId.trimmingCharacters(in: .whitespacesAndNewlines))"]
+    }
+
+    func chatSnapshotAroundMessage(chatId: String, messageId: String, beforeLimit: UInt32, afterLimit: UInt32) -> CurrentChatSnapshot? {
+        pagesAround["\(chatId.trimmingCharacters(in: .whitespacesAndNewlines))|\(messageId.trimmingCharacters(in: .whitespacesAndNewlines))"]
+    }
+
     func ingestNearbyEventJson(eventJson: String) -> Bool {
         true
     }
@@ -214,6 +248,8 @@ final class IrisEmojiPickerSearchTests: XCTestCase {
     }
 }
 
+private let largeFixtureMessageCount: UInt32 = 1_200
+
 private func makeBusyState() -> BusyState {
     BusyState(
         creatingAccount: false,
@@ -294,7 +330,7 @@ private func makeLargeFixtureState(
     var state = buildLargeTestAppState(
         directChatCount: 80,
         groupChatCount: 20,
-        messagesInCurrentChat: 240
+        messagesInCurrentChat: largeFixtureMessageCount
     )
     state.rev = rev
     state.preferences.nearbyBluetoothEnabled = false
@@ -362,6 +398,54 @@ private func makeChatThread(
         isMuted: false,
         isPinned: false,
         draft: ""
+    )
+}
+
+private func makeCurrentChat(
+    chatId: String,
+    kind: ChatKind = .direct,
+    messages: [ChatMessageSnapshot] = []
+) -> CurrentChatSnapshot {
+    CurrentChatSnapshot(
+        chatId: chatId,
+        kind: kind,
+        displayName: "Chat",
+        subtitle: nil,
+        pictureUrl: nil,
+        groupId: kind == .group ? String(chatId.dropFirst("group:".count)) : nil,
+        memberCount: kind == .group ? 2 : 0,
+        messageTtlSeconds: nil,
+        isMuted: false,
+        messages: messages,
+        typingIndicators: [],
+        draft: ""
+    )
+}
+
+private func makeMessage(chatId: String, id: String, body: String? = nil) -> ChatMessageSnapshot {
+    ChatMessageSnapshot(
+        id: id,
+        chatId: chatId,
+        kind: .user,
+        author: "owner",
+        body: body ?? "message \(id)",
+        attachments: [],
+        reactions: [],
+        reactors: [],
+        isOutgoing: true,
+        createdAtSecs: UInt64(id) ?? 0,
+        expiresAtSecs: nil,
+        delivery: .sent,
+        recipientDeliveries: [],
+        deliveryTrace: MessageDeliveryTraceSnapshot(
+            outerEventIds: [],
+            pendingRelayEventIds: [],
+            queuedProtocolTargets: [],
+            targetDeviceIds: [],
+            transportChannels: [],
+            lastTransportError: nil
+        ),
+        sourceEventId: nil
     )
 }
 
@@ -1428,6 +1512,165 @@ final class IrisChatTests: XCTestCase {
         XCTAssertEqual(manager.state.rev, 3)
         XCTAssertEqual(manager.state.router.screenStack, [])
         XCTAssertEqual(manager.activeScreen, .chatList)
+    }
+
+    @MainActor
+    func testOpenChatAppliesLocalRouteWhileRustCatchesUp() async {
+        let chatId = "chat-1"
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: Router(defaultScreen: .chatList, screenStack: [])
+            )
+        )
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.dispatch(.openChat(chatId: chatId))
+
+        XCTAssertEqual(rust.dispatchedActions.first, .openChat(chatId: chatId))
+        XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
+        XCTAssertEqual(manager.activeScreen, .chat(chatId: chatId))
+        XCTAssertEqual(manager.state.currentChat?.chatId, chatId)
+
+        rust.emit(
+            .fullState(
+                makeLargeFixtureState(
+                    rev: 2,
+                    router: Router(defaultScreen: .chatList, screenStack: [])
+                )
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(manager.state.rev, 2)
+        XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
+        XCTAssertEqual(manager.activeScreen, .chat(chatId: chatId))
+    }
+
+    @MainActor
+    func testOpenChatAtMessageLoadsSearchHitPageOutsideInitialPage() async {
+        let chatId = "chat-1"
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: Router(defaultScreen: .chatList, screenStack: [])
+            )
+        )
+        rust.pagesAround["\(chatId)|25"] = makeCurrentChat(
+            chatId: chatId,
+            messages: (15...35).map { makeMessage(chatId: chatId, id: String($0)) }
+        )
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.openChatAtMessage(chatId: chatId, messageId: "25")
+
+        XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: chatId)))
+        XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
+        XCTAssertTrue(manager.state.currentChat?.messages.contains(where: { $0.id == "25" }) == true)
+    }
+
+    @MainActor
+    func testFullStateKeepsLoadedSearchHitContextForVisibleChat() async {
+        let chatId = "chat-1"
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)]),
+                currentChat: makeCurrentChat(
+                    chatId: chatId,
+                    messages: (15...35).map { makeMessage(chatId: chatId, id: String($0)) }
+                )
+            )
+        )
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        rust.emit(
+            .fullState(
+                makeLargeFixtureState(
+                    rev: 2,
+                    router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)]),
+                    currentChat: makeCurrentChat(
+                        chatId: chatId,
+                        messages: (121...200).map { makeMessage(chatId: chatId, id: String($0)) }
+                    )
+                )
+            )
+        )
+        await Task.yield()
+
+        let messageIds = manager.state.currentChat?.messages.map(\.id) ?? []
+        XCTAssertEqual(manager.state.rev, 2)
+        XCTAssertTrue(messageIds.contains("25"))
+        XCTAssertTrue(messageIds.contains("200"))
+        XCTAssertEqual(messageIds.first, "15")
+        XCTAssertEqual(messageIds.last, "200")
+    }
+
+    @MainActor
+    func testPushScreenAppliesLocalRouteWhileRustCatchesUp() async {
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: Router(defaultScreen: .chatList, screenStack: [])
+            )
+        )
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.dispatch(.pushScreen(screen: .settings))
+
+        XCTAssertEqual(rust.dispatchedActions.first, .pushScreen(screen: .settings))
+        XCTAssertEqual(manager.state.router.screenStack, [.settings])
+        XCTAssertEqual(manager.activeScreen, .settings)
+
+        rust.emit(
+            .fullState(
+                makeLargeFixtureState(
+                    rev: 2,
+                    router: Router(defaultScreen: .chatList, screenStack: [])
+                )
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(manager.state.rev, 2)
+        XCTAssertEqual(manager.state.router.screenStack, [.settings])
+        XCTAssertEqual(manager.activeScreen, .settings)
     }
 
     @MainActor

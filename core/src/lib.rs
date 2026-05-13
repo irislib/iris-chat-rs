@@ -104,7 +104,10 @@ pub struct CorePerfCountersSnapshot {
 
 #[derive(uniffi::Object)]
 pub struct FfiApp {
-    core_tx: Sender<CoreMsg>,
+    foreground_tx: Sender<CoreMsg>,
+    foreground_rx: Receiver<CoreMsg>,
+    background_tx: Sender<CoreMsg>,
+    background_rx: Receiver<CoreMsg>,
     update_rx: Receiver<AppUpdate>,
     listening: AtomicBool,
     shared_state: Arc<RwLock<AppState>>,
@@ -113,6 +116,42 @@ pub struct FfiApp {
     /// a working core).
     shared_db: Option<crate::core::SharedConnection>,
     perf: FfiPerfCounters,
+    queue_metrics: Arc<CoreQueueMetrics>,
+}
+
+#[derive(Default, Debug)]
+struct CoreQueueMetrics {
+    foreground_processed: AtomicU64,
+    background_processed: AtomicU64,
+    batch_active: AtomicBool,
+    last_batch_started_at_ms: AtomicU64,
+    last_batch_finished_at_ms: AtomicU64,
+    last_batch_size: AtomicU64,
+    last_batch_foreground_count: AtomicU64,
+    last_batch_background_count: AtomicU64,
+}
+
+impl CoreQueueMetrics {
+    fn mark_batch_start(&self, size: u64, foreground: u64, background: u64) {
+        self.last_batch_started_at_ms
+            .store(crate::perflog::now_ms(), Ordering::Relaxed);
+        self.last_batch_size.store(size, Ordering::Relaxed);
+        self.last_batch_foreground_count
+            .store(foreground, Ordering::Relaxed);
+        self.last_batch_background_count
+            .store(background, Ordering::Relaxed);
+        self.batch_active.store(true, Ordering::Release);
+    }
+
+    fn mark_batch_finished(&self, foreground: u64, background: u64) {
+        self.foreground_processed
+            .fetch_add(foreground, Ordering::Relaxed);
+        self.background_processed
+            .fetch_add(background, Ordering::Relaxed);
+        self.last_batch_finished_at_ms
+            .store(crate::perflog::now_ms(), Ordering::Relaxed);
+        self.batch_active.store(false, Ordering::Release);
+    }
 }
 
 #[derive(uniffi::Object)]
@@ -147,7 +186,7 @@ impl FfiApp {
         self.perf.dispatch.fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.dispatch", (), || {
             crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
-            let _ = self.core_tx.send(CoreMsg::Action(action));
+            let _ = self.foreground_tx.send(CoreMsg::Action(action));
         })
     }
 
@@ -183,7 +222,7 @@ impl FfiApp {
             || {
                 let (reply_tx, reply_rx) = flume::bounded(1);
                 if self
-                    .core_tx
+                    .foreground_tx
                     .send(CoreMsg::CorePerfCounters(reply_tx))
                     .is_err()
                 {
@@ -271,6 +310,70 @@ impl FfiApp {
         )
     }
 
+    /// Bounded chat projection for a route-selected chat. Unlike
+    /// `OpenChat`, this is a direct read from the shared state/SQLite
+    /// handle and never waits behind the core action queue. Shells use
+    /// it as the first paint for chat screens; the core still receives
+    /// `OpenChat` for unread clearing, subscriptions, and side effects.
+    pub fn chat_snapshot(&self, chat_id: String, limit: u32) -> Option<CurrentChatSnapshot> {
+        ffi_or("ffiapp.chat_snapshot", None, || {
+            let state_snapshot = match self.shared_state.read() {
+                Ok(slot) => slot.clone(),
+                Err(poison) => poison.into_inner().clone(),
+            };
+            crate::core::chat_snapshot_from_state_and_db(
+                &state_snapshot,
+                self.shared_db.as_ref(),
+                &chat_id,
+                limit.max(1) as usize,
+            )
+        })
+    }
+
+    pub fn chat_snapshot_before(
+        &self,
+        chat_id: String,
+        before_message_id: String,
+        limit: u32,
+    ) -> Option<CurrentChatSnapshot> {
+        ffi_or("ffiapp.chat_snapshot_before", None, || {
+            let state_snapshot = match self.shared_state.read() {
+                Ok(slot) => slot.clone(),
+                Err(poison) => poison.into_inner().clone(),
+            };
+            crate::core::chat_snapshot_before_from_state_and_db(
+                &state_snapshot,
+                self.shared_db.as_ref(),
+                &chat_id,
+                &before_message_id,
+                limit.max(1) as usize,
+            )
+        })
+    }
+
+    pub fn chat_snapshot_around_message(
+        &self,
+        chat_id: String,
+        message_id: String,
+        before_limit: u32,
+        after_limit: u32,
+    ) -> Option<CurrentChatSnapshot> {
+        ffi_or("ffiapp.chat_snapshot_around_message", None, || {
+            let state_snapshot = match self.shared_state.read() {
+                Ok(slot) => slot.clone(),
+                Err(poison) => poison.into_inner().clone(),
+            };
+            crate::core::chat_snapshot_around_message_from_state_and_db(
+                &state_snapshot,
+                self.shared_db.as_ref(),
+                &chat_id,
+                &message_id,
+                before_limit as usize,
+                after_limit as usize,
+            )
+        })
+    }
+
     pub fn ingest_nearby_event_json(&self, event_json: String) -> bool {
         self.perf
             .ingest_nearby_event_json
@@ -291,7 +394,7 @@ impl FfiApp {
             if event.verify().is_err() {
                 return false;
             }
-            self.core_tx
+            self.background_tx
                 .send(CoreMsg::Internal(Box::new(InternalEvent::NearbyEvent {
                     event,
                     transport,
@@ -313,7 +416,7 @@ impl FfiApp {
             || {
                 let (reply_tx, reply_rx) = flume::bounded(1);
                 if self
-                    .core_tx
+                    .background_tx
                     .send(CoreMsg::BuildNearbyPresenceEvent {
                         peer_id,
                         my_nonce,
@@ -373,19 +476,20 @@ impl FfiApp {
             .fetch_add(1, Ordering::Relaxed);
         ffi_or(
             "ffiapp.export_support_bundle_json",
-            "{}".to_string(),
+            self.support_bundle_json_with_ffi_diagnostics("{}".to_string(), true),
             || {
                 let (reply_tx, reply_rx) = flume::bounded(1);
                 if self
-                    .core_tx
+                    .foreground_tx
                     .send(CoreMsg::ExportSupportBundle(reply_tx))
                     .is_err()
                 {
-                    return "{}".to_string();
+                    return self.support_bundle_json_with_ffi_diagnostics("{}".to_string(), true);
                 }
-                reply_rx
-                    .recv_timeout(Duration::from_secs(2))
-                    .unwrap_or_else(|_| "{}".to_string())
+                match reply_rx.recv_timeout(Duration::from_secs(2)) {
+                    Ok(json) => self.support_bundle_json_with_ffi_diagnostics(json, false),
+                    Err(_) => self.support_bundle_json_with_ffi_diagnostics("{}".to_string(), true),
+                }
             },
         )
     }
@@ -395,7 +499,7 @@ impl FfiApp {
         ffi_or("ffiapp.peer_profile_debug", None, || {
             let (reply_tx, reply_rx) = flume::bounded(1);
             if self
-                .core_tx
+                .foreground_tx
                 .send(CoreMsg::PeerProfileDebug {
                     owner_input,
                     reply_tx,
@@ -415,7 +519,7 @@ impl FfiApp {
         ffi_or("ffiapp.prepare_for_suspend", (), || {
             let (reply_tx, reply_rx) = flume::bounded(1);
             if self
-                .core_tx
+                .foreground_tx
                 .send(CoreMsg::PrepareForSuspend(reply_tx))
                 .is_err()
             {
@@ -429,7 +533,7 @@ impl FfiApp {
         ffi_or("ffiapp.shutdown", (), || {
             let (reply_tx, reply_rx) = flume::bounded(1);
             if self
-                .core_tx
+                .foreground_tx
                 .send(CoreMsg::Shutdown(Some(reply_tx)))
                 .is_err()
             {
@@ -437,6 +541,60 @@ impl FfiApp {
             }
             let _ = reply_rx.recv_timeout(Duration::from_secs(2));
         })
+    }
+
+    fn support_bundle_json_with_ffi_diagnostics(
+        &self,
+        rust_json: String,
+        core_support_bundle_timed_out: bool,
+    ) -> String {
+        let mut object = serde_json::from_str::<serde_json::Value>(&rust_json)
+            .ok()
+            .and_then(|value| value.as_object().cloned())
+            .unwrap_or_default();
+        let now_ms = crate::perflog::now_ms();
+        let last_started_at_ms = self
+            .queue_metrics
+            .last_batch_started_at_ms
+            .load(Ordering::Relaxed);
+        let last_finished_at_ms = self
+            .queue_metrics
+            .last_batch_finished_at_ms
+            .load(Ordering::Relaxed);
+        let batch_active = self.queue_metrics.batch_active.load(Ordering::Acquire);
+        let active_batch_age_ms = if batch_active && last_started_at_ms > 0 {
+            Some(now_ms.saturating_sub(last_started_at_ms))
+        } else {
+            None
+        };
+        let last_batch_started_ago_ms = if last_started_at_ms > 0 {
+            Some(now_ms.saturating_sub(last_started_at_ms))
+        } else {
+            None
+        };
+        let last_batch_finished_ago_ms = if last_finished_at_ms > 0 {
+            Some(now_ms.saturating_sub(last_finished_at_ms))
+        } else {
+            None
+        };
+        object.insert(
+            "ffi_queue".to_string(),
+            serde_json::json!({
+                "core_support_bundle_timed_out": core_support_bundle_timed_out,
+                "foreground_pending": self.foreground_rx.len(),
+                "background_pending": self.background_rx.len(),
+                "foreground_processed": self.queue_metrics.foreground_processed.load(Ordering::Relaxed),
+                "background_processed": self.queue_metrics.background_processed.load(Ordering::Relaxed),
+                "batch_active": batch_active,
+                "active_batch_age_ms": active_batch_age_ms,
+                "last_batch_started_ago_ms": last_batch_started_ago_ms,
+                "last_batch_finished_ago_ms": last_batch_finished_ago_ms,
+                "last_batch_size": self.queue_metrics.last_batch_size.load(Ordering::Relaxed),
+                "last_batch_foreground_count": self.queue_metrics.last_batch_foreground_count.load(Ordering::Relaxed),
+                "last_batch_background_count": self.queue_metrics.last_batch_background_count.load(Ordering::Relaxed),
+            }),
+        );
+        serde_json::Value::Object(object).to_string()
     }
 
     pub fn listen_for_updates(&self, reconciler: Box<dyn AppReconciler>) {
@@ -534,32 +692,43 @@ impl FfiDesktopNearby {
 
 fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
     let (update_tx, update_rx) = flume::unbounded();
-    let (core_tx, core_rx) = flume::unbounded();
+    let (foreground_tx, foreground_rx) = flume::unbounded();
+    let (background_tx, background_rx) = flume::unbounded();
     let shared_state = Arc::new(RwLock::new(AppState::empty()));
+    let queue_metrics = Arc::new(CoreQueueMetrics::default());
 
-    let core_tx_for_thread = core_tx.clone();
+    let core_tx_for_thread = background_tx.clone();
     let shared_for_thread = shared_state.clone();
     let update_tx_for_error = update_tx.clone();
     let mut shared_db = None;
     match AppCore::try_new(update_tx, core_tx_for_thread, data_dir, shared_for_thread) {
         Ok(mut core) => {
             shared_db = Some(core.shared_db());
+            let queue_metrics_for_thread = queue_metrics.clone();
+            let foreground_rx_for_thread = foreground_rx.clone();
+            let background_rx_for_thread = background_rx.clone();
             let spawn_result =
                 thread::Builder::new()
                     .name("iris-core".to_string())
                     .spawn(move || {
-                        // Drain whatever is already queued and process it as one batch so
-                        // a flurry of relay events + user actions produces a single UI
-                        // update instead of N. Without this, tapping a chat while a
-                        // relay backlog drains can take seconds because OpenChat sits
-                        // behind every queued event and the UI recomposes between each.
-                        while let Ok(first) = core_rx.recv() {
-                            let mut batch = Vec::with_capacity(8);
-                            batch.push(first);
-                            while let Ok(next) = core_rx.try_recv() {
-                                batch.push(next);
-                            }
+                        // User actions and synchronous shell requests must not sit behind
+                        // relay/nearby backlog. The core keeps internal work on a
+                        // background queue and drains it in bounded chunks between
+                        // foreground batches.
+                        while let Ok(batch) =
+                            recv_core_batch(&foreground_rx_for_thread, &background_rx_for_thread)
+                        {
                             let batch_size = batch.len();
+                            let foreground_count = batch
+                                .iter()
+                                .filter(|msg| is_foreground_core_msg(msg))
+                                .count() as u64;
+                            let background_count = batch_size as u64 - foreground_count;
+                            queue_metrics_for_thread.mark_batch_start(
+                                batch_size as u64,
+                                foreground_count,
+                                background_count,
+                            );
                             let t0 = crate::perflog::now_ms();
                             crate::perflog!("core.batch.start size={batch_size}");
                             match catch_core_batch(|| {
@@ -576,6 +745,8 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
                                 "core.batch.end size={batch_size} elapsed_ms={}",
                                 crate::perflog::now_ms().saturating_sub(t0)
                             );
+                            queue_metrics_for_thread
+                                .mark_batch_finished(foreground_count, background_count);
                         }
                     });
             if let Err(error) = spawn_result {
@@ -602,30 +773,119 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
     }
 
     Arc::new(FfiApp {
-        core_tx,
+        foreground_tx,
+        foreground_rx,
+        background_tx,
+        background_rx,
         update_rx,
         listening: AtomicBool::new(false),
         shared_state,
         shared_db,
         perf: FfiPerfCounters::default(),
+        queue_metrics,
     })
 }
 
 fn ffi_app_failure(message: String) -> Arc<FfiApp> {
     let (_update_tx, update_rx) = flume::unbounded();
-    let (core_tx, _core_rx) = flume::unbounded();
+    let (foreground_tx, foreground_rx) = flume::unbounded();
+    let (background_tx, background_rx) = flume::unbounded();
     let mut state = AppState::empty();
     state.toast = Some(message);
     state.rev = 1;
     let shared_state = Arc::new(RwLock::new(state));
     Arc::new(FfiApp {
-        core_tx,
+        foreground_tx,
+        foreground_rx,
+        background_tx,
+        background_rx,
         update_rx,
         listening: AtomicBool::new(false),
         shared_state,
         shared_db: None,
         perf: FfiPerfCounters::default(),
+        queue_metrics: Arc::new(CoreQueueMetrics::default()),
     })
+}
+
+const CORE_FOREGROUND_BATCH_LIMIT: usize = 64;
+const CORE_BACKGROUND_BATCH_LIMIT: usize = 16;
+
+fn recv_core_batch(
+    foreground_rx: &Receiver<CoreMsg>,
+    background_rx: &Receiver<CoreMsg>,
+) -> Result<Vec<CoreMsg>, flume::RecvError> {
+    if let Some(batch) = try_recv_core_batch(foreground_rx, background_rx) {
+        return Ok(batch);
+    }
+
+    let (is_foreground, first) = flume::Selector::new()
+        .recv(foreground_rx, |result| result.map(|msg| (true, msg)))
+        .recv(background_rx, |result| result.map(|msg| (false, msg)))
+        .wait()?;
+    Ok(drain_core_batch_after_first(
+        is_foreground,
+        first,
+        foreground_rx,
+        background_rx,
+    ))
+}
+
+fn try_recv_core_batch(
+    foreground_rx: &Receiver<CoreMsg>,
+    background_rx: &Receiver<CoreMsg>,
+) -> Option<Vec<CoreMsg>> {
+    if let Ok(first) = foreground_rx.try_recv() {
+        return Some(drain_core_batch_after_first(
+            true,
+            first,
+            foreground_rx,
+            background_rx,
+        ));
+    }
+    background_rx
+        .try_recv()
+        .ok()
+        .map(|first| drain_core_batch_after_first(false, first, foreground_rx, background_rx))
+}
+
+fn drain_core_batch_after_first(
+    is_foreground: bool,
+    first: CoreMsg,
+    foreground_rx: &Receiver<CoreMsg>,
+    background_rx: &Receiver<CoreMsg>,
+) -> Vec<CoreMsg> {
+    let mut batch = Vec::with_capacity(if is_foreground {
+        CORE_FOREGROUND_BATCH_LIMIT
+    } else {
+        CORE_BACKGROUND_BATCH_LIMIT
+    });
+    batch.push(first);
+    drain_foreground_messages(&mut batch, foreground_rx);
+    if batch.iter().any(is_foreground_core_msg) {
+        return batch;
+    }
+
+    while batch.len() < CORE_BACKGROUND_BATCH_LIMIT {
+        let Ok(next) = background_rx.try_recv() else {
+            break;
+        };
+        batch.push(next);
+        drain_foreground_messages(&mut batch, foreground_rx);
+        if batch.iter().any(is_foreground_core_msg) {
+            break;
+        }
+    }
+    batch
+}
+
+fn drain_foreground_messages(batch: &mut Vec<CoreMsg>, foreground_rx: &Receiver<CoreMsg>) {
+    while batch.len() < CORE_FOREGROUND_BATCH_LIMIT {
+        let Ok(next) = foreground_rx.try_recv() else {
+            break;
+        };
+        batch.push(next);
+    }
 }
 
 fn handle_core_batch_responsive(core: &mut AppCore, messages: Vec<CoreMsg>) -> bool {
@@ -701,6 +961,77 @@ fn panic_payload_to_string(payload: Box<dyn Any + Send>) -> String {
 
 fn is_foreground_core_msg(message: &CoreMsg) -> bool {
     !matches!(message, CoreMsg::Internal(_))
+}
+
+#[cfg(test)]
+mod core_queue_tests {
+    use super::*;
+
+    fn background_msg(index: usize) -> CoreMsg {
+        CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+            category: "test.background".to_string(),
+            detail: index.to_string(),
+        }))
+    }
+
+    #[test]
+    fn foreground_queue_preempts_background_backlog() {
+        let (foreground_tx, foreground_rx) = flume::unbounded();
+        let (background_tx, background_rx) = flume::unbounded();
+        for index in 0..100 {
+            background_tx.send(background_msg(index)).unwrap();
+        }
+        foreground_tx
+            .send(CoreMsg::Action(AppAction::NavigateBack))
+            .unwrap();
+
+        let batch = recv_core_batch(&foreground_rx, &background_rx).unwrap();
+
+        assert!(matches!(
+            batch.first(),
+            Some(CoreMsg::Action(AppAction::NavigateBack))
+        ));
+        assert!(
+            batch.iter().all(is_foreground_core_msg),
+            "foreground work should not be bundled behind background backlog"
+        );
+    }
+
+    #[test]
+    fn background_queue_drains_in_bounded_chunks() {
+        let (_foreground_tx, foreground_rx) = flume::unbounded();
+        let (background_tx, background_rx) = flume::unbounded();
+        for index in 0..100 {
+            background_tx.send(background_msg(index)).unwrap();
+        }
+
+        let batch = recv_core_batch(&foreground_rx, &background_rx).unwrap();
+
+        assert_eq!(batch.len(), CORE_BACKGROUND_BATCH_LIMIT);
+        assert!(batch.iter().all(|msg| !is_foreground_core_msg(msg)));
+    }
+
+    #[test]
+    fn route_chat_snapshot_uses_chat_list_without_core_queue() {
+        let state = build_large_test_app_state(80, 20, 1_200);
+        let chat_id = state.chat_list[10].chat_id.clone();
+
+        let snapshot =
+            crate::core::chat_snapshot_from_state_and_db(&state, None, &chat_id, 80).unwrap();
+
+        assert_eq!(snapshot.chat_id, chat_id);
+        assert_eq!(snapshot.display_name, state.chat_list[10].display_name);
+        assert!(snapshot.messages.is_empty());
+    }
+
+    #[test]
+    fn route_chat_snapshot_requires_account() {
+        let mut state = build_large_test_app_state(80, 20, 1_200);
+        state.account = None;
+        let chat_id = state.chat_list[10].chat_id.clone();
+
+        assert!(crate::core::chat_snapshot_from_state_and_db(&state, None, &chat_id, 80).is_none());
+    }
 }
 
 fn filter_threads_for_search(
@@ -839,7 +1170,7 @@ fn verify_nearby_presence_event_json(
 
 impl Drop for FfiApp {
     fn drop(&mut self) {
-        let _ = self.core_tx.send(CoreMsg::Shutdown(None));
+        let _ = self.foreground_tx.send(CoreMsg::Shutdown(None));
     }
 }
 

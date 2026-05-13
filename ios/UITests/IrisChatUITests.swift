@@ -92,7 +92,7 @@ final class IrisChatUITests: XCTestCase {
     // scroll time and the manual `proxy.scrollTo(.bottom)` lands too
     // high — fixed by `defaultScrollAnchor(.bottom)`.
     //
-    // Uses the IRIS_UI_TEST_SEED_* escape hatch to dispatch 30 outgoing
+    // Uses the IRIS_UI_TEST_SEED_* escape hatch to dispatch outgoing
     // messages directly through AppManager once the account exists —
     // XCUITest's typeText+tap loop gets flaky past ~12 sends, which
     // can't reliably build a chat tall enough to test the lazy-row case.
@@ -111,6 +111,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(nameField.waitForExistence(timeout: 15))
         typeText("ios tester", into: nameField, app: app)
         element(app, "generateKeyButton").tap()
+        XCTAssertTrue(waitForChatList(app, timeout: 45), "seed helper never returned to the chat list")
 
         // Once the seed finishes dispatching, it pops back to the chat
         // list so we can re-enter the chat from a clean state — that's
@@ -119,7 +120,7 @@ final class IrisChatUITests: XCTestCase {
         // as the chat row preview (the Rust core's tie-breaking on
         // identical timestamps means we can't predict which seed
         // message lands last in the ordering), then tap into the chat.
-        let chatRowPreview = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'seed-msg-' OR label BEGINSWITH 'LAST_SCROLL_SENTINEL'")).firstMatch
+        let chatRowPreview = seededChatRowPreview(app)
         XCTAssertTrue(
             chatRowPreview.waitForExistence(timeout: 30),
             "seeded chat row never appeared in the chat list"
@@ -141,6 +142,45 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertFalse(
             element(app, "chatJumpToBottom").exists,
             "chat opened without scrolling to the latest message — the jump-to-bottom button is visible"
+        )
+    }
+
+    func testSearchHitInSeededLongChatOpensInTimeline() {
+        let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 120)
+
+        XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 15))
+        element(app, "welcomeCreateAction").tap()
+        XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15))
+        let nameField = element(app, "signupNameField")
+        XCTAssertTrue(nameField.waitForExistence(timeout: 15))
+        typeText("ios tester", into: nameField, app: app)
+        element(app, "generateKeyButton").tap()
+        XCTAssertTrue(waitForChatList(app, timeout: 60), "seed helper never returned to the chat list")
+
+        let chatRowPreview = seededChatRowPreview(app)
+        XCTAssertTrue(
+            chatRowPreview.waitForExistence(timeout: 45),
+            "seeded 120-message chat never appeared in the chat list"
+        )
+        chatRowPreview.tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+
+        XCTAssertTrue(element(app, "chatHeaderSearchButton").waitForExistence(timeout: 10))
+        element(app, "chatHeaderSearchButton").tap()
+        let searchField = element(app, "inChatSearchField")
+        XCTAssertTrue(searchField.waitForExistence(timeout: 10))
+        typeText("FIRST_SCROLL_SENTINEL", into: searchField, app: app)
+
+        let oldestSearchHit = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'inChatMessageHit-'")).firstMatch
+        XCTAssertTrue(oldestSearchHit.waitForExistence(timeout: 15))
+        oldestSearchHit.tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { !searchField.exists })
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+
+        let oldestTimelineMessage = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'FIRST_SCROLL_SENTINEL'")).firstMatch
+        XCTAssertTrue(
+            oldestTimelineMessage.waitForExistence(timeout: 15),
+            "search hit outside the initial 80-message page did not load into the chat timeline"
         )
     }
 
@@ -457,6 +497,14 @@ final class IrisChatUITests: XCTestCase {
         waitForAnyElement(app, identifiers: ["chatListNewChatButton", "desktopNewChatRow"], timeout: timeout) != nil
     }
 
+    private func seededChatRowPreview(_ app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(
+            NSPredicate(
+                format: "label CONTAINS 'FIRST_SCROLL_SENTINEL' OR label CONTAINS 'seed-msg-' OR label CONTAINS 'LAST_SCROLL_SENTINEL'"
+            )
+        ).firstMatch
+    }
+
     private func assertOnboardingScreenUsesHeaderBack(
         _ app: XCUIApplication,
         actionIdentifier: String,
@@ -518,6 +566,17 @@ final class IrisChatUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
         return nil
+    }
+
+    private func waitUntil(timeout: TimeInterval, condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        repeat {
+            if condition() {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        } while Date() < deadline
+        return condition()
     }
 
     private func openGroupDetails(_ app: XCUIApplication) {

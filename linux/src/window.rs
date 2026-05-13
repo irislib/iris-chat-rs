@@ -209,6 +209,9 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
     let current_for_updates = current.clone();
     glib::MainContext::default().spawn_local(async move {
         while let Ok(update) = update_rx.recv().await {
+            let Some(update) = manager_for_updates.apply_update(update) else {
+                continue;
+            };
             match update {
                 AppUpdate::FullState(state) => {
                     let mut slot = current_for_updates.borrow_mut();

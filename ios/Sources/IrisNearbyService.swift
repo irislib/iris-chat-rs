@@ -113,6 +113,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var maintenanceTimer: Timer?
     private var lastHelloAt = Date.distantPast
     private var lanService: IrisNearbyLanService?
+    private let localDeviceName = IrisNearbyService.resolveLocalDeviceName()
+    private let codecQueue = DispatchQueue(label: "to.iris.chat.nearby.codec", qos: .utility)
 
     var ingestEventJson: ((_ eventJson: String, _ transport: String) -> Bool)?
     var buildPresenceEventJson: ((String, String, String, String?) -> String)?
@@ -691,9 +693,13 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
-    private func sendHello(excludingPeerID: String?) {
+    private func sendHello(excludingPeerID: String?, force: Bool = false) {
         guard isNearbyActive else { return }
-        lastHelloAt = Date()
+        let now = Date()
+        if !force, now.timeIntervalSince(lastHelloAt) < 1 {
+            return
+        }
+        lastHelloAt = now
         let envelope: [String: Any] = [
             "v": 1,
             "type": "hello",
@@ -703,7 +709,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         sendEnvelope(envelope, excludingPeerID: excludingPeerID)
     }
 
-    private var localDeviceName: String {
+    private static func resolveLocalDeviceName() -> String {
 #if os(iOS)
         let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? "Iris" : name
@@ -786,27 +792,40 @@ final class IrisNearbyService: NSObject, ObservableObject {
             "type": "event",
             "event_json": eventJson
         ]
-        if let frame = encodeFrame(envelope), frame.count <= Self.singleFrameBytes {
-            sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
-        } else {
-            if let record = IrisNearbyStoredEvent.fromEventJson(eventJson) {
-                sendEventFragments(record, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
+        encodeFrame(envelope) { [weak self] frame in
+            guard let self, self.isNearbyActive else { return }
+            if let frame, frame.count <= Self.singleFrameBytes {
+                self.sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
+            } else {
+                guard let record = IrisNearbyStoredEvent.fromEventJson(eventJson) else { return }
+                self.sendEventFragments(record, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
             }
-        }
-        if let eventID, let onlyPeerID {
-            markPeerSeenEvent(eventID, peerID: onlyPeerID)
+            if let eventID, let onlyPeerID {
+                self.markPeerSeenEvent(eventID, peerID: onlyPeerID)
+            }
         }
     }
 
     private func sendPresence(remoteNonce: String) {
-        let eventJson = buildPresenceEventJson?(
-            peerID,
-            localNonce,
-            remoteNonce,
-            ownProfileEventID
-        ) ?? ""
-        guard !eventJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        sendEventJson(eventJson, excludingPeerID: nil, onlyPeerID: nil)
+        let builder = buildPresenceEventJson
+        let peerID = peerID
+        let localNonce = localNonce
+        let profileEventID = ownProfileEventID
+        codecQueue.async { [weak self] in
+            let eventJson = builder?(
+                peerID,
+                localNonce,
+                remoteNonce,
+                profileEventID
+            ) ?? ""
+            DispatchQueue.main.async {
+                guard let self,
+                      self.isNearbyActive,
+                      !eventJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                else { return }
+                self.sendEventJson(eventJson, excludingPeerID: nil, onlyPeerID: nil)
+            }
+        }
     }
 
     private func sendPresenceIfNeeded(remoteNonce: String, responseKey: String, force: Bool) {
@@ -853,22 +872,50 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func sendEnvelope(_ object: [String: Any], excludingPeerID: String?, onlyPeerID: String? = nil) {
-        guard isNearbyActive, let frame = encodeFrame(object) else { return }
-        sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
+        guard isNearbyActive else { return }
+        encodeFrame(object) { [weak self] frame in
+            guard let self, self.isNearbyActive, let frame else { return }
+            self.sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
+        }
     }
 
-    private func encodeFrame(_ object: [String: Any]) -> Data? {
-        guard JSONSerialization.isValidJSONObject(object),
-              let data = try? JSONSerialization.data(withJSONObject: object),
-              let json = String(data: data, encoding: .utf8) else { return nil }
-        return encodeFrameJson?(json)
+    private func encodeFrame(_ object: [String: Any], completion: @escaping (Data?) -> Void) {
+        guard JSONSerialization.isValidJSONObject(object) else {
+            completion(nil)
+            return
+        }
+        let encoder = self.encodeFrameJson
+        codecQueue.async { [weak self] in
+            let frame: Data?
+            if let data = try? JSONSerialization.data(withJSONObject: object),
+               let json = String(data: data, encoding: .utf8) {
+                frame = encoder?(json)
+            } else {
+                frame = nil
+            }
+            DispatchQueue.main.async {
+                guard self != nil else { return }
+                completion(frame?.isEmpty == false ? frame : nil)
+            }
+        }
     }
 
-    private func decodeFrameJson(_ frame: Data) -> [String: Any]? {
-        guard let json = decodeFrame?(frame),
-              !json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              let data = json.data(using: .utf8) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    private func decodeFrameJson(_ frame: Data, completion: @escaping ([String: Any]?) -> Void) {
+        let decoder = self.decodeFrame
+        codecQueue.async { [weak self] in
+            let object: [String: Any]?
+            if let json = decoder?(frame),
+               !json.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let data = json.data(using: .utf8) {
+                object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            } else {
+                object = nil
+            }
+            DispatchQueue.main.async {
+                guard self != nil else { return }
+                completion(object)
+            }
+        }
     }
 
     private func newFrameAssembler() -> IrisNearbyFrameAssembler {
@@ -1079,7 +1126,13 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private func ingestFrame(_ frame: Data, source: IrisNearbySource) {
         let sourceKey = sourceKey(for: source)
-        guard var envelope = decodeFrameJson(frame),
+        decodeFrameJson(frame) { [weak self] envelope in
+            self?.ingestDecodedFrame(envelope, source: source, sourceKey: sourceKey)
+        }
+    }
+
+    private func ingestDecodedFrame(_ decodedEnvelope: [String: Any]?, source: IrisNearbySource, sourceKey: String) {
+        guard var envelope = decodedEnvelope,
               let type = envelope["type"] as? String else { return }
         if envelope["peer_id"] != nil {
             rejectLegacyNearbySource(source, type: type)
@@ -1109,7 +1162,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 )
                 let nonceChanged = remoteNonce != nil && remoteNonce != previousNonce
                 if wasNew || nonceChanged {
-                    sendHello(excludingPeerID: nil)
+                    sendHello(excludingPeerID: nil, force: true)
                 }
                 if let remoteNonce {
                     peerNonces[remotePeerID] = remoteNonce
@@ -1566,33 +1619,51 @@ final class IrisNearbyService: NSObject, ObservableObject {
         source: IrisNearbySource
     ) {
         markTransportPeer(peerID, source: source)
+        let now = Date()
         let sanitizedProfileEventID = sanitizedEventID(profileEventID)
-        let existing = peers.first(where: { $0.id == peerID })
-        let peer = IrisNearbyPeer(
-            id: peerID,
-            name: Self.nearbyPeerName(
-                advertisedName: name,
-                ownerPubkeyHex: existing?.ownerPubkeyHex,
-                profileDisplayName: nil,
-                existingName: existing?.name
-            ),
+        let existingIndex = peers.firstIndex(where: { $0.id == peerID })
+        let existing = existingIndex.map { peers[$0] }
+        let nextName = Self.nearbyPeerName(
+            advertisedName: name,
             ownerPubkeyHex: existing?.ownerPubkeyHex,
-            pictureURL: existing?.pictureURL,
-            profileEventID: sanitizedProfileEventID ?? existing?.profileEventID,
-            lastSeen: Date()
+            profileDisplayName: nil,
+            existingName: existing?.name
         )
-        if let index = peers.firstIndex(where: { $0.id == peerID }) {
-            peers[index] = peer
+        let nextProfileEventID = sanitizedProfileEventID ?? existing?.profileEventID
+        if let existingIndex, let existing {
+            let changed = existing.name != nextName ||
+                existing.profileEventID != nextProfileEventID
+            if changed || now.timeIntervalSince(existing.lastSeen) >= Self.peerTouchPublishInterval {
+                peers[existingIndex] = IrisNearbyPeer(
+                    id: peerID,
+                    name: nextName,
+                    ownerPubkeyHex: existing.ownerPubkeyHex,
+                    pictureURL: existing.pictureURL,
+                    profileEventID: nextProfileEventID,
+                    lastSeen: now
+                )
+                sortPeers()
+                status = sidebarSubtitle
+            }
         } else {
-            peers.append(peer)
+            peers.append(
+                IrisNearbyPeer(
+                    id: peerID,
+                    name: nextName,
+                    ownerPubkeyHex: nil,
+                    pictureURL: nil,
+                    profileEventID: nextProfileEventID,
+                    lastSeen: now
+                )
+            )
+            sortPeers()
+            status = sidebarSubtitle
+            irisDebugLog("Iris nearby: saw peer")
         }
-        sortPeers()
-        if let profileEventID = sanitizedProfileEventID ?? existing?.profileEventID,
+        if let profileEventID = nextProfileEventID,
            let profile = knownProfiles[profileEventID] {
             applyAdvertisedProfile(profile, toPeerID: peerID)
         }
-        status = sidebarSubtitle
-        irisDebugLog("Iris nearby: saw peer")
     }
 
     private func touchPeer(_ peerID: String) {
@@ -1686,6 +1757,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func rememberPresence(peerID: String, ownerPubkeyHex: String, profileEventID: String?) {
+        let now = Date()
         if peers.firstIndex(where: { $0.id == peerID }) == nil {
             peers.append(
                 IrisNearbyPeer(
@@ -1699,21 +1771,29 @@ final class IrisNearbyService: NSObject, ObservableObject {
                     ownerPubkeyHex: nil,
                     pictureURL: nil,
                     profileEventID: nil,
-                    lastSeen: Date()
+                    lastSeen: now
                 )
             )
         }
         guard let index = peers.firstIndex(where: { $0.id == peerID }) else { return }
         let nextProfileEventID = profileEventID ?? peers[index].profileEventID
-        peers[index].ownerPubkeyHex = ownerPubkeyHex
-        peers[index].profileEventID = nextProfileEventID
-        peers[index].name = Self.nearbyPeerName(
+        let nextName = Self.nearbyPeerName(
             advertisedName: nil,
             ownerPubkeyHex: ownerPubkeyHex,
             profileDisplayName: nil,
             existingName: peers[index].name
         )
-        peers[index].lastSeen = Date()
+        let changed = peers[index].ownerPubkeyHex != ownerPubkeyHex ||
+            peers[index].profileEventID != nextProfileEventID ||
+            peers[index].name != nextName
+        if changed || now.timeIntervalSince(peers[index].lastSeen) >= Self.peerTouchPublishInterval {
+            peers[index].ownerPubkeyHex = ownerPubkeyHex
+            peers[index].profileEventID = nextProfileEventID
+            peers[index].name = nextName
+            peers[index].lastSeen = now
+            sortPeers()
+            status = sidebarSubtitle
+        }
         if let nextProfileEventID, let profile = knownProfiles[nextProfileEventID] {
             applyAdvertisedProfile(profile, toPeerID: peerID)
         } else if let nextProfileEventID,
@@ -1721,8 +1801,6 @@ final class IrisNearbyService: NSObject, ObservableObject {
                   forwarded[nextProfileEventID] == nil {
             sendWant([nextProfileEventID], excludingPeerID: nil, onlyPeerID: peerID)
         }
-        sortPeers()
-        status = sidebarSubtitle
     }
 
     private func applyAdvertisedProfile(_ profile: IrisNearbyProfileEvent, toPeerID peerID: String) {
@@ -1734,18 +1812,26 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if let profileEventID = peers[index].profileEventID, profileEventID != profile.id {
             return
         }
-        peers[index].ownerPubkeyHex = profile.ownerPubkeyHex
-        peers[index].profileEventID = profile.id
-        peers[index].name = Self.nearbyPeerName(
+        let now = Date()
+        let nextName = Self.nearbyPeerName(
             advertisedName: nil,
             ownerPubkeyHex: profile.ownerPubkeyHex,
             profileDisplayName: profile.displayName,
             existingName: peers[index].name
         )
-        if let pictureURL = profile.pictureURL {
-            peers[index].pictureURL = pictureURL
+        let nextPictureURL = profile.pictureURL ?? peers[index].pictureURL
+        let changed = peers[index].ownerPubkeyHex != profile.ownerPubkeyHex ||
+            peers[index].profileEventID != profile.id ||
+            peers[index].name != nextName ||
+            peers[index].pictureURL != nextPictureURL
+        guard changed || now.timeIntervalSince(peers[index].lastSeen) >= Self.peerTouchPublishInterval else {
+            return
         }
-        peers[index].lastSeen = Date()
+        peers[index].ownerPubkeyHex = profile.ownerPubkeyHex
+        peers[index].profileEventID = profile.id
+        peers[index].name = nextName
+        peers[index].pictureURL = nextPictureURL
+        peers[index].lastSeen = now
         sortPeers()
         status = sidebarSubtitle
     }

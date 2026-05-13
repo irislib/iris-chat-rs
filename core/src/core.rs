@@ -122,6 +122,191 @@ use publish_helpers::*;
 use storage::{open_database, AppStore, DataDirLock, SqliteStorageAdapter};
 pub(crate) use storage::{search_messages_fts, PersistedMessageSearchHit, SharedConnection};
 
+pub(crate) fn chat_snapshot_from_state_and_db(
+    state: &AppState,
+    shared_db: Option<&SharedConnection>,
+    chat_id: &str,
+    limit: usize,
+) -> Option<CurrentChatSnapshot> {
+    let chat_id = chat_id.trim();
+    if chat_id.is_empty() || state.account.is_none() {
+        return None;
+    }
+    if let Some(current) = state
+        .current_chat
+        .as_ref()
+        .filter(|chat| chat.chat_id == chat_id)
+    {
+        return Some(current.clone());
+    }
+
+    build_chat_snapshot_with_messages(
+        state,
+        shared_db,
+        chat_id,
+        ChatPageRequest::Latest {
+            limit: limit.max(1),
+        },
+    )
+}
+
+pub(crate) fn chat_snapshot_before_from_state_and_db(
+    state: &AppState,
+    shared_db: Option<&SharedConnection>,
+    chat_id: &str,
+    before_message_id: &str,
+    limit: usize,
+) -> Option<CurrentChatSnapshot> {
+    build_chat_snapshot_with_messages(
+        state,
+        shared_db,
+        chat_id,
+        ChatPageRequest::Before {
+            before_message_id,
+            limit: limit.max(1),
+        },
+    )
+}
+
+pub(crate) fn chat_snapshot_around_message_from_state_and_db(
+    state: &AppState,
+    shared_db: Option<&SharedConnection>,
+    chat_id: &str,
+    message_id: &str,
+    before_limit: usize,
+    after_limit: usize,
+) -> Option<CurrentChatSnapshot> {
+    build_chat_snapshot_with_messages(
+        state,
+        shared_db,
+        chat_id,
+        ChatPageRequest::Around {
+            message_id,
+            before_limit,
+            after_limit,
+        },
+    )
+}
+
+enum ChatPageRequest<'a> {
+    Latest {
+        limit: usize,
+    },
+    Before {
+        before_message_id: &'a str,
+        limit: usize,
+    },
+    Around {
+        message_id: &'a str,
+        before_limit: usize,
+        after_limit: usize,
+    },
+}
+
+fn build_chat_snapshot_with_messages(
+    state: &AppState,
+    shared_db: Option<&SharedConnection>,
+    chat_id: &str,
+    request: ChatPageRequest<'_>,
+) -> Option<CurrentChatSnapshot> {
+    let chat_id = chat_id.trim();
+    if chat_id.is_empty() || state.account.is_none() {
+        return None;
+    }
+    let thread = state.chat_list.iter().find(|chat| chat.chat_id == chat_id);
+    let messages = load_chat_messages(shared_db, chat_id, request)?;
+    let group_id = group_id_from_chat_id(chat_id);
+    Some(CurrentChatSnapshot {
+        chat_id: chat_id.to_string(),
+        kind: thread
+            .map(|thread| thread.kind.clone())
+            .unwrap_or_else(|| chat_kind_for_id(chat_id)),
+        display_name: thread
+            .map(|thread| thread.display_name.clone())
+            .unwrap_or_else(|| fallback_chat_title(chat_id)),
+        subtitle: thread
+            .and_then(|thread| thread.subtitle.clone())
+            .or_else(|| group_id.as_ref().map(|_| "Group".to_string())),
+        picture_url: thread.and_then(|thread| thread.picture_url.clone()),
+        group_id,
+        member_count: thread.map(|thread| thread.member_count).unwrap_or(0),
+        message_ttl_seconds: None,
+        is_muted: thread.map(|thread| thread.is_muted).unwrap_or(false),
+        messages,
+        typing_indicators: Vec::new(),
+        draft: thread
+            .map(|thread| thread.draft.clone())
+            .unwrap_or_default(),
+    })
+}
+
+fn load_chat_messages(
+    shared_db: Option<&SharedConnection>,
+    chat_id: &str,
+    request: ChatPageRequest<'_>,
+) -> Option<Vec<ChatMessageSnapshot>> {
+    let Some(shared) = shared_db else {
+        return match request {
+            ChatPageRequest::Latest { .. } => Some(Vec::new()),
+            ChatPageRequest::Before { .. } | ChatPageRequest::Around { .. } => None,
+        };
+    };
+    let Ok(conn) = shared.try_lock() else {
+        return match request {
+            ChatPageRequest::Latest { .. } => Some(Vec::new()),
+            ChatPageRequest::Before { .. } | ChatPageRequest::Around { .. } => None,
+        };
+    };
+    let result = match request {
+        ChatPageRequest::Latest { limit } => storage::load_recent_messages(&conn, chat_id, limit),
+        ChatPageRequest::Before {
+            before_message_id,
+            limit,
+        } => storage::load_messages_before(&conn, chat_id, before_message_id, limit),
+        ChatPageRequest::Around {
+            message_id,
+            before_limit,
+            after_limit,
+        } => storage::load_messages_around(&conn, chat_id, message_id, before_limit, after_limit),
+    };
+    let Ok(messages) = result else {
+        return match request {
+            ChatPageRequest::Latest { .. } => Some(Vec::new()),
+            ChatPageRequest::Before { .. } | ChatPageRequest::Around { .. } => None,
+        };
+    };
+    Some(
+        messages
+            .iter()
+            .map(chats::chat_message_from_persisted)
+            .collect(),
+    )
+}
+
+fn group_id_from_chat_id(chat_id: &str) -> Option<String> {
+    chat_id
+        .strip_prefix("group:")
+        .filter(|group_id| !group_id.trim().is_empty())
+        .map(ToString::to_string)
+}
+
+fn fallback_chat_title(chat_id: &str) -> String {
+    if is_group_chat_id(chat_id) {
+        return "Group".to_string();
+    }
+    let trimmed = chat_id.trim();
+    let boundary = trimmed
+        .char_indices()
+        .map(|(index, _)| index)
+        .nth(12)
+        .unwrap_or(trimmed.len());
+    if boundary < trimmed.len() {
+        format!("{}...", &trimmed[..boundary])
+    } else {
+        trimmed.to_string()
+    }
+}
+
 pub struct AppCore {
     update_tx: Sender<AppUpdate>,
     core_sender: Sender<CoreMsg>,

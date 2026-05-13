@@ -435,6 +435,39 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
 }
 
 #[test]
+fn fetch_catch_up_events_requeues_large_batches_in_chunks() {
+    let keys = Keys::generate();
+    let events = (0..=super::lifecycle::CATCH_UP_EVENT_PROCESS_CHUNK_SIZE)
+        .map(|index| {
+            EventBuilder::new(Kind::TextNote, format!("catch-up-{index}"))
+                .sign_with_keys(&keys)
+                .expect("event")
+        })
+        .collect::<Vec<_>>();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let (core_tx, core_rx) = flume::unbounded();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        core_tx,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    core.handle_internal(InternalEvent::FetchCatchUpEvents(events));
+
+    let requeued = core_rx.try_recv().expect("requeued remainder");
+    match requeued {
+        CoreMsg::Internal(event) => match *event {
+            InternalEvent::FetchCatchUpEvents(remainder) => {
+                assert_eq!(remainder.len(), 1);
+            }
+            other => panic!("unexpected internal event: {other:?}"),
+        },
+        other => panic!("unexpected core message: {other:?}"),
+    }
+}
+
+#[test]
 fn failed_publish_drain_batches_results_and_schedules_one_retry() {
     let owner = Keys::generate();
     let device = Keys::generate();

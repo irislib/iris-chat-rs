@@ -280,6 +280,7 @@ fun ChatScreen(
                 appManager.consumePendingScrollMessage()
                 return@LaunchedEffect
             }
+            appManager.loadChatAroundMessage(chatId, target)
         }
         val previousTotal = observedMessageCount
         val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
@@ -494,6 +495,11 @@ fun ChatScreen(
                         verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.Bottom),
                     ) {
                         itemsIndexed(visibleMessages, key = { _, message -> message.id }) { index, message ->
+                            if (index == 0) {
+                                LaunchedEffect(chat.chatId, message.id) {
+                                    appManager.loadOlderMessages(chat.chatId)
+                                }
+                            }
                             val previous = visibleMessages.getOrNull(index - 1)
                             val next = visibleMessages.getOrNull(index + 1)
                             val showDayChip =

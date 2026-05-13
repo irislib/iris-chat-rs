@@ -11,7 +11,10 @@ mod store;
 
 pub(crate) use connection::{open_database, DataDirLock, CORE_DB_FILENAME};
 pub(crate) use ndr_storage::SqliteStorageAdapter;
-pub(crate) use store::{search_messages_fts, AppStore, PersistedMessageSearchHit, SaveSnapshot};
+pub(crate) use store::{
+    load_messages_around, load_messages_before, load_recent_messages, search_messages_fts,
+    AppStore, PersistedMessageSearchHit, SaveSnapshot,
+};
 
 use std::sync::{Arc, Mutex};
 

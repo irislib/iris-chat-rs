@@ -40,8 +40,12 @@ import to.iris.chat.rust.AppState
 import to.iris.chat.rust.AppUpdate
 import to.iris.chat.rust.BusyState
 import to.iris.chat.rust.ChatKind
+import to.iris.chat.rust.ChatMessageKind
+import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
+import to.iris.chat.rust.DeliveryState
+import to.iris.chat.rust.MessageDeliveryTraceSnapshot
 import to.iris.chat.rust.MobilePushNotificationResolution
 import to.iris.chat.rust.MobilePushSyncSnapshot
 import to.iris.chat.rust.PeerProfileDebugSnapshot
@@ -332,6 +336,120 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun open_chat_updates_shell_route_before_rust_catches_up() {
+        val initial = makeLoggedInState(rev = 1u)
+        rustFactory.initialStates += initial
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+
+        appManager.dispatch(AppAction.OpenChat("chat-1"))
+
+        assertTrue(rust.dispatchedActions.contains(AppAction.OpenChat("chat-1")))
+        assertEquals(listOf(Screen.Chat("chat-1")), appManager.state.value.router.screenStack)
+        assertEquals("chat-1", appManager.state.value.currentChat?.chatId)
+
+        rust.emit(
+            AppUpdate.FullState(
+                makeLoggedInState(rev = 2u).also { state ->
+                    state.router = Router(Screen.ChatList, emptyList())
+                },
+            ),
+        )
+        waitFor("stale route reconciled with local open") {
+            appManager.state.value.rev == 2uL
+        }
+
+        assertEquals(listOf(Screen.Chat("chat-1")), appManager.state.value.router.screenStack)
+    }
+
+    @Test
+    fun open_chat_at_message_loads_search_hit_page_outside_initial_page() {
+        rustFactory.initialStates += makeLoggedInState(rev = 1u)
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        val aroundPage =
+            makeCurrentChat(
+                chatId = "chat-1",
+                kind = ChatKind.DIRECT,
+                messages = (15..35).map { makeMessage("chat-1", it.toString()) },
+            )
+        rust.pagesAround["chat-1" to "25"] = aroundPage
+
+        appManager.openChatAtMessage("chat-1", "25")
+
+        assertTrue(rust.dispatchedActions.contains(AppAction.OpenChat("chat-1")))
+        assertEquals(listOf(Screen.Chat("chat-1")), appManager.state.value.router.screenStack)
+        assertTrue(appManager.state.value.currentChat?.messages.orEmpty().any { it.id == "25" })
+    }
+
+    @Test
+    fun full_state_keeps_loaded_search_hit_context_for_visible_chat() {
+        val initial =
+            makeLoggedInState(rev = 1u).also { state ->
+                state.router = Router(Screen.ChatList, listOf(Screen.Chat("chat-1")))
+                state.currentChat =
+                    makeCurrentChat(
+                        chatId = "chat-1",
+                        kind = ChatKind.DIRECT,
+                        messages = (15..35).map { makeMessage("chat-1", it.toString()) },
+                    )
+            }
+        rustFactory.initialStates += initial
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        val latestPage =
+            makeCurrentChat(
+                chatId = "chat-1",
+                kind = ChatKind.DIRECT,
+                messages = (121..200).map { makeMessage("chat-1", it.toString()) },
+            )
+
+        rust.emit(
+            AppUpdate.FullState(
+                makeLoggedInState(rev = 2u).also { state ->
+                    state.router = Router(Screen.ChatList, listOf(Screen.Chat("chat-1")))
+                    state.currentChat = latestPage
+                },
+            ),
+        )
+        waitFor("visible chat page preserved") {
+            appManager.state.value.rev == 2uL
+        }
+
+        val messages = appManager.state.value.currentChat?.messages.orEmpty()
+        assertTrue(messages.any { it.id == "25" })
+        assertTrue(messages.any { it.id == "200" })
+        assertEquals("15", messages.first().id)
+        assertEquals("200", messages.last().id)
+    }
+
+    @Test
+    fun push_screen_updates_shell_route_before_rust_catches_up() {
+        val initial = makeLoggedInState(rev = 1u)
+        rustFactory.initialStates += initial
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+
+        appManager.dispatch(AppAction.PushScreen(Screen.Settings))
+
+        assertTrue(rust.dispatchedActions.contains(AppAction.PushScreen(Screen.Settings)))
+        assertEquals(listOf(Screen.Settings), appManager.state.value.router.screenStack)
+
+        rust.emit(
+            AppUpdate.FullState(
+                makeLoggedInState(rev = 2u).also { state ->
+                    state.router = Router(Screen.ChatList, emptyList())
+                },
+            ),
+        )
+        waitFor("stale route reconciled with local push") {
+            appManager.state.value.rev == 2uL
+        }
+
+        assertEquals(listOf(Screen.Settings), appManager.state.value.router.screenStack)
+    }
+
+    @Test
     fun persist_account_bundle_side_effect_applies_even_when_stale() {
         rustFactory.initialStates += makeLargeFixtureState(rev = 5u)
         createManager()
@@ -595,7 +713,7 @@ class AppManagerContractTest {
         buildLargeTestAppState(
             directChatCount = 80u,
             groupChatCount = 20u,
-            messagesInCurrentChat = 240u,
+            messagesInCurrentChat = LARGE_FIXTURE_MESSAGE_COUNT,
         ).also { state ->
             state.rev = rev
             state.preferences.nearbyBluetoothEnabled = false
@@ -610,6 +728,7 @@ class AppManagerContractTest {
         chatId: String,
         kind: ChatKind,
         groupId: String? = null,
+        messages: List<ChatMessageSnapshot> = emptyList(),
     ): CurrentChatSnapshot =
         CurrentChatSnapshot(
             chatId = chatId,
@@ -621,9 +740,40 @@ class AppManagerContractTest {
             memberCount = 0u,
             messageTtlSeconds = null,
             isMuted = false,
-            messages = emptyList(),
+            messages = messages,
             typingIndicators = emptyList(),
             draft = "",
+        )
+
+    private fun makeMessage(
+        chatId: String,
+        id: String,
+        body: String = "message $id",
+    ): ChatMessageSnapshot =
+        ChatMessageSnapshot(
+            id = id,
+            chatId = chatId,
+            kind = ChatMessageKind.USER,
+            author = "owner-hex",
+            body = body,
+            attachments = emptyList(),
+            reactions = emptyList(),
+            reactors = emptyList(),
+            isOutgoing = true,
+            createdAtSecs = id.toULongOrNull() ?: 0u,
+            expiresAtSecs = null,
+            delivery = DeliveryState.SENT,
+            recipientDeliveries = emptyList(),
+            deliveryTrace =
+                MessageDeliveryTraceSnapshot(
+                    outerEventIds = emptyList(),
+                    pendingRelayEventIds = emptyList(),
+                    queuedProtocolTargets = emptyList(),
+                    targetDeviceIds = emptyList(),
+                    transportChannels = emptyList(),
+                    lastTransportError = null,
+                ),
+            sourceEventId = null,
         )
 
     private fun makeLoggedInState(rev: ULong): AppState =
@@ -644,6 +794,7 @@ class AppManagerContractTest {
         )
 
     private companion object {
+        val LARGE_FIXTURE_MESSAGE_COUNT = 1_200u
         val SECRET_CIPHERTEXT = stringPreferencesKey("secret_ciphertext")
         val SECRET_IV = stringPreferencesKey("secret_iv")
     }
@@ -680,6 +831,8 @@ private class MockRustAppClient(
     var dispatchError: Throwable? = null
     var prepareForSuspendCount = 0
     var shutdownCount = 0
+    val pagesBefore = mutableMapOf<Pair<String, String>, CurrentChatSnapshot>()
+    val pagesAround = mutableMapOf<Pair<String, String>, CurrentChatSnapshot>()
     private var reconciler: AppReconciler? = null
 
     override fun state(): AppState = currentState
@@ -704,6 +857,41 @@ private class MockRustAppClient(
             }
         }
     }
+
+    override fun chatSnapshot(chatId: String, limit: UInt): CurrentChatSnapshot? {
+        val trimmed = chatId.trim()
+        if (trimmed.isEmpty() || currentState.account == null) {
+            return null
+        }
+        currentState.currentChat?.takeIf { it.chatId == trimmed }?.let { return it }
+        val thread = currentState.chatList.firstOrNull { it.chatId == trimmed }
+        val groupId = trimmed.removePrefix("group:").takeIf { trimmed.startsWith("group:") }
+        return CurrentChatSnapshot(
+            chatId = trimmed,
+            kind = thread?.kind ?: if (groupId == null) ChatKind.DIRECT else ChatKind.GROUP,
+            displayName = thread?.displayName ?: trimmed,
+            subtitle = thread?.subtitle,
+            pictureUrl = thread?.pictureUrl,
+            groupId = groupId,
+            memberCount = thread?.memberCount ?: 0u,
+            messageTtlSeconds = null,
+            isMuted = thread?.isMuted ?: false,
+            messages = emptyList(),
+            typingIndicators = emptyList(),
+            draft = thread?.draft.orEmpty(),
+        )
+    }
+
+    override fun chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt): CurrentChatSnapshot? =
+        pagesBefore[chatId.trim() to beforeMessageId.trim()]
+
+    override fun chatSnapshotAroundMessage(
+        chatId: String,
+        messageId: String,
+        beforeLimit: UInt,
+        afterLimit: UInt,
+    ): CurrentChatSnapshot? =
+        pagesAround[chatId.trim() to messageId.trim()]
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = true
 

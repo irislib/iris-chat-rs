@@ -393,6 +393,9 @@ protocol RustAppClient: AnyObject {
     func state() -> AppState
     func dispatch(action: AppAction) throws
     func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot
+    func chatSnapshot(chatId: String, limit: UInt32) -> CurrentChatSnapshot?
+    func chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot?
+    func chatSnapshotAroundMessage(chatId: String, messageId: String, beforeLimit: UInt32, afterLimit: UInt32) -> CurrentChatSnapshot?
     func ingestNearbyEventJson(eventJson: String) -> Bool
     func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool
     func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String
@@ -423,6 +426,23 @@ final class LiveRustAppClient: RustAppClient {
 
     func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot {
         ffi.searchSafely(query: query, scopeChatId: scopeChatId, limit: limit)
+    }
+
+    func chatSnapshot(chatId: String, limit: UInt32) -> CurrentChatSnapshot? {
+        ffi.chatSnapshot(chatId: chatId, limit: limit)
+    }
+
+    func chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot? {
+        ffi.chatSnapshotBefore(chatId: chatId, beforeMessageId: beforeMessageId, limit: limit)
+    }
+
+    func chatSnapshotAroundMessage(chatId: String, messageId: String, beforeLimit: UInt32, afterLimit: UInt32) -> CurrentChatSnapshot? {
+        ffi.chatSnapshotAroundMessage(
+            chatId: chatId,
+            messageId: messageId,
+            beforeLimit: beforeLimit,
+            afterLimit: afterLimit
+        )
     }
 
     func ingestNearbyEventJson(eventJson: String) -> Bool {
@@ -833,7 +853,10 @@ final class AppManager: ObservableObject {
     private static let activeChatSeenIdleLimit: TimeInterval = 5 * 60
     private static let maxClientDebugLogEntries = 50
     private static let dispatchFailureToast = "Action failed. Copy support bundle in Settings."
-    private static let navigationOverrideTTL: TimeInterval = 2
+    private static let navigationOverrideTTL: TimeInterval = 10
+    private static let chatPageSize: UInt32 = 80
+    private static let chatAroundBeforeLimit: UInt32 = 40
+    private static let chatAroundAfterLimit: UInt32 = 40
     private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
     private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
@@ -850,6 +873,10 @@ final class AppManager: ObservableObject {
     /// Stays nil for normal `openChat` taps so we don't re-scroll on
     /// every chat-open.
     @Published private(set) var pendingScrollMessageId: String?
+
+    private var olderChatPageLoads = Set<String>()
+    private var exhaustedOlderChatPages = Set<String>()
+    private var aroundChatPageLoads = Set<String>()
 
     // Keeps user-driven navigation stable while queued Rust snapshots catch up.
     private struct PendingNavigationOverride {
@@ -1079,14 +1106,117 @@ final class AppManager: ObservableObject {
             return
         }
         let nextStack = Array(currentStack.dropLast())
+        navigateOptimistically(
+            to: nextStack,
+            action: .updateScreenStack(stack: nextStack),
+            showsToastOnFailure: false
+        )
+    }
+
+    func dispatch(_ action: AppAction) {
+        if handleOptimisticNavigation(action) {
+            return
+        }
+        dispatchToRust(action)
+    }
+
+    private func handleOptimisticNavigation(_ action: AppAction) -> Bool {
+        switch action {
+        case .navigateBack:
+            navigateBack()
+            return true
+        case .openChat(let chatId):
+            let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return true }
+            navigateOptimistically(
+                to: [.chat(chatId: trimmed)],
+                action: .openChat(chatId: trimmed)
+            )
+            return true
+        case .pushScreen(let screen):
+            guard let stack = stackByApplyingPushScreen(screen) else {
+                dispatchToRust(action)
+                return true
+            }
+            navigateOptimistically(to: stack, action: action)
+            return true
+        case .updateScreenStack(let stack):
+            navigateOptimistically(
+                to: stack,
+                action: action,
+                showsToastOnFailure: false
+            )
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func stackByApplyingPushScreen(_ screen: Screen) -> [Screen]? {
+        if state.account == nil {
+            switch screen {
+            case .welcome:
+                return []
+            case .createAccount, .restoreAccount, .addDevice:
+                return [screen]
+            default:
+                return nil
+            }
+        }
+
+        switch screen {
+        case .chatList:
+            return []
+        case .newChat,
+             .newGroup,
+             .createInvite,
+             .joinInvite,
+             .settings,
+             .deviceRoster:
+            return [screen]
+        case .chat(let chatId):
+            let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : [.chat(chatId: trimmed)]
+        case .groupDetails(let groupId):
+            let trimmed = groupId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            let groupChatId = "group:\(trimmed)"
+            var stack = state.router.screenStack
+            if activeChatID(in: state) != groupChatId {
+                stack = [.chat(chatId: groupChatId)]
+            }
+            let detailsScreen = Screen.groupDetails(groupId: trimmed)
+            if stack.last != detailsScreen {
+                stack.append(detailsScreen)
+            }
+            return stack
+        case .createAccount,
+             .restoreAccount,
+             .addDevice,
+             .awaitingDeviceApproval,
+             .deviceRevoked,
+             .welcome:
+            return nil
+        }
+    }
+
+    private func navigateOptimistically(
+        to stack: [Screen],
+        action: AppAction,
+        showsToastOnFailure: Bool = true
+    ) {
         pendingNavigationOverride = PendingNavigationOverride(
-            stack: nextStack,
+            stack: stack,
             expiresAt: Date().addingTimeInterval(Self.navigationOverrideTTL)
         )
-        applyLocalScreenStack(nextStack)
+        applyLocalScreenStack(stack)
+        appendClientDebugLog(
+            category: "navigation.optimistic",
+            detail: "\(actionLogName(action)) stack=\(stack)"
+        )
         let dispatched = dispatchToRust(
-            .updateScreenStack(stack: nextStack),
-            showsToastOnFailure: false,
+            action,
+            showsToastOnFailure: showsToastOnFailure,
             preservesPendingNavigation: true
         )
         if !dispatched {
@@ -1094,21 +1224,17 @@ final class AppManager: ObservableObject {
         }
     }
 
-    func dispatch(_ action: AppAction) {
-        if case .navigateBack = action {
-            navigateBack()
-            return
-        }
-        dispatchToRust(action)
-    }
-
     /// Open a chat and queue a scroll-to-message hop on first paint.
     /// Used by the search result rows so tapping a message hit lands
     /// the chat at that bubble instead of the bottom of the
     /// timeline.
     func openChatAtMessage(chatId: String, messageId: String) {
-        pendingScrollMessageId = messageId
-        dispatchToRust(.openChat(chatId: chatId))
+        let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMessage = messageId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedChat.isEmpty, !trimmedMessage.isEmpty else { return }
+        pendingScrollMessageId = trimmedMessage
+        dispatch(.openChat(chatId: trimmedChat))
+        loadChatAroundMessage(chatId: trimmedChat, messageId: trimmedMessage)
     }
 
     /// ChatScreen calls this after it's actually scrolled the
@@ -1126,6 +1252,59 @@ final class AppManager: ObservableObject {
     /// connection without going through the action queue.
     func search(_ query: String, scopeChatId: String? = nil, limit: UInt32 = 50) -> SearchResultSnapshot {
         rust.search(query: query, scopeChatId: scopeChatId, limit: limit)
+    }
+
+    @discardableResult
+    func loadOlderMessages(chatId: String) -> Bool {
+        let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedChat.isEmpty,
+              !olderChatPageLoads.contains(trimmedChat),
+              !exhaustedOlderChatPages.contains(trimmedChat),
+              let current = state.currentChat,
+              current.chatId == trimmedChat,
+              let firstMessage = current.messages.first else {
+            return false
+        }
+        olderChatPageLoads.insert(trimmedChat)
+        defer { olderChatPageLoads.remove(trimmedChat) }
+        guard let page = rust.chatSnapshotBefore(
+            chatId: trimmedChat,
+            beforeMessageId: firstMessage.id,
+            limit: Self.chatPageSize
+        ) else {
+            return false
+        }
+        if page.messages.isEmpty || page.messages.count < Int(Self.chatPageSize) {
+            exhaustedOlderChatPages.insert(trimmedChat)
+        }
+        guard !page.messages.isEmpty else {
+            return false
+        }
+        mergeCurrentChatSnapshot(page)
+        return true
+    }
+
+    func loadChatAroundMessage(chatId: String, messageId: String) {
+        let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMessage = messageId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedChat.isEmpty, !trimmedMessage.isEmpty else { return }
+        if state.currentChat?.chatId == trimmedChat,
+           state.currentChat?.messages.contains(where: { $0.id == trimmedMessage }) == true {
+            return
+        }
+        let key = "\(trimmedChat)\u{1f}\(trimmedMessage)"
+        guard !aroundChatPageLoads.contains(key) else { return }
+        aroundChatPageLoads.insert(key)
+        defer { aroundChatPageLoads.remove(key) }
+        guard let page = rust.chatSnapshotAroundMessage(
+            chatId: trimmedChat,
+            messageId: trimmedMessage,
+            beforeLimit: Self.chatAroundBeforeLimit,
+            afterLimit: Self.chatAroundAfterLimit
+        ) else {
+            return
+        }
+        mergeCurrentChatSnapshot(page)
     }
 
     func handleChatLink(_ url: URL) {
@@ -1207,7 +1386,7 @@ final class AppManager: ObservableObject {
                 ) && dispatchedAll
             }
         }
-        dispatchedAll = dispatchToRust(.openChat(chatId: targets[0])) && dispatchedAll
+        dispatch(.openChat(chatId: targets[0]))
         guard dispatchedAll else {
             return
         }
@@ -2112,8 +2291,11 @@ final class AppManager: ObservableObject {
             guard nextState.rev > lastRevApplied else {
                 return
             }
-            let reconciledState = stateByReconcilingPendingNavigation(nextState)
             let oldState = state
+            let reconciledState = stateByPreservingVisibleChatPage(
+                from: oldState,
+                into: stateByReconcilingPendingNavigation(nextState)
+            )
             lastRevApplied = nextState.rev
             postDesktopNotifications(from: oldState, to: reconciledState)
             state = reconciledState
@@ -2151,7 +2333,14 @@ final class AppManager: ObservableObject {
         guard !seedTestMessagesDispatched, let chat = state.chatList.first else { return }
         seedTestMessagesDispatched = true
         for i in 1...seed.count {
-            let label = i == seed.count ? "LAST_SCROLL_SENTINEL" : "seed-msg-\(i)"
+            let label: String
+            if i == 1 {
+                label = "FIRST_SCROLL_SENTINEL"
+            } else if i == seed.count {
+                label = "LAST_SCROLL_SENTINEL"
+            } else {
+                label = "seed-msg-\(i)"
+            }
             let body = "\(label) lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
             dispatchToRust(.sendMessage(chatId: chat.chatId, text: body))
         }
@@ -2203,6 +2392,70 @@ final class AppManager: ObservableObject {
         return stateByApplyingLocalScreenStack(pending.stack, to: nextState)
     }
 
+    private func stateByPreservingVisibleChatPage(from oldState: AppState, into nextState: AppState) -> AppState {
+        guard let oldChat = oldState.currentChat,
+              let newChat = nextState.currentChat,
+              oldChat.chatId == newChat.chatId,
+              activeChatID(in: nextState) == newChat.chatId else {
+            return nextState
+        }
+        let newMessageIDs = Set(newChat.messages.map(\.id))
+        guard oldChat.messages.contains(where: { !newMessageIDs.contains($0.id) }) else {
+            return nextState
+        }
+        var result = nextState
+        result.currentChat = mergedChatSnapshot(existing: oldChat, page: newChat)
+        return result
+    }
+
+    private func mergeCurrentChatSnapshot(_ page: CurrentChatSnapshot) {
+        guard state.currentChat?.chatId == page.chatId else { return }
+        var nextState = state
+        nextState.currentChat = mergedChatSnapshot(existing: state.currentChat, page: page)
+        state = nextState
+    }
+
+    private func mergedChatSnapshot(existing: CurrentChatSnapshot?, page: CurrentChatSnapshot) -> CurrentChatSnapshot {
+        guard let existing, existing.chatId == page.chatId else {
+            return page
+        }
+        var merged = page
+        var byID: [String: ChatMessageSnapshot] = [:]
+        byID.reserveCapacity(existing.messages.count + page.messages.count)
+        for message in existing.messages {
+            byID[message.id] = message
+        }
+        for message in page.messages {
+            byID[message.id] = message
+        }
+        merged.messages = byID.values.sorted(by: chatMessagePrecedes)
+        if merged.typingIndicators.isEmpty {
+            merged.typingIndicators = existing.typingIndicators
+        }
+        if merged.draft.isEmpty, !existing.draft.isEmpty {
+            merged.draft = existing.draft
+        }
+        return merged
+    }
+
+    private func chatMessagePrecedes(_ lhs: ChatMessageSnapshot, _ rhs: ChatMessageSnapshot) -> Bool {
+        if lhs.createdAtSecs != rhs.createdAtSecs {
+            return lhs.createdAtSecs < rhs.createdAtSecs
+        }
+        let lhsNumeric = UInt64(lhs.id)
+        let rhsNumeric = UInt64(rhs.id)
+        switch (lhsNumeric, rhsNumeric) {
+        case let (lhs?, rhs?) where lhs != rhs:
+            return lhs < rhs
+        case (.some, .none):
+            return true
+        case (.none, .some):
+            return false
+        default:
+            return lhs.id < rhs.id
+        }
+    }
+
     private func applyLocalScreenStack(_ stack: [Screen]) {
         state = stateByApplyingLocalScreenStack(stack, to: state)
     }
@@ -2214,7 +2467,10 @@ final class AppManager: ObservableObject {
         switch activeScreen {
         case .chat(let chatId):
             if nextState.currentChat?.chatId != chatId {
-                nextState.currentChat = nil
+                nextState.currentChat = rust.chatSnapshot(
+                    chatId: chatId,
+                    limit: Self.chatPageSize
+                )
             }
             nextState.groupDetails = nil
         case .groupDetails(let groupId):
