@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 13;
+const SCHEMA_VERSION: u32 = 14;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -87,6 +87,17 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS messages_chat_order_idx
     ON messages(chat_id, created_at_secs, id);
+
+CREATE INDEX IF NOT EXISTS messages_chat_recent_idx
+    ON messages(
+        chat_id,
+        created_at_secs DESC,
+        CASE
+            WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
+            ELSE 9223372036854775807
+        END DESC,
+        id DESC
+    );
 
 CREATE INDEX IF NOT EXISTS messages_expires_idx
     ON messages(expires_at_secs) WHERE expires_at_secs IS NOT NULL;
@@ -329,6 +340,20 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         tx.execute_batch(
             "ALTER TABLE preferences
              ADD COLUMN debug_logging_enabled INTEGER NOT NULL DEFAULT 0;",
+        )?;
+    }
+    if current < 14 {
+        tx.execute_batch(
+            "CREATE INDEX IF NOT EXISTS messages_chat_recent_idx
+             ON messages(
+                 chat_id,
+                 created_at_secs DESC,
+                 CASE
+                     WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
+                     ELSE 9223372036854775807
+                 END DESC,
+                 id DESC
+             );",
         )?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;

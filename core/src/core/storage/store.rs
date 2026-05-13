@@ -1837,6 +1837,48 @@ mod tests {
     }
 
     #[test]
+    fn load_recent_messages_uses_recent_index_for_large_chat() {
+        let (_tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let messages = (1..=20_000)
+            .map(|idx| sample_message(&idx.to_string(), &format!("message {idx}"), idx as u64))
+            .collect::<Vec<_>>();
+        let mut threads = BTreeMap::new();
+        threads.insert("chat".to_string(), thread_from_messages("chat", messages));
+        let snapshot = empty_snapshot(
+            None,
+            20_001,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        let started = std::time::Instant::now();
+        let page = store
+            .load_recent_messages("chat", RESTORED_MESSAGES_PER_THREAD)
+            .unwrap();
+        let elapsed = started.elapsed();
+
+        assert_eq!(page.len(), RESTORED_MESSAGES_PER_THREAD);
+        assert_eq!(page.first().unwrap().body, "message 19921");
+        assert_eq!(page.last().unwrap().body, "message 20000");
+        assert!(
+            elapsed < std::time::Duration::from_millis(250),
+            "large chat recent-message page took {elapsed:?}",
+        );
+    }
+
+    #[test]
     fn saving_partially_loaded_thread_preserves_older_message_rows() {
         let (tmp, mut store) = fresh_store();
         let preferences = PreferencesSnapshot::default();

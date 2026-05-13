@@ -165,11 +165,15 @@ class IrisNearbyLanService(
     fun send(
         frame: ByteArray,
         excludingPeerId: String?,
+        onlyPeerId: String? = null,
     ) {
         if (!enabled) {
             return
         }
         connections.values.forEach { connection ->
+            if (onlyPeerId != null && connection.peerId != onlyPeerId) {
+                return@forEach
+            }
             if (excludingPeerId != null && connection.peerId == excludingPeerId) {
                 return@forEach
             }

@@ -120,6 +120,21 @@ struct RootView: View {
                     }
                 } else if case .welcome = manager.activeScreen {
                     WelcomeScreen(manager: manager)
+                } else if let directChatInfoChatId {
+                    NavigationShell(
+                        title: "Details",
+                        canGoBack: true,
+                        onBack: { self.directChatInfoChatId = nil },
+                        leading: AnyView(EmptyView()),
+                        trailing: AnyView(EmptyView()),
+                        offlineBanner: offlineBanner
+                    ) {
+                        DirectChatInfoScreen(
+                            manager: manager,
+                            chatId: directChatInfoChatId,
+                            onClose: { self.directChatInfoChatId = nil }
+                        )
+                    }
                 } else {
                     NavigationShell(
                         title: screenTitle(manager.activeScreen),
@@ -144,17 +159,6 @@ struct RootView: View {
                     LoadingOverlay()
                         .allowsHitTesting(false)
                 }
-            }
-        .sheet(
-            item: Binding(
-                get: { directChatInfoChatId.map(IdentifiedString.init) },
-                set: { directChatInfoChatId = $0?.value }
-            )
-            ) { wrapper in
-                DirectChatInfoSheet(manager: manager, chatId: wrapper.value)
-                    .presentationDetents([.medium])
-                    .presentationDragIndicator(.visible)
-                    .irisDismissOnMacOutsideClick { directChatInfoChatId = nil }
             }
         .sheet(item: $inChatSearch) { target in
             InChatSearchSheet(manager: manager, target: target) {
@@ -1479,11 +1483,11 @@ private struct IdentifiedString: Identifiable, Hashable {
     var id: String { value }
 }
 
-private struct DirectChatInfoSheet: View {
+private struct DirectChatInfoScreen: View {
     @Environment(\.irisPalette) private var palette
-    @Environment(\.dismiss) private var dismiss
     @ObservedObject var manager: AppManager
     let chatId: String
+    let onClose: () -> Void
     @State private var advancedExpanded = false
     @State private var profileDebug: PeerProfileDebugSnapshot?
     @State private var loadedProfileDebugFor: String?
@@ -1493,124 +1497,110 @@ private struct DirectChatInfoSheet: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if let chat {
-                        HStack(spacing: 14) {
-                            IrisAvatar(
-                                label: chat.displayName,
-                                size: 72,
-                                emphasize: true,
-                                pictureUrl: chat.pictureUrl,
-                                preferences: manager.state.preferences,
-                                manager: manager
-                            )
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(chat.displayName)
-                                    .font(.system(.title3, design: .rounded, weight: .bold))
-                                    .foregroundStyle(palette.textPrimary)
-                                if let subtitle = chat.subtitle, !subtitle.isEmpty {
-                                    Text(subtitle)
-                                        .font(.system(.footnote, design: .rounded))
-                                        .foregroundStyle(palette.muted)
-                                }
-                            }
-                            Spacer(minLength: 0)
-                        }
-                        .padding(.top, 8)
-
-                        IrisCopyButton(label: "Copy user ID", value: peerInputToNpub(input: chatId))
-                            .accessibilityIdentifier("directChatCopyUserIdButton")
-
-                        Button {
-                            manager.dispatch(.setChatMuted(chatId: chatId, muted: !chat.isMuted))
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: chat.isMuted ? "bell.fill" : "bell.slash.fill")
-                                Text(chat.isMuted ? "Unmute chat" : "Mute chat")
-                            }
-                            .foregroundStyle(palette.textPrimary)
-                            .padding(.vertical, 8)
-                        }
-                        .buttonStyle(.irisPlain)
-                        .accessibilityIdentifier("directChatMuteButton")
-
-                        IrisSectionCard {
-                            CardHeader(
-                                title: "Disappearing messages",
-                                subtitle: "Messages auto-delete after the chosen interval."
-                            )
-                            VStack(spacing: 0) {
-                                ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
-                                    Button {
-                                        manager.dispatch(.setChatMessageTtl(chatId: chatId, ttlSeconds: ttlSeconds))
-                                    } label: {
-                                        HStack {
-                                            Text(label)
-                                                .foregroundStyle(palette.textPrimary)
-                                            Spacer()
-                                            if chat.messageTtlSeconds == ttlSeconds {
-                                                Image(systemName: "checkmark")
-                                                    .font(.system(size: 14, weight: .semibold))
-                                                    .foregroundStyle(palette.textPrimary)
-                                            }
-                                        }
-                                        .padding(.vertical, 10)
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.irisPlain)
-                                }
-                            }
-                        }
-
-                        DirectChatAdvancedCard(
-                            debug: profileDebug,
-                            isExpanded: $advancedExpanded
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                if let chat {
+                    HStack(spacing: 14) {
+                        IrisAvatar(
+                            label: chat.displayName,
+                            size: 72,
+                            emphasize: true,
+                            pictureUrl: chat.pictureUrl,
+                            preferences: manager.state.preferences,
+                            manager: manager
                         )
-                        .accessibilityIdentifier("directChatAdvancedCard")
-                        .onAppear(perform: loadProfileDebugIfNeeded)
-                        .irisOnChange(of: advancedExpanded) { _ in
-                            loadProfileDebugIfNeeded()
-                        }
-
-                        Button {
-                            manager.dispatch(.deleteChat(chatId: chatId))
-                            dismiss()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "trash")
-                                Text("Delete chat")
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(chat.displayName)
+                                .font(.system(.title3, design: .rounded, weight: .bold))
+                                .foregroundStyle(palette.textPrimary)
+                            if let subtitle = chat.subtitle, !subtitle.isEmpty {
+                                Text(subtitle)
+                                    .font(.system(.footnote, design: .rounded))
+                                    .foregroundStyle(palette.muted)
                             }
-                            .foregroundStyle(.red)
-                            .padding(.vertical, 8)
                         }
-                        .buttonStyle(.irisPlain)
-                        .accessibilityIdentifier("directChatDeleteButton")
-                    } else {
-                        ProgressView()
-                            .padding(.top, 40)
+                        Spacer(minLength: 0)
                     }
+                    .padding(.top, 8)
+
+                    IrisCopyButton(label: "Copy user ID", value: peerInputToNpub(input: chatId))
+                        .accessibilityIdentifier("directChatCopyUserIdButton")
+
+                    Button {
+                        manager.dispatch(.setChatMuted(chatId: chatId, muted: !chat.isMuted))
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: chat.isMuted ? "bell.fill" : "bell.slash.fill")
+                            Text(chat.isMuted ? "Unmute chat" : "Mute chat")
+                        }
+                        .foregroundStyle(palette.textPrimary)
+                        .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.irisPlain)
+                    .accessibilityIdentifier("directChatMuteButton")
+
+                    IrisSectionCard {
+                        CardHeader(
+                            title: "Disappearing messages",
+                            subtitle: "Messages auto-delete after the chosen interval."
+                        )
+                        VStack(spacing: 0) {
+                            ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
+                                Button {
+                                    manager.dispatch(.setChatMessageTtl(chatId: chatId, ttlSeconds: ttlSeconds))
+                                } label: {
+                                    HStack {
+                                        Text(label)
+                                            .foregroundStyle(palette.textPrimary)
+                                        Spacer()
+                                        if chat.messageTtlSeconds == ttlSeconds {
+                                            Image(systemName: "checkmark")
+                                                .font(.system(size: 14, weight: .semibold))
+                                                .foregroundStyle(palette.textPrimary)
+                                        }
+                                    }
+                                    .padding(.vertical, 10)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.irisPlain)
+                            }
+                        }
+                    }
+
+                    DirectChatAdvancedCard(
+                        debug: profileDebug,
+                        isExpanded: $advancedExpanded
+                    )
+                    .accessibilityIdentifier("directChatAdvancedCard")
+                    .onAppear(perform: loadProfileDebugIfNeeded)
+                    .irisOnChange(of: advancedExpanded) { _ in
+                        loadProfileDebugIfNeeded()
+                    }
+
+                    Button {
+                        manager.dispatch(.deleteChat(chatId: chatId))
+                        onClose()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "trash")
+                            Text("Delete chat")
+                        }
+                        .foregroundStyle(.red)
+                        .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.irisPlain)
+                    .accessibilityIdentifier("directChatDeleteButton")
+                } else {
+                    ProgressView()
+                        .padding(.top, 40)
                 }
-                .padding(.horizontal, 18)
-                .padding(.bottom, 24)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                // Direct-chat info exposes the peer's npub + hex
-                // pubkey, profile debug counters, and so on — all
-                // copy-worthy. Same long-press-to-select gesture as
-                // settings/message-details.
-                .textSelection(.enabled)
             }
-            .background(palette.background)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    IrisModalCloseButton { dismiss() }
-                }
-            }
-            #if os(iOS)
-            .navigationBarTitleDisplayMode(.inline)
-            #endif
+            .padding(.horizontal, 18)
+            .padding(.bottom, 24)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .textSelection(.enabled)
         }
+        .background(palette.background)
     }
 
     private func loadProfileDebugIfNeeded() {

@@ -4449,8 +4449,14 @@ fn restored_linked_device_uses_persisted_protocol_session_for_authorization() {
             Arc::new(RwLock::new(AppState::empty())),
         );
         core.preferences.nostr_relay_urls.clear();
-        core.start_session(owner.public_key(), None, linked_device.clone(), false, false)
-            .expect("linked session");
+        core.start_session(
+            owner.public_key(),
+            None,
+            linked_device.clone(),
+            false,
+            false,
+        )
+        .expect("linked session");
         core.app_keys.insert(
             owner.public_key().to_hex(),
             known_app_keys_from_ndr(

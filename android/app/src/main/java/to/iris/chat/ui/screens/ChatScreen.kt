@@ -1,6 +1,7 @@
 package to.iris.chat.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -456,6 +457,14 @@ fun ChatScreen(
             }
             return@Scaffold
         }
+        if (directChatInfoOpen) {
+            DirectChatInfoScreen(
+                appManager = appManager,
+                chatId = chatId,
+                onBack = { directChatInfoOpen = false },
+            )
+            return@Scaffold
+        }
         val visibleMessages = chat.messages
 
         Box(
@@ -704,14 +713,6 @@ fun ChatScreen(
                 )
             }
 
-            if (directChatInfoOpen) {
-                DirectChatInfoSheet(
-                    appManager = appManager,
-                    chatId = chatId,
-                    onDismiss = { directChatInfoOpen = false },
-                )
-            }
-
             if (inChatSearchOpen) {
                 InChatSearchSheet(
                     appManager = appManager,
@@ -725,10 +726,10 @@ fun ChatScreen(
 }
 
 @Composable
-private fun DirectChatInfoSheet(
+private fun DirectChatInfoScreen(
     appManager: AppManager,
     chatId: String,
-    onDismiss: () -> Unit,
+    onBack: () -> Unit,
 ) {
     val currentChat by appManager.currentChat.collectAsStateWithLifecycle()
     val preferences by appManager.preferences.collectAsStateWithLifecycle()
@@ -755,37 +756,37 @@ private fun DirectChatInfoSheet(
         }
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    BackHandler {
+        onBack()
+    }
+
+    Surface(
+        modifier =
+            Modifier
+                .fillMaxSize()
+                .testTag("directChatInfoScreen"),
+        color = MaterialTheme.colorScheme.background,
     ) {
-        Surface(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .testTag("directChatInfoSheet"),
-            color = MaterialTheme.colorScheme.background,
-        ) {
-            Scaffold(
-                containerColor = MaterialTheme.colorScheme.background,
-                topBar = {
-                    IrisTopBar(
-                        title = chat.displayName,
-                        onBack = onDismiss,
-                    )
-                },
-            ) { padding ->
-                // Chat info exposes the peer's hex pubkey + npub +
-                // their relay debug counters — make them all
-                // long-press-to-copy. SelectionContainer is inert for
-                // buttons, IconButtons, and the avatar; only Text
-                // children pick up selection.
-                SelectionContainer(
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .padding(padding),
-                ) {
+        Scaffold(
+            containerColor = MaterialTheme.colorScheme.background,
+            topBar = {
+                IrisTopBar(
+                    title = chat.displayName,
+                    onBack = onBack,
+                )
+            },
+        ) { padding ->
+            // Chat info exposes the peer's hex pubkey + npub +
+            // their relay debug counters — make them all
+            // long-press-to-copy. SelectionContainer is inert for
+            // buttons, IconButtons, and the avatar; only Text
+            // children pick up selection.
+            SelectionContainer(
+                modifier =
+                    Modifier
+                        .fillMaxSize()
+                        .padding(padding),
+            ) {
                 Column(
                     modifier =
                         Modifier
@@ -866,7 +867,7 @@ private fun DirectChatInfoSheet(
                         text = "Delete chat",
                         onClick = {
                             appManager.dispatch(AppAction.DeleteChat(chatId))
-                            onDismiss()
+                            onBack()
                         },
                         modifier = Modifier.testTag("directChatDeleteButton"),
                     ) {
@@ -876,7 +877,6 @@ private fun DirectChatInfoSheet(
                             tint = MaterialTheme.colorScheme.error,
                         )
                     }
-                }
                 }
             }
         }
