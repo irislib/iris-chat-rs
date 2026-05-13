@@ -7,5 +7,7 @@
 
 - Linked devices now restore correctly after restart instead of getting stuck waiting for approval.
 - iOS composer taps now focus reliably on the first tap.
+- iOS composer send button now aligns with the message input.
+- macOS composer no longer shows a send button; Return sends and Shift-Return keeps multiline drafting.
 - Nearby permission checks no longer poll from render paths, reducing CPU waste.
 - Debug logging is off by default in release builds and can be enabled from Settings when exporting a debug dump.
