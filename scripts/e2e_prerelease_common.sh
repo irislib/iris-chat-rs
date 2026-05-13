@@ -84,6 +84,32 @@ iris_e2e_run_and_log() {
   "$@" 2>&1 | tee -a "${log_file}"
 }
 
+iris_e2e_android_instrumentation_succeeded() {
+  local output="$1"
+  if printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_CODE: -1$'; then
+    return 0
+  fi
+  if printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_STATUS_CODE: -'; then
+    return 1
+  fi
+  if printf '%s\n' "${output}" | rg -q '^FAILURES!!!$'; then
+    return 1
+  fi
+  if printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_STATUS_CODE: 0$' &&
+    printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_RESULT: shortMsg=Process crashed\.?$'; then
+    return 0
+  fi
+  return 1
+}
+
+iris_e2e_android_instrumentation_file_succeeded() {
+  local file="$1"
+  if [[ ! -f "${file}" ]]; then
+    return 1
+  fi
+  iris_e2e_android_instrumentation_succeeded "$(cat "${file}")"
+}
+
 iris_e2e_ensure_android_package() {
   local adb="$1"
   local serial="$2"

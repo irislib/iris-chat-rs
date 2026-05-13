@@ -2624,6 +2624,46 @@ fn invite_response_observation_installs_session_author_state() {
 }
 
 #[test]
+fn invite_response_replay_after_consumed_invite_is_idempotent() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &device);
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys");
+
+    let invite = engine.local_invite_for_test().expect("local invite");
+    let (_peer_session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer_device.public_key().to_hex()),
+            Some(peer_owner.public_key()),
+        )
+        .expect("peer accepts invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+
+    engine
+        .observe_invite_response_event(&response_event)
+        .expect("first invite response");
+    let duplicate = engine
+        .observe_invite_response_event(&response_event)
+        .expect("duplicate invite response should be ignored");
+    assert!(duplicate.direct_results.is_empty());
+    assert!(duplicate.direct_messages.is_empty());
+    assert!(duplicate.effects.is_empty());
+    assert!(duplicate.group_result.events.is_empty());
+    assert!(duplicate.group_result.effects.is_empty());
+}
+
+#[test]
 fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() {
     let owner = Keys::generate();
     let device = Keys::generate();

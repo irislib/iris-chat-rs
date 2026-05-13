@@ -172,7 +172,7 @@ run_android_test() {
     printf '%s\n' "${output}" >&2
     return 1
   fi
-  if ! printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_CODE: -1$'; then
+  if ! iris_e2e_android_instrumentation_succeeded "${output}"; then
     echo "Android harness ${test_name} did not report success on ${serial}" >&2
     printf '%s\n' "${output}" >&2
     return 1
@@ -300,7 +300,7 @@ if [[ "${LINK_STATUS}" -ne 0 ]]; then
   echo "Linked-device authorization harness failed with exit code ${LINK_STATUS}" >&2
   exit "${LINK_STATUS}"
 fi
-if ! rg -q '^INSTRUMENTATION_CODE: -1$' "${LINK_LOG}"; then
+if ! iris_e2e_android_instrumentation_file_succeeded "${LINK_LOG}"; then
   echo "Linked-device authorization harness did not report success" >&2
   exit 1
 fi
