@@ -200,6 +200,8 @@ run_publish() {
 
   if [[ "$mode" == "wizard" ]]; then
     cmd=(zsp publish --wizard "$ZAPSTORE_CONFIG" --channel "$ZAPSTORE_CHANNEL")
+  else
+    cmd+=(--quiet)
   fi
 
   if [[ -n "${ZSP_EXTRA_FLAGS:-}" ]]; then
