@@ -24,6 +24,7 @@ struct ChatScreen: View {
     @State private var timelineBottomMaxY: CGFloat = .greatestFiniteMagnitude
     @State private var timelineContentHeight: CGFloat = 0
     @State private var initialScrollPending = true
+    @State private var timelineReadyForDisplay = false
     @State private var renderedMessageCount = 0
     @State private var pendingPrependAnchorMessageId: String?
     @State private var replyTarget: ChatMessageSnapshot?
@@ -225,9 +226,12 @@ struct ChatScreen: View {
                                         }
                                     }
                                     .irisInteractiveKeyboardDismiss()
+                                    .opacity(timelineReadyForDisplay ? 1 : 0)
+                                    .allowsHitTesting(timelineReadyForDisplay)
                                 }
                                 .irisOnChange(of: chatId) { _ in
                                     initialScrollPending = true
+                                    timelineReadyForDisplay = false
                                     isNearBottom = true
                                     shouldFollowLatest = true
                                     forceScrollToLatest = false
@@ -298,6 +302,7 @@ struct ChatScreen: View {
                                 .task(id: chatTimelineScrollTaskToken(for: chat)) {
                                     guard !chat.messages.isEmpty else {
                                         initialScrollPending = true
+                                        revealTimelineAfterLayout()
                                         shouldFollowLatest = true
                                         forceScrollToLatest = false
                                         renderedMessageCount = 0
@@ -309,6 +314,7 @@ struct ChatScreen: View {
                                         renderedMessageCount = messageCount
                                         initialScrollPending = false
                                         scrollToMessage(proxy: proxy, messageId: anchorId, anchor: .top, animated: false)
+                                        revealTimelineAfterLayout()
                                         pendingPrependAnchorMessageId = nil
                                         return
                                     }
@@ -328,6 +334,7 @@ struct ChatScreen: View {
                                             shouldFollowLatest = false
                                             forceScrollToLatest = false
                                             scrollToMessage(proxy: proxy, messageId: targetId)
+                                            revealTimelineAfterLayout()
                                             manager.consumePendingScrollMessage()
                                             return
                                         }
@@ -338,9 +345,15 @@ struct ChatScreen: View {
                                         || (messageCountIncreased && shouldFollowLatest)
                                     renderedMessageCount = messageCount
                                     if shouldScroll {
-                                        scrollToBottom(proxy: proxy, animated: !initialScrollPending)
+                                        let wasInitialScroll = initialScrollPending
+                                        scrollToBottom(proxy: proxy, animated: !wasInitialScroll)
                                         initialScrollPending = false
                                         shouldFollowLatest = true
+                                        if wasInitialScroll {
+                                            revealTimelineAfterLayout()
+                                        }
+                                    } else {
+                                        revealTimelineAfterLayout()
                                     }
                                     if forceScrollToLatest {
                                         forceScrollToLatest = false
@@ -363,7 +376,7 @@ struct ChatScreen: View {
                                     }
                                 }
 
-                                if !isNearBottom && !chat.messages.isEmpty {
+                                if timelineReadyForDisplay && !isNearBottom && !chat.messages.isEmpty {
                                     Button {
                                         isComposerFocused = false
                                         shouldFollowLatest = true
@@ -401,7 +414,7 @@ struct ChatScreen: View {
                                     .accessibilityIdentifier("chatJumpToBottom")
                                 }
 
-                                if !chat.typingIndicators.isEmpty {
+                                if timelineReadyForDisplay && !chat.typingIndicators.isEmpty {
                                     IrisTypingIndicatorRow(indicators: chat.typingIndicators)
                                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                                         .padding(.leading, IrisLayout.usesDesktopChrome ? 22 : 16)
@@ -566,6 +579,18 @@ struct ChatScreen: View {
             manager.pendingScrollMessageId ?? "",
             pendingPrependAnchorMessageId ?? "",
         ].joined(separator: "|")
+    }
+
+    private func revealTimelineAfterLayout() {
+        guard !timelineReadyForDisplay else { return }
+        DispatchQueue.main.async {
+            guard !timelineReadyForDisplay else { return }
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                timelineReadyForDisplay = true
+            }
+        }
     }
 
     /// Centre the targeted bubble in the viewport for search-hit

@@ -44,6 +44,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static let helloInterval: TimeInterval = 5
     private static let inventoryResendInterval: TimeInterval = 60
     private static let presenceResendInterval: TimeInterval = 60
+    private static let unverifiedPresenceResendInterval: TimeInterval = 5
     private static let peerSweepInterval: TimeInterval = 2
     private static let peerTTL: TimeInterval = 15
     private static let peerTouchPublishInterval: TimeInterval = 5
@@ -107,6 +108,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var knownProfiles: [String: IrisNearbyProfileEvent] = [:]
     private var incomingFragments: [String: IrisNearbyIncomingFragment] = [:]
     private var localNonce = UUID().uuidString.lowercased()
+    private var cachedHelloNonce: String?
+    private var cachedHelloFrame: Data?
     private var ownProfileEventID: String?
     private var lastCentralStateLog: String?
     private var lastPeripheralStateLog: String?
@@ -383,6 +386,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if visible {
             irisDebugLog("Iris nearby: visible on")
             localNonce = UUID().uuidString.lowercased()
+            invalidateCachedHelloFrame()
             startBluetooth()
         } else {
             irisDebugLog("Iris nearby: visible off")
@@ -406,6 +410,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if visible {
             irisDebugLog("Iris nearby LAN: visible on")
             localNonce = UUID().uuidString.lowercased()
+            invalidateCachedHelloFrame()
             if lanStatus != "No local network access" {
                 lanPermissionNeedsSettings = false
             }
@@ -629,7 +634,6 @@ final class IrisNearbyService: NSObject, ObservableObject {
         pruneStalePeers(now: now)
         if now.timeIntervalSince(lastHelloAt) >= Self.helloInterval {
             sendHello(excludingPeerID: nil)
-            lastHelloAt = now
         }
     }
 
@@ -700,13 +704,31 @@ final class IrisNearbyService: NSObject, ObservableObject {
             return
         }
         lastHelloAt = now
+        let nonce = localNonce
+        if cachedHelloNonce == nonce, let cachedHelloFrame {
+            sendEncodedFrame(cachedHelloFrame, excludingPeerID: excludingPeerID, onlyPeerID: nil)
+            return
+        }
         let envelope: [String: Any] = [
             "v": 1,
             "type": "hello",
-            "nonce": localNonce,
+            "nonce": nonce,
             "name": localDeviceName
         ]
-        sendEnvelope(envelope, excludingPeerID: excludingPeerID)
+        encodeFrame(envelope) { [weak self] frame in
+            guard let self,
+                  self.isNearbyActive,
+                  self.localNonce == nonce,
+                  let frame else { return }
+            self.cachedHelloNonce = nonce
+            self.cachedHelloFrame = frame
+            self.sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: nil)
+        }
+    }
+
+    private func invalidateCachedHelloFrame() {
+        cachedHelloNonce = nil
+        cachedHelloFrame = nil
     }
 
     private static func resolveLocalDeviceName() -> String {
@@ -828,12 +850,17 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
-    private func sendPresenceIfNeeded(remoteNonce: String, responseKey: String, force: Bool) {
+    private func sendPresenceIfNeeded(
+        remoteNonce: String,
+        responseKey: String,
+        force: Bool,
+        resendInterval: TimeInterval = IrisNearbyService.presenceResendInterval
+    ) {
         let key = "\(responseKey)|\(remoteNonce)"
         let now = Date()
         if !force,
            let lastSent = presenceSentAt[key],
-           now.timeIntervalSince(lastSent) < Self.presenceResendInterval {
+           now.timeIntervalSince(lastSent) < resendInterval {
             return
         }
         presenceSentAt[key] = now
@@ -1148,6 +1175,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         switch type {
         case "hello":
             let remoteNonce = sanitizedNonce(envelope["nonce"] as? String)
+            let previousSourceNonce = connectionNonces[sourceKey]
             if let remoteNonce {
                 connectionNonces[sourceKey] = remoteNonce
             }
@@ -1174,8 +1202,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 }
                 sendInventoryAfterHelloIfNeeded(remotePeerID: remotePeerID, force: wasNew || nonceChanged)
             } else if let remoteNonce {
-                sendPresenceIfNeeded(remoteNonce: remoteNonce, responseKey: sourceKey, force: false)
-                sendInventoryAfterHelloIfNeeded(remotePeerID: sourceKey, force: false)
+                sendPresenceIfNeeded(
+                    remoteNonce: remoteNonce,
+                    responseKey: sourceKey,
+                    force: previousSourceNonce != remoteNonce,
+                    resendInterval: Self.unverifiedPresenceResendInterval
+                )
             }
         case "inv":
             handleInventory(envelope)
@@ -1313,6 +1345,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 ownerPubkeyHex: ownerPubkeyHex,
                 profileEventID: sanitizedEventID(object["profile_event_id"] as? String)
             )
+            sendInventoryAfterHelloIfNeeded(remotePeerID: peerID, force: true)
             return true
         }
         return false

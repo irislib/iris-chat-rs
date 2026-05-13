@@ -6,6 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 MODE="${IRIS_TEST_GATE_MODE:-local}"
 RUN_NATIVE_CONTRACT="${IRIS_TEST_GATE_NATIVE_CONTRACT:-1}"
+RUN_CORE_LAN="${IRIS_TEST_GATE_CORE_LAN:-1}"
 RUN_INTEROP="${IRIS_TEST_GATE_INTEROP:-0}"
 RUN_ONDEVICE="${IRIS_TEST_GATE_ONDEVICE:-0}"
 RUN_NOTIFICATIONS="${IRIS_TEST_GATE_NOTIFICATIONS:-0}"
@@ -23,12 +24,14 @@ Options:
   --interop            Include mixed-platform interop confidence checks.
   --on-device          Require Android + iPhone + Mac LAN visibility.
   --lan-available      Run LAN visibility if at least two participants are available.
+  --no-core-lan        Skip same-host core LAN visibility smoke.
   --notifications      Include Android notification decrypt / FCM checks.
   --no-native-contract Skip Android native contract UI lane.
   -h, --help           Show this help
 
 Environment:
   IRIS_TEST_GATE_INTEROP=1
+  IRIS_TEST_GATE_CORE_LAN=0
   IRIS_TEST_GATE_ONDEVICE=1
   IRIS_TEST_GATE_NOTIFICATIONS=1
   IRIS_TEST_GATE_LAN_AVAILABLE=1
@@ -56,6 +59,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --lan-available)
       RUN_LAN_AVAILABLE=1
+      shift
+      ;;
+    --no-core-lan)
+      RUN_CORE_LAN=0
       shift
       ;;
     --notifications)
@@ -92,6 +99,10 @@ run_step "release publish guard" "${ROOT_DIR}/scripts/test_release_publish_guard
 run_step "Homebrew tap packaging" "${ROOT_DIR}/scripts/test_homebrew_tap"
 
 run_step "fast local tests" "${ROOT_DIR}/scripts/test_fast.sh"
+
+if [[ "${RUN_CORE_LAN}" == "1" ]]; then
+  run_step "core LAN nearby smoke" "${ROOT_DIR}/scripts/nearby_lan_core_smoke.sh"
+fi
 
 if [[ "${RUN_NATIVE_CONTRACT}" == "1" ]]; then
   run_step "Android native contract/UI tests" env IRIS_SKIP_FAST=1 "${ROOT_DIR}/scripts/test_native_contract.sh"

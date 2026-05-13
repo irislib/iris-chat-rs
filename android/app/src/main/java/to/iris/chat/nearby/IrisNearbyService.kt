@@ -99,6 +99,7 @@ class IrisNearbyService(
     private val inventoryIdsSentByPeer = linkedMapOf<String, RecentIdSet>()
     private val wantIdsSentByPeer = linkedMapOf<String, RecentIdSet>()
     private val eventIdsSeenByPeer = linkedMapOf<String, RecentIdSet>()
+    private val presenceSentMillis = linkedMapOf<String, Long>()
     private val centralReconnectSuppressedUntilMillis = linkedMapOf<String, Long>()
     private val peerNonces = linkedMapOf<String, String>()
     private val connectionNonces = linkedMapOf<String, String>()
@@ -140,6 +141,8 @@ class IrisNearbyService(
     private var localNetworkVisible = false
     private var status = "Off"
     private var localNonce = newNonce()
+    private var cachedHelloNonce: String? = null
+    private var cachedHelloFrame: ByteArray? = null
     private var ownProfileEventId: String? = null
     private var maintenanceJob: Job? = null
     @Volatile private var bluetoothPermissionGranted = readBluetoothPermission()
@@ -234,6 +237,7 @@ class IrisNearbyService(
         if (nextVisible) {
             IrisDebugLog.d(TAG, "visible on")
             localNonce = newNonce()
+            invalidateCachedHelloFrame()
             start()
         } else {
             IrisDebugLog.d(TAG, "visible off")
@@ -258,6 +262,7 @@ class IrisNearbyService(
         if (nextVisible) {
             IrisDebugLog.d(TAG, "local network on")
             localNonce = newNonce()
+            invalidateCachedHelloFrame()
             lanService.start()
             startMaintenance()
         } else {
@@ -398,6 +403,7 @@ class IrisNearbyService(
         inventoryIdsSentByPeer.clear()
         wantIdsSentByPeer.clear()
         eventIdsSeenByPeer.clear()
+        presenceSentMillis.clear()
         centralReconnectSuppressedUntilMillis.clear()
         connectionNonces.clear()
         if (localNetworkVisible) {
@@ -602,13 +608,30 @@ class IrisNearbyService(
     }
 
     private fun sendHello(excludingPeerId: String?) {
+        val nonce = localNonce
+        val cached = cachedHelloFrame?.takeIf { cachedHelloNonce == nonce }
+        if (cached != null) {
+            sendFrame("hello", cached, excludingPeerId, onlyPeerId = null)
+            return
+        }
         val envelope =
             JSONObject()
                 .put("v", 1)
                 .put("type", "hello")
-                .put("nonce", localNonce)
+                .put("nonce", nonce)
                 .put("name", "Iris")
-        sendEnvelope(envelope, excludingPeerId)
+        val frame = appManager.encodeNearbyFrame(envelope) ?: return
+        if (localNonce != nonce) {
+            return
+        }
+        cachedHelloNonce = nonce
+        cachedHelloFrame = frame
+        sendFrame("hello", frame, excludingPeerId, onlyPeerId = null)
+    }
+
+    private fun invalidateCachedHelloFrame() {
+        cachedHelloNonce = null
+        cachedHelloFrame = null
     }
 
     private fun sendInventory(
@@ -722,6 +745,28 @@ class IrisNearbyService(
         if (eventJson.isNotBlank()) {
             sendEventJson(eventJson, excludingPeerId = null, onlyPeerId = null)
         }
+    }
+
+    private fun sendPresenceIfNeeded(
+        remoteNonce: String,
+        responseKey: String,
+        force: Boolean,
+        resendIntervalMillis: Long = PRESENCE_RESEND_INTERVAL_MS,
+    ) {
+        val key = "$responseKey|$remoteNonce"
+        val nowMillis = System.currentTimeMillis()
+        val lastSentMillis = presenceSentMillis[key]
+        if (!force && lastSentMillis != null && nowMillis - lastSentMillis < resendIntervalMillis) {
+            return
+        }
+        presenceSentMillis[key] = nowMillis
+        prunePresenceSentMillis(nowMillis)
+        sendPresence(remoteNonce)
+    }
+
+    private fun prunePresenceSentMillis(nowMillis: Long = System.currentTimeMillis()) {
+        val cutoff = nowMillis - PRESENCE_RESEND_INTERVAL_MS * 2
+        presenceSentMillis.entries.removeAll { it.value < cutoff }
     }
 
     private fun sendEventFragments(
@@ -984,6 +1029,7 @@ class IrisNearbyService(
         when (type) {
             "hello" -> {
                 val remoteNonce = envelope.optString("nonce").sanitizedNonce()
+                val previousSourceNonce = sourceKey?.let(connectionNonces::get)
                 if (remoteNonce != null && sourceKey != null) {
                     connectionNonces[sourceKey] = remoteNonce
                 }
@@ -1000,9 +1046,11 @@ class IrisNearbyService(
                     }
                     if (remoteNonce != null) {
                         peerNonces[remotePeerId] = remoteNonce
-                        if (wasNew || nonceChanged) {
-                            sendPresence(remoteNonce)
-                        }
+                        sendPresenceIfNeeded(
+                            remoteNonce = remoteNonce,
+                            responseKey = remotePeerId,
+                            force = wasNew || nonceChanged,
+                        )
                     }
                     if (wasNew) {
                         IrisDebugLog.d(TAG, "peer nearby id=$remotePeerId")
@@ -1011,9 +1059,13 @@ class IrisNearbyService(
                         remotePeerId = remotePeerId,
                         force = wasNew || nonceChanged,
                     )
-                } else if (remoteNonce != null) {
-                    sendPresence(remoteNonce)
-                    sendInventory(excludingPeerId = null, onlyPeerId = null)
+                } else if (remoteNonce != null && sourceKey != null) {
+                    sendPresenceIfNeeded(
+                        remoteNonce = remoteNonce,
+                        responseKey = sourceKey,
+                        force = previousSourceNonce != remoteNonce,
+                        resendIntervalMillis = UNVERIFIED_PRESENCE_RESEND_INTERVAL_MS,
+                    )
                 }
                 status = if (peers.size == 1) "1 nearby" else "${peers.size} nearby"
             }
@@ -1169,6 +1221,7 @@ class IrisNearbyService(
             sourceKey?.let { connectionNonces.remove(it) }
             nonceKey?.let { connectionNonces.remove(it) }
             rememberPresence(peer, ownerPubkeyHex, profileEventId)
+            sendInventoryAfterHelloIfNeeded(remotePeerId = peer, force = true)
             return true
         }
         return false
@@ -1217,6 +1270,7 @@ class IrisNearbyService(
             inventoryIdsSentByPeer.remove(peerId)
             wantIdsSentByPeer.remove(peerId)
             eventIdsSeenByPeer.remove(peerId)
+            presenceSentMillis.entries.removeAll { it.key.startsWith("$peerId|") }
             peerNonces.remove(peerId)
         }
 
@@ -1260,6 +1314,7 @@ class IrisNearbyService(
                 inventoryIdsSentByPeer.remove(peerId)
                 wantIdsSentByPeer.remove(peerId)
                 eventIdsSeenByPeer.remove(peerId)
+                presenceSentMillis.entries.removeAll { it.key.startsWith("$peerId|") }
             }
         pruneKnownProfiles()
         status = nearbyStatusWhenVisible()
@@ -2158,6 +2213,8 @@ class IrisNearbyService(
         const val FRAGMENT_TTL_MS = 30_000L
         const val HELLO_INTERVAL_MS = 5_000L
         const val INVENTORY_RESEND_INTERVAL_MS = 60_000L
+        const val PRESENCE_RESEND_INTERVAL_MS = 60_000L
+        const val UNVERIFIED_PRESENCE_RESEND_INTERVAL_MS = 5_000L
         const val PEER_SWEEP_INTERVAL_MS = 1_000L
         const val PEER_TTL_MS = 15_000L
         const val BLE_CHUNK_BYTES = 180
