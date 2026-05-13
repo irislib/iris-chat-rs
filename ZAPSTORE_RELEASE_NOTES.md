@@ -3,6 +3,7 @@
 - iOS message bubbles no longer steal fast vertical flicks from the chat timeline.
 - iOS message swipe gestures still open reply and message info, and chat-list row swipes still show row actions.
 - Jump to latest now stops in-flight timeline momentum before scrolling, avoiding temporary scroll lock near the bottom.
+- The jump-to-latest caret now responds on first touch even while the timeline is still coasting.
 
 # Iris Chat 2026.5.13.5
 

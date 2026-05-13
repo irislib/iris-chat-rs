@@ -399,39 +399,12 @@ struct ChatScreen: View {
                                 }
 
                                 if timelineReadyForDisplay && !isNearBottom && !chat.messages.isEmpty {
-                                    Button {
+                                    ChatJumpToBottomButton {
                                         jumpToLatest(proxy: proxy)
-                                    } label: {
-                                        // Signal-style glass capsule:
-                                        // translucent pane that adapts to
-                                        // the bubbles below, the arrow
-                                        // itself carries the accent
-                                        // colour for visibility. The
-                                        // outer 60×60 contentShape lets
-                                        // off-center thumb taps still
-                                        // land on the button instead of
-                                        // slipping through to a bubble
-                                        // underneath.
-                                        Image(systemName: "chevron.down")
-                                            .font(.system(size: 17, weight: .bold))
-                                            .foregroundStyle(palette.textPrimary)
-                                            .frame(width: 44, height: 44)
-                                            .irisGlassSurface(in: Circle())
-                                            .overlay(
-                                                Circle()
-                                                    .strokeBorder(
-                                                        palette.border.opacity(0.42),
-                                                        lineWidth: 0.5
-                                                    )
-                                            )
-                                            .frame(width: 60, height: 60)
-                                            .contentShape(Rectangle())
                                     }
                                     .padding(.trailing, 8)
                                     .padding(.bottom, 8)
-                                    .buttonStyle(.irisPlain)
                                     .shadow(color: .black.opacity(0.18), radius: 12, y: 4)
-                                    .accessibilityIdentifier("chatJumpToBottom")
                                 }
 
                                 if timelineReadyForDisplay && !chat.typingIndicators.isEmpty {
@@ -985,6 +958,48 @@ private enum ChatTimelineCoordinateSpace {
 private enum ChatTimelineAnchor {
     static let top = "chatTimelineTop"
     static let bottom = "chatTimelineBottom"
+}
+
+private struct ChatJumpToBottomButton: View {
+    @Environment(\.irisPalette) private var palette
+    let action: () -> Void
+
+    var body: some View {
+#if os(iOS)
+        label
+            .accessibilityHidden(true)
+            .overlay {
+                TouchDownControl(
+                    accessibilityIdentifier: "chatJumpToBottom",
+                    accessibilityLabel: "Jump to latest",
+                    action: action
+                )
+            }
+#else
+        Button(action: action) {
+            label
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier("chatJumpToBottom")
+#endif
+    }
+
+    private var label: some View {
+        Image(systemName: "chevron.down")
+            .font(.system(size: 17, weight: .bold))
+            .foregroundStyle(palette.textPrimary)
+            .frame(width: 44, height: 44)
+            .irisGlassSurface(in: Circle())
+            .overlay(
+                Circle()
+                    .strokeBorder(
+                        palette.border.opacity(0.42),
+                        lineWidth: 0.5
+                    )
+            )
+            .frame(width: 60, height: 60)
+            .contentShape(Rectangle())
+    }
 }
 
 private struct ActiveMessageBubbleSwipe {
@@ -2591,6 +2606,57 @@ extension View {
 }
 
 #if os(iOS)
+private struct TouchDownControl: UIViewRepresentable {
+    let accessibilityIdentifier: String
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    func makeUIView(context: Context) -> TouchDownControlView {
+        let view = TouchDownControlView()
+        view.backgroundColor = .clear
+        view.isAccessibilityElement = true
+        view.accessibilityTraits = [.button]
+        view.accessibilityIdentifier = accessibilityIdentifier
+        view.accessibilityLabel = accessibilityLabel
+        view.onTouchDown = action
+        return view
+    }
+
+    func updateUIView(_ uiView: TouchDownControlView, context: Context) {
+        uiView.accessibilityIdentifier = accessibilityIdentifier
+        uiView.accessibilityLabel = accessibilityLabel
+        uiView.onTouchDown = action
+    }
+}
+
+private final class TouchDownControlView: UIControl {
+    var onTouchDown: (() -> Void)?
+    private var firedForCurrentTouch = false
+
+    override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        fireOnce()
+        return true
+    }
+
+    override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+        true
+    }
+
+    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+        firedForCurrentTouch = false
+    }
+
+    override func cancelTracking(with event: UIEvent?) {
+        firedForCurrentTouch = false
+    }
+
+    private func fireOnce() {
+        guard !firedForCurrentTouch else { return }
+        firedForCurrentTouch = true
+        onTouchDown?()
+    }
+}
+
 private struct ChatTimelineScrollObserver: UIViewRepresentable {
     let timelineCoordinator: ChatTimelineInteractionCoordinator
     let onPan: (CGFloat, CGFloat) -> Void
