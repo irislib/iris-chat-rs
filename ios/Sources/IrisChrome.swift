@@ -1295,6 +1295,12 @@ struct IrisComposerBar: View {
                     .irisInputField()
                     .irisDesktopSubmit(submitDraft)
                     .focused($isFocused)
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(
+                        TapGesture().onEnded {
+                            isFocused = true
+                        }
+                    )
                     .irisOnChange(of: draft) { _ in onDraftChange() }
                     .accessibilityIdentifier("chatMessageInput")
 

@@ -141,6 +141,12 @@ struct ChatScreen: View {
                                         }
                                         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 14)
                                         .padding(.vertical, 10)
+                                        .contentShape(Rectangle())
+                                        .simultaneousGesture(
+                                            TapGesture().onEnded {
+                                                isComposerFocused = false
+                                            }
+                                        )
                                         .background(
                                             // Publishes the timeline's
                                             // intrinsic content height —
@@ -187,11 +193,6 @@ struct ChatScreen: View {
                                             .accessibilityHidden(true)
                                     }
                                     .irisDefaultScrollAnchorBottom()
-                                    .simultaneousGesture(
-                                        TapGesture().onEnded {
-                                            isComposerFocused = false
-                                        }
-                                    )
                                     .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
                                     .overlay {
                                         GeometryReader { geometry in
