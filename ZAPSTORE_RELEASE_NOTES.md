@@ -1,5 +1,9 @@
 # Iris Chat 2026.5.13.5
 
+- Long chats no longer flicker on open or briefly lock scrolling after you scroll away from the latest message.
+- Bluetooth nearby presence now stays visible even when the same device is also reachable over Wi-Fi.
+- Wi-Fi and Bluetooth nearby handshakes now keep liveness traffic small while avoiding duplicate bulk sync work.
+- Release checks now include a local core LAN discovery smoke test.
 - Navigation now updates immediately across shells while Rust remains the source of truth, so protocol backlog cannot make chat taps look dead.
 - Rust now services user actions ahead of relay/nearby backlog and chunks catch-up processing to keep the app responsive.
 - Nearby frame work moved off the iOS main thread and repeated peer updates are deduplicated more aggressively.
