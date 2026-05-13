@@ -42,6 +42,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
+import to.iris.chat.IrisDebugLog
 import to.iris.chat.core.AppManager
 import to.iris.chat.core.NearbyPublishedEvent
 
@@ -210,11 +211,11 @@ class IrisNearbyService(
         }
         visible = nextVisible
         if (nextVisible) {
-            Log.d(TAG, "visible on")
+            IrisDebugLog.d(TAG, "visible on")
             localNonce = newNonce()
             start()
         } else {
-            Log.d(TAG, "visible off")
+            IrisDebugLog.d(TAG, "visible off")
             stop()
         }
     }
@@ -234,12 +235,12 @@ class IrisNearbyService(
         }
         localNetworkVisible = nextVisible
         if (nextVisible) {
-            Log.d(TAG, "local network on")
+            IrisDebugLog.d(TAG, "local network on")
             localNonce = newNonce()
             lanService.start()
             startMaintenance()
         } else {
-            Log.d(TAG, "local network off")
+            IrisDebugLog.d(TAG, "local network off")
             val lanPeerIds = lanService.peerIds()
             lanService.stop()
             removeLanOnlyPeers(lanPeerIds)
@@ -318,7 +319,7 @@ class IrisNearbyService(
             }
         }
         pruneMailbags()
-        Log.d(TAG, "published event kind=${record.kind} id=${record.id} visible=${nearbyActive()}")
+        IrisDebugLog.d(TAG, "published event kind=${record.kind} id=${record.id} visible=${nearbyActive()}")
         if (nearbyActive()) {
             if (record.kind == 0L) {
                 sendHello(excludingPeerId = null)
@@ -521,7 +522,7 @@ class IrisNearbyService(
             guardBluetooth("read non-Iris GATT address", null as String?, statusOnFailure = null) {
                 gatt.device.address
             } ?: return
-        Log.d(TAG, "$reason for $address")
+        IrisDebugLog.d(TAG, "$reason for $address")
         ignoreAddress(address)
         gatts.remove(address)
         writableCharacteristics.remove(address)
@@ -686,7 +687,7 @@ class IrisNearbyService(
         if (frames.size != total) {
             return
         }
-        Log.d(TAG, "send event_frag count=${frames.size} event=${record.id} peers=${peers.size}")
+        IrisDebugLog.d(TAG, "send event_frag count=${frames.size} event=${record.id} peers=${peers.size}")
         frames.forEach { frame ->
             sendFrame("event_frag", frame, excludingPeerId)
         }
@@ -705,7 +706,7 @@ class IrisNearbyService(
         if (!nearbyActive()) {
             return
         }
-        Log.d(TAG, "send $type bytes=${frame.size} peers=${peers.size}")
+        IrisDebugLog.d(TAG, "send $type bytes=${frame.size} peers=${peers.size}")
         if (localNetworkVisible) {
             lanService.send(frame, excludingPeerId)
         }
@@ -855,7 +856,7 @@ class IrisNearbyService(
         address: String,
         reason: String,
     ) {
-        Log.d(TAG, "forget server GATT $address: $reason")
+        IrisDebugLog.d(TAG, "forget server GATT $address: $reason")
         subscribedServerAddresses.remove(address)
         pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
         serverAssemblers.remove(address)
@@ -871,7 +872,7 @@ class IrisNearbyService(
         reason: String,
         suppressReconnect: Boolean = false,
     ) {
-        Log.d(TAG, "forget central GATT $address: $reason")
+        IrisDebugLog.d(TAG, "forget central GATT $address: $reason")
         pendingGattWrites.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
         pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
         gatts.remove(address)
@@ -924,7 +925,7 @@ class IrisNearbyService(
                         }
                     }
                     if (wasNew) {
-                        Log.d(TAG, "peer nearby id=$remotePeerId")
+                        IrisDebugLog.d(TAG, "peer nearby id=$remotePeerId")
                     }
                     sendInventoryAfterHelloIfNeeded(
                         remotePeerId = remotePeerId,
@@ -1033,7 +1034,7 @@ class IrisNearbyService(
         val record = StoredNearbyEvent.fromEventJson(eventJson) ?: return
         if (record.kind == NEARBY_PRESENCE_KIND.toLong()) {
             if (handlePresenceEvent(eventJson, remotePeerId, sourceKey)) {
-                Log.d(TAG, "accepted nearby presence")
+                IrisDebugLog.d(TAG, "accepted nearby presence")
             }
             return
         }
@@ -1050,7 +1051,7 @@ class IrisNearbyService(
         forwarded[record.id] = record
         pruneMailbags()
         sendEventJson(eventJson, excludingPeerId = remotePeerId)
-        Log.d(TAG, "accepted event kind=${record.kind} id=${record.id}")
+        IrisDebugLog.d(TAG, "accepted event kind=${record.kind} id=${record.id}")
     }
 
     private fun handlePresenceEvent(
@@ -1151,7 +1152,7 @@ class IrisNearbyService(
 
         pruneKnownProfiles()
         status = nearbyStatusWhenVisible()
-        Log.d(TAG, "expired stale peers count=${stalePeerIds.size}")
+        IrisDebugLog.d(TAG, "expired stale peers count=${stalePeerIds.size}")
     }
 
     private fun removeLanOnlyPeers(lanPeerIds: Set<String>) {
@@ -1219,7 +1220,7 @@ class IrisNearbyService(
         when (source) {
             is NearbySource.BluetoothAddress -> {
                 val address = source.address ?: return
-                Log.d(TAG, "legacy nearby $type frame from $address")
+                IrisDebugLog.d(TAG, "legacy nearby $type frame from $address")
                 ignoreAddress(address)
                 gatts[address]?.let { gatt ->
                     forgetCentralConnection(
@@ -1332,7 +1333,7 @@ class IrisNearbyService(
         address: String,
         remotePeerId: String,
     ) {
-        Log.d(TAG, "close duplicate server GATT $address peer=$remotePeerId")
+        IrisDebugLog.d(TAG, "close duplicate server GATT $address peer=$remotePeerId")
         subscribedServerAddresses.remove(address)
         pendingNotifications.remove(address)?.complete(BluetoothGatt.GATT_FAILURE)
         serverAssemblers.remove(address)
@@ -1655,7 +1656,7 @@ class IrisNearbyService(
         object : AdvertiseCallback() {
             override fun onStartSuccess(settingsInEffect: AdvertiseSettings) {
                 status = if (peers.isEmpty()) "Visible" else "${peers.size} nearby"
-                Log.d(TAG, "advertising")
+                IrisDebugLog.d(TAG, "advertising")
             }
 
             override fun onStartFailure(errorCode: Int) {
@@ -1736,7 +1737,7 @@ class IrisNearbyService(
                     val address = gatt.device.address
                     if (status == BluetoothGatt.GATT_SUCCESS) {
                         mtuPayloadBytes[address] = blePayloadBytesForMtu(mtu)
-                        Log.d(TAG, "MTU $mtu for $address")
+                        IrisDebugLog.d(TAG, "MTU $mtu for $address")
                     } else {
                         Log.w(TAG, "MTU request failed for $address status=$status")
                     }
@@ -1779,7 +1780,7 @@ class IrisNearbyService(
                         }
                     } ?: false
                     if (!descriptorWriteStarted) {
-                        Log.d(TAG, "notification descriptor unavailable; sending hello without subscribe")
+                        IrisDebugLog.d(TAG, "notification descriptor unavailable; sending hello without subscribe")
                         announceIdentityToConnectedPeers()
                     }
                 }
@@ -1798,7 +1799,7 @@ class IrisNearbyService(
                         guardBluetooth("read descriptor GATT address", "unknown", statusOnFailure = null) {
                             gatt.device.address
                         }
-                    Log.d(TAG, "notifications ready for $address status=$status")
+                    IrisDebugLog.d(TAG, "notifications ready for $address status=$status")
                     announceIdentityToConnectedPeers()
                 }
             }
@@ -1831,7 +1832,7 @@ class IrisNearbyService(
                 guardBluetooth("server MTU changed", Unit, statusOnFailure = null) {
                     val address = device.address
                     mtuPayloadBytes[address] = blePayloadBytesForMtu(mtu)
-                    Log.d(TAG, "server MTU $mtu for $address")
+                    IrisDebugLog.d(TAG, "server MTU $mtu for $address")
                 }
             }
 

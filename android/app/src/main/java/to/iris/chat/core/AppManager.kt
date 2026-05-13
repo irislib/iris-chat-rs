@@ -31,6 +31,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import to.iris.chat.BuildConfig
+import to.iris.chat.IrisDebugLog
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.account.AccountState
 import to.iris.chat.account.AndroidKeystoreSecretStore
@@ -369,7 +370,8 @@ class AppManager(
 
     init {
         val initial = bindRust(rust)
-        Log.d(TAG, "init rev=${initial.rev} defaultScreen=${initial.router.defaultScreen}")
+        IrisDebugLog.enabled = initial.preferences.debugLoggingEnabled
+        IrisDebugLog.d(TAG, "init rev=${initial.rev} defaultScreen=${initial.router.defaultScreen}")
         publishState(initial)
         applicationScope.launch(ioDispatcher) {
             restoreSessionFromSecureStore()
@@ -966,7 +968,7 @@ class AppManager(
                 }
                 val reconciledState = stateByReconcilingPendingNavigation(update.v1)
                 lastRevApplied = update.v1.rev
-                Log.d(
+                IrisDebugLog.d(
                     TAG,
                     "reconcile rev=${reconciledState.rev} screen=${reconciledState.router.defaultScreen} " +
                         "chatList=${reconciledState.chatList.size} activeChat=${reconciledState.currentChat?.chatId.orEmpty()} " +
@@ -1085,10 +1087,10 @@ class AppManager(
 
     private suspend fun restoreSessionFromSecureStore() {
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.
-        Log.d(TAG, "restoreSessionFromSecureStore start")
+        IrisDebugLog.d(TAG, "restoreSessionFromSecureStore start")
         val encrypted = loadPersistedSecret()
         if (encrypted == null) {
-            Log.d(TAG, "restoreSessionFromSecureStore no persisted secret")
+            IrisDebugLog.d(TAG, "restoreSessionFromSecureStore no persisted secret")
             restoreCheckComplete = true
             publishBootstrapNeedsLogin()
             return
@@ -1096,7 +1098,7 @@ class AppManager(
 
         val decrypted = runCatching { secureSecretStore.decrypt(encrypted).decodeToString() }.getOrNull()
         if (decrypted.isNullOrBlank()) {
-            Log.d(TAG, "restoreSessionFromSecureStore decrypt failed or blank")
+            IrisDebugLog.d(TAG, "restoreSessionFromSecureStore decrypt failed or blank")
             clearPersistedSecret()
             restoreCheckComplete = true
             publishBootstrapNeedsLogin()
@@ -1107,7 +1109,7 @@ class AppManager(
         val bundle = StoredAccountBundle.fromJson(decrypted)
         if (bundle != null) {
             cachedAccountBundle = bundle
-            Log.d(TAG, "restoreSessionFromSecureStore dispatch bundle restore")
+            IrisDebugLog.d(TAG, "restoreSessionFromSecureStore dispatch bundle restore")
             dispatchToRust(
                 AppAction.RestoreAccountBundle(
                     ownerNsec = bundle.ownerNsec,
@@ -1117,7 +1119,7 @@ class AppManager(
                 showsToastOnFailure = false,
             )
         } else {
-            Log.d(TAG, "restoreSessionFromSecureStore dispatch direct restore")
+            IrisDebugLog.d(TAG, "restoreSessionFromSecureStore dispatch direct restore")
             dispatchToRust(AppAction.RestoreSession(decrypted), showsToastOnFailure = false)
         }
     }
@@ -1348,6 +1350,7 @@ class AppManager(
     }
 
     private fun publishState(snapshot: AppState) {
+        IrisDebugLog.enabled = snapshot.preferences.debugLoggingEnabled
         mutableState.value = snapshot
         if (!restoreCheckComplete) {
             mutableBootstrapState.value = AccountBootstrapState.Loading
@@ -1370,7 +1373,7 @@ class AppManager(
 
     private fun publishBootstrapNeedsLogin() {
         restoreCheckComplete = true
-        Log.d(TAG, "bootstrap needs login")
+        IrisDebugLog.d(TAG, "bootstrap needs login")
         mutableBootstrapState.value = AccountBootstrapState.NeedsLogin
     }
 

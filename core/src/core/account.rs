@@ -566,6 +566,7 @@ impl AppCore {
                 persisted.preferences.image_proxy_salt_hex.clone();
             self.preferences.mobile_push_server_url =
                 persisted.preferences.mobile_push_server_url.clone();
+            self.preferences.debug_logging_enabled = persisted.preferences.debug_logging_enabled;
             self.preferences.muted_chat_ids = persisted.preferences.muted_chat_ids.clone();
             self.preferences.muted_chat_ids.sort();
             self.preferences.muted_chat_ids.dedup();

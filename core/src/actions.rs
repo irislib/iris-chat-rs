@@ -110,6 +110,9 @@ pub enum AppAction {
     SetNearbyLanEnabled {
         enabled: bool,
     },
+    SetDebugLoggingEnabled {
+        enabled: bool,
+    },
     AddNostrRelay {
         relay_url: String,
     },

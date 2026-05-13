@@ -38,7 +38,7 @@ mod sink {
     }
 
     pub fn enabled() -> bool {
-        true
+        cfg!(debug_assertions) || option_env!("IRIS_PERF_LOG").is_some()
     }
 }
 

@@ -1,6 +1,19 @@
 import SwiftUI
 import UserNotifications
 
+private var irisDebugLoggingEnabled = false
+
+func irisSetDebugLoggingEnabled(_ enabled: Bool) {
+    irisDebugLoggingEnabled = enabled
+}
+
+func irisDebugLog(_ format: String, _ args: CVarArg...) {
+    guard irisDebugLoggingEnabled else { return }
+    withVaList(args) { pointer in
+        NSLogv(format, pointer)
+    }
+}
+
 #if os(iOS)
 import UIKit
 import WebKit

@@ -350,11 +350,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
         isVisible = visible
         if visible {
-            NSLog("Iris nearby: visible on")
+            irisDebugLog("Iris nearby: visible on")
             localNonce = UUID().uuidString.lowercased()
             startBluetooth()
         } else {
-            NSLog("Iris nearby: visible off")
+            irisDebugLog("Iris nearby: visible off")
             stopBluetooth()
         }
     }
@@ -373,7 +373,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
         isLanVisible = visible
         if visible {
-            NSLog("Iris nearby LAN: visible on")
+            irisDebugLog("Iris nearby LAN: visible on")
             localNonce = UUID().uuidString.lowercased()
             if lanStatus != "No local network access" {
                 lanPermissionNeedsSettings = false
@@ -382,7 +382,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             lanService?.start()
             startMaintenance()
         } else {
-            NSLog("Iris nearby LAN: visible off")
+            irisDebugLog("Iris nearby LAN: visible off")
             let lanPeerIDs = lanService?.peerIDs() ?? []
             lanService?.stop()
             lanStatus = "Off"
@@ -525,7 +525,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             withServices: [Self.serviceUUID],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
         )
-        NSLog("Iris nearby: scanning")
+        irisDebugLog("Iris nearby: scanning")
     }
 
     private func startAdvertisingIfReady() {
@@ -543,7 +543,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             CBAdvertisementDataServiceUUIDsKey: [Self.serviceUUID],
             CBAdvertisementDataLocalNameKey: "Iris"
         ])
-        NSLog("Iris nearby: advertising")
+        irisDebugLog("Iris nearby: advertising")
         status = peers.isEmpty ? "Visible" : sidebarSubtitle
     }
 
@@ -623,7 +623,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func rejectNonIrisPeripheral(_ peripheral: CBPeripheral, reason: String) {
-        NSLog("Iris nearby: \(reason)")
+        irisDebugLog("Iris nearby: \(reason)")
         ignoredPeripherals[peripheral.identifier] = Date().addingTimeInterval(Self.nonIrisBackoff)
         peripherals.removeValue(forKey: peripheral.identifier)
         writableCharacteristics.removeValue(forKey: peripheral.identifier)
@@ -646,7 +646,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             )
         case .central(let central):
             let centralID = central.identifier
-            NSLog("Iris nearby: legacy nearby \(type) frame from central \(centralID.uuidString)")
+            irisDebugLog("Iris nearby: legacy nearby \(type) frame from central \(centralID.uuidString)")
             subscribedCentrals.removeValue(forKey: centralID)
             centralAssemblers.removeValue(forKey: centralID)
             peerIDByCentral.removeValue(forKey: centralID)
@@ -879,7 +879,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             maxBytes: Self.maxPendingWriteBytes
         )
         if droppedChunks > 0 {
-            NSLog("Iris nearby: dropped stale Bluetooth write chunks \(droppedChunks)")
+            irisDebugLog("Iris nearby: dropped stale Bluetooth write chunks \(droppedChunks)")
         }
         peripheralWriteQueues[peripheral.identifier] = queue
         flushWriteQueue(for: peripheral.identifier)
@@ -1153,7 +1153,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
               let record = IrisNearbyStoredEvent.fromEventJson(eventJson) else { return }
         if record.kind == Self.nearbyPresenceKind {
             if handlePresenceEvent(eventJson, remotePeerID: remotePeerID, sourceKey: sourceKey) {
-                NSLog("Iris nearby: accepted presence")
+                irisDebugLog("Iris nearby: accepted presence")
             }
             return
         }
@@ -1168,7 +1168,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         forwarded[record.id] = record
         pruneMailbags()
         sendInventory(excludingPeerID: remotePeerID)
-        NSLog("Iris nearby: accepted event kind %u %@", record.kind, record.id)
+        irisDebugLog("Iris nearby: accepted event kind %u %@", record.kind, record.id)
     }
 
     private func handlePresenceEvent(_ eventJson: String, remotePeerID: String?, sourceKey: String?) -> Bool {
@@ -1277,7 +1277,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         pruneKnownProfiles()
         restartScanningAfterPruning()
         status = peers.isEmpty ? visibleIdleStatus : sidebarSubtitle
-        NSLog("Iris nearby: expired stale peers \(stalePeerIDs.count)")
+        irisDebugLog("Iris nearby: expired stale peers \(stalePeerIDs.count)")
     }
 
     private func removeLanOnlyPeers(_ lanPeerIDs: Set<String>) {
@@ -1467,7 +1467,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             applyAdvertisedProfile(profile, toPeerID: peerID)
         }
         status = sidebarSubtitle
-        NSLog("Iris nearby: saw peer")
+        irisDebugLog("Iris nearby: saw peer")
     }
 
     private func touchPeer(_ peerID: String) {
@@ -1678,7 +1678,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private func logState(_ state: String, previous: inout String?, label: String) {
         guard previous != state else { return }
         previous = state
-        NSLog("Iris nearby: %@ state %@", label, state)
+        irisDebugLog("Iris nearby: %@ state %@", label, state)
     }
 
     private func bluetoothDescription(_ state: CBManagerState) -> String {
@@ -1754,7 +1754,7 @@ extension IrisNearbyService: CBCentralManagerDelegate {
         guard characteristic.uuid == Self.characteristicUUID else { return }
         guard var queue = peripheralWriteQueues[peripheral.identifier] else { return }
         if let error {
-            NSLog("Iris nearby: write failed \(error.localizedDescription)")
+            irisDebugLog("Iris nearby: write failed \(error.localizedDescription)")
             peripheralWriteQueues.removeValue(forKey: peripheral.identifier)
             return
         }
@@ -1802,9 +1802,9 @@ extension IrisNearbyService: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic.uuid == Self.characteristicUUID else { return }
         if let error {
-            NSLog("Iris nearby: notification setup failed \(error.localizedDescription)")
+            irisDebugLog("Iris nearby: notification setup failed \(error.localizedDescription)")
         } else {
-            NSLog("Iris nearby: notifications ready")
+            irisDebugLog("Iris nearby: notifications ready")
         }
         sendHello(excludingPeerID: nil)
     }

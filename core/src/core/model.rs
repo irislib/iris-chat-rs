@@ -361,6 +361,8 @@ pub(super) struct PersistedPreferences {
     pub(super) muted_chat_ids: Vec<String>,
     #[serde(default)]
     pub(super) pinned_chat_ids: Vec<String>,
+    #[serde(default)]
+    pub(super) debug_logging_enabled: bool,
 }
 
 impl Default for PersistedPreferences {
@@ -383,6 +385,7 @@ impl Default for PersistedPreferences {
             mobile_push_server_url: defaults.mobile_push_server_url,
             muted_chat_ids: defaults.muted_chat_ids,
             pinned_chat_ids: defaults.pinned_chat_ids,
+            debug_logging_enabled: defaults.debug_logging_enabled,
         }
     }
 }

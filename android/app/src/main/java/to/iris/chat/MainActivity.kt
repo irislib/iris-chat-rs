@@ -66,7 +66,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d(TAG, "onCreate")
+        IrisDebugLog.d(TAG, "onCreate")
         container = (application as IrisChatApp).container
         handleLaunchIntent(intent)
 
@@ -104,7 +104,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStart() {
         super.onStart()
-        Log.d(TAG, "onStart")
+        IrisDebugLog.d(TAG, "onStart")
         requestNotificationPermissionIfNeeded()
         container.nearbyIrisService.refreshPermissionState()
         container.appManager.appForegrounded()
@@ -112,7 +112,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        Log.d(TAG, "onStop")
+        IrisDebugLog.d(TAG, "onStop")
         container.appManager.appBackgrounded()
         super.onStop()
     }

@@ -369,6 +369,7 @@ private func fallbackAppState(toast: String?) -> AppState {
             imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
             mutedChatIds: [],
             pinnedChatIds: [],
+            debugLoggingEnabled: false,
             mobilePushServerUrl: ""
         ),
         toast: toast
@@ -464,7 +465,7 @@ private func liftData(_ buffer: RustBuffer) throws -> Data {
 }
 
 private func logSafeFfiFailure(_ label: String, _ error: Error) {
-    NSLog("%@", "Iris Chat FFI call failed (\(label)): \(error)")
+    irisDebugLog("%@", "Iris Chat FFI call failed (\(label)): \(error)")
 }
 
 private func appendInt32(_ value: Int32, to bytes: inout [UInt8]) {

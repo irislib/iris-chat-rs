@@ -376,6 +376,9 @@ impl AppCore {
                 self.set_nearby_bluetooth_enabled(enabled)
             }
             AppAction::SetNearbyLanEnabled { enabled } => self.set_nearby_lan_enabled(enabled),
+            AppAction::SetDebugLoggingEnabled { enabled } => {
+                self.set_debug_logging_enabled(enabled)
+            }
             AppAction::AddNostrRelay { relay_url } => self.add_nostr_relay(&relay_url),
             AppAction::UpdateNostrRelay {
                 old_relay_url,

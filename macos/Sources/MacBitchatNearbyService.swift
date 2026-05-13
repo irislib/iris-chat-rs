@@ -82,10 +82,10 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         }
         isVisible = visible
         if visible {
-            NSLog("Iris nearby BitChat: visible on")
+            irisDebugLog("Iris nearby BitChat: visible on")
             start()
         } else {
-            NSLog("Iris nearby BitChat: visible off")
+            irisDebugLog("Iris nearby BitChat: visible off")
             stop()
         }
     }
@@ -188,7 +188,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
             return
         }
         status = "Scanning"
-        NSLog("Iris nearby BitChat: scanning")
+        irisDebugLog("Iris nearby BitChat: scanning")
         centralManager.scanForPeripherals(
             withServices: [Self.mainnetServiceUUID, Self.testnetServiceUUID],
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
@@ -212,7 +212,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         peripheralManager.startAdvertising([
             CBAdvertisementDataServiceUUIDsKey: [Self.mainnetServiceUUID, Self.testnetServiceUUID]
         ])
-        NSLog("Iris nearby BitChat: advertising")
+        irisDebugLog("Iris nearby BitChat: advertising")
     }
 
     private func addLocalServices() {
@@ -291,7 +291,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         write(data, to: peripheral, characteristic: characteristic)
         announcedPeripherals.insert(peripheral.identifier)
         status = "Announced"
-        NSLog(
+        irisDebugLog(
             "Iris nearby BitChat: sent announce to %@ (%ld bytes)",
             peripheral.identifier.uuidString,
             data.count
@@ -305,7 +305,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         notify(data, to: channel)
         announcedCentrals.insert(channel.central.identifier)
         status = "Announced"
-        NSLog(
+        irisDebugLog(
             "Iris nearby BitChat: sent announce to central %@ (%ld bytes)",
             channel.central.identifier.uuidString,
             data.count
@@ -325,7 +325,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
             notify(data, to: channel)
         }
         status = peers.isEmpty ? "Sent" : sidebarSubtitle
-        NSLog("Iris nearby BitChat: sent packet type %d (%ld bytes)", packet.type, data.count)
+        irisDebugLog("Iris nearby BitChat: sent packet type %d (%ld bytes)", packet.type, data.count)
     }
 
     private func write(_ data: Data, to peripheral: CBPeripheral, characteristic: CBCharacteristic) {
@@ -375,24 +375,24 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         case MacBitchatMessageType.message.rawValue:
             ingestMessage(packet, peerID: peerID)
         default:
-            NSLog("Iris nearby BitChat: packet type %d from %@", packet.type, peerID)
+            irisDebugLog("Iris nearby BitChat: packet type %d from %@", packet.type, peerID)
         }
     }
 
     private func ingestAnnounce(_ packet: MacBitchatPacket, peerID: String, source: MacBitchatPeerSource) {
         guard let announcement = MacBitchatAnnouncement.decode(packet.payload) else {
-            NSLog("Iris nearby BitChat: ignored malformed announce from %@", peerID)
+            irisDebugLog("Iris nearby BitChat: ignored malformed announce from %@", peerID)
             return
         }
         let derivedPeerID = Data(SHA256.hash(data: announcement.noisePublicKey).prefix(8))
             .map { String(format: "%02x", $0) }
             .joined()
         guard derivedPeerID == peerID else {
-            NSLog("Iris nearby BitChat: ignored announce with mismatched key from %@", peerID)
+            irisDebugLog("Iris nearby BitChat: ignored announce with mismatched key from %@", peerID)
             return
         }
         guard verifyPacketSignature(packet, publicKey: announcement.signingPublicKey) else {
-            NSLog("Iris nearby BitChat: ignored unsigned announce from %@", peerID)
+            irisDebugLog("Iris nearby BitChat: ignored unsigned announce from %@", peerID)
             return
         }
 
@@ -419,7 +419,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
             peers.sort { $0.nickname.localizedCaseInsensitiveCompare($1.nickname) == .orderedAscending }
         }
         status = peers.count == 1 ? "1 nearby" : "\(peers.count) nearby"
-        NSLog("Iris nearby BitChat: saw %@ (%@)", peer.nickname, peer.id)
+        irisDebugLog("Iris nearby BitChat: saw %@ (%@)", peer.nickname, peer.id)
         sendDebugMessageIfNeeded()
     }
 
@@ -431,7 +431,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         }
         if let signingKey = signingKeysByPeerID[peerID],
            !verifyPacketSignature(packet, publicKey: signingKey) {
-            NSLog("Iris nearby BitChat: ignored message with bad signature from %@", peerID)
+            irisDebugLog("Iris nearby BitChat: ignored message with bad signature from %@", peerID)
             return
         }
         guard let text = String(data: packet.payload, encoding: .utf8),
@@ -441,7 +441,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         let sender = peers.first(where: { $0.id == peerID })?.nickname ?? peerID
         appendMessage(sender: sender, text: text, isLocal: false, timestampMs: packet.timestampMs)
         status = sidebarSubtitle
-        NSLog("Iris nearby BitChat: message from %@: %@", sender, text)
+        irisDebugLog("Iris nearby BitChat: message from %@: %@", sender, text)
     }
 
     private func appendMessage(sender: String, text: String, isLocal: Bool, timestampMs: UInt64) {
@@ -516,7 +516,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         let state = bluetoothDescription(centralManager.state)
         guard state != lastCentralStateLog else { return }
         lastCentralStateLog = state
-        NSLog("Iris nearby BitChat: central state %@", state)
+        irisDebugLog("Iris nearby BitChat: central state %@", state)
     }
 
     private func logPeripheralStateIfChanged() {
@@ -524,7 +524,7 @@ final class MacBitchatNearbyService: NSObject, ObservableObject {
         let state = bluetoothDescription(peripheralManager.state)
         guard state != lastPeripheralStateLog else { return }
         lastPeripheralStateLog = state
-        NSLog("Iris nearby BitChat: peripheral state %@", state)
+        irisDebugLog("Iris nearby BitChat: peripheral state %@", state)
     }
 
     private func bluetoothDescription(_ state: CBManagerState) -> String {
@@ -553,20 +553,20 @@ extension MacBitchatNearbyService: CBCentralManagerDelegate {
         logCentralStateIfChanged()
         switch central.state {
         case .poweredOn:
-            NSLog("Iris nearby BitChat: bluetooth powered on")
+            irisDebugLog("Iris nearby BitChat: bluetooth powered on")
             startScanningIfReady()
         case .poweredOff:
             status = "Bluetooth off"
-            NSLog("Iris nearby BitChat: bluetooth off")
+            irisDebugLog("Iris nearby BitChat: bluetooth off")
         case .unauthorized:
             status = "No Bluetooth access"
-            NSLog("Iris nearby BitChat: no bluetooth access")
+            irisDebugLog("Iris nearby BitChat: no bluetooth access")
         case .unsupported:
             status = "Bluetooth unavailable"
-            NSLog("Iris nearby BitChat: bluetooth unavailable")
+            irisDebugLog("Iris nearby BitChat: bluetooth unavailable")
         case .resetting:
             status = "Bluetooth reset"
-            NSLog("Iris nearby BitChat: bluetooth reset")
+            irisDebugLog("Iris nearby BitChat: bluetooth reset")
         case .unknown:
             status = "Bluetooth"
         @unknown default:
@@ -593,13 +593,13 @@ extension MacBitchatNearbyService: CBCentralManagerDelegate {
             serviceNames[peripheral.identifier] = "BitChat"
         }
         status = "Connecting"
-        NSLog("Iris nearby BitChat: discovered %@", peripheral.identifier.uuidString)
+        irisDebugLog("Iris nearby BitChat: discovered %@", peripheral.identifier.uuidString)
         central.connect(peripheral)
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         status = "Connected"
-        NSLog("Iris nearby BitChat: connected %@", peripheral.identifier.uuidString)
+        irisDebugLog("Iris nearby BitChat: connected %@", peripheral.identifier.uuidString)
         peripheral.delegate = self
         peripheral.discoverServices(nil)
     }
@@ -608,7 +608,7 @@ extension MacBitchatNearbyService: CBCentralManagerDelegate {
         status = "Connect failed"
         peripherals.removeValue(forKey: peripheral.identifier)
         let message = error.map { String(describing: $0) } ?? "unknown"
-        NSLog("Iris nearby BitChat: connect failed %@ %@", peripheral.identifier.uuidString, message)
+        irisDebugLog("Iris nearby BitChat: connect failed %@ %@", peripheral.identifier.uuidString, message)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
@@ -631,10 +631,10 @@ extension MacBitchatNearbyService: CBPeripheralDelegate {
         guard error == nil, let services = peripheral.services else {
             status = "Service failed"
             let message = error.map { String(describing: $0) } ?? "no services"
-            NSLog("Iris nearby BitChat: service discovery failed %@ %@", peripheral.identifier.uuidString, message)
+            irisDebugLog("Iris nearby BitChat: service discovery failed %@ %@", peripheral.identifier.uuidString, message)
             return
         }
-        NSLog(
+        irisDebugLog(
             "Iris nearby BitChat: services %@ %@",
             peripheral.identifier.uuidString,
             services.map { $0.uuid.uuidString }.joined(separator: ",")
@@ -643,7 +643,7 @@ extension MacBitchatNearbyService: CBPeripheralDelegate {
             $0.uuid == Self.mainnetServiceUUID || $0.uuid == Self.testnetServiceUUID
         }
         guard !bitchatServices.isEmpty else {
-            NSLog("Iris nearby BitChat: no BitChat service on %@", peripheral.identifier.uuidString)
+            irisDebugLog("Iris nearby BitChat: no BitChat service on %@", peripheral.identifier.uuidString)
             centralManager?.cancelPeripheralConnection(peripheral)
             return
         }
@@ -657,12 +657,12 @@ extension MacBitchatNearbyService: CBPeripheralDelegate {
               let characteristic = service.characteristics?.first(where: { $0.uuid == Self.characteristicUUID }) else {
             status = "No channel"
             let message = error.map { String(describing: $0) } ?? "characteristic missing"
-            NSLog("Iris nearby BitChat: characteristic discovery failed %@ %@", peripheral.identifier.uuidString, message)
+            irisDebugLog("Iris nearby BitChat: characteristic discovery failed %@ %@", peripheral.identifier.uuidString, message)
             return
         }
         writableCharacteristics[peripheral.identifier] = characteristic
         notificationAssemblers[peripheral.identifier] = MacBitchatNotificationAssembler()
-        NSLog("Iris nearby BitChat: found characteristic %@", peripheral.identifier.uuidString)
+        irisDebugLog("Iris nearby BitChat: found characteristic %@", peripheral.identifier.uuidString)
         if characteristic.properties.contains(.notify) {
             peripheral.setNotifyValue(true, for: characteristic)
         }
@@ -683,7 +683,7 @@ extension MacBitchatNearbyService: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if let error {
             status = "Write failed"
-            NSLog("Iris nearby BitChat write failed: %@", "\(error)")
+            irisDebugLog("Iris nearby BitChat write failed: %@", "\(error)")
         }
     }
 }
@@ -693,17 +693,17 @@ extension MacBitchatNearbyService: CBPeripheralManagerDelegate {
         logPeripheralStateIfChanged()
         switch peripheral.state {
         case .poweredOn:
-            NSLog("Iris nearby BitChat: peripheral bluetooth powered on")
+            irisDebugLog("Iris nearby BitChat: peripheral bluetooth powered on")
             startAdvertisingIfReady()
         case .poweredOff:
             status = "Bluetooth off"
-            NSLog("Iris nearby BitChat: peripheral bluetooth off")
+            irisDebugLog("Iris nearby BitChat: peripheral bluetooth off")
         case .unauthorized:
             status = "No Bluetooth access"
-            NSLog("Iris nearby BitChat: no peripheral bluetooth access")
+            irisDebugLog("Iris nearby BitChat: no peripheral bluetooth access")
         case .unsupported:
             status = "Bluetooth unavailable"
-            NSLog("Iris nearby BitChat: peripheral bluetooth unavailable")
+            irisDebugLog("Iris nearby BitChat: peripheral bluetooth unavailable")
         case .resetting:
             status = "Bluetooth reset"
         case .unknown:
@@ -716,7 +716,7 @@ extension MacBitchatNearbyService: CBPeripheralManagerDelegate {
     func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
         if let error {
             status = "Bluetooth failed"
-            NSLog("Iris nearby BitChat: add service failed %@", String(describing: error))
+            irisDebugLog("Iris nearby BitChat: add service failed %@", String(describing: error))
             return
         }
         pendingServiceAdds = max(0, pendingServiceAdds - 1)
@@ -728,10 +728,10 @@ extension MacBitchatNearbyService: CBPeripheralManagerDelegate {
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
         if let error {
             status = "Advertise failed"
-            NSLog("Iris nearby BitChat: advertising failed %@", String(describing: error))
+            irisDebugLog("Iris nearby BitChat: advertising failed %@", String(describing: error))
         } else {
             status = peers.isEmpty ? "Visible" : sidebarSubtitle
-            NSLog("Iris nearby BitChat: advertising started")
+            irisDebugLog("Iris nearby BitChat: advertising started")
         }
     }
 
@@ -745,7 +745,7 @@ extension MacBitchatNearbyService: CBPeripheralManagerDelegate {
         subscribedCentralChannels[central.identifier] = channel
         centralAssemblers[central.identifier] = MacBitchatNotificationAssembler()
         status = "Connected"
-        NSLog("Iris nearby BitChat: central subscribed %@", central.identifier.uuidString)
+        irisDebugLog("Iris nearby BitChat: central subscribed %@", central.identifier.uuidString)
         sendAnnounce(to: channel)
     }
 
@@ -761,7 +761,7 @@ extension MacBitchatNearbyService: CBPeripheralManagerDelegate {
         }
         announcedCentrals.remove(central.identifier)
         status = peers.isEmpty ? "Visible" : sidebarSubtitle
-        NSLog("Iris nearby BitChat: central unsubscribed %@", central.identifier.uuidString)
+        irisDebugLog("Iris nearby BitChat: central unsubscribed %@", central.identifier.uuidString)
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {

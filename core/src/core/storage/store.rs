@@ -680,6 +680,7 @@ fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.mobile_push_server_url.hash(&mut hasher);
     preferences.muted_chat_ids.hash(&mut hasher);
     preferences.pinned_chat_ids.hash(&mut hasher);
+    preferences.debug_logging_enabled.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -902,7 +903,8 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     startup_at_login_enabled, nearby_bluetooth_enabled, nearby_lan_enabled,
                     nostr_relay_urls_json, image_proxy_enabled,
                     image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex,
-                    mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json
+                    mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
+                    debug_logging_enabled
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -925,6 +927,7 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                         .unwrap_or_default(),
                     pinned_chat_ids: serde_json::from_str(&row.get::<_, String>(14)?)
                         .unwrap_or_default(),
+                    debug_logging_enabled: row.get::<_, i64>(15)? != 0,
                 })
             },
         )
@@ -940,8 +943,8 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             invite_acceptance_notifications_enabled, startup_at_login_enabled,
             nearby_bluetooth_enabled, nearby_lan_enabled, nostr_relay_urls_json, image_proxy_enabled,
             image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex,
-            mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+            mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json, debug_logging_enabled
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT(id) DO UPDATE SET
             send_typing_indicators = excluded.send_typing_indicators,
             send_read_receipts = excluded.send_read_receipts,
@@ -957,7 +960,8 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             image_proxy_salt_hex = excluded.image_proxy_salt_hex,
             mobile_push_server_url = excluded.mobile_push_server_url,
             muted_chat_ids_json = excluded.muted_chat_ids_json,
-            pinned_chat_ids_json = excluded.pinned_chat_ids_json",
+            pinned_chat_ids_json = excluded.pinned_chat_ids_json,
+            debug_logging_enabled = excluded.debug_logging_enabled",
         params![
             preferences.send_typing_indicators as i64,
             preferences.send_read_receipts as i64,
@@ -974,6 +978,7 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             preferences.mobile_push_server_url,
             serde_json::to_string(&preferences.muted_chat_ids)?,
             serde_json::to_string(&preferences.pinned_chat_ids)?,
+            preferences.debug_logging_enabled as i64,
         ],
     )?;
     Ok(())

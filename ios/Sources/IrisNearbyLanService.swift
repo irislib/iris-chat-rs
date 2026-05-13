@@ -278,7 +278,7 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     }
 
     func netServiceDidPublish(_ sender: NetService) {
-        NSLog("Iris nearby LAN: published \(sender.name).\(sender.type) port \(sender.port)")
+        irisDebugLog("Iris nearby LAN: published \(sender.name).\(sender.type) port \(sender.port)")
         queue.async { [weak self] in
             guard let self, self.enabled, sender === self.netService else { return }
             self.servicePublished = true
@@ -287,7 +287,7 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
     }
 
     func netService(_ sender: NetService, didNotPublish errorDict: [String: NSNumber]) {
-        NSLog("Iris nearby LAN: publish failed \(errorDict)")
+        irisDebugLog("Iris nearby LAN: publish failed \(errorDict)")
         queue.async { [weak self] in
             guard let self, sender === self.netService else { return }
             self.reportFailureOrRetry("Local network failed", generation: self.startGeneration)

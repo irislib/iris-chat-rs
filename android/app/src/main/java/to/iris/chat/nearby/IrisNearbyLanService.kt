@@ -27,6 +27,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import to.iris.chat.IrisDebugLog
 
 class IrisNearbyLanService(
     context: Context,
@@ -481,7 +482,7 @@ class IrisNearbyLanService(
             s
         }.getOrElse { error ->
             if (enabled) {
-                Log.d(TAG, "LAN connect failed ${host.hostAddress}:$port via=${network ?: "default"}", error)
+                IrisDebugLog.d(TAG, "LAN connect failed ${host.hostAddress}:$port via=${network ?: "default"}", error)
             }
             null
         }
@@ -517,7 +518,7 @@ class IrisNearbyLanService(
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
             if (enabled && error !is EOFException) {
-                Log.d(TAG, "LAN read failed", error)
+                IrisDebugLog.d(TAG, "LAN read failed", error)
             }
         } finally {
             close(connection.id)

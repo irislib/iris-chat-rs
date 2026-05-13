@@ -702,6 +702,23 @@ fun MyProfileSheet(
                     text = "Support",
                     style = MaterialTheme.typography.titleMedium,
                 )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Debug logging",
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                    Switch(
+                        checked = preferences.debugLoggingEnabled,
+                        onCheckedChange = { enabled ->
+                            appManager.dispatch(AppAction.SetDebugLoggingEnabled(enabled))
+                        },
+                        modifier = Modifier.testTag("myProfileDebugLoggingSwitch"),
+                    )
+                }
                 Text(
                     text = "Build ${appManager.buildSummary()}",
                     style = MaterialTheme.typography.bodyMedium,
@@ -726,7 +743,7 @@ fun MyProfileSheet(
                 }
                 if (canShareSupport) {
                     IrisPrimaryButton(
-                        text = if (supportBusy) "Preparing…" else "Share support bundle",
+                        text = if (supportBusy) "Preparing…" else "Share debug dump",
                         onClick = {
                             coroutineScope.launch {
                                 supportBusy = true
@@ -735,9 +752,9 @@ fun MyProfileSheet(
                                 shareText(
                                     context = context,
                                     text = bundle,
-                                    title = "Share support bundle",
+                                    title = "Share debug dump",
                                     mimeType = "application/json",
-                                    subject = "Iris Chat support bundle",
+                                    subject = "Iris Chat debug dump",
                                 )
                             }
                         },
@@ -752,14 +769,14 @@ fun MyProfileSheet(
                     )
                 }
                 IrisSecondaryButton(
-                    text = "Copy support bundle",
+                    text = "Copy debug dump",
                     onClick = {
                         coroutineScope.launch {
                             supportBusy = true
                             val bundle = appManager.exportSupportBundleJson()
                             supportBusy = false
-                            clipboard.setText("Support bundle", bundle)
-                            Toast.makeText(context, "Support bundle copied", Toast.LENGTH_SHORT).show()
+                            clipboard.setText("Debug dump", bundle)
+                            Toast.makeText(context, "Debug dump copied", Toast.LENGTH_SHORT).show()
                         }
                     },
                     enabled = !supportBusy,

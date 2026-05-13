@@ -6,14 +6,15 @@ import com.google.firebase.messaging.RemoteMessage
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import to.iris.chat.IrisChatApp
+import to.iris.chat.IrisDebugLog
 
 class IrisFirebaseMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
-        Log.d(TAG, "FCM token refreshed")
+        IrisDebugLog.d(TAG, "FCM token refreshed")
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
-        Log.d(TAG, "FCM message received with data keys=${message.data.keys.sorted()}")
+        IrisDebugLog.d(TAG, "FCM message received with data keys=${message.data.keys.sorted()}")
         val payloadJson = message.toPayloadJson()
         val appManager = (applicationContext as? IrisChatApp)?.container?.appManager
         // Block here on purpose. Firebase keeps the wakelock alive for as
@@ -36,11 +37,11 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
             }
         PushNotificationProbe.recordReceived(this, payloadJson, resolution)
         if (!resolution.shouldShow) {
-            Log.d(TAG, "FCM message suppressed by resolver")
+            IrisDebugLog.d(TAG, "FCM message suppressed by resolver")
             return
         }
         if (appManager?.shouldSuppressNotificationForActiveChat(resolution) == true) {
-            Log.d(TAG, "FCM message suppressed because matching chat is open")
+            IrisDebugLog.d(TAG, "FCM message suppressed because matching chat is open")
             PushNotificationProbe.recordNotificationBlocked(this, "active_chat_open")
             return
         }

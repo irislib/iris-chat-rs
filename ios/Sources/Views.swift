@@ -4554,6 +4554,13 @@ struct SettingsScreen: View {
                         ImageProxySettingsSection(manager: manager)
                     }
 
+#if os(iOS) || os(macOS)
+                    IrisSectionCard {
+                        CardHeader(title: "Nearby")
+                        NearbySettingsRows(manager: manager, service: manager.nearbyIris)
+                    }
+#endif
+
                     IrisSectionCard {
                         CardHeader(title: "Message servers")
                         NostrRelaySettingsSection(
@@ -4635,8 +4642,19 @@ struct SettingsScreen: View {
                     IrisSectionCard {
                         CardHeader(
                             title: "Support",
-                            subtitle: "Capture a support bundle or inspect current build metadata."
+                            subtitle: "Capture a debug dump or inspect current build metadata."
                         )
+                        Toggle(
+                            "Debug logging",
+                            isOn: Binding(
+                                get: { manager.state.preferences.debugLoggingEnabled },
+                                set: { enabled in
+                                    manager.dispatch(.setDebugLoggingEnabled(enabled: enabled))
+                                }
+                            )
+                        )
+                        .accessibilityIdentifier("myProfileDebugLoggingToggle")
+
                         Text("Build \(manager.buildSummaryText())")
                             .font(.system(.body, design: .rounded))
                             .foregroundStyle(palette.textPrimary)
@@ -4657,21 +4675,17 @@ struct SettingsScreen: View {
                             }
                         }
 
-#if os(iOS) || os(macOS)
-                        NearbySettingsRows(manager: manager, service: manager.nearbyIris)
-#endif
-
                         ShareLink(item: manager.supportBundleJson()) {
                             HStack(spacing: 8) {
                                 Image(systemName: "square.and.arrow.up")
-                                Text("Share support bundle")
+                                Text("Share debug dump")
                             }
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(IrisPrimaryButtonStyle())
                         .accessibilityIdentifier("myProfileShareSupportBundleButton")
 
-                        Button("Copy support bundle") {
+                        Button("Copy debug dump") {
                             manager.copyToClipboard(manager.supportBundleJson())
                         }
                         .buttonStyle(IrisSecondaryButtonStyle())

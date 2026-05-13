@@ -965,6 +965,7 @@ final class AppManager: ObservableObject {
         )
 #endif
         self.state = initialState
+        irisSetDebugLoggingEnabled(initialState.preferences.debugLoggingEnabled)
         self.lastRevApplied = initialState.rev
 #if os(iOS) || os(macOS)
         self.nearbyLanPermissionPromptAttempted = UserDefaults.standard.bool(
@@ -1988,13 +1989,13 @@ final class AppManager: ObservableObject {
     }
 
     func uploadProfilePicture(fileURL: URL) {
-        print("[upload-profile-picture] picked: \(fileURL.path)")
+        irisDebugLog("[upload-profile-picture] picked: %@", fileURL.path)
         do {
             let staged = try stageOutgoingAttachment(fileURL)
-            print("[upload-profile-picture] staged: \(staged.path)")
+            irisDebugLog("[upload-profile-picture] staged: %@", staged.path)
             dispatchToRust(.uploadProfilePicture(filePath: staged.path))
         } catch {
-            print("[upload-profile-picture] stage failed: \(error)")
+            irisDebugLog("[upload-profile-picture] stage failed: %@", "\(error)")
             showToast("Image could not be opened: \(error.localizedDescription)")
         }
     }
@@ -2116,6 +2117,7 @@ final class AppManager: ObservableObject {
             lastRevApplied = nextState.rev
             postDesktopNotifications(from: oldState, to: reconciledState)
             state = reconciledState
+            irisSetDebugLoggingEnabled(reconciledState.preferences.debugLoggingEnabled)
 #if os(iOS) || os(macOS)
             syncNearbyBluetoothPreference(from: oldState, to: reconciledState)
             syncNearbyLanPreference(from: oldState, to: reconciledState)
@@ -2297,7 +2299,7 @@ final class AppManager: ObservableObject {
         let actionName = actionLogName(action)
         let message = "Iris Chat FFI dispatch failed (\(actionName)): \(error)"
         appendClientDebugLog(category: "ffi.dispatch.failed", detail: "\(actionName): \(error)")
-        NSLog("%@", message)
+        irisDebugLog("%@", message)
 #if DEBUG
         print(message)
 #endif
