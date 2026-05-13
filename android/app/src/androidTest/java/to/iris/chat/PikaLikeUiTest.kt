@@ -65,6 +65,7 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("myProfileSheet")
+        composeRule.openSettingsPage("settingsProfileRow")
         composeRule.onNodeWithTag("myProfileQrCode", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true).assertIsDisplayed()
     }
@@ -74,6 +75,7 @@ class PikaLikeUiTest {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
 
+        composeRule.openSettingsPage("settingsProfileRow")
         composeRule.waitForTag("myProfileManageDevicesButton")
         composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
             .performClick()
@@ -90,6 +92,7 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("myProfileSheet")
+        composeRule.openSettingsPage("settingsSupportRow")
         composeRule.onNodeWithTag("myProfileDebugLoggingSwitch", useUnmergedTree = true)
             .performScrollTo()
             .assertIsOff()
@@ -137,6 +140,7 @@ class PikaLikeUiTest {
     fun manage_devices_valid_link_code_enables_authorize_action() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
+        composeRule.openSettingsPage("settingsProfileRow")
         composeRule.waitForTag("myProfileManageDevicesButton")
         composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
             .performClick()
@@ -152,6 +156,7 @@ class PikaLikeUiTest {
     fun manage_devices_plain_device_key_keeps_authorize_action_disabled() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
+        composeRule.openSettingsPage("settingsProfileRow")
         composeRule.waitForTag("myProfileManageDevicesButton")
         composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
             .performClick()
@@ -167,6 +172,7 @@ class PikaLikeUiTest {
     fun scan_device_approval_qr_authorizes_device() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
+        composeRule.openSettingsPage("settingsProfileRow")
         composeRule.waitForTag("myProfileManageDevicesButton")
         composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
             .performClick()
@@ -490,6 +496,11 @@ class PikaLikeUiTest {
                 true
             }.getOrDefault(false)
         }
+    }
+
+    private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.openSettingsPage(tag: String) {
+        waitForTag(tag)
+        onNodeWithTag(tag, useUnmergedTree = true).performScrollTo().performClick()
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.waitForText(

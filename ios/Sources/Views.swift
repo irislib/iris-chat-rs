@@ -91,6 +91,86 @@ enum SettingsFocusSection: Hashable {
     case messageServers
 }
 
+private enum SettingsPage: String, CaseIterable, Identifiable {
+    case profile
+    case messaging
+    case notifications
+    case media
+    case nearby
+    case messageServers
+    case security
+    case updates
+    case about
+    case support
+    case accountData
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .profile: return "Profile"
+        case .messaging: return "Messaging"
+        case .notifications: return "Notifications"
+        case .media: return "Media"
+        case .nearby: return "Nearby"
+        case .messageServers: return "Message servers"
+        case .security: return "Security"
+        case .updates: return "Updates"
+        case .about: return "About"
+        case .support: return "Support"
+        case .accountData: return "Account data"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .profile: return "person.crop.circle.fill"
+        case .messaging: return "bubble.left.and.bubble.right.fill"
+        case .notifications: return "bell.fill"
+        case .media: return "photo.fill"
+        case .nearby: return "dot.radiowaves.left.and.right"
+        case .messageServers: return "server.rack"
+        case .security: return "lock.fill"
+        case .updates: return "arrow.down.circle.fill"
+        case .about: return "info.circle.fill"
+        case .support: return "wrench.and.screwdriver.fill"
+        case .accountData: return "trash.fill"
+        }
+    }
+
+    var accessibilityID: String {
+        switch self {
+        case .profile: return "settingsProfileRow"
+        case .messaging: return "settingsMessagingRow"
+        case .notifications: return "settingsNotificationsRow"
+        case .media: return "settingsMediaRow"
+        case .nearby: return "settingsNearbyRow"
+        case .messageServers: return "settingsMessageServersRow"
+        case .security: return "settingsSecurityRow"
+        case .updates: return "settingsUpdatesRow"
+        case .about: return "settingsAboutRow"
+        case .support: return "settingsSupportRow"
+        case .accountData: return "settingsAccountDataRow"
+        }
+    }
+
+    static var menuPages: [SettingsPage] {
+        var pages: [SettingsPage] = [
+            .messaging,
+            .notifications,
+            .media,
+            .nearby,
+            .messageServers,
+            .security,
+        ]
+        #if os(macOS)
+        pages.append(.updates)
+        #endif
+        pages.append(contentsOf: [.about, .support, .accountData])
+        return pages
+    }
+}
+
 struct RootView: View {
     @ObservedObject var manager: AppManager
     @State private var directChatInfoChatId: String?
@@ -4458,264 +4538,25 @@ struct SettingsScreen: View {
     @State private var newRelayURL = ""
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
+    @State private var selectedPage: SettingsPage?
 
     var body: some View {
-        // Settings is full of inspectable identifiers — version,
-        // npub, hex pubkey, relay URLs, build summary. Default
-        // SwiftUI Text is not selectable; flipping textSelection on
-        // at the root means a long-press anywhere on the page can
-        // pull values onto the clipboard. Buttons and Links still
-        // route their taps; only inert Text picks up selection.
-        scrollBody.textSelection(.enabled)
+        settingsBody
+            // Settings contains copyable values like version, user ID,
+            // device key, server URLs, and build metadata. Buttons and
+            // Links still receive taps; inert Text can be selected.
+            .textSelection(.enabled)
     }
 
     @ViewBuilder
-    private var scrollBody: some View {
-        ScrollViewReader { proxy in
-            ZStack {
-                BackgroundFill()
+    private var settingsBody: some View {
+        ZStack {
+            BackgroundFill()
 
-            IrisScrollScreen {
-                VStack(alignment: .leading, spacing: 18) {
-                    if let account = manager.state.account {
-                        ProfileEditorCard(
-                            manager: manager,
-                            account: account,
-                            profileName: $profileName,
-                            openProfilePicture: { profilePictureViewerURL = $0 },
-                            manageDevices: {
-                                manager.dispatch(.pushScreen(screen: .deviceRoster))
-                            }
-                        )
-                    }
-
-                    if manager.trustedTestBuildEnabled() {
-                        IrisSectionCard {
-                            CardHeader(
-                                title: "Test build",
-                                subtitle: "For trusted testing only."
-                            )
-                        }
-                    }
-
-                    IrisSectionCard {
-                        CardHeader(title: "Messaging")
-
-                        Toggle(
-                            "Typing indicators",
-                            isOn: Binding(
-                                get: { manager.state.preferences.sendTypingIndicators },
-                                set: { enabled in
-                                    manager.dispatch(.setTypingIndicatorsEnabled(enabled: enabled))
-                                }
-                            )
-                        )
-                        .irisControlTint()
-                        .accessibilityIdentifier("myProfileTypingIndicatorsToggle")
-
-                        Toggle(
-                            "Received / seen",
-                            isOn: Binding(
-                                get: { manager.state.preferences.sendReadReceipts },
-                                set: { enabled in
-                                    manager.dispatch(.setReadReceiptsEnabled(enabled: enabled))
-                                }
-                            )
-                        )
-                        .irisControlTint()
-                        .accessibilityIdentifier("myProfileReadReceiptsToggle")
-
-                        if PlatformStartupAtLogin.isSupported {
-                            Toggle(
-                                "Open at login",
-                                isOn: Binding(
-                                    get: { manager.state.preferences.startupAtLoginEnabled },
-                                    set: { enabled in
-                                        manager.setStartupAtLoginEnabled(enabled)
-                                    }
-                                )
-                            )
-                            .irisControlTint()
-                            .accessibilityIdentifier("myProfileStartupAtLoginToggle")
-                        }
-                    }
-
-                    IrisSectionCard {
-                        CardHeader(title: "Notifications")
-                        NotificationsSettingsSection(manager: manager)
-                    }
-
-                    IrisSectionCard {
-                        CardHeader(title: "Media")
-                        ImageProxySettingsSection(manager: manager)
-                    }
-
-#if os(iOS) || os(macOS)
-                    IrisSectionCard {
-                        CardHeader(title: "Nearby")
-                        NearbySettingsRows(manager: manager, service: manager.nearbyIris)
-                    }
-#endif
-
-                    IrisSectionCard {
-                        CardHeader(title: "Message servers")
-                        NostrRelaySettingsSection(
-                            manager: manager,
-                            newRelayURL: $newRelayURL,
-                            editingRelayURL: $editingRelayURL,
-                            editingRelayDraft: $editingRelayDraft
-                        )
-                    }
-                    .id(SettingsFocusSection.messageServers)
-
-                    IrisSectionCard {
-                        CardHeader(title: "Security")
-
-                        if manager.state.account?.hasOwnerSigningAuthority == true {
-                            Button {
-                                pendingSecretExport = .owner
-                            } label: {
-                                Label("Export secret key", systemImage: "key.fill")
-                            }
-                            .buttonStyle(IrisSecondaryButtonStyle())
-                            .accessibilityIdentifier("myProfileExportOwnerKeyButton")
-                        }
-
-                        Button {
-                            pendingSecretExport = .device
-                        } label: {
-                            Label("Export this device's key", systemImage: "key.fill")
-                        }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                        .accessibilityIdentifier("myProfileExportDeviceKeyButton")
-                    }
-
-#if os(macOS)
-                    IrisSectionCard {
-                        DesktopUpdateSettingsSection(buildSummary: manager.buildSummaryText(), updates: manager.updates)
-                    }
-#endif
-
-                    IrisSectionCard {
-                        CardHeader(
-                            title: "About",
-                            subtitle: "Version and source details for this build."
-                        )
-                        HStack(spacing: 10) {
-                            Image(systemName: "info.circle.fill")
-                                .foregroundStyle(palette.textPrimary)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("Version")
-                                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(palette.textPrimary)
-                                Text(manager.buildSummaryText())
-                                    .font(.system(.body, design: .rounded))
-                                    .foregroundStyle(palette.muted)
-                                    .accessibilityIdentifier("myProfileVersionValue")
-                            }
-                            Spacer()
-                        }
-
-                        Link(destination: irisSourceURL) {
-                            HStack(spacing: 10) {
-                                Image(systemName: "chevron.left.forwardslash.chevron.right")
-                                    .foregroundStyle(palette.textPrimary)
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text("Source code")
-                                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                                        .foregroundStyle(palette.textPrimary)
-                                    Text(irisSourceLabel)
-                                        .font(.system(.body, design: .rounded))
-                                        .foregroundStyle(palette.muted)
-                                        .accessibilityIdentifier("myProfileSourceCodeValue")
-                                }
-                                Spacer()
-                            }
-                        }
-                        .accessibilityIdentifier("myProfileSourceCodeButton")
-                    }
-
-                    IrisSectionCard {
-                        CardHeader(
-                            title: "Support",
-                            subtitle: "Capture a debug dump or inspect current build metadata."
-                        )
-                        Toggle(
-                            "Debug logging",
-                            isOn: Binding(
-                                get: { manager.state.preferences.debugLoggingEnabled },
-                                set: { enabled in
-                                    manager.dispatch(.setDebugLoggingEnabled(enabled: enabled))
-                                }
-                            )
-                        )
-                        .irisControlTint()
-                        .accessibilityIdentifier("myProfileDebugLoggingToggle")
-
-                        Text("Build \(manager.buildSummaryText())")
-                            .font(.system(.body, design: .rounded))
-                            .foregroundStyle(palette.textPrimary)
-                        if let networkStatus = manager.state.networkStatus {
-                            Text(
-                                "Network \(networkStatus.syncing ? "syncing" : "idle") · " +
-                                    "\(networkStatus.connectedRelayCount)/\(networkStatus.relayUrls.count) connected · " +
-                                    "\(networkStatus.recentEventCount) updates"
-                            )
-                            .font(.system(.body, design: .rounded))
-                            .foregroundStyle(palette.muted)
-                            .accessibilityIdentifier("myProfileNetworkStatusValue")
-
-                            if let category = networkStatus.lastDebugCategory {
-                                Text("Last debug \(category)")
-                                    .font(.system(.caption, design: .rounded))
-                                    .foregroundStyle(palette.muted)
-                            }
-                        }
-
-                        ShareLink(item: manager.supportBundleJson()) {
-                            HStack(spacing: 8) {
-                                Image(systemName: "square.and.arrow.up")
-                                Text("Share debug dump")
-                            }
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(IrisPrimaryButtonStyle())
-                        .accessibilityIdentifier("myProfileShareSupportBundleButton")
-
-                        Button("Copy debug dump") {
-                            manager.copyToClipboard(manager.supportBundleJson())
-                        }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                        .accessibilityIdentifier("myProfileCopySupportBundleButton")
-
-                    }
-
-                    IrisSectionCard {
-                        CardHeader(
-                            title: "Danger Zone",
-                            subtitle: "Local profile, secret keys, messages, and cached files are removed from this device."
-                        )
-
-                        Button("Logout", role: .destructive) {
-                            showingLogoutConfirmation = true
-                        }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                        .accessibilityIdentifier("myProfileLogoutButton")
-
-                        Button("Delete all data", role: .destructive) {
-                            showingDeleteAllConfirmation = true
-                        }
-                        .buttonStyle(IrisSecondaryButtonStyle())
-                        .accessibilityIdentifier("myProfileDeleteAllDataButton")
-                    }
-                }
-            }
-            }
-            .onAppear {
-                scrollToFocusedSection(proxy)
-            }
-            .onChange(of: focusedSection) { _ in
-                scrollToFocusedSection(proxy)
+            if IrisLayout.usesDesktopChrome {
+                desktopSettingsLayout
+            } else {
+                mobileSettingsLayout
             }
         }
         .overlay {
@@ -4724,6 +4565,10 @@ struct SettingsScreen: View {
                     self.profilePictureViewerURL = nil
                 }
             }
+        }
+        .onAppear(perform: applyFocusedSection)
+        .onChange(of: focusedSection) { _ in
+            applyFocusedSection()
         }
         .accessibilityIdentifier("settingsScreen")
         .alert(item: $pendingSecretExport) { exportKind in
@@ -4764,18 +4609,438 @@ struct SettingsScreen: View {
         }
     }
 
-    private func scrollToFocusedSection(_ proxy: ScrollViewProxy) {
-        guard let focusedSection else {
-            return
-        }
-        DispatchQueue.main.async {
-            withAnimation(.easeInOut(duration: 0.25)) {
-                proxy.scrollTo(focusedSection, anchor: .top)
+    private var desktopSettingsLayout: some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                settingsMenu
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 18)
             }
-            self.focusedSection = nil
+            .frame(width: 312)
+
+            Rectangle()
+                .fill(palette.border)
+                .frame(width: 1)
+
+            settingsPageScroll(selectedPage ?? .profile, showsBackButton: false)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
+    @ViewBuilder
+    private var mobileSettingsLayout: some View {
+        if let selectedPage {
+            settingsPageScroll(selectedPage, showsBackButton: true)
+        } else {
+            IrisScrollScreen {
+                settingsMenu
+            }
+        }
+    }
+
+    private var settingsMenu: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            if let account = manager.state.account {
+                SettingsProfileMenuRow(
+                    account: account,
+                    preferences: manager.state.preferences,
+                    manager: manager
+                ) {
+                    selectedPage = .profile
+                }
+            }
+
+            SettingsMenuSection {
+                ForEach(SettingsPage.menuPages.prefix(6)) { page in
+                    SettingsMenuRow(page: page, selected: selectedPage == page) {
+                        selectedPage = page
+                    }
+                }
+            }
+
+            SettingsMenuSection {
+                ForEach(Array(SettingsPage.menuPages.dropFirst(6))) { page in
+                    SettingsMenuRow(page: page, selected: selectedPage == page) {
+                        selectedPage = page
+                    }
+                }
+            }
+        }
+    }
+
+    private func settingsPageScroll(_ page: SettingsPage, showsBackButton: Bool) -> some View {
+        IrisScrollScreen {
+            if showsBackButton {
+                Button {
+                    selectedPage = nil
+                } label: {
+                    Label("Settings", systemImage: "chevron.left")
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityIdentifier("settingsSubpageBackButton")
+            }
+
+            settingsPageContent(page)
+        }
+    }
+
+    @ViewBuilder
+    private func settingsPageContent(_ page: SettingsPage) -> some View {
+        switch page {
+        case .profile:
+            if let account = manager.state.account {
+                ProfileEditorCard(
+                    manager: manager,
+                    account: account,
+                    profileName: $profileName,
+                    openProfilePicture: { profilePictureViewerURL = $0 },
+                    manageDevices: {
+                        manager.dispatch(.pushScreen(screen: .deviceRoster))
+                    }
+                )
+            }
+
+        case .messaging:
+            IrisSectionCard {
+                CardHeader(title: "Messaging")
+
+                Toggle(
+                    "Typing indicators",
+                    isOn: Binding(
+                        get: { manager.state.preferences.sendTypingIndicators },
+                        set: { enabled in
+                            manager.dispatch(.setTypingIndicatorsEnabled(enabled: enabled))
+                        }
+                    )
+                )
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileTypingIndicatorsToggle")
+
+                Toggle(
+                    "Received / seen",
+                    isOn: Binding(
+                        get: { manager.state.preferences.sendReadReceipts },
+                        set: { enabled in
+                            manager.dispatch(.setReadReceiptsEnabled(enabled: enabled))
+                        }
+                    )
+                )
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileReadReceiptsToggle")
+
+                if PlatformStartupAtLogin.isSupported {
+                    Toggle(
+                        "Open at login",
+                        isOn: Binding(
+                            get: { manager.state.preferences.startupAtLoginEnabled },
+                            set: { enabled in
+                                manager.setStartupAtLoginEnabled(enabled)
+                            }
+                        )
+                    )
+                    .irisControlTint()
+                    .accessibilityIdentifier("myProfileStartupAtLoginToggle")
+                }
+            }
+
+        case .notifications:
+            IrisSectionCard {
+                CardHeader(title: "Notifications")
+                NotificationsSettingsSection(manager: manager)
+            }
+
+        case .media:
+            IrisSectionCard {
+                CardHeader(title: "Media")
+                ImageProxySettingsSection(manager: manager)
+            }
+
+        case .nearby:
+            #if os(iOS) || os(macOS)
+            IrisSectionCard {
+                CardHeader(title: "Nearby")
+                NearbySettingsRows(manager: manager, service: manager.nearbyIris)
+            }
+            #endif
+
+        case .messageServers:
+            IrisSectionCard {
+                NostrRelaySettingsSection(
+                    manager: manager,
+                    newRelayURL: $newRelayURL,
+                    editingRelayURL: $editingRelayURL,
+                    editingRelayDraft: $editingRelayDraft
+                )
+            }
+
+        case .security:
+            IrisSectionCard {
+                CardHeader(title: "Security")
+
+                if manager.state.account?.hasOwnerSigningAuthority == true {
+                    Button {
+                        pendingSecretExport = .owner
+                    } label: {
+                        Label("Export secret key", systemImage: "key.fill")
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .accessibilityIdentifier("myProfileExportOwnerKeyButton")
+                }
+
+                Button {
+                    pendingSecretExport = .device
+                } label: {
+                    Label("Export this device's key", systemImage: "key.fill")
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("myProfileExportDeviceKeyButton")
+            }
+
+        case .updates:
+            #if os(macOS)
+            IrisSectionCard {
+                DesktopUpdateSettingsSection(buildSummary: manager.buildSummaryText(), updates: manager.updates)
+            }
+            #else
+            EmptyView()
+            #endif
+
+        case .about:
+            IrisSectionCard {
+                CardHeader(title: "About")
+
+                if manager.trustedTestBuildEnabled() {
+                    IrisInfoPill("Test build", tint: .orange)
+                }
+
+                HStack(spacing: 10) {
+                    Image(systemName: "info.circle.fill")
+                        .foregroundStyle(palette.textPrimary)
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("Version")
+                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.textPrimary)
+                        Text(manager.buildSummaryText())
+                            .font(.system(.body, design: .rounded))
+                            .foregroundStyle(palette.muted)
+                            .accessibilityIdentifier("myProfileVersionValue")
+                    }
+                    Spacer()
+                }
+
+                Link(destination: irisSourceURL) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                            .foregroundStyle(palette.textPrimary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Source code")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
+                                .foregroundStyle(palette.textPrimary)
+                            Text(irisSourceLabel)
+                                .font(.system(.body, design: .rounded))
+                                .foregroundStyle(palette.muted)
+                                .accessibilityIdentifier("myProfileSourceCodeValue")
+                        }
+                        Spacer()
+                    }
+                }
+                .accessibilityIdentifier("myProfileSourceCodeButton")
+            }
+
+        case .support:
+            IrisSectionCard {
+                CardHeader(title: "Support")
+                Toggle(
+                    "Debug logging",
+                    isOn: Binding(
+                        get: { manager.state.preferences.debugLoggingEnabled },
+                        set: { enabled in
+                            manager.dispatch(.setDebugLoggingEnabled(enabled: enabled))
+                        }
+                    )
+                )
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileDebugLoggingToggle")
+
+                Text("Build \(manager.buildSummaryText())")
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(palette.textPrimary)
+                if let networkStatus = manager.state.networkStatus {
+                    Text(
+                        "Network \(networkStatus.syncing ? "syncing" : "idle") · " +
+                            "\(networkStatus.connectedRelayCount)/\(networkStatus.relayUrls.count) connected · " +
+                            "\(networkStatus.recentEventCount) updates"
+                    )
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(palette.muted)
+                    .accessibilityIdentifier("myProfileNetworkStatusValue")
+
+                    if let category = networkStatus.lastDebugCategory {
+                        Text("Last debug \(category)")
+                            .font(.system(.caption, design: .rounded))
+                            .foregroundStyle(palette.muted)
+                    }
+                }
+
+                ShareLink(item: manager.supportBundleJson()) {
+                    HStack(spacing: 8) {
+                        Image(systemName: "square.and.arrow.up")
+                        Text("Share debug dump")
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(IrisPrimaryButtonStyle())
+                .accessibilityIdentifier("myProfileShareSupportBundleButton")
+
+                Button("Copy debug dump") {
+                    manager.copyToClipboard(manager.supportBundleJson())
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("myProfileCopySupportBundleButton")
+            }
+
+        case .accountData:
+            IrisSectionCard {
+                CardHeader(
+                    title: "Account data",
+                    subtitle: "Local profile, secret keys, messages, and cached files are removed from this device."
+                )
+
+                Button("Logout", role: .destructive) {
+                    showingLogoutConfirmation = true
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("myProfileLogoutButton")
+
+                Button("Delete all data", role: .destructive) {
+                    showingDeleteAllConfirmation = true
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("myProfileDeleteAllDataButton")
+            }
+        }
+    }
+
+    private func applyFocusedSection() {
+        guard let focusedSection else {
+            if IrisLayout.usesDesktopChrome, selectedPage == nil {
+                selectedPage = .profile
+            }
+            return
+        }
+        switch focusedSection {
+        case .messageServers:
+            selectedPage = .messageServers
+        }
+        self.focusedSection = nil
+    }
+
+}
+
+private struct SettingsProfileMenuRow: View {
+    @Environment(\.irisPalette) private var palette
+    let account: AccountSnapshot
+    let preferences: PreferencesSnapshot
+    @ObservedObject var manager: AppManager
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                IrisAvatar(
+                    label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                    size: 54,
+                    emphasize: true,
+                    pictureUrl: account.pictureUrl,
+                    preferences: preferences,
+                    manager: manager,
+                    loadedImageIdentifier: "myProfileAvatarImage"
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(account.displayName.isEmpty ? "Profile" : account.displayName)
+                        .font(.system(.headline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineLimit(1)
+                    Text("My profile")
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+            }
+            .padding(18)
+            .background(
+                RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
+                    .fill(palette.panelAlt)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
+                            .stroke(palette.border, lineWidth: 1)
+                    )
+            )
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier("settingsProfileRow")
+    }
+}
+
+private struct SettingsMenuSection<Content: View>: View {
+    @Environment(\.irisPalette) private var palette
+    let content: () -> Content
+
+    init(@ViewBuilder content: @escaping () -> Content) {
+        self.content = content
+    }
+
+    var body: some View {
+        VStack(spacing: 0, content: content)
+            .background(
+                RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
+                    .fill(palette.panel)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
+                            .stroke(palette.border, lineWidth: 1)
+                    )
+            )
+    }
+}
+
+private struct SettingsMenuRow: View {
+    @Environment(\.irisPalette) private var palette
+    let page: SettingsPage
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: page.systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .frame(width: 32, height: 32)
+                    .background(
+                        Circle()
+                            .fill(selected ? palette.accent.opacity(0.16) : palette.toolbar)
+                    )
+                Text(page.title)
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 13)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier(page.accessibilityID)
+    }
 }
 
 #if os(iOS) || os(macOS)

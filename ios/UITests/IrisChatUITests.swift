@@ -18,6 +18,7 @@ final class IrisChatUITests: XCTestCase {
         element(app, "chatListProfileButton").tap()
 
         XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
+        openSettingsPage(app, "settingsProfileRow")
         XCTAssertTrue(element(app, "myProfileQrCode").waitForExistence(timeout: 5))
     }
 
@@ -524,6 +525,7 @@ final class IrisChatUITests: XCTestCase {
         element(app, "chatListProfileButton").tap()
 
         XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
+        openSettingsPage(app, "settingsAccountDataRow")
         XCTAssertTrue(element(app, "myProfileLogoutButton").waitForExistence(timeout: 10))
         element(app, "myProfileLogoutButton").tap()
         XCTAssertTrue(element(app, "myProfileConfirmLogoutButton").waitForExistence(timeout: 10))
@@ -612,6 +614,7 @@ final class IrisChatUITests: XCTestCase {
         // Open settings; profile picture viewer should not be reachable yet.
         element(app, "chatListProfileButton").tap()
         XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
+        openSettingsPage(app, "settingsProfileRow")
         XCTAssertTrue(element(app, "myProfileUploadPictureButton").waitForExistence(timeout: 5))
         XCTAssertFalse(element(app, "myProfileAvatarImage").exists)
 
@@ -778,6 +781,17 @@ final class IrisChatUITests: XCTestCase {
 
     private func element(_ app: XCUIApplication, _ identifier: String) -> XCUIElement {
         app.descendants(matching: .any)[identifier]
+    }
+
+    private func openSettingsPage(
+        _ app: XCUIApplication,
+        _ identifier: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let row = element(app, identifier)
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "settings row \(identifier) did not appear", file: file, line: line)
+        row.tap()
     }
 
     private func typeText(_ text: String, into target: XCUIElement, app: XCUIApplication) {

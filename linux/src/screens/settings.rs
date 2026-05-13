@@ -13,27 +13,246 @@ use crate::widgets::{image_cache, qr};
 const IRIS_SOURCE_URL: &str =
     "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs";
 
+#[derive(Clone, Copy)]
+enum SettingsPage {
+    Profile,
+    Messaging,
+    Notifications,
+    Media,
+    Nearby,
+    MessageServers,
+    Updates,
+    About,
+    Support,
+    AccountData,
+}
+
+impl SettingsPage {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Profile => "profile",
+            Self::Messaging => "messaging",
+            Self::Notifications => "notifications",
+            Self::Media => "media",
+            Self::Nearby => "nearby",
+            Self::MessageServers => "message-servers",
+            Self::Updates => "updates",
+            Self::About => "about",
+            Self::Support => "support",
+            Self::AccountData => "account-data",
+        }
+    }
+
+    fn title(self) -> &'static str {
+        match self {
+            Self::Profile => "Profile",
+            Self::Messaging => "Messaging",
+            Self::Notifications => "Notifications",
+            Self::Media => "Media",
+            Self::Nearby => "Nearby",
+            Self::MessageServers => "Message servers",
+            Self::Updates => "Updates",
+            Self::About => "About",
+            Self::Support => "Support",
+            Self::AccountData => "Account data",
+        }
+    }
+
+    fn icon_name(self) -> &'static str {
+        match self {
+            Self::Profile => "avatar-default-symbolic",
+            Self::Messaging => "mail-message-new-symbolic",
+            Self::Notifications => "preferences-system-notifications-symbolic",
+            Self::Media => "image-x-generic-symbolic",
+            Self::Nearby => "network-wireless-symbolic",
+            Self::MessageServers => "network-server-symbolic",
+            Self::Updates => "software-update-available-symbolic",
+            Self::About => "help-about-symbolic",
+            Self::Support => "tools-symbolic",
+            Self::AccountData => "user-trash-symbolic",
+        }
+    }
+}
+
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
-    let page = adw::PreferencesPage::new();
+    let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    root.set_hexpand(true);
+    root.set_vexpand(true);
+
+    let stack = gtk::Stack::new();
+    stack.set_hexpand(true);
+    stack.set_vexpand(true);
+    stack.set_transition_type(gtk::StackTransitionType::Crossfade);
 
     if let Some(account) = state.account.as_ref() {
-        page.add(&profile_group(account, &state.preferences, manager));
+        stack.add_named(
+            &settings_detail_page(vec![profile_group(account, &state.preferences, manager)]),
+            Some(SettingsPage::Profile.id()),
+        );
     }
 
+    stack.add_named(
+        &settings_detail_page(vec![messaging_group(&state.preferences, manager)]),
+        Some(SettingsPage::Messaging.id()),
+    );
+    stack.add_named(
+        &settings_detail_page(vec![notifications_group(&state.preferences, manager)]),
+        Some(SettingsPage::Notifications.id()),
+    );
+    stack.add_named(
+        &settings_detail_page(vec![media_group(&state.preferences, manager)]),
+        Some(SettingsPage::Media.id()),
+    );
+    stack.add_named(
+        &settings_detail_page(vec![nearby_group(&state.preferences, manager)]),
+        Some(SettingsPage::Nearby.id()),
+    );
+    stack.add_named(
+        &settings_detail_page(vec![relays_group(&state.preferences, manager)]),
+        Some(SettingsPage::MessageServers.id()),
+    );
+    stack.add_named(
+        &settings_detail_page(vec![updates_group()]),
+        Some(SettingsPage::Updates.id()),
+    );
+    let mut about_groups = Vec::new();
     if iris_chat_core::is_trusted_test_build() {
-        page.add(&trusted_build_group());
+        about_groups.push(trusted_build_group());
+    }
+    about_groups.push(about_group(state));
+    stack.add_named(
+        &settings_detail_page(about_groups),
+        Some(SettingsPage::About.id()),
+    );
+    stack.add_named(
+        &settings_detail_page(vec![support_group(manager)]),
+        Some(SettingsPage::Support.id()),
+    );
+    stack.add_named(
+        &settings_detail_page(vec![account_data_group(manager)]),
+        Some(SettingsPage::AccountData.id()),
+    );
+
+    let sidebar = settings_menu(state, &stack);
+    let sidebar_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_width(300)
+        .child(&sidebar)
+        .build();
+    sidebar_scroll.set_width_request(320);
+    root.append(&sidebar_scroll);
+
+    let separator = gtk::Separator::new(gtk::Orientation::Vertical);
+    root.append(&separator);
+
+    let detail_scroll = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .child(&stack)
+        .build();
+    root.append(&detail_scroll);
+
+    let default_page = if state.account.is_some() {
+        SettingsPage::Profile
+    } else {
+        SettingsPage::Messaging
+    };
+    stack.set_visible_child_name(default_page.id());
+
+    root.upcast()
+}
+
+fn settings_detail_page(groups: Vec<adw::PreferencesGroup>) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::new();
+    page.set_margin_top(12);
+    page.set_margin_bottom(24);
+    page.set_margin_start(12);
+    page.set_margin_end(24);
+    for group in groups {
+        page.add(&group);
+    }
+    page
+}
+
+fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
+    let page = adw::PreferencesPage::new();
+    page.set_margin_top(12);
+    page.set_margin_bottom(24);
+    page.set_margin_start(12);
+    page.set_margin_end(12);
+
+    if let Some(account) = state.account.as_ref() {
+        let group = adw::PreferencesGroup::new();
+        let title = if account.display_name.is_empty() {
+            "Profile"
+        } else {
+            &account.display_name
+        };
+        group.add(&settings_menu_row(
+            SettingsPage::Profile,
+            title,
+            Some("My profile"),
+            stack,
+        ));
+        page.add(&group);
     }
 
-    page.add(&messaging_group(&state.preferences, manager));
-    page.add(&nearby_group(&state.preferences, manager));
-    page.add(&media_group(&state.preferences, manager));
-    page.add(&relays_group(&state.preferences, manager));
-    page.add(&security_group(manager));
-    page.add(&updates_group());
-    page.add(&about_group(state));
-    page.add(&support_group(manager));
+    let primary = adw::PreferencesGroup::new();
+    for settings_page in [
+        SettingsPage::Messaging,
+        SettingsPage::Notifications,
+        SettingsPage::Media,
+        SettingsPage::Nearby,
+        SettingsPage::MessageServers,
+    ] {
+        primary.add(&settings_menu_row(
+            settings_page,
+            settings_page.title(),
+            None,
+            stack,
+        ));
+    }
+    page.add(&primary);
 
-    page.upcast()
+    let secondary = adw::PreferencesGroup::new();
+    for settings_page in [
+        SettingsPage::Updates,
+        SettingsPage::About,
+        SettingsPage::Support,
+        SettingsPage::AccountData,
+    ] {
+        secondary.add(&settings_menu_row(
+            settings_page,
+            settings_page.title(),
+            None,
+            stack,
+        ));
+    }
+    page.add(&secondary);
+
+    page
+}
+
+fn settings_menu_row(
+    page: SettingsPage,
+    title: &str,
+    subtitle: Option<&str>,
+    stack: &gtk::Stack,
+) -> adw::ActionRow {
+    let row = adw::ActionRow::builder()
+        .title(title)
+        .subtitle(subtitle.unwrap_or_default())
+        .activatable(true)
+        .build();
+    let icon = gtk::Image::from_icon_name(page.icon_name());
+    row.add_prefix(&icon);
+    let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+    chevron.add_css_class("dim-label");
+    row.add_suffix(&chevron);
+    let stack = stack.clone();
+    row.connect_activated(move |_| {
+        stack.set_visible_child_name(page.id());
+    });
+    row
 }
 
 fn nearby_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
@@ -448,7 +667,18 @@ fn messaging_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw
         group.add(&startup_row);
     }
 
-    let notifications = adw::SwitchRow::builder().title("Notifications").build();
+    group
+}
+
+fn notifications_group(
+    prefs: &PreferencesSnapshot,
+    manager: &Rc<AppManager>,
+) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("Notifications")
+        .build();
+
+    let notifications = adw::SwitchRow::builder().title("Enabled").build();
     notifications.set_active(prefs.desktop_notifications_enabled);
     {
         let manager = manager.clone();
@@ -529,8 +759,10 @@ fn relays_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::P
     group
 }
 
-fn security_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
-    let group = adw::PreferencesGroup::builder().title("Security").build();
+fn account_data_group(manager: &Rc<AppManager>) -> adw::PreferencesGroup {
+    let group = adw::PreferencesGroup::builder()
+        .title("Account data")
+        .build();
 
     let logout = adw::ActionRow::builder()
         .title("Sign out of this device")

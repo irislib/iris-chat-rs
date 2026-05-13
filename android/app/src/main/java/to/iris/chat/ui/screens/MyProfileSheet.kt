@@ -43,10 +43,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -81,6 +83,38 @@ private const val NotificationsServerProjectLabel = "Notification server source 
 private enum class SecretExportKind {
     Owner,
     Device,
+}
+
+private enum class SettingsPage(
+    val title: String,
+    val tag: String,
+) {
+    Profile("Profile", "settingsProfileRow"),
+    Messaging("Messaging", "settingsMessagingRow"),
+    Notifications("Notifications", "settingsNotificationsRow"),
+    Media("Media", "settingsMediaRow"),
+    Nearby("Nearby", "settingsNearbyRow"),
+    MessageServers("Message servers", "settingsMessageServersRow"),
+    Security("Security", "settingsSecurityRow"),
+    About("About", "settingsAboutRow"),
+    Support("Support", "settingsSupportRow"),
+    AccountData("Account data", "settingsAccountDataRow"),
+    ;
+
+    companion object {
+        val menuPages =
+            listOf(
+                Messaging,
+                Notifications,
+                Media,
+                Nearby,
+                MessageServers,
+                Security,
+                About,
+                Support,
+                AccountData,
+            )
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -139,6 +173,7 @@ fun MyProfileSheet(
     var newRelayUrl by remember { mutableStateOf("") }
     var editingRelayUrl by remember { mutableStateOf<String?>(null) }
     var editingRelayDraft by remember { mutableStateOf("") }
+    var selectedPage by remember { mutableStateOf<SettingsPage?>(null) }
     val trimmedPictureUrl = pictureUrl?.trim().orEmpty()
     val isHttpPictureUrl =
         trimmedPictureUrl.startsWith("http://") || trimmedPictureUrl.startsWith("https://")
@@ -171,8 +206,14 @@ fun MyProfileSheet(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             IrisTopBar(
-                title = "Settings",
-                onBack = onDismiss,
+                title = selectedPage?.title ?: "Settings",
+                onBack = {
+                    if (selectedPage == null) {
+                        onDismiss()
+                    } else {
+                        selectedPage = null
+                    }
+                },
             )
         },
     ) { padding ->
@@ -182,645 +223,610 @@ fun MyProfileSheet(
         // route taps the normal way — only inert `Text` picks up
         // selection.
         SelectionContainer {
-        Column(
-            modifier =
-                Modifier
-                    .testTag("myProfileSheet")
-                    .fillMaxSize()
-                    .padding(padding)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            IrisSectionCard {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IrisAvatar(
-                        label = displayName.ifBlank { "Profile" },
-                        size = 54.dp,
-                        emphasize = true,
+            Column(
+                modifier =
+                    Modifier
+                        .testTag("myProfileSheet")
+                        .fillMaxSize()
+                        .padding(padding)
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                if (selectedPage == null) {
+                    SettingsProfileMenuRow(
+                        displayName = displayName,
                         imageUrl = proxiedAvatarUrl,
                         imageData = avatarBytes,
-                        modifier =
-                            Modifier
-                                .then(
-                                    if (isHttpPictureUrl || (isHashtreePictureUrl && avatarBytes != null)) {
-                                        Modifier
-                                            .clickable { showProfilePicture = true }
-                                            .testTag("myProfilePictureButton")
-                                    } else {
-                                        Modifier
-                                    },
-                                ),
+                        onClick = { selectedPage = SettingsPage.Profile },
                     )
-                    Column {
-                        Text(
-                            text = displayName.ifBlank { "Profile" },
-                            style = MaterialTheme.typography.headlineSmall,
-                        )
-                        Text(
-                            text = "My profile",
-                            style = MaterialTheme.typography.titleMedium,
-                            color = IrisTheme.palette.muted,
-                        )
+                    SettingsMenuSection {
+                        SettingsPage.menuPages.take(6).forEach { page ->
+                            SettingsMenuRow(page = page, onClick = { selectedPage = page })
+                        }
                     }
-                }
-                TextField(
-                    value = profileName,
-                    onValueChange = { profileName = it },
-                    label = { Text("Display name") },
-                    singleLine = true,
-                    enabled = canManageDevices,
-                    modifier = Modifier.fillMaxWidth().testTag("myProfileDisplayNameInput"),
-                )
-                if (canManageDevices) {
-                    IrisSecondaryButton(
-                        text = "Change picture",
-                        onClick = { profilePicturePicker.launch(arrayOf("image/*")) },
-                        enabled = true,
-                        modifier = Modifier.testTag("myProfilePictureUploadButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.Image,
-                                contentDescription = null,
-                            )
-                        },
-                    )
-                }
-                IrisSecondaryButton(
-                    text = "Save profile",
-                    onClick = {
-                        appManager.updateProfileMetadata(
-                            name = profileName,
-                            pictureUrl = pictureUrl,
-                        )
-                    },
-                    enabled = canManageDevices &&
-                        profileName.trim().isNotEmpty() &&
-                        profileName.trim() != displayName.trim(),
-                    modifier = Modifier.testTag("myProfileSaveProfileButton"),
-                )
-                Text(
-                    text = "Scan this code on another device to link it.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = IrisTheme.palette.muted,
-                )
-                if (canManageDevices) {
-                    IrisPrimaryButton(
-                        text = "Manage devices",
-                        onClick = onManageDevices,
-                        modifier = Modifier.testTag("myProfileManageDevicesButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.Devices,
-                                contentDescription = null,
-                            )
-                        },
-                    )
-                }
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (qrBitmap != null) {
-                        Image(
-                            bitmap = qrBitmap.asImageBitmap(),
-                            contentDescription = "My user ID code",
-                            modifier =
-                                Modifier
-                                    .size(260.dp)
-                                    .testTag("myProfileQrCode"),
-                        )
+                    SettingsMenuSection {
+                        SettingsPage.menuPages.drop(6).forEach { page ->
+                            SettingsMenuRow(page = page, onClick = { selectedPage = page })
+                        }
                     }
-                }
-                IrisInlineAction(
-                    text = "Copy user ID",
-                    onClick = { clipboard.setText("User ID", npub) },
-                ) {
-                    Icon(imageVector = IrisIcons.Copy, contentDescription = null)
-                }
-                IrisInlineAction(
-                    text = "Copy this device code",
-                    onClick = { clipboard.setText("Link code", deviceNpub) },
-                ) {
-                    Icon(imageVector = IrisIcons.Copy, contentDescription = null)
-                }
-            }
-
-            IrisSectionCard {
-                Text(
-                    text = "Messaging",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Typing indicators",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = sendTypingIndicators,
-                        onCheckedChange = { enabled ->
-                            appManager.dispatch(AppAction.SetTypingIndicatorsEnabled(enabled))
-                        },
-                        modifier = Modifier.testTag("myProfileTypingIndicatorsSwitch"),
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Received / seen",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = sendReadReceipts,
-                        onCheckedChange = { enabled ->
-                            appManager.dispatch(AppAction.SetReadReceiptsEnabled(enabled))
-                        },
-                        modifier = Modifier.testTag("myProfileReadReceiptsSwitch"),
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Image proxy",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = imageProxyEnabled,
-                        onCheckedChange = { enabled ->
-                            appManager.dispatch(AppAction.SetImageProxyEnabled(enabled))
-                        },
-                        modifier = Modifier.testTag("myProfileImageProxySwitch"),
-                    )
-                }
-                TextField(
-                    value = imageProxyUrl,
-                    onValueChange = { value ->
-                        appManager.dispatch(AppAction.SetImageProxyUrl(value))
-                    },
-                    label = { Text("Proxy URL") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxyUrlInput"),
-                )
-                TextField(
-                    value = imageProxyKeyHex,
-                    onValueChange = { value ->
-                        appManager.dispatch(AppAction.SetImageProxyKeyHex(value))
-                    },
-                    label = { Text("Proxy key") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxyKeyInput"),
-                )
-                TextField(
-                    value = imageProxySaltHex,
-                    onValueChange = { value ->
-                        appManager.dispatch(AppAction.SetImageProxySaltHex(value))
-                    },
-                    label = { Text("Proxy salt") },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxySaltInput"),
-                )
-                IrisSecondaryButton(
-                    text = "Reset image proxy",
-                    onClick = {
-                        appManager.dispatch(AppAction.ResetImageProxySettings)
-                    },
-                    modifier = Modifier.testTag("myProfileResetImageProxyButton"),
-                )
-            }
-
-            IrisSectionCard {
-                Text(
-                    text = "Nearby",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Bluetooth",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = preferences.nearbyBluetoothEnabled,
-                        onCheckedChange = onNearbyBluetoothChange,
-                        modifier = Modifier.testTag("myProfileNearbyBluetoothSwitch"),
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Wi-Fi",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = preferences.nearbyLanEnabled,
-                        onCheckedChange = onNearbyLanChange,
-                        modifier = Modifier.testTag("myProfileNearbyLanSwitch"),
-                    )
-                }
-            }
-
-            IrisSectionCard {
-                Text(
-                    text = "Notifications",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Enabled",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = desktopNotificationsEnabled,
-                        onCheckedChange = { enabled ->
-                            appManager.dispatch(AppAction.SetDesktopNotificationsEnabled(enabled))
-                        },
-                        modifier = Modifier.testTag("myProfileDesktopNotificationsSwitch"),
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Invite accepted",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = preferences.inviteAcceptanceNotificationsEnabled,
-                        onCheckedChange = { enabled ->
-                            appManager.dispatch(
-                                AppAction.SetInviteAcceptanceNotificationsEnabled(enabled),
-                            )
-                        },
-                        modifier = Modifier.testTag("myProfileInviteAcceptedNotificationsSwitch"),
-                    )
-                }
-                TextField(
-                    value = preferences.mobilePushServerUrl,
-                    onValueChange = { value ->
-                        appManager.dispatch(AppAction.SetMobilePushServerUrl(value))
-                    },
-                    label = { Text("Server URL") },
-                    placeholder = { Text(NotificationsServerDefault) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth().testTag("myProfileNotificationsServerUrlInput"),
-                )
-                IrisInlineAction(
-                    text = NotificationsServerProjectLabel,
-                    onClick = {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(NotificationsServerProjectUrl)),
-                        )
-                    },
-                    modifier = Modifier.testTag("myProfileNotificationsServerProjectLink"),
-                ) {
-                    Icon(imageVector = IrisIcons.File, contentDescription = null)
-                }
-            }
-
-            IrisSectionCard {
-                Text(
-                    text = "About",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Text(
-                    text = "Version",
-                    style = MaterialTheme.typography.titleSmall,
-                )
-                Text(
-                    text = appManager.buildSummary(),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.testTag("myProfileVersionValue"),
-                )
-                IrisInlineAction(
-                    text = "Source code",
-                    onClick = {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, Uri.parse(IrisSourceUrl)),
-                        )
-                    },
-                    modifier = Modifier.testTag("myProfileSourceCodeButton"),
-                ) {
-                    Icon(imageVector = IrisIcons.File, contentDescription = null)
-                }
-                Text(
-                    text = IrisSourceLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                    modifier = Modifier.testTag("myProfileSourceCodeValue"),
-                )
-            }
-
-            if (appManager.isTrustedTestBuild()) {
-                IrisSectionCard {
-                    Text(
-                        text = "Test build",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
-                    Text(
-                        text = "For trusted testing only.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = IrisTheme.palette.muted,
-                    )
-                }
-            }
-
-            IrisSectionCard {
-                Text(
-                    text = "Security",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                if (canManageDevices) {
-                    IrisSecondaryButton(
-                        text = "Export secret key",
-                        onClick = { pendingSecretExport = SecretExportKind.Owner },
-                        modifier = Modifier.testTag("myProfileExportOwnerKeyButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.Key,
-                                contentDescription = null,
-                            )
-                        },
-                    )
-                }
-                IrisSecondaryButton(
-                    text = "Export this device's key",
-                    onClick = { pendingSecretExport = SecretExportKind.Device },
-                    modifier = Modifier.testTag("myProfileExportDeviceKeyButton"),
-                    icon = {
-                        Icon(
-                            imageVector = IrisIcons.Key,
-                            contentDescription = null,
-                        )
-                    },
-                )
-            }
-
-            IrisSectionCard {
-                Text(
-                    text = "Message servers",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                relayUrls.forEach { relayUrl ->
-                    if (editingRelayUrl == relayUrl) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TextField(
-                                value = editingRelayDraft,
-                                onValueChange = { editingRelayDraft = it },
-                                singleLine = true,
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .testTag("myProfileEditRelayInput"),
-                            )
-                            TextButton(
-                                onClick = {
-                                    appManager.dispatch(
-                                        AppAction.UpdateNostrRelay(relayUrl, editingRelayDraft),
+                } else {
+                    when (selectedPage) {
+                        SettingsPage.Profile -> {
+                            IrisSectionCard {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    IrisAvatar(
+                                        label = displayName.ifBlank { "Profile" },
+                                        size = 54.dp,
+                                        emphasize = true,
+                                        imageUrl = proxiedAvatarUrl,
+                                        imageData = avatarBytes,
+                                        modifier =
+                                            Modifier
+                                                .then(
+                                                    if (isHttpPictureUrl || (isHashtreePictureUrl && avatarBytes != null)) {
+                                                        Modifier
+                                                            .clickable { showProfilePicture = true }
+                                                            .testTag("myProfilePictureButton")
+                                                    } else {
+                                                        Modifier
+                                                    },
+                                                ),
                                     )
-                                    editingRelayUrl = null
-                                    editingRelayDraft = ""
-                                },
-                            ) {
-                                Text("Save")
-                            }
-                            TextButton(
-                                onClick = {
-                                    editingRelayUrl = null
-                                    editingRelayDraft = ""
-                                },
-                            ) {
-                                Text("Cancel")
+                                    Column {
+                                        Text(
+                                            text = displayName.ifBlank { "Profile" },
+                                            style = MaterialTheme.typography.headlineSmall,
+                                        )
+                                        Text(
+                                            text = "My profile",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = IrisTheme.palette.muted,
+                                        )
+                                    }
+                                }
+                                TextField(
+                                    value = profileName,
+                                    onValueChange = { profileName = it },
+                                    label = { Text("Display name") },
+                                    singleLine = true,
+                                    enabled = canManageDevices,
+                                    modifier = Modifier.fillMaxWidth().testTag("myProfileDisplayNameInput"),
+                                )
+                                if (canManageDevices) {
+                                    IrisSecondaryButton(
+                                        text = "Change picture",
+                                        onClick = { profilePicturePicker.launch(arrayOf("image/*")) },
+                                        enabled = true,
+                                        modifier = Modifier.testTag("myProfilePictureUploadButton"),
+                                        icon = {
+                                            Icon(
+                                                imageVector = IrisIcons.Image,
+                                                contentDescription = null,
+                                            )
+                                        },
+                                    )
+                                }
+                                IrisSecondaryButton(
+                                    text = "Save profile",
+                                    onClick = {
+                                        appManager.updateProfileMetadata(
+                                            name = profileName,
+                                            pictureUrl = pictureUrl,
+                                        )
+                                    },
+                                    enabled = canManageDevices &&
+                                        profileName.trim().isNotEmpty() &&
+                                        profileName.trim() != displayName.trim(),
+                                    modifier = Modifier.testTag("myProfileSaveProfileButton"),
+                                )
+                                if (canManageDevices) {
+                                    IrisPrimaryButton(
+                                        text = "Manage devices",
+                                        onClick = onManageDevices,
+                                        modifier = Modifier.testTag("myProfileManageDevicesButton"),
+                                        icon = {
+                                            Icon(
+                                                imageVector = IrisIcons.Devices,
+                                                contentDescription = null,
+                                            )
+                                        },
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    if (qrBitmap != null) {
+                                        Image(
+                                            bitmap = qrBitmap.asImageBitmap(),
+                                            contentDescription = "My user ID code",
+                                            modifier =
+                                                Modifier
+                                                    .size(260.dp)
+                                                    .testTag("myProfileQrCode"),
+                                        )
+                                    }
+                                }
+                                IrisInlineAction(
+                                    text = "Copy user ID",
+                                    onClick = { clipboard.setText("User ID", npub) },
+                                ) {
+                                    Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                                }
+                                IrisInlineAction(
+                                    text = "Copy this device code",
+                                    onClick = { clipboard.setText("Link code", deviceNpub) },
+                                ) {
+                                    Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                                }
                             }
                         }
-                    } else {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Box(
-                                modifier =
-                                    Modifier
-                                        .size(8.dp)
-                                        .background(relayStatusColor(networkStatus, relayUrl), CircleShape),
-                            )
-                            Text(
-                                text = relayUrl,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier =
-                                    Modifier
-                                        .weight(1f)
-                                        .testTag("myProfileRelayRow"),
-                            )
-                            relayStatusLabel(networkStatus, relayUrl)?.let { label ->
+
+                        SettingsPage.Messaging -> {
+                            IrisSectionCard {
                                 Text(
-                                    text = label,
-                                    style = MaterialTheme.typography.labelSmall,
+                                    text = "Messaging",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                SettingsToggleRow(
+                                    title = "Typing indicators",
+                                    checked = sendTypingIndicators,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetTypingIndicatorsEnabled(enabled))
+                                    },
+                                    tag = "myProfileTypingIndicatorsSwitch",
+                                )
+                                SettingsToggleRow(
+                                    title = "Received / seen",
+                                    checked = sendReadReceipts,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetReadReceiptsEnabled(enabled))
+                                    },
+                                    tag = "myProfileReadReceiptsSwitch",
+                                )
+                            }
+                        }
+
+                        SettingsPage.Notifications -> {
+                            IrisSectionCard {
+                                Text(
+                                    text = "Notifications",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                SettingsToggleRow(
+                                    title = "Enabled",
+                                    checked = desktopNotificationsEnabled,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetDesktopNotificationsEnabled(enabled))
+                                    },
+                                    tag = "myProfileDesktopNotificationsSwitch",
+                                )
+                                SettingsToggleRow(
+                                    title = "Invite accepted",
+                                    checked = preferences.inviteAcceptanceNotificationsEnabled,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(
+                                            AppAction.SetInviteAcceptanceNotificationsEnabled(enabled),
+                                        )
+                                    },
+                                    tag = "myProfileInviteAcceptedNotificationsSwitch",
+                                )
+                                TextField(
+                                    value = preferences.mobilePushServerUrl,
+                                    onValueChange = { value ->
+                                        appManager.dispatch(AppAction.SetMobilePushServerUrl(value))
+                                    },
+                                    label = { Text("Server URL") },
+                                    placeholder = { Text(NotificationsServerDefault) },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().testTag("myProfileNotificationsServerUrlInput"),
+                                )
+                                IrisInlineAction(
+                                    text = NotificationsServerProjectLabel,
+                                    onClick = {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(NotificationsServerProjectUrl)),
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("myProfileNotificationsServerProjectLink"),
+                                ) {
+                                    Icon(imageVector = IrisIcons.File, contentDescription = null)
+                                }
+                            }
+                        }
+
+                        SettingsPage.Media -> {
+                            IrisSectionCard {
+                                Text(
+                                    text = "Media",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                SettingsToggleRow(
+                                    title = "Image proxy",
+                                    checked = imageProxyEnabled,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetImageProxyEnabled(enabled))
+                                    },
+                                    tag = "myProfileImageProxySwitch",
+                                )
+                                TextField(
+                                    value = imageProxyUrl,
+                                    onValueChange = { value ->
+                                        appManager.dispatch(AppAction.SetImageProxyUrl(value))
+                                    },
+                                    label = { Text("Proxy URL") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxyUrlInput"),
+                                )
+                                TextField(
+                                    value = imageProxyKeyHex,
+                                    onValueChange = { value ->
+                                        appManager.dispatch(AppAction.SetImageProxyKeyHex(value))
+                                    },
+                                    label = { Text("Proxy key") },
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxyKeyInput"),
+                                )
+                                TextField(
+                                    value = imageProxySaltHex,
+                                    onValueChange = { value ->
+                                        appManager.dispatch(AppAction.SetImageProxySaltHex(value))
+                                    },
+                                    label = { Text("Proxy salt") },
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxySaltInput"),
+                                )
+                                IrisSecondaryButton(
+                                    text = "Reset image proxy",
+                                    onClick = {
+                                        appManager.dispatch(AppAction.ResetImageProxySettings)
+                                    },
+                                    modifier = Modifier.testTag("myProfileResetImageProxyButton"),
+                                )
+                            }
+                        }
+
+                        SettingsPage.Nearby -> {
+                            IrisSectionCard {
+                                Text(
+                                    text = "Nearby",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                SettingsToggleRow(
+                                    title = "Bluetooth",
+                                    checked = preferences.nearbyBluetoothEnabled,
+                                    onCheckedChange = onNearbyBluetoothChange,
+                                    tag = "myProfileNearbyBluetoothSwitch",
+                                )
+                                SettingsToggleRow(
+                                    title = "Wi-Fi",
+                                    checked = preferences.nearbyLanEnabled,
+                                    onCheckedChange = onNearbyLanChange,
+                                    tag = "myProfileNearbyLanSwitch",
+                                )
+                            }
+                        }
+
+                        SettingsPage.MessageServers -> {
+                            IrisSectionCard {
+                                Text(
+                                    text = "Message servers",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                relayUrls.forEach { relayUrl ->
+                                    if (editingRelayUrl == relayUrl) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            TextField(
+                                                value = editingRelayDraft,
+                                                onValueChange = { editingRelayDraft = it },
+                                                singleLine = true,
+                                                modifier =
+                                                    Modifier
+                                                        .weight(1f)
+                                                        .testTag("myProfileEditRelayInput"),
+                                            )
+                                            TextButton(
+                                                onClick = {
+                                                    appManager.dispatch(
+                                                        AppAction.UpdateNostrRelay(relayUrl, editingRelayDraft),
+                                                    )
+                                                    editingRelayUrl = null
+                                                    editingRelayDraft = ""
+                                                },
+                                            ) {
+                                                Text("Save")
+                                            }
+                                            TextButton(
+                                                onClick = {
+                                                    editingRelayUrl = null
+                                                    editingRelayDraft = ""
+                                                },
+                                            ) {
+                                                Text("Cancel")
+                                            }
+                                        }
+                                    } else {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Box(
+                                                modifier =
+                                                    Modifier
+                                                        .size(8.dp)
+                                                        .background(relayStatusColor(networkStatus, relayUrl), CircleShape),
+                                            )
+                                            Text(
+                                                text = relayUrl,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier =
+                                                    Modifier
+                                                        .weight(1f)
+                                                        .testTag("myProfileRelayRow"),
+                                            )
+                                            relayStatusLabel(networkStatus, relayUrl)?.let { label ->
+                                                Text(
+                                                    text = label,
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = IrisTheme.palette.muted,
+                                                )
+                                            }
+                                            IconButton(
+                                                onClick = {
+                                                    editingRelayUrl = relayUrl
+                                                    editingRelayDraft = relayUrl
+                                                },
+                                            ) {
+                                                Icon(IrisIcons.Edit, contentDescription = "Edit server")
+                                            }
+                                            IconButton(
+                                                onClick = {
+                                                    appManager.dispatch(AppAction.RemoveNostrRelay(relayUrl))
+                                                },
+                                            ) {
+                                                Icon(IrisIcons.DeleteForever, contentDescription = "Delete server")
+                                            }
+                                        }
+                                    }
+                                }
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    TextField(
+                                        value = newRelayUrl,
+                                        onValueChange = { newRelayUrl = it },
+                                        label = { Text("Server URL") },
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f).testTag("myProfileNewRelayInput"),
+                                    )
+                                    IrisSecondaryButton(
+                                        text = "Add",
+                                        onClick = {
+                                            appManager.dispatch(AppAction.AddNostrRelay(newRelayUrl))
+                                            newRelayUrl = ""
+                                        },
+                                        modifier = Modifier.testTag("myProfileAddRelayButton"),
+                                    )
+                                }
+                                IrisSecondaryButton(
+                                    text = "Reset servers",
+                                    onClick = { appManager.dispatch(AppAction.ResetNostrRelays) },
+                                    modifier = Modifier.testTag("myProfileResetRelaysButton"),
+                                )
+                            }
+                        }
+
+                        SettingsPage.Security -> {
+                            IrisSectionCard {
+                                Text(
+                                    text = "Security",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                if (canManageDevices) {
+                                    IrisSecondaryButton(
+                                        text = "Export secret key",
+                                        onClick = { pendingSecretExport = SecretExportKind.Owner },
+                                        modifier = Modifier.testTag("myProfileExportOwnerKeyButton"),
+                                        icon = {
+                                            Icon(
+                                                imageVector = IrisIcons.Key,
+                                                contentDescription = null,
+                                            )
+                                        },
+                                    )
+                                }
+                                IrisSecondaryButton(
+                                    text = "Export this device's key",
+                                    onClick = { pendingSecretExport = SecretExportKind.Device },
+                                    modifier = Modifier.testTag("myProfileExportDeviceKeyButton"),
+                                    icon = {
+                                        Icon(
+                                            imageVector = IrisIcons.Key,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                )
+                            }
+                        }
+
+                        SettingsPage.About -> {
+                            IrisSectionCard {
+                                Text(
+                                    text = "About",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                if (appManager.isTrustedTestBuild()) {
+                                    Text(
+                                        text = "Test build",
+                                        style = MaterialTheme.typography.titleSmall,
+                                    )
+                                }
+                                Text(
+                                    text = "Version",
+                                    style = MaterialTheme.typography.titleSmall,
+                                )
+                                Text(
+                                    text = appManager.buildSummary(),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.testTag("myProfileVersionValue"),
+                                )
+                                IrisInlineAction(
+                                    text = "Source code",
+                                    onClick = {
+                                        context.startActivity(
+                                            Intent(Intent.ACTION_VIEW, Uri.parse(IrisSourceUrl)),
+                                        )
+                                    },
+                                    modifier = Modifier.testTag("myProfileSourceCodeButton"),
+                                ) {
+                                    Icon(imageVector = IrisIcons.File, contentDescription = null)
+                                }
+                                Text(
+                                    text = IrisSourceLabel,
+                                    style = MaterialTheme.typography.bodySmall,
                                     color = IrisTheme.palette.muted,
+                                    modifier = Modifier.testTag("myProfileSourceCodeValue"),
                                 )
                             }
-                            IconButton(
-                                onClick = {
-                                    editingRelayUrl = relayUrl
-                                    editingRelayDraft = relayUrl
-                                },
-                            ) {
-                                Icon(IrisIcons.Edit, contentDescription = "Edit server")
-                            }
-                            IconButton(
-                                onClick = {
-                                    appManager.dispatch(AppAction.RemoveNostrRelay(relayUrl))
-                                },
-                            ) {
-                                Icon(IrisIcons.DeleteForever, contentDescription = "Delete server")
-                            }
                         }
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    TextField(
-                        value = newRelayUrl,
-                        onValueChange = { newRelayUrl = it },
-                        label = { Text("Server URL") },
-                        singleLine = true,
-                        modifier = Modifier.weight(1f).testTag("myProfileNewRelayInput"),
-                    )
-                    IrisSecondaryButton(
-                        text = "Add",
-                        onClick = {
-                            appManager.dispatch(AppAction.AddNostrRelay(newRelayUrl))
-                            newRelayUrl = ""
-                        },
-                        modifier = Modifier.testTag("myProfileAddRelayButton"),
-                    )
-                }
-                IrisSecondaryButton(
-                    text = "Reset servers",
-                    onClick = { appManager.dispatch(AppAction.ResetNostrRelays) },
-                    modifier = Modifier.testTag("myProfileResetRelaysButton"),
-                )
-            }
 
-            IrisSectionCard {
-                Text(
-                    text = "Support",
-                    style = MaterialTheme.typography.titleMedium,
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        text = "Debug logging",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Switch(
-                        checked = preferences.debugLoggingEnabled,
-                        onCheckedChange = { enabled ->
-                            appManager.dispatch(AppAction.SetDebugLoggingEnabled(enabled))
-                        },
-                        modifier = Modifier.testTag("myProfileDebugLoggingSwitch"),
-                    )
-                }
-                Text(
-                    text = "Build ${appManager.buildSummary()}",
-                    style = MaterialTheme.typography.bodyMedium,
-                )
-                networkStatus?.let { status ->
-                    Text(
-                        text =
-                            "Network ${if (status.syncing) "syncing" else "idle"} · " +
-                                "${status.connectedRelayCount}/${status.relayUrls.size} connected · " +
-                                "${status.recentEventCount} updates",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = IrisTheme.palette.muted,
-                        modifier = Modifier.testTag("myProfileNetworkStatusValue"),
-                    )
-                    status.lastDebugCategory?.let { category ->
-                        Text(
-                            text = "Last debug $category",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = IrisTheme.palette.muted,
-                        )
-                    }
-                }
-                if (canShareSupport) {
-                    IrisPrimaryButton(
-                        text = if (supportBusy) "Preparing…" else "Share debug dump",
-                        onClick = {
-                            coroutineScope.launch {
-                                supportBusy = true
-                                val bundle = appManager.exportSupportBundleJson()
-                                supportBusy = false
-                                shareText(
-                                    context = context,
-                                    text = bundle,
-                                    title = "Share debug dump",
-                                    mimeType = "application/json",
-                                    subject = "Iris Chat debug dump",
+                        SettingsPage.Support -> {
+                            IrisSectionCard {
+                                Text(
+                                    text = "Support",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                SettingsToggleRow(
+                                    title = "Debug logging",
+                                    checked = preferences.debugLoggingEnabled,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetDebugLoggingEnabled(enabled))
+                                    },
+                                    tag = "myProfileDebugLoggingSwitch",
+                                )
+                                Text(
+                                    text = "Build ${appManager.buildSummary()}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                )
+                                networkStatus?.let { status ->
+                                    Text(
+                                        text =
+                                            "Network ${if (status.syncing) "syncing" else "idle"} · " +
+                                                "${status.connectedRelayCount}/${status.relayUrls.size} connected · " +
+                                                "${status.recentEventCount} updates",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = IrisTheme.palette.muted,
+                                        modifier = Modifier.testTag("myProfileNetworkStatusValue"),
+                                    )
+                                    status.lastDebugCategory?.let { category ->
+                                        Text(
+                                            text = "Last debug $category",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = IrisTheme.palette.muted,
+                                        )
+                                    }
+                                }
+                                if (canShareSupport) {
+                                    IrisPrimaryButton(
+                                        text = if (supportBusy) "Preparing…" else "Share debug dump",
+                                        onClick = {
+                                            coroutineScope.launch {
+                                                supportBusy = true
+                                                val bundle = appManager.exportSupportBundleJson()
+                                                supportBusy = false
+                                                shareText(
+                                                    context = context,
+                                                    text = bundle,
+                                                    title = "Share debug dump",
+                                                    mimeType = "application/json",
+                                                    subject = "Iris Chat debug dump",
+                                                )
+                                            }
+                                        },
+                                        enabled = !supportBusy,
+                                        modifier = Modifier.testTag("myProfileShareSupportBundleButton"),
+                                        icon = {
+                                            Icon(
+                                                imageVector = IrisIcons.Share,
+                                                contentDescription = null,
+                                            )
+                                        },
+                                    )
+                                }
+                                IrisSecondaryButton(
+                                    text = "Copy debug dump",
+                                    onClick = {
+                                        coroutineScope.launch {
+                                            supportBusy = true
+                                            val bundle = appManager.exportSupportBundleJson()
+                                            supportBusy = false
+                                            clipboard.setText("Debug dump", bundle)
+                                            Toast.makeText(context, "Debug dump copied", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    enabled = !supportBusy,
+                                    modifier = Modifier.testTag("myProfileCopySupportBundleButton"),
                                 )
                             }
-                        },
-                        enabled = !supportBusy,
-                        modifier = Modifier.testTag("myProfileShareSupportBundleButton"),
-                        icon = {
-                            Icon(
-                                imageVector = IrisIcons.Share,
-                                contentDescription = null,
-                            )
-                        },
-                    )
-                }
-                IrisSecondaryButton(
-                    text = "Copy debug dump",
-                    onClick = {
-                        coroutineScope.launch {
-                            supportBusy = true
-                            val bundle = appManager.exportSupportBundleJson()
-                            supportBusy = false
-                            clipboard.setText("Debug dump", bundle)
-                            Toast.makeText(context, "Debug dump copied", Toast.LENGTH_SHORT).show()
                         }
-                    },
-                    enabled = !supportBusy,
-                    modifier = Modifier.testTag("myProfileCopySupportBundleButton"),
-                )
-            }
 
-            IrisSectionCard {
-                Text(
-                    text = "Danger Zone",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                Text(
-                    text = "Your account, secret keys, messages, and cached files are removed from this device.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = IrisTheme.palette.muted,
-                    modifier = Modifier.testTag("myProfileDangerZoneText"),
-                )
-                IrisSecondaryButton(
-                    text = "Logout",
-                    onClick = { showLogoutConfirmation = true },
-                    modifier = Modifier.testTag("myProfileLogoutButton"),
-                    icon = {
-                        Icon(
-                            imageVector = IrisIcons.Logout,
-                            contentDescription = null,
-                        )
-                    },
-                )
-                IrisSecondaryButton(
-                    text = "Delete all data",
-                    onClick = { showDeleteAllConfirmation = true },
-                    modifier = Modifier.testTag("myProfileDeleteAllDataButton"),
-                    icon = {
-                        Icon(
-                            imageVector = IrisIcons.DeleteForever,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.error,
-                        )
-                    },
-                )
+                        SettingsPage.AccountData -> {
+                            IrisSectionCard {
+                                Text(
+                                    text = "Account data",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.error,
+                                )
+                                Text(
+                                    text = "Your account, secret keys, messages, and cached files are removed from this device.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = IrisTheme.palette.muted,
+                                    modifier = Modifier.testTag("myProfileDangerZoneText"),
+                                )
+                                IrisSecondaryButton(
+                                    text = "Logout",
+                                    onClick = { showLogoutConfirmation = true },
+                                    modifier = Modifier.testTag("myProfileLogoutButton"),
+                                    icon = {
+                                        Icon(
+                                            imageVector = IrisIcons.Logout,
+                                            contentDescription = null,
+                                        )
+                                    },
+                                )
+                                IrisSecondaryButton(
+                                    text = "Delete all data",
+                                    onClick = { showDeleteAllConfirmation = true },
+                                    modifier = Modifier.testTag("myProfileDeleteAllDataButton"),
+                                    icon = {
+                                        Icon(
+                                            imageVector = IrisIcons.DeleteForever,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.error,
+                                        )
+                                    },
+                                )
+                            }
+                        }
+
+                        null -> Unit
+                    }
+                }
             }
-        }
         }
     }
 
@@ -910,6 +916,145 @@ fun MyProfileSheet(
         )
     }
 }
+
+@Composable
+private fun SettingsProfileMenuRow(
+    displayName: String,
+    imageUrl: String?,
+    imageData: ByteArray?,
+    onClick: () -> Unit,
+) {
+    IrisSectionCard {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onClick)
+                    .testTag(SettingsPage.Profile.tag),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IrisAvatar(
+                label = displayName.ifBlank { "Profile" },
+                size = 54.dp,
+                emphasize = true,
+                imageUrl = imageUrl,
+                imageData = imageData,
+            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = displayName.ifBlank { "Profile" },
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "My profile",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = IrisTheme.palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                imageVector = IrisIcons.ChevronRight,
+                contentDescription = null,
+                tint = IrisTheme.palette.muted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsMenuSection(content: @Composable () -> Unit) {
+    IrisSectionCard {
+        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SettingsMenuRow(
+    page: SettingsPage,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .testTag(page.tag)
+                .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .size(34.dp)
+                    .background(IrisTheme.palette.toolbar, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = settingsPageIcon(page),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(19.dp),
+            )
+        }
+        Text(
+            text = page.title,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Icon(
+            imageVector = IrisIcons.ChevronRight,
+            contentDescription = null,
+            tint = IrisTheme.palette.muted,
+        )
+    }
+}
+
+@Composable
+private fun SettingsToggleRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    tag: String,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge,
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.testTag(tag),
+        )
+    }
+}
+
+private fun settingsPageIcon(page: SettingsPage): ImageVector =
+    when (page) {
+        SettingsPage.Profile -> IrisIcons.Devices
+        SettingsPage.Messaging -> IrisIcons.NewChat
+        SettingsPage.Notifications -> IrisIcons.Notifications
+        SettingsPage.Media -> IrisIcons.Image
+        SettingsPage.Nearby -> IrisIcons.Nearby
+        SettingsPage.MessageServers -> IrisIcons.Refresh
+        SettingsPage.Security -> IrisIcons.Key
+        SettingsPage.About -> IrisIcons.File
+        SettingsPage.Support -> IrisIcons.Share
+        SettingsPage.AccountData -> IrisIcons.DeleteForever
+    }
 
 @Composable
 private fun relayStatusColor(

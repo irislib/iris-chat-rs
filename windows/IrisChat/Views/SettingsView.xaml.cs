@@ -15,10 +15,12 @@ public partial class SettingsView : UserControl
         "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs";
 
     private bool _suppressToggleDispatch;
+    private string _selectedPage = "Profile";
 
     public SettingsView()
     {
         InitializeComponent();
+        UpdateSettingsPageVisibility();
         Loaded += (_, _) =>
         {
             App.CurrentManager.PropertyChanged += OnChanged;
@@ -51,10 +53,18 @@ public partial class SettingsView : UserControl
         NotificationsToggle.IsChecked = prefs.desktopNotificationsEnabled;
         StartupToggle.IsChecked = prefs.startupAtLoginEnabled;
         NearbyLanToggle.IsChecked = prefs.nearbyLanEnabled;
+        ImageProxyToggle.IsChecked = prefs.imageProxyEnabled;
         AutoCheckUpdatesToggle.IsChecked = App.CurrentManager.AutoCheckUpdates;
         AutoInstallUpdatesToggle.IsChecked = App.CurrentManager.AutoInstallUpdates;
         StartupToggle.Visibility = PlatformStartupAtLogin.IsSupported ? Visibility.Visible : Visibility.Collapsed;
         _suppressToggleDispatch = false;
+
+        if (!ImageProxyUrlInput.IsKeyboardFocused)
+            ImageProxyUrlInput.Text = prefs.imageProxyUrl;
+        if (!ImageProxyKeyInput.IsKeyboardFocused)
+            ImageProxyKeyInput.Text = prefs.imageProxyKeyHex;
+        if (!ImageProxySaltInput.IsKeyboardFocused)
+            ImageProxySaltInput.Text = prefs.imageProxySaltHex;
 
         RebuildRelays(prefs);
 
@@ -76,6 +86,53 @@ public partial class SettingsView : UserControl
         UpdateStatusText.Text = App.CurrentManager.UpdateStatus;
         CheckUpdatesButton.IsEnabled = !App.CurrentManager.UpdateChecking && !App.CurrentManager.UpdateInstalling;
         InstallUpdateButton.IsEnabled = App.CurrentManager.UpdateInstallEnabled;
+    }
+
+    private void OnSettingsMenuClick(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string page })
+        {
+            _selectedPage = page;
+            UpdateSettingsPageVisibility();
+        }
+    }
+
+    private void UpdateSettingsPageVisibility()
+    {
+        foreach (var page in new FrameworkElement[]
+        {
+            ProfilePage,
+            MessagingPage,
+            NotificationsPage,
+            MediaPage,
+            NearbyPage,
+            MessageServersPage,
+            SecurityPage,
+            UpdatesPage,
+            AboutPage,
+            SupportPage,
+            AccountDataPage,
+        })
+        {
+            page.Visibility = Visibility.Collapsed;
+            page.Margin = new Thickness(0);
+        }
+
+        var selected = _selectedPage switch
+        {
+            "Messaging" => MessagingPage,
+            "Notifications" => NotificationsPage,
+            "Media" => MediaPage,
+            "Nearby" => NearbyPage,
+            "MessageServers" => MessageServersPage,
+            "Security" => SecurityPage,
+            "Updates" => UpdatesPage,
+            "About" => AboutPage,
+            "Support" => SupportPage,
+            "AccountData" => AccountDataPage,
+            _ => ProfilePage,
+        };
+        selected.Visibility = Visibility.Visible;
     }
 
     private void RebuildRelays(PreferencesSnapshot prefs)
@@ -153,6 +210,27 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetNearbyLanEnabled(NearbyLanToggle.IsChecked == true);
+    }
+
+    private void OnImageProxyChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetImageProxyEnabled(ImageProxyToggle.IsChecked == true);
+    }
+
+    private void OnImageProxyUrlCommitted(object sender, RoutedEventArgs e) =>
+        App.CurrentManager.SetImageProxyUrl(ImageProxyUrlInput.Text ?? string.Empty);
+
+    private void OnImageProxyKeyCommitted(object sender, RoutedEventArgs e) =>
+        App.CurrentManager.SetImageProxyKeyHex(ImageProxyKeyInput.Text ?? string.Empty);
+
+    private void OnImageProxySaltCommitted(object sender, RoutedEventArgs e) =>
+        App.CurrentManager.SetImageProxySaltHex(ImageProxySaltInput.Text ?? string.Empty);
+
+    private void OnResetImageProxy(object sender, RoutedEventArgs e)
+    {
+        App.CurrentManager.ResetImageProxySettings();
+        Refresh();
     }
 
     private void OnAutoCheckUpdatesChanged(object sender, RoutedEventArgs e)

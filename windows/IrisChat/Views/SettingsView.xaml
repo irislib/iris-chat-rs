@@ -2,253 +2,430 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:chrome="clr-namespace:IrisChat.Chrome">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel Margin="32" MaxWidth="720" HorizontalAlignment="Stretch">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="304" />
+            <ColumnDefinition Width="1" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
 
-            <!-- profile editor -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <chrome:Avatar x:Name="ProfileAvatar"
-                                       Grid.Column="0"
-                                       Size="64" />
-                        <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
-                            <TextBox x:Name="ProfileNameInput" />
-                            <TextBlock x:Name="NpubText"
-                                       Style="{StaticResource MutedText}"
-                                       Margin="0,6,0,0" />
-                        </StackPanel>
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+        <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18">
+                <Border Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="8"
+                        Margin="0,0,0,14">
+                    <Button Style="{StaticResource GhostButton}"
+                            Tag="Profile"
+                            Click="OnSettingsMenuClick"
+                            HorizontalContentAlignment="Stretch">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Profile" FontWeight="SemiBold" />
+                                <TextBlock Text="My profile" Style="{StaticResource MutedText}" Margin="0,3,0,0" />
+                            </StackPanel>
+                            <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" VerticalAlignment="Center" />
+                        </Grid>
+                    </Button>
+                </Border>
+
+                <Border Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="8"
+                        Margin="0,0,0,14">
+                    <StackPanel>
+                        <Button Style="{StaticResource GhostButton}" Tag="Messaging" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Messaging" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="Notifications" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Notifications" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="Media" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Media" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="Nearby" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Nearby" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="MessageServers" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Message servers" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+                <Border Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="8">
+                    <StackPanel>
+                        <Button Style="{StaticResource GhostButton}" Tag="Security" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Security" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="Updates" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Updates" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="About" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="About" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="Support" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Support" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="AccountData" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Account data" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <Border Grid.Column="1" Background="{StaticResource Border}" />
+
+        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="32" MaxWidth="720" HorizontalAlignment="Stretch">
+
+                <Border x:Name="ProfilePage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <chrome:Avatar x:Name="ProfileAvatar"
+                                           Grid.Column="0"
+                                           Size="64" />
+                            <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                <TextBox x:Name="ProfileNameInput" />
+                                <TextBlock x:Name="NpubText"
+                                           Style="{StaticResource MutedText}"
+                                           Margin="0,6,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button Style="{StaticResource SecondaryButton}"
+                                        Click="OnPickPicture"
+                                        Margin="0,0,8,0">
+                                    <TextBlock Text="Picture" />
+                                </Button>
+                                <Button Style="{StaticResource PrimaryButton}"
+                                        Click="OnSaveProfile">
+                                    <TextBlock Text="Save" />
+                                </Button>
+                            </StackPanel>
+                        </Grid>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
                             <Button Style="{StaticResource SecondaryButton}"
-                                    Click="OnPickPicture"
-                                    Margin="0,0,8,0">
-                                <TextBlock Text="Picture" />
+                                    Click="OnManageDevices"
+                                    HorizontalAlignment="Left">
+                                <TextBlock Text="Manage devices" />
                             </Button>
-                            <Button Style="{StaticResource PrimaryButton}"
-                                    Click="OnSaveProfile">
-                                <TextBlock Text="Save" />
+                            <Button Style="{StaticResource SecondaryButton}"
+                                    Click="OnCopyUserId"
+                                    Margin="8,0,0,0"
+                                    HorizontalAlignment="Left">
+                                <TextBlock Text="Copy user ID" />
                             </Button>
                         </StackPanel>
-                    </Grid>
+                    </StackPanel>
+                </Border>
 
-                    <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                <Border x:Name="MessagingPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Messaging"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <CheckBox x:Name="TypingToggle" Content="Typing indicators" Margin="0,0,0,8"
+                                  Checked="OnTypingChanged" Unchecked="OnTypingChanged" />
+                        <CheckBox x:Name="ReceiptsToggle" Content="Received / seen" Margin="0,0,0,8"
+                                  Checked="OnReceiptsChanged" Unchecked="OnReceiptsChanged" />
+                        <CheckBox x:Name="StartupToggle" Content="Open at login"
+                                  Checked="OnStartupChanged" Unchecked="OnStartupChanged" />
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="NotificationsPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Notifications"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <CheckBox x:Name="NotificationsToggle" Content="Enabled"
+                                  Checked="OnNotificationsChanged" Unchecked="OnNotificationsChanged" />
+                    </StackPanel>
+                </Border>
+
+                <Border x:Name="MediaPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Media"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <CheckBox x:Name="ImageProxyToggle" Content="Image proxy" Margin="0,0,0,12"
+                                  Checked="OnImageProxyChanged" Unchecked="OnImageProxyChanged" />
+                        <TextBlock Text="Proxy URL" Style="{StaticResource MutedText}" Margin="0,0,0,4" />
+                        <TextBox x:Name="ImageProxyUrlInput" LostFocus="OnImageProxyUrlCommitted" Margin="0,0,0,10" />
+                        <TextBlock Text="Proxy key" Style="{StaticResource MutedText}" Margin="0,0,0,4" />
+                        <TextBox x:Name="ImageProxyKeyInput" LostFocus="OnImageProxyKeyCommitted" Margin="0,0,0,10" />
+                        <TextBlock Text="Proxy salt" Style="{StaticResource MutedText}" Margin="0,0,0,4" />
+                        <TextBox x:Name="ImageProxySaltInput" LostFocus="OnImageProxySaltCommitted" Margin="0,0,0,12" />
                         <Button Style="{StaticResource SecondaryButton}"
-                                Click="OnManageDevices"
+                                Click="OnResetImageProxy"
                                 HorizontalAlignment="Left">
-                            <TextBlock Text="Manage devices" />
-                        </Button>
-                        <Button Style="{StaticResource SecondaryButton}"
-                                Click="OnCopyUserId"
-                                Margin="8,0,0,0"
-                                HorizontalAlignment="Left">
-                            <TextBlock Text="Copy user ID" />
+                            <TextBlock Text="Reset image proxy" />
                         </Button>
                     </StackPanel>
-                </StackPanel>
-            </Border>
+                </Border>
 
-            <!-- messaging -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Messaging"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,0,0,12" />
-                    <CheckBox x:Name="TypingToggle" Content="Send typing indicators" Margin="0,0,0,8"
-                              Checked="OnTypingChanged" Unchecked="OnTypingChanged" />
-                    <CheckBox x:Name="ReceiptsToggle" Content="Send read receipts" Margin="0,0,0,8"
-                              Checked="OnReceiptsChanged" Unchecked="OnReceiptsChanged" />
-                    <CheckBox x:Name="NotificationsToggle" Content="Desktop notifications" Margin="0,0,0,8"
-                              Checked="OnNotificationsChanged" Unchecked="OnNotificationsChanged" />
-                    <CheckBox x:Name="StartupToggle" Content="Open at login"
-                              Checked="OnStartupChanged" Unchecked="OnStartupChanged" />
-                </StackPanel>
-            </Border>
+                <Border x:Name="NearbyPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Nearby"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <CheckBox x:Name="NearbyLanToggle"
+                                  Content="Wi-Fi"
+                                  Checked="OnNearbyLanChanged"
+                                  Unchecked="OnNearbyLanChanged" />
+                    </StackPanel>
+                </Border>
 
-            <!-- nearby -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Nearby"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,0,0,12" />
-                    <CheckBox x:Name="NearbyLanToggle"
-                              Content="Wi-Fi"
-                              Checked="OnNearbyLanChanged"
-                              Unchecked="OnNearbyLanChanged" />
-                </StackPanel>
-            </Border>
+                <Border x:Name="MessageServersPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Message servers"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,8" />
+                        <ItemsControl x:Name="RelaysList" />
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Name="NewRelayInput" Grid.Column="0" />
+                            <Button Style="{StaticResource SecondaryButton}"
+                                    Grid.Column="1"
+                                    Click="OnAddRelay"
+                                    Margin="8,0,0,0">
+                                <TextBlock Text="Add" />
+                            </Button>
+                            <Button Style="{StaticResource GhostButton}"
+                                    Grid.Column="2"
+                                    Click="OnResetRelays"
+                                    Margin="6,0,0,0">
+                                <TextBlock Text="Reset" />
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+                </Border>
 
-            <!-- servers -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Message servers"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,0,0,8" />
-                    <ItemsControl x:Name="RelaysList" />
-                    <Grid Margin="0,12,0,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBox x:Name="NewRelayInput" Grid.Column="0" />
-                        <Button Style="{StaticResource SecondaryButton}"
-                                Grid.Column="1"
-                                Click="OnAddRelay"
-                                Margin="8,0,0,0">
-                            <TextBlock Text="Add" />
-                        </Button>
-                        <Button Style="{StaticResource GhostButton}"
-                                Grid.Column="2"
-                                Click="OnResetRelays"
-                                Margin="6,0,0,0">
-                            <TextBlock Text="Reset" />
-                        </Button>
-                    </Grid>
-                </StackPanel>
-            </Border>
-
-            <!-- security -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Security"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,0,0,12" />
-                    <Button x:Name="ExportOwnerKeyButton"
-                            Style="{StaticResource SecondaryButton}"
-                            Click="OnExportOwner"
-                            Margin="0,0,0,8"
-                            HorizontalAlignment="Left">
-                        <TextBlock Text="Copy secret key" />
-                    </Button>
-                    <Button Style="{StaticResource SecondaryButton}"
-                            Click="OnExportDevice"
-                            HorizontalAlignment="Left">
-                        <TextBlock Text="Copy this device's key" />
-                    </Button>
-                </StackPanel>
-            </Border>
-
-            <!-- updates -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Updates"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,0,0,12" />
-                    <TextBlock x:Name="UpdateVersionText"
-                               Foreground="{StaticResource TextPrimary}"
-                               Margin="0,0,0,8" />
-                    <CheckBox x:Name="AutoCheckUpdatesToggle"
-                              Content="Check automatically"
-                              Margin="0,0,0,8"
-                              Checked="OnAutoCheckUpdatesChanged"
-                              Unchecked="OnAutoCheckUpdatesChanged" />
-                    <CheckBox x:Name="AutoInstallUpdatesToggle"
-                              Content="Install automatically"
-                              Margin="0,0,0,12"
-                              Checked="OnAutoInstallUpdatesChanged"
-                              Unchecked="OnAutoInstallUpdatesChanged" />
-                    <StackPanel Orientation="Horizontal">
-                        <Button x:Name="CheckUpdatesButton"
+                <Border x:Name="SecurityPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Security"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <Button x:Name="ExportOwnerKeyButton"
                                 Style="{StaticResource SecondaryButton}"
-                                Click="OnCheckUpdates"
-                                Margin="0,0,8,0">
-                            <TextBlock Text="Check for updates" />
+                                Click="OnExportOwner"
+                                Margin="0,0,0,8"
+                                HorizontalAlignment="Left">
+                            <TextBlock Text="Copy secret key" />
                         </Button>
-                        <Button x:Name="InstallUpdateButton"
-                                Style="{StaticResource PrimaryButton}"
-                                Click="OnInstallUpdate">
-                            <TextBlock Text="Install update" />
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="OnExportDevice"
+                                HorizontalAlignment="Left">
+                            <TextBlock Text="Copy this device's key" />
                         </Button>
                     </StackPanel>
-                    <TextBlock x:Name="UpdateStatusText"
-                               Style="{StaticResource MutedText}"
-                               Margin="0,10,0,0" />
-                </StackPanel>
-            </Border>
+                </Border>
 
-            <!-- about -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="About"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,0,0,12" />
-                    <TextBlock x:Name="VersionText"
-                               Foreground="{StaticResource TextPrimary}"
-                               Margin="0,0,0,4" />
-                    <TextBlock x:Name="RelaySetText"
-                               Style="{StaticResource MutedText}" />
-                    <TextBlock x:Name="NetworkText"
-                               Style="{StaticResource MutedText}"
-                               Margin="0,4,0,0" />
-                    <Button Style="{StaticResource SecondaryButton}"
-                            Click="OnSourceCode"
-                            Margin="0,12,0,0"
-                            HorizontalAlignment="Left">
-                        <TextBlock Text="Source code" />
-                    </Button>
-                </StackPanel>
-            </Border>
+                <Border x:Name="UpdatesPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Updates"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <TextBlock x:Name="UpdateVersionText"
+                                   Foreground="{StaticResource TextPrimary}"
+                                   Margin="0,0,0,8" />
+                        <CheckBox x:Name="AutoCheckUpdatesToggle"
+                                  Content="Check automatically"
+                                  Margin="0,0,0,8"
+                                  Checked="OnAutoCheckUpdatesChanged"
+                                  Unchecked="OnAutoCheckUpdatesChanged" />
+                        <CheckBox x:Name="AutoInstallUpdatesToggle"
+                                  Content="Install automatically"
+                                  Margin="0,0,0,12"
+                                  Checked="OnAutoInstallUpdatesChanged"
+                                  Unchecked="OnAutoInstallUpdatesChanged" />
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="CheckUpdatesButton"
+                                    Style="{StaticResource SecondaryButton}"
+                                    Click="OnCheckUpdates"
+                                    Margin="0,0,8,0">
+                                <TextBlock Text="Check for updates" />
+                            </Button>
+                            <Button x:Name="InstallUpdateButton"
+                                    Style="{StaticResource PrimaryButton}"
+                                    Click="OnInstallUpdate">
+                                <TextBlock Text="Install update" />
+                            </Button>
+                        </StackPanel>
+                        <TextBlock x:Name="UpdateStatusText"
+                                   Style="{StaticResource MutedText}"
+                                   Margin="0,10,0,0" />
+                    </StackPanel>
+                </Border>
 
-            <!-- support -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Support"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,0,0,12" />
-                    <Button Style="{StaticResource SecondaryButton}"
-                            Click="OnExportSupport"
-                            HorizontalAlignment="Left">
-                        <TextBlock Text="Save support bundle" />
-                    </Button>
-                </StackPanel>
-            </Border>
+                <Border x:Name="AboutPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="About"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <TextBlock x:Name="VersionText"
+                                   Foreground="{StaticResource TextPrimary}"
+                                   Margin="0,0,0,4" />
+                        <TextBlock x:Name="RelaySetText"
+                                   Style="{StaticResource MutedText}" />
+                        <TextBlock x:Name="NetworkText"
+                                   Style="{StaticResource MutedText}"
+                                   Margin="0,4,0,0" />
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="OnSourceCode"
+                                Margin="0,12,0,0"
+                                HorizontalAlignment="Left">
+                            <TextBlock Text="Source code" />
+                        </Button>
+                    </StackPanel>
+                </Border>
 
-            <!-- danger -->
-            <Border Background="{StaticResource Panel}"
-                    CornerRadius="{StaticResource SectionRadius}"
-                    Padding="20"
-                    Margin="0,0,0,16">
-                <StackPanel>
-                    <TextBlock Text="Danger zone"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,0,0,12" />
-                    <Button Style="{StaticResource DangerButton}"
-                            Click="OnLogout"
-                            HorizontalAlignment="Left">
-                        <TextBlock Text="Sign out / reset device" />
-                    </Button>
-                </StackPanel>
-            </Border>
+                <Border x:Name="SupportPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Support"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="OnExportSupport"
+                                HorizontalAlignment="Left">
+                            <TextBlock Text="Save support bundle" />
+                        </Button>
+                    </StackPanel>
+                </Border>
 
-        </StackPanel>
-    </ScrollViewer>
+                <Border x:Name="AccountDataPage"
+                        Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="20">
+                    <StackPanel>
+                        <TextBlock Text="Account data"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Margin="0,0,0,12" />
+                        <Button Style="{StaticResource DangerButton}"
+                                Click="OnLogout"
+                                HorizontalAlignment="Left">
+                            <TextBlock Text="Sign out / reset device" />
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
 </UserControl>
