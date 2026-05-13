@@ -18,6 +18,8 @@ struct ChatScreen: View {
     @State private var shouldFollowLatest = true
     @State private var forceScrollToLatest = false
     @State private var pendingScrollSettle: DispatchWorkItem?
+    @State private var timelineUserScrollGeneration = 0
+    @State private var timelineScrollSettleGeneration = 0
     @State private var timelineAutoFollowSuppressedUntil: Date?
     @State private var timelineViewportMinY: CGFloat = 0
     @State private var timelineViewportMaxY: CGFloat = 0
@@ -183,7 +185,6 @@ struct ChatScreen: View {
                                             }
                                         )
                                         .frame(minHeight: viewport.size.height, alignment: .bottom)
-                                        .accessibilityIdentifier("chatTimeline")
 
                                         // Trailing bottom anchor sits OUTSIDE
                                         // the LazyVStack so SwiftUI always
@@ -212,6 +213,7 @@ struct ChatScreen: View {
                                     }
                                     .irisDefaultScrollAnchorBottom()
                                     .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
+                                    .accessibilityIdentifier("chatTimeline")
                                     .overlay {
                                         GeometryReader { geometry in
                                             let frame = geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
@@ -228,7 +230,7 @@ struct ChatScreen: View {
                                     }
                                     .irisInteractiveKeyboardDismiss()
                                     .simultaneousGesture(
-                                        DragGesture(minimumDistance: 3)
+                                        DragGesture(minimumDistance: 0)
                                             .onChanged { value in
                                                 handleTimelineDrag(value)
                                             }
@@ -590,12 +592,16 @@ struct ChatScreen: View {
     }
 
     private func handleTimelineDrag(_ value: DragGesture.Value) {
+        if pendingScrollSettle != nil {
+            pendingScrollSettle?.cancel()
+            pendingScrollSettle = nil
+            timelineUserScrollGeneration += 1
+            timelineScrollSettleGeneration += 1
+        }
+
         let vertical = value.translation.height
         let horizontal = value.translation.width
         guard abs(vertical) > 6, abs(vertical) > abs(horizontal) else { return }
-
-        pendingScrollSettle?.cancel()
-        pendingScrollSettle = nil
 
         if vertical > 0 {
             shouldFollowLatest = false
@@ -613,10 +619,16 @@ struct ChatScreen: View {
         pendingPrependAnchorMessageId = nil
         pendingScrollSettle?.cancel()
         pendingScrollSettle = nil
+        timelineScrollSettleGeneration += 1
         isComposerFocused = false
         resumeTimelineAutoFollow()
-        shouldFollowLatest = true
-        scrollToBottom(proxy: proxy, animated: true)
+        // Match Signal's behavior: the button is a one-shot request to
+        // land on the newest message. The normal geometry observer will
+        // re-enable latest-following once the viewport is actually at
+        // bottom; arming it here lets delayed layout work pin the user
+        // down if they immediately drag upward again.
+        shouldFollowLatest = false
+        scrollToBottom(proxy: proxy, animated: true, settleAfterLayout: false)
     }
 
     private func timelineAutoFollowIsSuppressed(now: Date = Date()) -> Bool {
@@ -735,7 +747,11 @@ struct ChatScreen: View {
         return [manager.seenEligibilityToken, messageIds].joined(separator: "|")
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy, animated: Bool) {
+    private func scrollToBottom(
+        proxy: ScrollViewProxy,
+        animated: Bool,
+        settleAfterLayout: Bool = true
+    ) {
         // Prefer the last message's own id over the trailing 1pt
         // anchor: SwiftUI must realise & measure the targeted row, so
         // a scroll to the actual final bubble forces SwiftUI to lay
@@ -765,9 +781,22 @@ struct ChatScreen: View {
             scroll()
         }
         pendingScrollSettle?.cancel()
-        let item = DispatchWorkItem { scroll() }
-        pendingScrollSettle = item
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: item)
+        guard settleAfterLayout else {
+            pendingScrollSettle = nil
+            timelineScrollSettleGeneration += 1
+            return
+        }
+        let userScrollGeneration = timelineUserScrollGeneration
+        timelineScrollSettleGeneration += 1
+        let settleGeneration = timelineScrollSettleGeneration
+        let guardedItem = DispatchWorkItem {
+            guard timelineScrollSettleGeneration == settleGeneration else { return }
+            guard timelineUserScrollGeneration == userScrollGeneration else { return }
+            guard !timelineAutoFollowIsSuppressed() else { return }
+            scroll()
+        }
+        pendingScrollSettle = guardedItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: guardedItem)
     }
 
     // The wire format for a quoted reply only carries author + a snippet

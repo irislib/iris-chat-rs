@@ -21,6 +21,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.stopScroll
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -688,8 +689,8 @@ fun ChatScreen(
                             .size(36.dp)
                             .clip(CircleShape)
                             .clickable {
-                                shouldFollowLatest = true
                                 coroutineScope.launch {
+                                    listState.stopScroll()
                                     val total = chat.messages.size
                                     if (total > 0) {
                                         listState.animateScrollToItem(total - 1)

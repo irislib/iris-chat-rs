@@ -145,6 +145,49 @@ final class IrisChatUITests: XCTestCase {
         )
     }
 
+    func testJumpToBottomDoesNotPinTimelineAfterUserScrollsAgain() throws {
+#if os(macOS)
+        throw XCTSkip("Scroll gesture lock regression is iOS-specific")
+#else
+        let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 120)
+
+        XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 15))
+        element(app, "welcomeCreateAction").tap()
+        XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15))
+        let nameField = element(app, "signupNameField")
+        XCTAssertTrue(nameField.waitForExistence(timeout: 15))
+        typeText("ios tester", into: nameField, app: app)
+        element(app, "generateKeyButton").tap()
+        XCTAssertTrue(waitForChatList(app, timeout: 60), "seed helper never returned to the chat list")
+
+        let chatRowPreview = seededChatRowPreview(app)
+        XCTAssertTrue(chatRowPreview.waitForExistence(timeout: 45), "seeded chat row never appeared")
+        chatRowPreview.tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+
+        let timeline = app.scrollViews["chatTimeline"].firstMatch
+        XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+        timeline.swipeDown()
+        timeline.swipeDown()
+
+        XCTAssertTrue(
+            element(app, "chatJumpToBottom").waitForExistence(timeout: 5),
+            "timeline did not move away from bottom before the jump test"
+        )
+        element(app, "chatJumpToBottom").tap()
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { !element(app, "chatJumpToBottom").exists },
+            "jump-to-bottom button did not disappear after tapping it"
+        )
+
+        timeline.swipeDown()
+        XCTAssertTrue(
+            element(app, "chatJumpToBottom").waitForExistence(timeout: 2),
+            "timeline stayed pinned after a manual jump-to-bottom followed by user scroll"
+        )
+#endif
+    }
+
     func testSearchHitInSeededLongChatOpensInTimeline() {
         let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 120)
 
