@@ -5,6 +5,7 @@ const PROTOCOL_SUBSCRIPTION_ID: &str = "ndr-protocol";
 const PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS: u64 = 8;
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 pub(super) const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
+const PROTOCOL_FETCH_MIN_INTERVAL_SECS: u64 = 30;
 const RELAY_TRANSPORT_RETRY_BACKOFF_SECS: [u64; 5] = [2, 5, 15, 30, 60];
 const PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE: usize = 64;
 #[cfg(not(test))]
@@ -13,6 +14,15 @@ const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 2] = [2_500, 10_000];
 const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 1] = [50];
 
 impl AppCore {
+    fn protocol_fetch_rate_limit_delay(&self) -> Option<Duration> {
+        let last_started = self
+            .protocol_subscription_runtime
+            .protocol_fetch_last_started_at?;
+        let min_interval = Duration::from_secs(PROTOCOL_FETCH_MIN_INTERVAL_SECS);
+        let elapsed = last_started.elapsed();
+        (elapsed < min_interval).then_some(min_interval - elapsed)
+    }
+
     pub(super) fn send_protocol_engine_unsigned_event(
         &mut self,
         peer: PublicKey,
@@ -654,6 +664,14 @@ impl AppCore {
             self.push_debug_log("protocol.catch_up.skip", "fetch already in flight");
             return false;
         }
+        if let Some(delay) = self.protocol_fetch_rate_limit_delay() {
+            self.push_debug_log(
+                "protocol.catch_up.skip",
+                format!("rate limited for {}ms", delay.as_millis()),
+            );
+            self.schedule_tracked_peer_catch_up(delay);
+            return false;
+        }
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -673,6 +691,8 @@ impl AppCore {
         );
         self.state.busy.syncing_network = true;
         self.protocol_subscription_runtime.protocol_fetch_in_flight = true;
+        self.protocol_subscription_runtime
+            .protocol_fetch_last_started_at = Some(Instant::now());
 
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
@@ -707,6 +727,22 @@ impl AppCore {
         filters: Vec<Filter>,
         reason: &'static str,
     ) -> bool {
+        if self.protocol_subscription_runtime.protocol_fetch_in_flight {
+            self.push_debug_log(
+                "protocol.engine_fetch.skip",
+                format!("reason={reason} fetch already in flight"),
+            );
+            self.schedule_tracked_peer_catch_up(Duration::from_secs(PROTOCOL_RECONNECT_CHECK_SECS));
+            return false;
+        }
+        if let Some(delay) = self.protocol_fetch_rate_limit_delay() {
+            self.push_debug_log(
+                "protocol.engine_fetch.skip",
+                format!("reason={reason} rate limited for {}ms", delay.as_millis()),
+            );
+            self.schedule_tracked_peer_catch_up(delay);
+            return false;
+        }
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -723,6 +759,9 @@ impl AppCore {
             format!("reason={reason} filters={}", filters.len()),
         );
         self.state.busy.syncing_network = true;
+        self.protocol_subscription_runtime.protocol_fetch_in_flight = true;
+        self.protocol_subscription_runtime
+            .protocol_fetch_last_started_at = Some(Instant::now());
 
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
@@ -792,11 +831,7 @@ impl AppCore {
         if let Some(protocol_engine) = self.protocol_engine.as_ref() {
             targets.extend(protocol_engine.queued_message_diagnostics(None));
             targets.extend(protocol_engine.queued_owner_claim_targets());
-            targets.extend(
-                protocol_engine
-                    .debug_snapshot()
-                    .pending_group_fanout_targets,
-            );
+            targets.extend(protocol_engine.queued_group_target_hexes());
         }
         targets.sort();
         targets.dedup();

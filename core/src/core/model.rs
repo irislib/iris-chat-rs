@@ -128,6 +128,7 @@ pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) tracked_peer_catch_up_due_at: Option<Instant>,
     pub(super) tracked_peer_catch_up_token: u64,
     pub(super) protocol_fetch_in_flight: bool,
+    pub(super) protocol_fetch_last_started_at: Option<Instant>,
 }
 
 #[derive(Clone, Debug, Default)]

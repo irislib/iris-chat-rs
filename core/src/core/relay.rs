@@ -645,9 +645,9 @@ impl AppCore {
     ) -> bool {
         is_invite_protocol_event
             && self
-                .current_queued_protocol_targets()
-                .iter()
-                .any(|target| target == &event.pubkey.to_hex())
+                .protocol_engine
+                .as_ref()
+                .is_some_and(|engine| engine.has_queued_invite_author(event.pubkey))
     }
 }
 

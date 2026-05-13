@@ -1153,6 +1153,70 @@ fn protocol_state_fetch_is_single_flight() {
 }
 
 #[test]
+fn targeted_protocol_fetch_is_single_flight() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("targeted-protocol-fetch-single-flight", &owner, &device);
+
+    core.protocol_subscription_runtime.protocol_fetch_in_flight = true;
+    core.debug_log.clear();
+
+    let filters = vec![Filter::new()
+        .author(peer.public_key())
+        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
+    assert!(
+        !core.fetch_protocol_state_for_filters(filters, "test"),
+        "existing protocol fetch should block duplicate targeted engine fetch"
+    );
+    assert!(
+        core.debug_log
+            .iter()
+            .any(|entry| entry.category == "protocol.engine_fetch.skip"),
+        "skipped targeted fetch should be visible in debug output"
+    );
+    assert!(
+        core.protocol_subscription_runtime
+            .tracked_peer_catch_up_due_at
+            .is_some(),
+        "skipped targeted fetch should schedule a coalesced retry"
+    );
+}
+
+#[test]
+fn protocol_fetch_start_is_rate_limited() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("protocol-fetch-rate-limit", &owner, &device);
+
+    core.protocol_subscription_runtime
+        .protocol_fetch_last_started_at = Some(Instant::now());
+    core.debug_log.clear();
+
+    let filters = vec![Filter::new()
+        .author(peer.public_key())
+        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
+    assert!(
+        !core.fetch_protocol_state_for_filters(filters, "test"),
+        "recent protocol fetch should rate-limit targeted engine fetches"
+    );
+    assert!(
+        core.debug_log
+            .iter()
+            .any(|entry| entry.category == "protocol.engine_fetch.skip"
+                && entry.detail.contains("rate limited")),
+        "rate-limited fetch should be visible in debug output"
+    );
+    assert!(
+        core.protocol_subscription_runtime
+            .tracked_peer_catch_up_due_at
+            .is_some(),
+        "rate-limited fetch should schedule one coalesced retry"
+    );
+}
+
+#[test]
 fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_session() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -2404,6 +2468,22 @@ fn queued_group_create_schedules_fast_protocol_retry_tick() {
     assert!(
         due_at <= Instant::now() + Duration::from_secs(5),
         "queued group work should schedule a fast retry tick, not wait for the normal liveness interval"
+    );
+}
+
+#[test]
+fn current_queued_protocol_targets_includes_group_fanout_targets() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-group-targets", &owner, &device);
+
+    core.create_group("Queued group", &[peer.public_key().to_hex()]);
+
+    let targets = core.current_queued_protocol_targets();
+    assert!(
+        targets.contains(&peer.public_key().to_hex()),
+        "queued protocol targets should include lightweight group fanout targets"
     );
 }
 

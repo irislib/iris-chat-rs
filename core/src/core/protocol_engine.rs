@@ -592,6 +592,18 @@ impl ProtocolEngine {
         (targets, effects)
     }
 
+    pub(super) fn queued_group_target_hexes(&self) -> Vec<String> {
+        self.queued_group_targets()
+    }
+
+    pub(super) fn has_queued_invite_author(&self, author: PublicKey) -> bool {
+        let target = ndr_device(author);
+        let snapshot = self.session_manager.snapshot();
+        self.pending_outbound.iter().any(|pending| {
+            self.pending_outbound_targets_device_with_snapshot(pending, target, &snapshot)
+        })
+    }
+
     #[cfg(test)]
     pub(super) fn local_invite_for_test(&self) -> Option<Invite> {
         self.session_manager.snapshot().local_invite
@@ -2496,17 +2508,26 @@ impl ProtocolEngine {
         owner: NdrOwnerPubkey,
         delivered_device_hexes: &[String],
     ) -> Vec<NdrDevicePubkey> {
+        let snapshot = self.session_manager.snapshot();
+        self.remaining_remote_targets_with_snapshot(&snapshot, owner, delivered_device_hexes)
+    }
+
+    fn remaining_remote_targets_with_snapshot(
+        &self,
+        snapshot: &SessionManagerSnapshot,
+        owner: NdrOwnerPubkey,
+        delivered_device_hexes: &[String],
+    ) -> Vec<NdrDevicePubkey> {
         let delivered = delivered_device_hexes
             .iter()
             .filter_map(|hex| PublicKey::parse(hex).ok())
             .map(ndr_device)
             .collect::<HashSet<_>>();
-        self.session_manager
-            .snapshot()
+        snapshot
             .users
-            .into_iter()
+            .iter()
             .find(|user| user.owner_pubkey == owner)
-            .and_then(|user| user.roster)
+            .and_then(|user| user.roster.as_ref())
             .map(|roster| {
                 roster
                     .devices()
@@ -2654,6 +2675,38 @@ impl ProtocolEngine {
         targets.sort();
         targets.dedup();
         targets
+    }
+
+    fn pending_outbound_targets_device_with_snapshot(
+        &self,
+        pending: &ProtocolPendingOutbound,
+        target: NdrDevicePubkey,
+        snapshot: &SessionManagerSnapshot,
+    ) -> bool {
+        let delivered_remote = delivered_device_set(&pending.delivered_remote_device_hexes);
+        if !delivered_remote.contains(&target)
+            && PublicKey::parse(&pending.recipient_owner_hex).is_ok_and(|owner| {
+                self.remaining_remote_targets_with_snapshot(
+                    snapshot,
+                    ndr_owner(owner),
+                    &pending.delivered_remote_device_hexes,
+                )
+                .contains(&target)
+            })
+        {
+            return true;
+        }
+
+        let delivered_local = delivered_device_set(&pending.delivered_local_device_hexes);
+        !delivered_local.contains(&target)
+            && self
+                .remaining_remote_targets_with_snapshot(
+                    snapshot,
+                    self.local_owner,
+                    &pending.delivered_local_device_hexes,
+                )
+                .into_iter()
+                .any(|device| device != self.local_device && device == target)
     }
 
     fn persist(&self) -> anyhow::Result<()> {
@@ -2973,6 +3026,14 @@ fn ndr_owner(pubkey: PublicKey) -> NdrOwnerPubkey {
 
 fn ndr_device(pubkey: PublicKey) -> NdrDevicePubkey {
     NdrDevicePubkey::from_bytes(pubkey.to_bytes())
+}
+
+fn delivered_device_set(device_hexes: &[String]) -> HashSet<NdrDevicePubkey> {
+    device_hexes
+        .iter()
+        .filter_map(|hex| PublicKey::parse(hex).ok())
+        .map(ndr_device)
+        .collect()
 }
 
 fn public_owner(pubkey: NdrOwnerPubkey) -> anyhow::Result<PublicKey> {
