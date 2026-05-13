@@ -87,10 +87,15 @@ private enum SecretExportKind: Identifiable {
     }
 }
 
+enum SettingsFocusSection: Hashable {
+    case messageServers
+}
+
 struct RootView: View {
     @ObservedObject var manager: AppManager
     @State private var directChatInfoChatId: String?
     @State private var inChatSearch: InChatSearchTarget?
+    @State private var settingsFocus: SettingsFocusSection?
 #if os(iOS) || os(macOS)
     @State private var showingNearbyIris = false
 #endif
@@ -237,7 +242,7 @@ struct RootView: View {
         case .joinInvite:
             JoinInviteScreen(manager: manager)
         case .settings:
-            SettingsScreen(manager: manager)
+            SettingsScreen(manager: manager, focusedSection: $settingsFocus)
         case .chat(let chatId):
             ChatScreen(manager: manager, chatId: chatId)
         case .groupDetails(let groupId):
@@ -401,6 +406,7 @@ struct RootView: View {
                 appSceneIsActive: manager.appSceneIsActive,
                 foregroundedAt: manager.lastForegroundedAt,
                 onTap: {
+                    settingsFocus = .messageServers
                     manager.dispatch(.pushScreen(screen: .settings))
                 }
             )
@@ -912,7 +918,7 @@ private struct DesktopChatShell: View {
             JoinInviteScreen(manager: manager)
         case .settings:
             DesktopPaneTopBar(title: "Settings", canGoBack: manager.canNavigateBack, onBack: manager.navigateBack)
-            SettingsScreen(manager: manager)
+            SettingsScreen(manager: manager, focusedSection: .constant(nil))
         case .chat(let chatId):
             let chat = manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
             DesktopPaneTopBar(
@@ -4450,6 +4456,7 @@ struct DeviceRevokedScreen: View {
 struct SettingsScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
+    @Binding var focusedSection: SettingsFocusSection?
     @State private var pendingSecretExport: SecretExportKind?
     @State private var showingLogoutConfirmation = false
     @State private var showingDeleteAllConfirmation = false
@@ -4471,8 +4478,9 @@ struct SettingsScreen: View {
 
     @ViewBuilder
     private var scrollBody: some View {
-        ZStack {
-            BackgroundFill()
+        ScrollViewReader { proxy in
+            ZStack {
+                BackgroundFill()
 
             IrisScrollScreen {
                 VStack(alignment: .leading, spacing: 18) {
@@ -4555,6 +4563,7 @@ struct SettingsScreen: View {
                             editingRelayDraft: $editingRelayDraft
                         )
                     }
+                    .id(SettingsFocusSection.messageServers)
 
                     IrisSectionCard {
                         CardHeader(title: "Security")
@@ -4690,6 +4699,13 @@ struct SettingsScreen: View {
                     }
                 }
             }
+            }
+            .onAppear {
+                scrollToFocusedSection(proxy)
+            }
+            .onChange(of: focusedSection) { _ in
+                scrollToFocusedSection(proxy)
+            }
         }
         .overlay {
             if let profilePictureViewerURL {
@@ -4734,6 +4750,18 @@ struct SettingsScreen: View {
             .accessibilityIdentifier("myProfileConfirmDeleteAllDataButton")
         } message: {
             Text("This removes your secret keys, messages, and cached files from this device.")
+        }
+    }
+
+    private func scrollToFocusedSection(_ proxy: ScrollViewProxy) {
+        guard let focusedSection else {
+            return
+        }
+        DispatchQueue.main.async {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                proxy.scrollTo(focusedSection, anchor: .top)
+            }
+            self.focusedSection = nil
         }
     }
 

@@ -6,6 +6,16 @@ const FIRST_CONTACT_STAGE_DELAY_MS: u64 = 1_500;
 #[cfg(test)]
 const FIRST_CONTACT_STAGE_DELAY_MS: u64 = 25;
 
+fn coalesce_protocol_fetch_effects(effects: &mut Vec<ProtocolEffect>) {
+    let mut seen = HashSet::new();
+    effects.retain(|effect| match effect {
+        ProtocolEffect::FetchProtocolState { filters, reason } => {
+            seen.insert(format!("{reason}:{filters:?}"))
+        }
+        _ => true,
+    });
+}
+
 impl AppCore {
     pub(super) fn runtime_publish_completion(
         &self,
@@ -377,9 +387,10 @@ impl AppCore {
 
     pub(super) fn process_protocol_engine_effects_with_completions(
         &mut self,
-        effects: Vec<ProtocolEffect>,
+        mut effects: Vec<ProtocolEffect>,
         completions: &BTreeMap<String, (String, String)>,
     ) {
+        coalesce_protocol_fetch_effects(&mut effects);
         for effect in effects {
             match effect {
                 ProtocolEffect::PublishUnsigned(unsigned) => {

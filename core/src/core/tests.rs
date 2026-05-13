@@ -2211,6 +2211,70 @@ fn queued_direct_send_starts_targeted_owner_protocol_fetch() {
 }
 
 #[test]
+fn retry_batch_coalesces_duplicate_queued_protocol_fetches() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("queued-retry-coalesce-fetches", &owner, &device);
+    let relay_urls = relay_urls_from_strings(&["wss://relay.invalid".to_string()]);
+    core.preferences.nostr_relay_urls = vec!["wss://relay.invalid".to_string()];
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls;
+
+    let target = format!("owner:{}", peer.public_key().to_hex());
+    let filters = vec![Filter::new()
+        .author(peer.public_key())
+        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
+    let result = ProtocolRetryResult {
+        message_id: "message-1".to_string(),
+        chat_id: peer.public_key().to_hex(),
+        effects: vec![ProtocolEffect::FetchProtocolState {
+            filters,
+            reason: "retry",
+        }],
+        queued_targets: vec![target.clone()],
+        ..ProtocolRetryResult::default()
+    };
+
+    core.process_protocol_engine_retry_batch(
+        "test_retry_dedupe",
+        ProtocolRetryBatch {
+            direct_results: vec![result.clone(), result],
+            ..ProtocolRetryBatch::default()
+        },
+    );
+
+    let retry_log = core
+        .debug_log
+        .iter()
+        .find(|entry| entry.category == "appcore.protocol.retry")
+        .expect("retry log");
+    assert!(
+        retry_log.detail.contains("queued_targets=1"),
+        "retry log should count unique queued protocol targets: {}",
+        retry_log.detail
+    );
+    let queued_log = core
+        .debug_log
+        .iter()
+        .find(|entry| entry.category == "appcore.protocol.queued")
+        .expect("queued log");
+    assert_eq!(
+        queued_log.detail.matches(&target).count(),
+        1,
+        "queued log should list each target once: {}",
+        queued_log.detail
+    );
+    assert_eq!(
+        core.debug_log
+            .iter()
+            .filter(|entry| entry.category == "protocol.engine_fetch.fetch")
+            .count(),
+        1,
+        "duplicate retry effects should schedule one targeted fetch"
+    );
+}
+
+#[test]
 fn queued_protocol_filters_are_narrow_for_missing_owner_roster() {
     let owner = Keys::generate();
     let device = Keys::generate();

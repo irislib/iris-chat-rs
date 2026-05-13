@@ -727,6 +727,7 @@ impl AppCore {
         });
         self.protocol_engine = Some(protocol_engine);
         let existing_app_keys = self.app_keys.values().cloned().collect::<Vec<_>>();
+        let mut app_keys_retry_batch = ProtocolRetryBatch::default();
         for app_keys in existing_app_keys {
             if let (Ok(owner), Some(keys)) = (
                 PublicKey::parse(&app_keys.owner_pubkey_hex),
@@ -738,11 +739,12 @@ impl AppCore {
                         keys,
                         app_keys.created_at_secs,
                     ) {
-                        self.process_protocol_engine_retry_batch("session_start_app_keys", batch);
+                        Self::append_protocol_retry_batch(&mut app_keys_retry_batch, batch);
                     }
                 }
             }
         }
+        self.process_protocol_engine_retry_batch("session_start_app_keys", app_keys_retry_batch);
         match self
             .app_store
             .load_pending_relay_publishes(&owner_pubkey.to_hex())

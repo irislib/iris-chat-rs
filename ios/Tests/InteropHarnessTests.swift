@@ -424,6 +424,35 @@ final class InteropHarnessTests: XCTestCase {
             try await disableRelays(manager: manager)
             status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
             status("relays", manager.state.preferences.nostrRelayUrls.joined(separator: "|"))
+        case "reset_relays_and_report":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            manager.dispatch(.resetNostrRelays)
+            _ = try await waitFor(label: "reset relays", timeout: 30) {
+                manager.state.preferences.nostrRelayUrls.count >= 3 ? true : nil
+            }
+            status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
+            status("relays", manager.state.preferences.nostrRelayUrls.joined(separator: "|"))
+        case "add_relay_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let relayURL = normalizedHarnessRelayURL(try requiredEnv("IRIS_IOS_HARNESS_RELAY_URL", env: env))
+            manager.dispatch(.addNostrRelay(relayUrl: relayURL))
+            _ = try await waitFor(label: "added relay \(relayURL)", timeout: 30) {
+                manager.state.preferences.nostrRelayUrls.contains(relayURL) ? true : nil
+            }
+            status("relay_count", String(manager.state.preferences.nostrRelayUrls.count))
+            status("relays", manager.state.preferences.nostrRelayUrls.joined(separator: "|"))
+        case "wait_for_connected_relay":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let timeout = TimeInterval(Double(env["IRIS_IOS_HARNESS_TIMEOUT_SECS"] ?? "") ?? 30)
+            let networkStatus: NetworkStatusSnapshot = try await waitFor(label: "connected relay", timeout: timeout) {
+                guard let status = manager.state.networkStatus, status.connectedRelayCount > 0 else {
+                    return nil
+                }
+                return status
+            }
+            status("network_connected_relay_count", String(networkStatus.connectedRelayCount))
+            status("network_relay_urls", networkStatus.relayUrls.joined(separator: ","))
+            status("network_relay_connections", summarizeRelayConnections(networkStatus.relayConnections))
         case "nearby_chat_exchange_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             try await maybeDisableRelays(manager: manager, env: env)
@@ -1521,6 +1550,7 @@ final class InteropHarnessTests: XCTestCase {
         let pendingProtocolOutbound = joinValues(arrayValue(protocolEngine?["pending_outbound_targets"]))
         let pendingGroupFanouts = joinValues(arrayValue(protocolEngine?["pending_group_fanout_targets"]))
         let legacyPendingOutbound = summarizeRuntimePendingOutbound(arrayValue(debug?["pending_outbound"]))
+        let networkStatus = state.networkStatus
 
         status("data_dir", dataDir.path)
         status("rev", String(state.rev))
@@ -1550,6 +1580,26 @@ final class InteropHarnessTests: XCTestCase {
         status("recent_handshake_peers", summarizeRecentHandshakePeers(arrayValue(debug?["recent_handshake_peers"])))
         status("event_counts", summarizeEventCounts(dictValue(debug?["event_counts"])))
         status("recent_log", summarizeRecentLog(arrayValue(debug?["recent_log"])))
+        status("network_connected_relay_count", String(networkStatus?.connectedRelayCount ?? 0))
+        status("network_all_relays_offline_since_secs", String(networkStatus?.allRelaysOfflineSinceSecs ?? 0))
+        status("network_relay_urls", networkStatus?.relayUrls.joined(separator: ",") ?? "")
+        status("network_relay_connections", summarizeRelayConnections(networkStatus?.relayConnections ?? []))
+    }
+
+    private func summarizeRelayConnections(_ connections: [RelayConnectionSnapshot]) -> String {
+        connections
+            .map { "\($0.url)=\($0.status)" }
+            .joined(separator: ",")
+    }
+
+    private func normalizedHarnessRelayURL(_ relayURL: String) -> String {
+        if relayURL.hasPrefix("wss:/"), !relayURL.hasPrefix("wss://") {
+            return "wss://" + relayURL.dropFirst("wss:/".count)
+        }
+        if relayURL.hasPrefix("ws:/"), !relayURL.hasPrefix("ws://") {
+            return "ws://" + relayURL.dropFirst("ws:/".count)
+        }
+        return relayURL
     }
 
     private func reportPersistedProtocolSnapshot(dataDir: URL) {

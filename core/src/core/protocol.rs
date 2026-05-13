@@ -66,28 +66,31 @@ impl AppCore {
             return;
         }
         let mut published = 0usize;
-        let mut queued = 0usize;
         let mut queued_targets = Vec::new();
+        let mut direct_effects = Vec::new();
+        let mut direct_completions = BTreeMap::new();
         for result in batch.direct_results {
             published = published.saturating_add(result.event_ids.len());
-            queued = queued.saturating_add(result.queued_targets.len());
             queued_targets.extend(result.queued_targets.clone());
-            let completions = result
-                .event_ids
-                .iter()
-                .map(|event_id| {
-                    (
-                        event_id.clone(),
-                        (result.message_id.clone(), result.chat_id.clone()),
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
-            self.process_protocol_engine_effects_with_completions(result.effects, &completions);
+            direct_completions.extend(
+                result
+                    .event_ids
+                    .iter()
+                    .map(|event_id| {
+                        (
+                            event_id.clone(),
+                            (result.message_id.clone(), result.chat_id.clone()),
+                        )
+                    })
+                    .collect::<BTreeMap<_, _>>(),
+            );
+            direct_effects.extend(result.effects);
             self.sync_message_delivery_trace(&result.chat_id, &result.message_id);
             self.reconcile_outgoing_message_delivery(&result.chat_id, &result.message_id);
         }
-        queued = queued.saturating_add(batch.group_result.queued_targets.len());
         queued_targets.extend(batch.group_result.queued_targets.clone());
+        normalize_protocol_queued_targets(&mut queued_targets);
+        self.process_protocol_engine_effects_with_completions(direct_effects, &direct_completions);
         for group_event in batch.group_result.events {
             self.apply_group_decrypted_event(group_event);
         }
@@ -111,7 +114,10 @@ impl AppCore {
         }
         self.push_debug_log(
             "appcore.protocol.retry",
-            format!("reason={reason} published={published} queued_targets={queued}"),
+            format!(
+                "reason={reason} published={published} queued_targets={}",
+                queued_targets.len()
+            ),
         );
         if queued_targets.is_empty() {
             self.request_protocol_subscription_refresh();
@@ -128,6 +134,11 @@ impl AppCore {
         reason: &'static str,
         queued_targets: &[String],
     ) {
+        if queued_targets.is_empty() {
+            return;
+        }
+        let mut queued_targets = queued_targets.to_vec();
+        normalize_protocol_queued_targets(&mut queued_targets);
         if queued_targets.is_empty() {
             return;
         }
@@ -154,6 +165,27 @@ impl AppCore {
             }
         };
         self.process_protocol_engine_retry_batch(reason, results);
+    }
+
+    pub(super) fn append_protocol_retry_batch(
+        target: &mut ProtocolRetryBatch,
+        mut source: ProtocolRetryBatch,
+    ) {
+        target.direct_results.append(&mut source.direct_results);
+        target
+            .group_result
+            .events
+            .append(&mut source.group_result.events);
+        target
+            .group_result
+            .effects
+            .append(&mut source.group_result.effects);
+        target
+            .group_result
+            .queued_targets
+            .append(&mut source.group_result.queued_targets);
+        target.direct_messages.append(&mut source.direct_messages);
+        target.effects.append(&mut source.effects);
     }
 
     pub(super) fn remember_recent_handshake_peer(
@@ -1554,6 +1586,12 @@ impl AppCore {
             }
         }
     }
+}
+
+fn normalize_protocol_queued_targets(targets: &mut Vec<String>) {
+    targets.retain(|target| !target.is_empty());
+    targets.sort();
+    targets.dedup();
 }
 
 struct ProtocolSubscriptionApplyOutput {
