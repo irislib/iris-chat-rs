@@ -261,7 +261,7 @@ fun DeviceRosterScreen(
                 if (resolved.errorMessage != null) {
                     resolved.errorMessage
                 } else {
-                    deviceInput = resolved.deviceInput
+                    deviceInput = scanned.trim()
                     showScanner = false
                     null
                 }
@@ -462,15 +462,10 @@ private fun resolveDeviceAuthorizationInput(
         return ResolvedDeviceAuthorizationInput(deviceInput = trimmed, errorMessage = null)
     }
 
-    val normalized = normalizePeerInput(trimmed)
-    return if (isValidPeerInput(normalized)) {
-        ResolvedDeviceAuthorizationInput(deviceInput = normalized, errorMessage = null)
-    } else {
-        ResolvedDeviceAuthorizationInput(
-            deviceInput = "",
-            errorMessage = "Not a valid link code.",
-        )
-    }
+    return ResolvedDeviceAuthorizationInput(
+        deviceInput = "",
+        errorMessage = "Not a valid link code.",
+    )
 }
 
 private fun isLikelyLinkInvite(input: String): Boolean {

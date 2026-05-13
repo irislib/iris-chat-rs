@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
 use adw::prelude::*;
-use iris_chat_core::{AppAction, AppState, DeviceEntrySnapshot, DeviceRosterSnapshot};
+use iris_chat_core::{
+    decode_device_approval_qr, is_valid_peer_input, normalize_peer_input, AppAction, AppState,
+    DeviceEntrySnapshot, DeviceRosterSnapshot,
+};
 
 use crate::app_manager::AppManager;
 use crate::screens::chat_list::{relative_time, unix_now};
@@ -29,7 +32,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
     inner.append(&owner_card(roster));
     if roster.can_manage_devices {
-        inner.append(&authorize_card(state, manager));
+        inner.append(&authorize_card(state, roster, manager));
     }
     inner.append(&devices_card(state, roster, manager));
 
@@ -49,7 +52,11 @@ fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {
     group.upcast()
 }
 
-fn authorize_card(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
+fn authorize_card(
+    state: &AppState,
+    roster: &DeviceRosterSnapshot,
+    manager: &Rc<AppManager>,
+) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder()
         .title("Link another device")
         .build();
@@ -59,15 +66,27 @@ fn authorize_card(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let submit = gtk::Button::with_label(if busy { "Linking…" } else { "Link device" });
     submit.add_css_class("suggested-action");
     submit.set_valign(gtk::Align::Center);
-    submit.set_sensitive(!busy);
+    submit.set_sensitive(false);
+
+    let roster_for_changed = roster.clone();
+    let submit_for_changed = submit.clone();
+    entry.connect_changed(move |row| {
+        submit_for_changed.set_sensitive(
+            !busy
+                && resolve_device_authorization_input(row.text().as_str(), &roster_for_changed)
+                    .is_some(),
+        );
+    });
 
     let entry_for_btn = entry.clone();
+    let roster_for_btn = roster.clone();
     let manager_for_btn = manager.clone();
     submit.connect_clicked(move |btn| {
-        let value = entry_for_btn.text().trim().to_string();
-        if value.is_empty() {
+        let Some(value) =
+            resolve_device_authorization_input(entry_for_btn.text().as_str(), &roster_for_btn)
+        else {
             return;
-        }
+        };
         btn.set_sensitive(false);
         entry_for_btn.set_text("");
         manager_for_btn.dispatch(AppAction::AddAuthorizedDevice {
@@ -77,11 +96,13 @@ fn authorize_card(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     entry.add_suffix(&submit);
 
     let manager_for_apply = manager.clone();
+    let roster_for_apply = roster.clone();
     entry.connect_apply(move |row| {
-        let value = row.text().trim().to_string();
-        if value.is_empty() {
+        let Some(value) =
+            resolve_device_authorization_input(row.text().as_str(), &roster_for_apply)
+        else {
             return;
-        }
+        };
         row.set_text("");
         manager_for_apply.dispatch(AppAction::AddAuthorizedDevice {
             device_input: value,
@@ -90,6 +111,71 @@ fn authorize_card(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
     group.add(&entry);
     group.upcast()
+}
+
+fn resolve_device_authorization_input(
+    raw_input: &str,
+    roster: &DeviceRosterSnapshot,
+) -> Option<String> {
+    let trimmed = raw_input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    if let Some(payload) = decode_device_approval_qr(trimmed.to_string()) {
+        let normalized_owner = normalize_peer_input(payload.owner_input);
+        let owner_inputs = [
+            normalize_peer_input(roster.owner_npub.clone()),
+            normalize_peer_input(roster.owner_public_key_hex.clone()),
+        ];
+        if !owner_inputs.contains(&normalized_owner) {
+            return None;
+        }
+
+        let normalized_device = normalize_peer_input(payload.device_input);
+        return is_valid_peer_input(normalized_device.clone()).then_some(normalized_device);
+    }
+
+    is_likely_link_invite(trimmed).then(|| trimmed.to_string())
+}
+
+fn is_likely_link_invite(input: &str) -> bool {
+    let lower = input.to_ascii_lowercase();
+    if !lower.starts_with("https://chat.iris.to/#") && !lower.starts_with("https://chat.iris.to/?")
+    {
+        return false;
+    }
+    let decoded = percent_decode_lossy(input);
+    decoded.contains("\"purpose\":\"link\"")
+        && decoded.contains("\"ephemeralKey\"")
+        && decoded.contains("\"sharedSecret\"")
+}
+
+fn percent_decode_lossy(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let (Some(high), Some(low)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+                out.push(high << 4 | low);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn devices_card(

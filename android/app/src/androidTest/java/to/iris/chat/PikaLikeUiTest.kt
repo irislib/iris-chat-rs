@@ -107,7 +107,22 @@ class PikaLikeUiTest {
     }
 
     @Test
-    fun manage_devices_valid_input_enables_authorize_action() {
+    fun manage_devices_valid_link_code_enables_authorize_action() {
+        composeRule.ensureChatList()
+        composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
+        composeRule.waitForTag("myProfileManageDevicesButton")
+        composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
+            .performClick()
+
+        composeRule.waitForTag("deviceRosterAddInput")
+        composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true)
+            .performTextInput(LINK_DEVICE_INVITE_URL)
+        composeRule.onNodeWithTag("deviceRosterAddButton", useUnmergedTree = true)
+            .assertIsEnabled()
+    }
+
+    @Test
+    fun manage_devices_plain_device_key_keeps_authorize_action_disabled() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
         composeRule.waitForTag("myProfileManageDevicesButton")
@@ -118,7 +133,7 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true)
             .performTextInput(SECONDARY_DEVICE_NPUB)
         composeRule.onNodeWithTag("deviceRosterAddButton", useUnmergedTree = true)
-            .assertIsEnabled()
+            .assertIsNotEnabled()
     }
 
     @Test
@@ -466,6 +481,8 @@ class PikaLikeUiTest {
             "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"
         private const val SECONDARY_DEVICE_NPUB =
             "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
+        private const val LINK_DEVICE_INVITE_URL =
+            "https://chat.iris.to/#%7B%22purpose%22%3A%22link%22%2C%22ephemeralKey%22%3A%22x%22%2C%22sharedSecret%22%3A%22y%22%7D"
     }
 
     private fun androidx.compose.ui.test.junit4.AndroidComposeTestRule<*, *>.ensureChatList() {

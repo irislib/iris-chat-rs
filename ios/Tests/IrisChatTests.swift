@@ -960,6 +960,20 @@ final class IrisChatTests: XCTestCase {
         XCTAssertEqual(resolved.errorMessage, "This code is for a different profile.")
     }
 
+    func testResolveDeviceAuthorizationInputRejectsPlainDeviceKey() {
+        let ownerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
+        let device = "npub1p34efzmkewwdsksmpp2r0tk7quke9jcfdz2zl7ezk8wnsj43uz2s8x5sp4"
+
+        let resolved = resolveDeviceAuthorizationInput(
+            rawInput: device,
+            ownerNpub: ownerNpub,
+            ownerPublicKeyHex: normalizePeerInput(input: ownerNpub)
+        )
+
+        XCTAssertEqual(resolved.deviceInput, "")
+        XCTAssertEqual(resolved.errorMessage, "Not a valid link code.")
+    }
+
     func testKeychainSecretStoreRoundTrip() throws {
 #if os(macOS)
         throw XCTSkip("macOS test lane uses the file-backed test store to avoid Keychain permission UI")

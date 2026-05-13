@@ -35,6 +35,7 @@ public partial class DeviceRosterView : UserControl
         }
 
         AddBlock.Visibility = roster.canManageDevices ? Visibility.Visible : Visibility.Collapsed;
+        UpdateAddButton();
 
         HeaderHint.Text = roster.canManageDevices
             ? "These devices can use your profile."
@@ -131,11 +132,88 @@ public partial class DeviceRosterView : UserControl
         return status;
     }
 
+    private void OnDeviceInputChanged(object sender, TextChangedEventArgs e) => UpdateAddButton();
+
+    private void UpdateAddButton()
+    {
+        var roster = App.CurrentManager.DeviceRoster;
+        AddButton.IsEnabled = roster?.canManageDevices == true
+            && !App.CurrentManager.Busy.updatingRoster
+            && ResolveDeviceAuthorizationInput(DeviceInput.Text, roster) != null;
+    }
+
     private void OnAdd(object sender, RoutedEventArgs e)
     {
-        var input = DeviceInput.Text?.Trim();
+        var input = ResolveDeviceAuthorizationInput(DeviceInput.Text, App.CurrentManager.DeviceRoster);
         if (string.IsNullOrEmpty(input)) return;
         App.CurrentManager.AddAuthorizedDevice(input);
         DeviceInput.Clear();
+    }
+
+    private static string? ResolveDeviceAuthorizationInput(string? rawInput, DeviceRosterSnapshot? roster)
+    {
+        var trimmed = rawInput?.Trim();
+        if (string.IsNullOrEmpty(trimmed) || roster == null) return null;
+
+        if (TryDecodeDeviceApprovalQr(trimmed, out var ownerInput, out var deviceInput))
+        {
+            var normalizedOwner = Native.NormalizePeerInput(ownerInput);
+            var ownerNpub = Native.NormalizePeerInput(roster.ownerNpub);
+            var ownerHex = Native.NormalizePeerInput(roster.ownerPublicKeyHex);
+            if (normalizedOwner != ownerNpub && normalizedOwner != ownerHex) return null;
+
+            var normalizedDevice = Native.NormalizePeerInput(deviceInput);
+            return Native.IsValidPeerInput(normalizedDevice) ? normalizedDevice : null;
+        }
+
+        return IsLikelyLinkInvite(trimmed) ? trimmed : null;
+    }
+
+    private static bool TryDecodeDeviceApprovalQr(string input, out string ownerInput, out string deviceInput)
+    {
+        ownerInput = "";
+        deviceInput = "";
+        if (!Uri.TryCreate(input, UriKind.Absolute, out var uri)) return false;
+        if (!uri.Scheme.Equals("ndrdemo", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(uri.Host, "device-link", StringComparison.OrdinalIgnoreCase)) return false;
+
+        var query = uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var part in query)
+        {
+            var pieces = part.Split('=', 2);
+            if (pieces.Length != 2) continue;
+            var key = UriUnescape(pieces[0]).ToLowerInvariant();
+            var value = UriUnescape(pieces[1]).Trim();
+            if (key == "owner") ownerInput = value;
+            if (key == "device") deviceInput = value;
+        }
+        return !string.IsNullOrEmpty(ownerInput) && !string.IsNullOrEmpty(deviceInput);
+    }
+
+    private static bool IsLikelyLinkInvite(string input)
+    {
+        var lower = input.ToLowerInvariant();
+        if (!lower.StartsWith("https://chat.iris.to/#") &&
+            !lower.StartsWith("https://chat.iris.to/?"))
+        {
+            return false;
+        }
+
+        var decoded = UriUnescape(input);
+        return decoded.Contains("\"purpose\":\"link\"")
+            && decoded.Contains("\"ephemeralKey\"")
+            && decoded.Contains("\"sharedSecret\"");
+    }
+
+    private static string UriUnescape(string input)
+    {
+        try
+        {
+            return Uri.UnescapeDataString(input);
+        }
+        catch (UriFormatException)
+        {
+            return input;
+        }
     }
 }
