@@ -1,4 +1,4 @@
-# Iris Chat 2026.5.13.3
+# Iris Chat 2026.5.13.4
 
 - iOS share sends now queue from the share sheet instead of depending on Iris opening right away.
 - iOS shared files are copied into Iris before sending, fixing missing attachments after sharing.
@@ -10,4 +10,5 @@
 - iOS composer send button now aligns with the message input.
 - macOS composer no longer shows a send button; Return sends and Shift-Return keeps multiline drafting.
 - Nearby permission checks no longer poll from render paths, reducing CPU waste.
+- Nearby sync now avoids repeated request/response broadcasts, reducing iOS idle CPU while Bluetooth and Wi-Fi discovery are active.
 - Debug logging is off by default in release builds and can be enabled from Settings when exporting a debug dump.

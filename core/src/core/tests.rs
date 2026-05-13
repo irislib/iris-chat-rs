@@ -4600,7 +4600,8 @@ fn app_keys_cache_merges_older_roster_events_additively() {
             device.public_key(),
             Some(LocalAuthorizationState::Authorized),
         ),
-        LocalAuthorizationState::Authorized
+        LocalAuthorizationState::AwaitingApproval,
+        "a cached roster without an active local protocol session must not mark the linked device approved"
     );
 }
 

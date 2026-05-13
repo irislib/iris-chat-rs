@@ -38,6 +38,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static let maxNotificationChunksPerDrain = 32
     private static let maxPendingNotifications = 256
     private static let maxPendingNotificationBytes = 2 * 1024 * 1024
+    private static let maxPeerDedupEntries = 512
     private static let nearbyPresenceKind: UInt32 = 22242
     private static let nonIrisBackoff: TimeInterval = 60
     private static let helloInterval: TimeInterval = 5
@@ -45,11 +46,36 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static let presenceResendInterval: TimeInterval = 60
     private static let peerSweepInterval: TimeInterval = 2
     private static let peerTTL: TimeInterval = 15
+    private static let peerTouchPublishInterval: TimeInterval = 5
     private static let dedupeReconnectBackoff: TimeInterval = 30
     private static let maxSimultaneousPeripherals = 4
     private static let bluetoothSourcePrefix = "bt:"
     private static let centralSourcePrefix = "central:"
     private static let lanSourcePrefix = "lan:"
+
+    private struct RecentIDSet {
+        private var ids: Set<String> = []
+        private var recentIDs: [String] = []
+
+        mutating func insert(_ id: String, limit: Int) -> Bool {
+            if ids.contains(id) {
+                recentIDs.removeAll { $0 == id }
+                recentIDs.append(id)
+                return false
+            }
+            ids.insert(id)
+            recentIDs.append(id)
+            while ids.count > limit, let oldest = recentIDs.first {
+                recentIDs.removeFirst()
+                ids.remove(oldest)
+            }
+            return true
+        }
+
+        func contains(_ id: String) -> Bool {
+            ids.contains(id)
+        }
+    }
 
     private let peerID = UUID().uuidString.lowercased()
     private var centralManager: CBCentralManager?
@@ -68,6 +94,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var peerIDByCentral: [UUID: String] = [:]
     private var bluetoothPeerLastSeen: [String: Date] = [:]
     private var peerInventorySentAt: [String: Date] = [:]
+    private var inventoryIDsSentByPeer: [String: RecentIDSet] = [:]
+    private var wantIDsSentByPeer: [String: RecentIDSet] = [:]
+    private var eventIDsSeenByPeer: [String: RecentIDSet] = [:]
     private var presenceSentAt: [String: Date] = [:]
     private var connectionNonces: [String: String] = [:]
     private var suppressedPeripheralReconnectUntil: [UUID: Date] = [:]
@@ -440,7 +469,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if kind == 0 {
             sendHello(excludingPeerID: nil)
         }
-        sendEvent(record, excludingPeerID: nil)
+        sendEvent(record, excludingPeerID: nil, onlyPeerID: nil)
     }
 
     private func startBluetooth() {
@@ -496,6 +525,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peerIDByCentral.removeAll()
         bluetoothPeerLastSeen.removeAll()
         peerInventorySentAt.removeAll()
+        inventoryIDsSentByPeer.removeAll()
+        wantIDsSentByPeer.removeAll()
+        eventIDsSeenByPeer.removeAll()
         connectionNonces.removeAll()
         suppressedPeripheralReconnectUntil.removeAll()
         if isLanVisible {
@@ -683,23 +715,35 @@ final class IrisNearbyService: NSObject, ObservableObject {
 #endif
     }
 
-    private func sendInventory(excludingPeerID: String?) {
+    private func sendInventory(excludingPeerID: String?, onlyPeerID: String?) {
         let records = Array(mailbagEvents().prefix(200))
         guard !records.isEmpty else { return }
         for record in records {
-            var envelope = [
-                "v": 1,
-                "type": "inv",
-                "id": record.id,
-                "kind": Int(record.kind),
-                "created_at": NSNumber(value: record.createdAtSecs),
-                "size": record.eventJson.utf8.count
-            ] as [String: Any]
-            if let author = record.authorPubkeyHex {
-                envelope["author"] = author
-            }
-            sendEnvelope(envelope, excludingPeerID: excludingPeerID)
+            sendInventoryRecord(record, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
         }
+    }
+
+    private func sendInventoryRecord(
+        _ record: IrisNearbyStoredEvent,
+        excludingPeerID: String?,
+        onlyPeerID: String?
+    ) {
+        if let onlyPeerID,
+           peerHasSeenEvent(record.id, peerID: onlyPeerID) || !markInventorySent(record.id, to: onlyPeerID) {
+            return
+        }
+        var envelope = [
+            "v": 1,
+            "type": "inv",
+            "id": record.id,
+            "kind": Int(record.kind),
+            "created_at": NSNumber(value: record.createdAtSecs),
+            "size": record.eventJson.utf8.count
+        ] as [String: Any]
+        if let author = record.authorPubkeyHex {
+            envelope["author"] = author
+        }
+        sendEnvelope(envelope, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
     }
 
     private func sendInventoryAfterHelloIfNeeded(remotePeerID: String, force: Bool) {
@@ -710,39 +754,47 @@ final class IrisNearbyService: NSObject, ObservableObject {
             return
         }
         peerInventorySentAt[remotePeerID] = now
-        sendInventory(excludingPeerID: nil)
+        sendInventory(excludingPeerID: nil, onlyPeerID: remotePeerID)
     }
 
-    private func sendWant(_ ids: [String], excludingPeerID: String?) {
+    private func sendWant(_ ids: [String], excludingPeerID: String?, onlyPeerID: String?) {
         guard !ids.isEmpty else { return }
         for id in ids.prefix(64) {
+            if let onlyPeerID, !markWantSent(id, to: onlyPeerID) {
+                continue
+            }
             sendEnvelope(
                 [
                     "v": 1,
                     "type": "want",
                     "id": id
                 ],
-                excludingPeerID: excludingPeerID
+                excludingPeerID: excludingPeerID,
+                onlyPeerID: onlyPeerID
             )
         }
     }
 
-    private func sendEvent(_ record: IrisNearbyStoredEvent, excludingPeerID: String?) {
-        sendEventJson(record.eventJson, excludingPeerID: excludingPeerID)
+    private func sendEvent(_ record: IrisNearbyStoredEvent, excludingPeerID: String?, onlyPeerID: String?) {
+        sendEventJson(record.eventJson, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
     }
 
-    private func sendEventJson(_ eventJson: String, excludingPeerID: String?) {
+    private func sendEventJson(_ eventJson: String, excludingPeerID: String?, onlyPeerID: String?) {
+        let eventID = IrisNearbyStoredEvent.fromEventJson(eventJson)?.id
         let envelope: [String: Any] = [
             "v": 1,
             "type": "event",
             "event_json": eventJson
         ]
         if let frame = encodeFrame(envelope), frame.count <= Self.singleFrameBytes {
-            sendEncodedFrame(frame, excludingPeerID: excludingPeerID)
+            sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
         } else {
             if let record = IrisNearbyStoredEvent.fromEventJson(eventJson) {
-                sendEventFragments(record, excludingPeerID: excludingPeerID)
+                sendEventFragments(record, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
             }
+        }
+        if let eventID, let onlyPeerID {
+            markPeerSeenEvent(eventID, peerID: onlyPeerID)
         }
     }
 
@@ -754,7 +806,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             ownProfileEventID
         ) ?? ""
         guard !eventJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        sendEventJson(eventJson, excludingPeerID: nil)
+        sendEventJson(eventJson, excludingPeerID: nil, onlyPeerID: nil)
     }
 
     private func sendPresenceIfNeeded(remoteNonce: String, responseKey: String, force: Bool) {
@@ -775,7 +827,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         presenceSentAt = presenceSentAt.filter { $0.value >= cutoff }
     }
 
-    private func sendEventFragments(_ record: IrisNearbyStoredEvent, excludingPeerID: String?) {
+    private func sendEventFragments(_ record: IrisNearbyStoredEvent, excludingPeerID: String?, onlyPeerID: String?) {
         let bytes = Array(record.eventJson.utf8)
         let total = (bytes.count + Self.fragmentPayloadBytes - 1) / Self.fragmentPayloadBytes
         guard total > 1, total <= Self.maxEventFragments else { return }
@@ -794,14 +846,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
                     "total": total,
                     "data": chunk
                 ],
-                excludingPeerID: excludingPeerID
+                excludingPeerID: excludingPeerID,
+                onlyPeerID: onlyPeerID
             )
         }
     }
 
-    private func sendEnvelope(_ object: [String: Any], excludingPeerID: String?) {
+    private func sendEnvelope(_ object: [String: Any], excludingPeerID: String?, onlyPeerID: String? = nil) {
         guard isNearbyActive, let frame = encodeFrame(object) else { return }
-        sendEncodedFrame(frame, excludingPeerID: excludingPeerID)
+        sendEncodedFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
     }
 
     private func encodeFrame(_ object: [String: Any]) -> Data? {
@@ -829,24 +882,24 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return "\(peripheral.identifier.uuidString) name=\(name)"
     }
 
-    private func sendEncodedFrame(_ frame: Data, excludingPeerID: String?) {
+    private func sendEncodedFrame(_ frame: Data, excludingPeerID: String?, onlyPeerID: String?) {
         if isLanVisible {
-            lanService?.send(frame, excludingPeerID: excludingPeerID)
+            lanService?.send(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
         }
-        sendBluetoothFrame(frame, excludingPeerID: excludingPeerID)
+        sendBluetoothFrame(frame, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID)
     }
 
-    private func sendBluetoothFrame(_ frame: Data, excludingPeerID: String?) {
+    private func sendBluetoothFrame(_ frame: Data, excludingPeerID: String?, onlyPeerID: String?) {
         guard isVisible else { return }
         for (id, characteristic) in writableCharacteristics {
-            if !shouldSendViaOutgoingBluetoothRoute(peripheralID: id, excludingPeerID: excludingPeerID) {
+            if !shouldSendViaOutgoingBluetoothRoute(peripheralID: id, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID) {
                 continue
             }
             guard let peripheral = peripherals[id] else { continue }
             write(frame, to: peripheral, characteristic: characteristic)
         }
         for (id, channel) in subscribedCentrals {
-            if !shouldSendViaIncomingBluetoothRoute(centralID: id, excludingPeerID: excludingPeerID) {
+            if !shouldSendViaIncomingBluetoothRoute(centralID: id, excludingPeerID: excludingPeerID, onlyPeerID: onlyPeerID) {
                 continue
             }
             notify(frame, to: channel)
@@ -1026,13 +1079,14 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private func ingestFrame(_ frame: Data, source: IrisNearbySource) {
         let sourceKey = sourceKey(for: source)
-        guard let envelope = decodeFrameJson(frame),
+        guard var envelope = decodeFrameJson(frame),
               let type = envelope["type"] as? String else { return }
         if envelope["peer_id"] != nil {
             rejectLegacyNearbySource(source, type: type)
             return
         }
         let remotePeerID = peerIDForSource(source)
+        envelope["_source_key"] = sourceKey
         if let remotePeerID, !remotePeerID.isEmpty {
             touchPeer(remotePeerID)
             markTransportPeer(remotePeerID, source: source)
@@ -1090,14 +1144,18 @@ final class IrisNearbyService: NSObject, ObservableObject {
               forwarded[id] == nil else { return }
         let size = (envelope["size"] as? NSNumber)?.intValue ?? (envelope["size"] as? Int ?? 0)
         if size > 0, size <= Self.maxEventBytes {
-            sendWant([id], excludingPeerID: nil)
+            let sender = envelopeRemotePeerID(envelope)
+            guard let sender else { return }
+            markPeerSeenEvent(id, peerID: sender)
+            sendWant([id], excludingPeerID: nil, onlyPeerID: sender)
         }
     }
 
     private func handleWant(_ envelope: [String: Any]) {
         guard let id = envelope["id"] as? String,
               let record = ownOutbound[id] ?? forwarded[id] else { return }
-        sendEvent(record, excludingPeerID: nil)
+        let requester = envelopeRemotePeerID(envelope)
+        sendEvent(record, excludingPeerID: nil, onlyPeerID: requester)
     }
 
     private func handleEventEnvelope(_ envelope: [String: Any], remotePeerID: String?, sourceKey: String?) {
@@ -1167,7 +1225,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
         rememberProfile(from: eventJson, remotePeerID: remotePeerID)
         forwarded[record.id] = record
         pruneMailbags()
-        sendInventory(excludingPeerID: remotePeerID)
+        if let remotePeerID {
+            markPeerSeenEvent(record.id, peerID: remotePeerID)
+        }
+        sendInventoryRecord(record, excludingPeerID: remotePeerID, onlyPeerID: nil)
         irisDebugLog("Iris nearby: accepted event kind %u %@", record.kind, record.id)
     }
 
@@ -1242,6 +1303,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
         for peerID in stalePeerIDs {
             bluetoothPeerLastSeen.removeValue(forKey: peerID)
             peerInventorySentAt.removeValue(forKey: peerID)
+            inventoryIDsSentByPeer.removeValue(forKey: peerID)
+            wantIDsSentByPeer.removeValue(forKey: peerID)
+            eventIDsSeenByPeer.removeValue(forKey: peerID)
             presenceSentAt = presenceSentAt.filter { !$0.key.hasPrefix("\(peerID)|") }
             peerNonces.removeValue(forKey: peerID)
         }
@@ -1285,6 +1349,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peers.removeAll { lanPeerIDs.contains($0.id) && !bluetoothPeerIDs.contains($0.id) }
         for peerID in lanPeerIDs where !bluetoothPeerIDs.contains(peerID) {
             peerNonces.removeValue(forKey: peerID)
+            peerInventorySentAt.removeValue(forKey: peerID)
+            inventoryIDsSentByPeer.removeValue(forKey: peerID)
+            wantIDsSentByPeer.removeValue(forKey: peerID)
+            eventIDsSeenByPeer.removeValue(forKey: peerID)
         }
         status = peers.isEmpty ? visibleIdleStatus : sidebarSubtitle
     }
@@ -1302,9 +1370,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return Set(bluetoothPeerLastSeen.filter { $0.value >= cutoff }.keys)
     }
 
-    private func shouldSendViaOutgoingBluetoothRoute(peripheralID: UUID, excludingPeerID: String?) -> Bool {
+    private func shouldSendViaOutgoingBluetoothRoute(
+        peripheralID: UUID,
+        excludingPeerID: String?,
+        onlyPeerID: String?
+    ) -> Bool {
         guard let remotePeerID = peerIDByPeripheral[peripheralID] else {
-            return true
+            return onlyPeerID == nil
+        }
+        if let onlyPeerID, remotePeerID != onlyPeerID {
+            return false
         }
         if let excludingPeerID, remotePeerID == excludingPeerID {
             return false
@@ -1318,9 +1393,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return true
     }
 
-    private func shouldSendViaIncomingBluetoothRoute(centralID: UUID, excludingPeerID: String?) -> Bool {
+    private func shouldSendViaIncomingBluetoothRoute(
+        centralID: UUID,
+        excludingPeerID: String?,
+        onlyPeerID: String?
+    ) -> Bool {
         guard let remotePeerID = peerIDByCentral[centralID] else {
-            return true
+            return onlyPeerID == nil
+        }
+        if let onlyPeerID, remotePeerID != onlyPeerID {
+            return false
         }
         if let excludingPeerID, remotePeerID == excludingPeerID {
             return false
@@ -1414,6 +1496,49 @@ final class IrisNearbyService: NSObject, ObservableObject {
         }
     }
 
+    private func envelopeRemotePeerID(_ envelope: [String: Any]) -> String? {
+        let sourceKey = envelope["_source_key"] as? String
+        return sourceKey.flatMap { peerIDForSourceKey($0) }
+    }
+
+    private func peerIDForSourceKey(_ sourceKey: String) -> String? {
+        if sourceKey.hasPrefix(Self.bluetoothSourcePrefix) {
+            let value = String(sourceKey.dropFirst(Self.bluetoothSourcePrefix.count))
+            return UUID(uuidString: value).flatMap { peerIDByPeripheral[$0] }
+        }
+        if sourceKey.hasPrefix(Self.centralSourcePrefix) {
+            let value = String(sourceKey.dropFirst(Self.centralSourcePrefix.count))
+            return UUID(uuidString: value).flatMap { peerIDByCentral[$0] }
+        }
+        if sourceKey.hasPrefix(Self.lanSourcePrefix) {
+            return lanService?.peerIDForConnection(String(sourceKey.dropFirst(Self.lanSourcePrefix.count)))
+        }
+        return nil
+    }
+
+    private func boundedInsert(_ id: String, in map: inout [String: RecentIDSet], peerID: String) -> Bool {
+        var recent = map[peerID] ?? RecentIDSet()
+        let inserted = recent.insert(id, limit: Self.maxPeerDedupEntries)
+        map[peerID] = recent
+        return inserted
+    }
+
+    private func markInventorySent(_ id: String, to peerID: String) -> Bool {
+        boundedInsert(id, in: &inventoryIDsSentByPeer, peerID: peerID)
+    }
+
+    private func markWantSent(_ id: String, to peerID: String) -> Bool {
+        boundedInsert(id, in: &wantIDsSentByPeer, peerID: peerID)
+    }
+
+    private func markPeerSeenEvent(_ id: String, peerID: String) {
+        _ = boundedInsert(id, in: &eventIDsSeenByPeer, peerID: peerID)
+    }
+
+    private func peerHasSeenEvent(_ id: String, peerID: String) -> Bool {
+        eventIDsSeenByPeer[peerID]?.contains(id) == true
+    }
+
     private func sourceKey(for source: IrisNearbySource) -> String {
         switch source {
         case .peripheral(let peripheral):
@@ -1472,7 +1597,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private func touchPeer(_ peerID: String) {
         guard let index = peers.firstIndex(where: { $0.id == peerID }) else { return }
-        peers[index].lastSeen = Date()
+        let now = Date()
+        guard now.timeIntervalSince(peers[index].lastSeen) >= Self.peerTouchPublishInterval else {
+            return
+        }
+        peers[index].lastSeen = now
     }
 
     private var visibleIdleStatus: String {
@@ -1590,7 +1719,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         } else if let nextProfileEventID,
                   ownOutbound[nextProfileEventID] == nil,
                   forwarded[nextProfileEventID] == nil {
-            sendWant([nextProfileEventID], excludingPeerID: nil)
+            sendWant([nextProfileEventID], excludingPeerID: nil, onlyPeerID: peerID)
         }
         sortPeers()
         status = sidebarSubtitle

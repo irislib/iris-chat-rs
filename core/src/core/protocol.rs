@@ -1506,7 +1506,9 @@ impl AppCore {
         connected_after: u64,
         filter_count: u64,
     ) {
-        if token != self.protocol_subscription_runtime.reconcile_token {
+        if generation != self.protocol_reconnect_token
+            || token != self.protocol_subscription_runtime.reconcile_token
+        {
             return;
         }
         self.protocol_subscription_runtime.refresh_in_flight = false;

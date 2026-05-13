@@ -14,7 +14,7 @@ ACTION="${1:-put}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/testflight-internal <put|attach|wait|status|groups|public|public-submit|public-attach|public-status>
+usage: ./scripts/testflight-internal <put|attach|wait|status|groups|public|public-submit|public-attach|public-status|public-expire-older>
 
 Commands:
   put      wait for the uploaded build, then attach it to internal TestFlight groups
@@ -29,6 +29,8 @@ Commands:
            attach the already-visible build to external TestFlight groups
   public-status
            print current public TestFlight status
+  public-expire-older
+           expire older non-current builds that are still in Beta App Review
 
 Environment:
   IRIS_TESTFLIGHT_GROUPS          optional comma-separated internal group names or IDs
@@ -42,7 +44,7 @@ EOF
 }
 
 case "$ACTION" in
-  put|attach|wait|status|groups|public|public-submit|public-attach|public-status)
+  put|attach|wait|status|groups|public|public-submit|public-attach|public-status|public-expire-older)
     ;;
   -h|--help|help)
     usage
@@ -94,7 +96,13 @@ VERSION_NAME = os.environ["IRIS_APP_VERSION_NAME"]
 BUILD_NUMBER = os.environ["IRIS_APP_VERSION_CODE"]
 WAIT_ATTEMPTS = int(os.environ.get("IRIS_TESTFLIGHT_WAIT_ATTEMPTS", "20"))
 WAIT_SECONDS = int(os.environ.get("IRIS_TESTFLIGHT_WAIT_SECONDS", "30"))
-PUBLIC_ACTIONS = {"public", "public-submit", "public-attach", "public-status"}
+PUBLIC_ACTIONS = {
+    "public",
+    "public-submit",
+    "public-attach",
+    "public-status",
+    "public-expire-older",
+}
 DEFAULT_WHATS_NEW = (
     "Please test account creation, restoring with a secret key, direct and group chats, "
     "linked devices, notifications, attachments, and Nearby messaging."
@@ -528,6 +536,60 @@ def beta_review_state(build):
     return data.get("attributes", {}).get("betaReviewState") or data.get("attributes", {}).get("state") or "submitted"
 
 
+def build_app_id(build_id):
+    status, body = request("GET", f"builds/{build_id}/relationships/app")
+    data = require_ok(status, body, f"Read app relationship for build {build_id}").get("data")
+    return data.get("id") if data else None
+
+
+def expire_build(build, reason):
+    status, body = request(
+        "PATCH",
+        f"builds/{build['id']}",
+        body={
+            "data": {
+                "type": "builds",
+                "id": build["id"],
+                "attributes": {"expired": True},
+            }
+        },
+    )
+    require_ok(status, body, f"Expire build {build['attributes'].get('version', build['id'])}")
+    print(
+        "Expired TestFlight build "
+        f"{build['attributes'].get('version', build['id'])}: {reason}"
+    )
+
+
+def expire_older_public_review_builds(current_build):
+    current_id = current_build["id"]
+    expired = 0
+    builds = get_all(
+        "builds",
+        {
+            "filter[app]": APP_ID,
+            "fields[builds]": "version,expired,uploadedDate,processingState",
+            "limit": "200",
+        },
+    )
+    for build in builds:
+        if build["id"] == current_id:
+            continue
+        attrs = build.get("attributes", {})
+        if attrs.get("expired"):
+            continue
+        state = beta_review_state(build)
+        if state not in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+            continue
+        expire_build(
+            build,
+            f"older Beta App Review submission was {state}; current build is {BUILD_NUMBER}",
+        )
+        expired += 1
+    if expired == 0:
+        print("No older Beta App Review builds needed expiring.")
+
+
 def submit_beta_review(build):
     state = beta_review_state(build)
     if state not in {"not submitted", "REJECTED"}:
@@ -598,6 +660,9 @@ else:
 if ACTION in PUBLIC_ACTIONS:
     selected_groups = select_external_groups(groups())
     ensure_public_build(build)
+    if ACTION == "public-expire-older":
+        expire_older_public_review_builds(build)
+        raise SystemExit(0)
     if ACTION in {"public", "public-submit"}:
         ensure_public_metadata()
         upsert_what_to_test(build)

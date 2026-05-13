@@ -21,9 +21,12 @@ case "$ACTION" in
   groups)
     exec "$ROOT/scripts/testflight-internal" groups
     ;;
+  expire-older)
+    exec "$ROOT/scripts/testflight-internal" public-expire-older
+    ;;
   -h|--help|help)
     cat <<'EOF'
-usage: ./scripts/testflight-public <put|submit|attach|status|groups>
+usage: ./scripts/testflight-public <put|submit|attach|status|groups|expire-older>
 
 Commands:
   put      wait, prepare metadata, submit Beta App Review, and attach external groups
@@ -31,6 +34,8 @@ Commands:
   attach   attach the already-visible build to external TestFlight groups
   status   print current public TestFlight status
   groups   list TestFlight groups for the app
+  expire-older
+           expire older non-current builds that are still in Beta App Review
 EOF
     ;;
   *)

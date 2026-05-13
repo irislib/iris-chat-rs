@@ -176,11 +176,14 @@ final class IrisNearbyLanService: NSObject, NetServiceDelegate {
         }
     }
 
-    func send(_ frame: Data, excludingPeerID: String?) {
+    func send(_ frame: Data, excludingPeerID: String?, onlyPeerID: String? = nil) {
         queue.async { [weak self] in
             guard let self, self.enabled else { return }
             for slot in self.connections.values {
                 if let excludingPeerID, slot.peerID == excludingPeerID {
+                    continue
+                }
+                if let onlyPeerID, slot.peerID != onlyPeerID {
                     continue
                 }
                 slot.connection.send(content: frame, completion: .contentProcessed { error in
