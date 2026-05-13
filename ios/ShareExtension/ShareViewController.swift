@@ -3,6 +3,7 @@ import UIKit
 import UniformTypeIdentifiers
 
 private let appGroupIdentifier = "group.to.iris.chat"
+private let pendingShareNotificationName = "to.iris.chat.pending-share"
 
 private struct StoredShareAttachment: Codable {
     let path: String
@@ -165,7 +166,7 @@ final class ShareViewController: UIViewController {
         if intentChatId != nil {
             // The user picked a specific contact suggestion in iOS's share sheet.
             // Send it straight through.
-            await openMainApp(autoSend: true)
+            await queueStagedShare(autoSend: true)
             return
         }
 
@@ -220,7 +221,21 @@ final class ShareViewController: UIViewController {
         suggestions
             .filter { selectedChatIds.contains($0.chatId) }
             .forEach(donateChatInteraction)
-        Task { await openMainApp(autoSend: true) }
+        Task { await queueStagedShare(autoSend: true) }
+    }
+
+    private func queueStagedShare(autoSend: Bool) async {
+        updateStagedPayload(autoSend: autoSend)
+        await MainActor.run {
+            isOpeningApp = true
+            activityIndicator.startAnimating()
+            statusLabel.text = "Sending…"
+            updateActionButtons()
+        }
+        notifyMainAppAboutPendingShare()
+        await MainActor.run {
+            complete()
+        }
     }
 
     private func openMainApp(autoSend: Bool) async {
@@ -271,6 +286,16 @@ final class ShareViewController: UIViewController {
 
     private func openURLFromExtension(_ url: URL) async -> Bool {
         await extensionContext?.open(url) == true
+    }
+
+    private func notifyMainAppAboutPendingShare() {
+        CFNotificationCenterPostNotification(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            CFNotificationName(pendingShareNotificationName as CFString),
+            nil,
+            nil,
+            true
+        )
     }
 
     private func shareURL(autoSend: Bool) -> URL? {
@@ -468,9 +493,10 @@ final class ShareViewController: UIViewController {
         return await withCheckedContinuation { continuation in
             provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
                 if let url = item as? URL {
-                    continuation.resume(returning: url.absoluteString)
+                    continuation.resume(returning: url.isFileURL ? nil : url.absoluteString)
                 } else if let string = item as? String {
-                    continuation.resume(returning: string)
+                    let url = URL(string: string)
+                    continuation.resume(returning: url?.isFileURL == true ? nil : string)
                 } else {
                     continuation.resume(returning: nil)
                 }
@@ -501,8 +527,7 @@ final class ShareViewController: UIViewController {
 
     private func copyAttachment(from provider: NSItemProvider, to filesDir: URL) async -> StoredShareAttachment? {
         let type = provider.registeredTypeIdentifiers.first {
-            $0 != UTType.url.identifier &&
-                $0 != UTType.plainText.identifier &&
+            $0 != UTType.plainText.identifier &&
                 $0 != UTType.text.identifier
         }
         guard let type else {
@@ -512,25 +537,30 @@ final class ShareViewController: UIViewController {
         let fallbackExtension = UTType(type)?.preferredFilenameExtension
         return await withCheckedContinuation { continuation in
             provider.loadFileRepresentation(forTypeIdentifier: type) { sourceURL, _ in
-                guard let sourceURL else {
-                    continuation.resume(returning: nil)
-                    return
-                }
-                let filename = safeFilename(
-                    suggestedName,
-                    fallbackExtension: fallbackExtension
-                )
-                let destination = uniqueDestination(in: filesDir, filename: filename)
-                do {
-                    try FileManager.default.copyItem(at: sourceURL, to: destination)
+                if let sourceURL {
                     continuation.resume(
-                        returning: StoredShareAttachment(
-                            path: destination.path,
-                            filename: destination.lastPathComponent
+                        returning: copySharedAttachment(
+                            from: sourceURL,
+                            to: filesDir,
+                            suggestedName: suggestedName,
+                            fallbackExtension: fallbackExtension
                         )
                     )
-                } catch {
-                    continuation.resume(returning: nil)
+                    return
+                }
+                provider.loadItem(forTypeIdentifier: type, options: nil) { item, _ in
+                    if let sourceURL = item as? URL, sourceURL.isFileURL {
+                        continuation.resume(
+                            returning: copySharedAttachment(
+                                from: sourceURL,
+                                to: filesDir,
+                                suggestedName: suggestedName,
+                                fallbackExtension: fallbackExtension
+                            )
+                        )
+                    } else {
+                        continuation.resume(returning: nil)
+                    }
                 }
             }
         }
@@ -678,4 +708,32 @@ private func uniqueDestination(in dir: URL, filename: String) -> URL {
         index += 1
     }
     return candidate
+}
+
+private func copySharedAttachment(
+    from sourceURL: URL,
+    to filesDir: URL,
+    suggestedName: String?,
+    fallbackExtension: String?
+) -> StoredShareAttachment? {
+    let filename = safeFilename(
+        suggestedName ?? sourceURL.lastPathComponent,
+        fallbackExtension: fallbackExtension
+    )
+    let destination = uniqueDestination(in: filesDir, filename: filename)
+    let accessed = sourceURL.startAccessingSecurityScopedResource()
+    defer {
+        if accessed {
+            sourceURL.stopAccessingSecurityScopedResource()
+        }
+    }
+    do {
+        try FileManager.default.copyItem(at: sourceURL, to: destination)
+        return StoredShareAttachment(
+            path: destination.path,
+            filename: destination.lastPathComponent
+        )
+    } catch {
+        return nil
+    }
 }

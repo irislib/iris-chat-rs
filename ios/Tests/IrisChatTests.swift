@@ -408,12 +408,13 @@ private func writePendingShare(
     text: String,
     chatIds: [String],
     to shareContainer: URL,
-    autoSend: Bool
+    autoSend: Bool,
+    attachments: [PendingShareAttachment] = []
 ) throws -> URL {
     let payload = PendingShare(
         id: id,
         text: text,
-        attachments: [],
+        attachments: attachments,
         suggestedChatId: chatIds.first,
         suggestedChatIds: chatIds,
         autoSend: autoSend
@@ -644,6 +645,58 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: "owner")))
         XCTAssertNil(manager.pendingShare)
         XCTAssertFalse(FileManager.default.fileExists(atPath: payloadURL.path))
+    }
+
+    @MainActor
+    func testPendingAutoShareCopiesAttachmentsBeforeClearingStagingFiles() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let shareContainer = try makeShareContainer()
+        defer {
+            try? FileManager.default.removeItem(at: dataDir)
+            try? FileManager.default.removeItem(at: shareContainer)
+        }
+        let shareID = UUID().uuidString
+        let filesDir = shareContainer
+            .appendingPathComponent("pending-shares", isDirectory: true)
+            .appendingPathComponent("\(shareID)-files", isDirectory: true)
+        try FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
+        let sourceURL = filesDir.appendingPathComponent("photo.txt")
+        try Data("shared attachment".utf8).write(to: sourceURL)
+        let payloadURL = try writePendingShare(
+            id: shareID,
+            text: "caption",
+            chatIds: ["owner"],
+            to: shareContainer,
+            autoSend: true,
+            attachments: [
+                PendingShareAttachment(path: sourceURL.path, filename: "photo.txt")
+            ]
+        )
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
+        _ = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: ["IRIS_SHARE_CONTAINER_DIR": shareContainer.path]
+        )
+
+        let sentOnLaunch = await waitUntil {
+            rust.dispatchedActions.contains { action in
+                if case let .sendAttachments(chatId, attachments, caption) = action {
+                    return chatId == "owner"
+                        && caption == "caption"
+                        && attachments.count == 1
+                        && attachments[0].filename == "photo.txt"
+                        && FileManager.default.fileExists(atPath: attachments[0].filePath)
+                        && attachments[0].filePath.contains("/attachments/outgoing/")
+                }
+                return false
+            }
+        }
+        XCTAssertTrue(sentOnLaunch)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: payloadURL.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: filesDir.path))
     }
 
     @MainActor

@@ -16,6 +16,9 @@ private let defaultIrisUpdateManifestUrl = URL(
     string: "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/release.json"
 )!
 #endif
+#if os(iOS)
+private let appManagerPendingShareNotificationName = "to.iris.chat.pending-share"
+#endif
 
 struct StoredAccountBundle: Codable, Equatable {
     let ownerNsec: String?
@@ -970,6 +973,7 @@ final class AppManager: ObservableObject {
         syncShareSuggestionsIfNeeded(chatList: initialState.chatList)
 #endif
 #if os(iOS)
+        registerPendingShareObserver()
         processPendingShareFilesIfNeeded()
 #endif
 
@@ -1169,15 +1173,22 @@ final class AppManager: ObservableObject {
         guard !targets.isEmpty else {
             return
         }
+        let stagedAttachments: [StagedAttachment]
+        do {
+            stagedAttachments = try stagePendingShareAttachments(share.attachments)
+        } catch {
+            showToast("Attachment could not be opened")
+            return
+        }
         var dispatchedAll = true
         for chatId in targets {
-            if share.attachments.isEmpty {
+            if stagedAttachments.isEmpty {
                 dispatchedAll = dispatchToRust(.sendMessage(chatId: chatId, text: share.text)) && dispatchedAll
             } else {
                 dispatchedAll = dispatchToRust(
                     .sendAttachments(
                         chatId: chatId,
-                        attachments: share.attachments.map {
+                        attachments: stagedAttachments.map {
                             OutgoingAttachment(filePath: $0.path, filename: $0.filename)
                         },
                         caption: share.text
@@ -1212,6 +1223,17 @@ final class AppManager: ObservableObject {
             result.append(chatId)
         }
         return result
+    }
+
+    private func stagePendingShareAttachments(_ attachments: [PendingShareAttachment]) throws -> [StagedAttachment] {
+        try attachments.map { attachment in
+            let staged = try stageOutgoingAttachment(URL(fileURLWithPath: attachment.path))
+            let filename = attachment.filename.trimmingCharacters(in: .whitespacesAndNewlines)
+            return StagedAttachment(
+                path: staged.path,
+                filename: filename.isEmpty ? staged.filename : filename
+            )
+        }
     }
 
     private func loadPendingShare(id: String, autoSend: Bool = false) {
@@ -1539,6 +1561,38 @@ final class AppManager: ObservableObject {
         }
 #endif
     }
+
+    deinit {
+#if os(iOS)
+        CFNotificationCenterRemoveObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            CFNotificationName(appManagerPendingShareNotificationName as CFString),
+            nil
+        )
+#endif
+    }
+
+#if os(iOS)
+    private func registerPendingShareObserver() {
+        CFNotificationCenterAddObserver(
+            CFNotificationCenterGetDarwinNotifyCenter(),
+            Unmanaged.passUnretained(self).toOpaque(),
+            { _, observer, _, _, _ in
+                guard let observer else { return }
+                let manager = Unmanaged<AppManager>
+                    .fromOpaque(observer)
+                    .takeUnretainedValue()
+                Task { @MainActor in
+                    manager.processPendingShareFilesIfNeeded()
+                }
+            },
+            appManagerPendingShareNotificationName as CFString,
+            nil,
+            .deliverImmediately
+        )
+    }
+#endif
 
     func appForegrounded() {
         lastForegroundedAt = Date()
