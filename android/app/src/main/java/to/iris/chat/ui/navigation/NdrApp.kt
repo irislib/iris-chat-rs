@@ -2,6 +2,14 @@ package to.iris.chat.ui.navigation
 
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -151,6 +159,14 @@ fun NdrApp(
         }
 
     val activeScreen = router.screenStack.lastOrNull() ?: router.defaultScreen
+    val activeRoute =
+        remember(activeScreen, router.screenStack.size) {
+            RouteTransitionTarget(
+                screen = activeScreen,
+                depth = router.screenStack.size,
+                key = screenRouteKey(activeScreen),
+            )
+        }
 
     BackHandler(enabled = bootstrapState != AccountBootstrapState.Loading && router.screenStack.isNotEmpty()) {
         appManager.navigateBack()
@@ -173,144 +189,148 @@ fun NdrApp(
                 }
 
                 AccountBootstrapState.NeedsLogin -> {
-                    when (activeScreen) {
-                        Screen.Welcome -> WelcomeScreen(appManager = appManager)
-                        Screen.CreateAccount -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            CreateAccountScreen(appManager = appManager, appState = appState)
+                    AnimatedRoute(target = activeRoute) { screen ->
+                        when (screen) {
+                            Screen.Welcome -> WelcomeScreen(appManager = appManager)
+                            Screen.CreateAccount -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                CreateAccountScreen(appManager = appManager, appState = appState)
+                            }
+                            Screen.RestoreAccount -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                RestoreAccountScreen(appManager = appManager, appState = appState)
+                            }
+                            Screen.AddDevice -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
+                            }
+                            else -> WelcomeScreen(appManager = appManager)
                         }
-                        Screen.RestoreAccount -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            RestoreAccountScreen(appManager = appManager, appState = appState)
-                        }
-                        Screen.AddDevice -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
-                        }
-                        else -> WelcomeScreen(appManager = appManager)
                     }
                 }
 
                 is AccountBootstrapState.LoggedIn -> {
-                    when (val screen = activeScreen) {
-                        Screen.Welcome -> {
-                            WelcomeScreen(appManager = appManager)
-                        }
+                    AnimatedRoute(target = activeRoute) { screen ->
+                        when (screen) {
+                            Screen.Welcome -> {
+                                WelcomeScreen(appManager = appManager)
+                            }
 
-                        Screen.CreateAccount -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            CreateAccountScreen(appManager = appManager, appState = appState)
-                        }
+                            Screen.CreateAccount -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                CreateAccountScreen(appManager = appManager, appState = appState)
+                            }
 
-                        Screen.RestoreAccount -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            RestoreAccountScreen(appManager = appManager, appState = appState)
-                        }
+                            Screen.RestoreAccount -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                RestoreAccountScreen(appManager = appManager, appState = appState)
+                            }
 
-                        Screen.AddDevice -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
-                        }
+                            Screen.AddDevice -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                AddDeviceScreen(appManager = appManager, appState = appState, awaitingApproval = false)
+                            }
 
-                        Screen.ChatList -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            ChatListScreen(
-                                appManager = appManager,
-                                appState = appState,
-                                nearbyService = container.nearbyIrisService,
-                                onNearbyClick = openNearbyIris,
-                            )
-                        }
-
-                        Screen.NewChat -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            NewChatScreen(appManager = appManager, appState = appState)
-                        }
-
-                        Screen.NewGroup -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            NewGroupScreen(appManager = appManager, appState = appState)
-                        }
-
-                        Screen.CreateInvite -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            CreateInviteScreen(appManager = appManager, appState = appState)
-                        }
-
-                        Screen.JoinInvite -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            JoinInviteScreen(appManager = appManager, appState = appState)
-                        }
-
-                        Screen.Settings -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            val account = appState.account
-                            if (account == null) {
+                            Screen.ChatList -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
                                 ChatListScreen(
                                     appManager = appManager,
                                     appState = appState,
                                     nearbyService = container.nearbyIrisService,
                                     onNearbyClick = openNearbyIris,
                                 )
-                            } else {
-                                MyProfileSheet(
+                            }
+
+                            Screen.NewChat -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                NewChatScreen(appManager = appManager, appState = appState)
+                            }
+
+                            Screen.NewGroup -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                NewGroupScreen(appManager = appManager, appState = appState)
+                            }
+
+                            Screen.CreateInvite -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                CreateInviteScreen(appManager = appManager, appState = appState)
+                            }
+
+                            Screen.JoinInvite -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                JoinInviteScreen(appManager = appManager, appState = appState)
+                            }
+
+                            Screen.Settings -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                val account = appState.account
+                                if (account == null) {
+                                    ChatListScreen(
+                                        appManager = appManager,
+                                        appState = appState,
+                                        nearbyService = container.nearbyIrisService,
+                                        onNearbyClick = openNearbyIris,
+                                    )
+                                } else {
+                                    MyProfileSheet(
+                                        appManager = appManager,
+                                        npub = account.npub,
+                                        displayName = account.displayName,
+                                        pictureUrl = account.pictureUrl,
+                                        deviceNpub = account.deviceNpub,
+                                        canManageDevices = account.hasOwnerSigningAuthority,
+                                        sendTypingIndicators = appState.preferences.sendTypingIndicators,
+                                        sendReadReceipts = appState.preferences.sendReadReceipts,
+                                        desktopNotificationsEnabled = appState.preferences.desktopNotificationsEnabled,
+                                        imageProxyEnabled = appState.preferences.imageProxyEnabled,
+                                        imageProxyUrl = appState.preferences.imageProxyUrl,
+                                        imageProxyKeyHex = appState.preferences.imageProxyKeyHex,
+                                        imageProxySaltHex = appState.preferences.imageProxySaltHex,
+                                        preferences = appState.preferences,
+                                        networkStatus = appState.networkStatus,
+                                        onNearbyBluetoothChange = onNearbyVisibilityChange,
+                                        onNearbyLanChange = onNearbyLanVisibilityChange,
+                                        onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },
+                                        onLogout = { appManager.logout() },
+                                        onDismiss = { appManager.navigateBack() },
+                                    )
+                                }
+                            }
+
+                            Screen.DeviceRoster -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                DeviceRosterScreen(appManager = appManager, appState = appState)
+                            }
+
+                            Screen.AwaitingDeviceApproval -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                AwaitingDeviceApprovalScreen(appManager = appManager, appState = appState)
+                            }
+
+                            Screen.DeviceRevoked -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                DeviceRevokedScreen(appManager = appManager, appState = appState)
+                            }
+
+                            is Screen.Chat -> {
+                                // ChatScreen takes only `(appManager, chatId)` and
+                                // collects its own state slices internally. Passing
+                                // `appState` here would invalidate ChatScreen's
+                                // memoization on every relay event.
+                                ChatScreen(
                                     appManager = appManager,
-                                    npub = account.npub,
-                                    displayName = account.displayName,
-                                    pictureUrl = account.pictureUrl,
-                                    deviceNpub = account.deviceNpub,
-                                    canManageDevices = account.hasOwnerSigningAuthority,
-                                    sendTypingIndicators = appState.preferences.sendTypingIndicators,
-                                    sendReadReceipts = appState.preferences.sendReadReceipts,
-                                    desktopNotificationsEnabled = appState.preferences.desktopNotificationsEnabled,
-                                    imageProxyEnabled = appState.preferences.imageProxyEnabled,
-                                    imageProxyUrl = appState.preferences.imageProxyUrl,
-                                    imageProxyKeyHex = appState.preferences.imageProxyKeyHex,
-                                    imageProxySaltHex = appState.preferences.imageProxySaltHex,
-                                    preferences = appState.preferences,
-                                    networkStatus = appState.networkStatus,
-                                    onNearbyBluetoothChange = onNearbyVisibilityChange,
-                                    onNearbyLanChange = onNearbyLanVisibilityChange,
-                                    onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },
-                                    onLogout = { appManager.logout() },
-                                    onDismiss = { appManager.navigateBack() },
+                                    chatId = screen.chatId,
                                 )
                             }
-                        }
 
-                        Screen.DeviceRoster -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            DeviceRosterScreen(appManager = appManager, appState = appState)
-                        }
-
-                        Screen.AwaitingDeviceApproval -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            AwaitingDeviceApprovalScreen(appManager = appManager, appState = appState)
-                        }
-
-                        Screen.DeviceRevoked -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            DeviceRevokedScreen(appManager = appManager, appState = appState)
-                        }
-
-                        is Screen.Chat -> {
-                            // ChatScreen takes only `(appManager, chatId)` and
-                            // collects its own state slices internally. Passing
-                            // `appState` here would invalidate ChatScreen's
-                            // memoization on every relay event.
-                            ChatScreen(
-                                appManager = appManager,
-                                chatId = screen.chatId,
-                            )
-                        }
-
-                        is Screen.GroupDetails -> {
-                            val appState by appManager.state.collectAsStateWithLifecycle()
-                            GroupDetailsScreen(
-                                appManager = appManager,
-                                appState = appState,
-                                groupId = screen.groupId,
-                            )
+                            is Screen.GroupDetails -> {
+                                val appState by appManager.state.collectAsStateWithLifecycle()
+                                GroupDetailsScreen(
+                                    appManager = appManager,
+                                    appState = appState,
+                                    groupId = screen.groupId,
+                                )
+                            }
                         }
                     }
                 }
@@ -343,6 +363,68 @@ fun NdrApp(
         }
     }
 }
+
+private data class RouteTransitionTarget(
+    val screen: Screen,
+    val depth: Int,
+    val key: String,
+)
+
+@Composable
+private fun AnimatedRoute(
+    target: RouteTransitionTarget,
+    content: @Composable (Screen) -> Unit,
+) {
+    AnimatedContent(
+        targetState = target,
+        transitionSpec = {
+            routeContentTransform(initialState = initialState, targetState = targetState)
+        },
+        modifier = Modifier.fillMaxSize(),
+        label = "IrisRouteTransition",
+    ) { route ->
+        content(route.screen)
+    }
+}
+
+private fun routeContentTransform(
+    initialState: RouteTransitionTarget,
+    targetState: RouteTransitionTarget,
+): ContentTransform {
+    if (targetState.depth == initialState.depth) {
+        return fadeIn(animationSpec = tween(durationMillis = 0))
+            .togetherWith(fadeOut(animationSpec = tween(durationMillis = 0)))
+    }
+    val direction = if (targetState.depth < initialState.depth) -1 else 1
+    return (
+        slideInHorizontally(animationSpec = tween(durationMillis = 220)) { width ->
+            width * direction
+        } + fadeIn(animationSpec = tween(durationMillis = 90, delayMillis = 40))
+    ).togetherWith(
+        slideOutHorizontally(animationSpec = tween(durationMillis = 220)) { width ->
+            -width * direction / 3
+        } + fadeOut(animationSpec = tween(durationMillis = 90))
+    )
+}
+
+private fun screenRouteKey(screen: Screen): String =
+    when (screen) {
+        Screen.Welcome -> "welcome"
+        Screen.CreateAccount -> "createAccount"
+        Screen.RestoreAccount -> "restoreAccount"
+        Screen.AddDevice -> "addDevice"
+        Screen.ChatList -> "chatList"
+        Screen.NewChat -> "newChat"
+        Screen.NewGroup -> "newGroup"
+        Screen.CreateInvite -> "createInvite"
+        Screen.JoinInvite -> "joinInvite"
+        Screen.Settings -> "settings"
+        Screen.DeviceRoster -> "deviceRoster"
+        Screen.AwaitingDeviceApproval -> "awaitingDeviceApproval"
+        Screen.DeviceRevoked -> "deviceRevoked"
+        is Screen.Chat -> "chat:${screen.chatId}"
+        is Screen.GroupDetails -> "groupDetails:${screen.groupId}"
+    }
 
 @Composable
 private fun ShareTargetDialog(

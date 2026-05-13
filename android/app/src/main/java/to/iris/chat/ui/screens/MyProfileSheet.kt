@@ -823,7 +823,7 @@ fun MyProfileSheet(
                             }
                         }
 
-                        null -> Unit
+                        else -> Unit
                     }
                 }
             }

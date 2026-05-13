@@ -4,6 +4,9 @@ import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
 #endif
+#if canImport(UIKit)
+import UIKit
+#endif
 #if canImport(PhotosUI)
 import PhotosUI
 #endif
@@ -198,8 +201,6 @@ struct RootView: View {
                             onOpenNearby: openNearbyIris
                         )
                     }
-                } else if case .welcome = manager.activeScreen {
-                    WelcomeScreen(manager: manager)
                 } else if let directChatInfoChatId {
                     NavigationShell(
                         title: "Details",
@@ -216,21 +217,7 @@ struct RootView: View {
                         )
                     }
                 } else {
-                    NavigationShell(
-                        title: screenTitle(manager.activeScreen),
-                        subtitle: chatHeaderSubtitle,
-                        subtitleSystemImage: chatHeaderSubtitleSystemImage,
-                        canGoBack: manager.canNavigateBack,
-                        onBack: manager.navigateBack,
-                        backBadgeCount: backUnreadCount,
-                        leading: topBarLeadingItem,
-                        trailing: topBarTrailingItem,
-                        titleAccessoryLeading: chatHeaderTitleAvatar,
-                        onTitleTap: chatHeaderOnTap,
-                        offlineBanner: offlineBanner
-                    ) {
-                        content
-                    }
+                    mobileNavigationContent
                 }
 
                 ToastOverlay(center: manager.toasts)
@@ -292,6 +279,51 @@ struct RootView: View {
 #endif
     }
 
+    @ViewBuilder
+    private var mobileNavigationContent: some View {
+#if os(iOS)
+        UIKitRouteNavigationHost(
+            routes: currentNavigationRoutes,
+            makeContent: { route in
+                AnyView(screenChrome(for: route))
+            },
+            onStackChanged: { stack in
+                manager.dispatch(.updateScreenStack(stack: stack))
+            }
+        )
+#else
+        if case .welcome = manager.activeScreen {
+            WelcomeScreen(manager: manager)
+        } else {
+            screenChrome(for: currentNavigationRoute)
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private func screenChrome(for route: NavigationRoute) -> some View {
+        let screen = route.screen
+        if case .welcome = screen {
+            WelcomeScreen(manager: manager)
+        } else {
+            NavigationShell(
+                title: screenTitle(screen),
+                subtitle: chatHeaderSubtitle(for: screen),
+                subtitleSystemImage: chatHeaderSubtitleSystemImage(for: screen),
+                canGoBack: route.depth > 0,
+                onBack: manager.navigateBack,
+                backBadgeCount: backUnreadCount(for: screen),
+                leading: topBarLeadingItem(for: screen),
+                trailing: topBarTrailingItem(for: screen),
+                titleAccessoryLeading: chatHeaderTitleAvatar(for: screen),
+                onTitleTap: chatHeaderOnTap(for: screen),
+                offlineBanner: offlineBanner
+            ) {
+                content(for: screen)
+            }
+        }
+    }
+
     private var usesDesktopChatShell: Bool {
         guard IrisLayout.usesDesktopChrome, manager.state.account != nil else {
             return false
@@ -304,9 +336,24 @@ struct RootView: View {
         }
     }
 
+    private var currentNavigationRoutes: [NavigationRoute] {
+        let root = NavigationRoute(screen: manager.state.router.defaultScreen, depth: 0)
+        let stack = manager.state.router.screenStack.enumerated().map { index, screen in
+            NavigationRoute(screen: screen, depth: index + 1)
+        }
+        return [root] + stack
+    }
+
+    private var currentNavigationRoute: NavigationRoute {
+        NavigationRoute(
+            screen: manager.activeScreen,
+            depth: manager.state.router.screenStack.count
+        )
+    }
+
     @ViewBuilder
-    private var content: some View {
-        switch manager.activeScreen {
+    private func content(for screen: Screen) -> some View {
+        switch screen {
         case .welcome:
             WelcomeScreen(manager: manager)
         case .createAccount:
@@ -340,8 +387,8 @@ struct RootView: View {
         }
     }
 
-    private var topBarLeadingItem: AnyView {
-        guard case .chatList = manager.activeScreen, let account = manager.state.account else {
+    private func topBarLeadingItem(for screen: Screen) -> AnyView {
+        guard case .chatList = screen, let account = manager.state.account else {
             return AnyView(EmptyView())
         }
 
@@ -366,8 +413,8 @@ struct RootView: View {
         )
     }
 
-    private var topBarTrailingItem: AnyView {
-        if case .chatList = manager.activeScreen {
+    private func topBarTrailingItem(for screen: Screen) -> AnyView {
+        if case .chatList = screen {
             return AnyView(
                 NewChatCircleButton {
                     manager.dispatch(.pushScreen(screen: .newChat))
@@ -380,7 +427,7 @@ struct RootView: View {
         // pages. Tapping pops up an inline scoped-search sheet so the
         // user doesn't have to navigate back to the chat list and
         // retype the chat name.
-        if let target = chatHeaderSearchTarget() {
+        if let target = chatHeaderSearchTarget(for: screen) {
             return AnyView(
                 Button {
                     inChatSearch = target
@@ -401,8 +448,8 @@ struct RootView: View {
         return AnyView(EmptyView())
     }
 
-    private func chatHeaderSearchTarget() -> InChatSearchTarget? {
-        switch manager.activeScreen {
+    private func chatHeaderSearchTarget(for screen: Screen) -> InChatSearchTarget? {
+        switch screen {
         case .chat:
             guard let chat = manager.state.currentChat else { return nil }
             return InChatSearchTarget(chatId: chat.chatId, displayName: chat.displayName)
@@ -415,8 +462,8 @@ struct RootView: View {
         }
     }
 
-    private var backUnreadCount: UInt64 {
-        guard case .chat(let activeChatId) = manager.activeScreen else {
+    private func backUnreadCount(for screen: Screen) -> UInt64 {
+        guard case .chat(let activeChatId) = screen else {
             return 0
         }
         return manager.state.chatList
@@ -424,8 +471,8 @@ struct RootView: View {
             .reduce(UInt64(0)) { $0 + $1.unreadCount }
     }
 
-    private var chatHeaderTitleAvatar: AnyView {
-        guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
+    private func chatHeaderTitleAvatar(for screen: Screen) -> AnyView {
+        guard case .chat = screen, let chat = manager.state.currentChat else {
             return AnyView(EmptyView())
         }
         return AnyView(
@@ -439,8 +486,8 @@ struct RootView: View {
         )
     }
 
-    private var chatHeaderOnTap: (() -> Void)? {
-        guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
+    private func chatHeaderOnTap(for screen: Screen) -> (() -> Void)? {
+        guard case .chat = screen, let chat = manager.state.currentChat else {
             return nil
         }
         if let groupId = chat.groupId {
@@ -455,8 +502,8 @@ struct RootView: View {
         }
     }
 
-    private var chatHeaderSubtitle: String? {
-        guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
+    private func chatHeaderSubtitle(for screen: Screen) -> String? {
+        guard case .chat = screen, let chat = manager.state.currentChat else {
             return nil
         }
         if let ttl = chat.messageTtlSeconds, ttl > 0 {
@@ -468,8 +515,8 @@ struct RootView: View {
         return nil
     }
 
-    private var chatHeaderSubtitleSystemImage: String? {
-        guard case .chat = manager.activeScreen, let chat = manager.state.currentChat else {
+    private func chatHeaderSubtitleSystemImage(for screen: Screen) -> String? {
+        guard case .chat = screen, let chat = manager.state.currentChat else {
             return nil
         }
         if let ttl = chat.messageTtlSeconds, ttl > 0 {
@@ -781,11 +828,187 @@ struct NavigationShell<Content: View>: View {
                         .ignoresSafeArea(.all, edges: .top)
                 }
             }
-#if os(iOS)
-            .modifier(IrisSwipeBackModifier(enabled: canGoBack, onBack: onBack))
-#endif
     }
 }
+
+private struct NavigationRoute: Equatable {
+    let screen: Screen
+    let depth: Int
+
+    var identity: String {
+        "\(key)|\(depth)"
+    }
+
+    var key: String {
+        switch screen {
+        case .welcome:
+            return "welcome"
+        case .createAccount:
+            return "createAccount"
+        case .restoreAccount:
+            return "restoreAccount"
+        case .addDevice:
+            return "addDevice"
+        case .chatList:
+            return "chatList"
+        case .newChat:
+            return "newChat"
+        case .newGroup:
+            return "newGroup"
+        case .createInvite:
+            return "createInvite"
+        case .joinInvite:
+            return "joinInvite"
+        case .settings:
+            return "settings"
+        case .chat(let chatId):
+            return "chat:\(chatId)"
+        case .groupDetails(let groupId):
+            return "groupDetails:\(groupId)"
+        case .deviceRoster:
+            return "deviceRoster"
+        case .awaitingDeviceApproval:
+            return "awaitingDeviceApproval"
+        case .deviceRevoked:
+            return "deviceRevoked"
+        }
+    }
+}
+
+#if os(iOS)
+private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
+    let routes: [NavigationRoute]
+    let makeContent: (NavigationRoute) -> AnyView
+    let onStackChanged: ([Screen]) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onStackChanged: onStackChanged)
+    }
+
+    func makeUIViewController(context: Context) -> UINavigationController {
+        let navigationController = UINavigationController()
+        navigationController.setNavigationBarHidden(true, animated: false)
+        navigationController.delegate = context.coordinator
+        navigationController.interactivePopGestureRecognizer?.delegate = context.coordinator
+        navigationController.interactivePopGestureRecognizer?.isEnabled = true
+        context.coordinator.navigationController = navigationController
+        return navigationController
+    }
+
+    func updateUIViewController(_ navigationController: UINavigationController, context: Context) {
+        context.coordinator.update(
+            navigationController: navigationController,
+            routes: routes,
+            makeContent: makeContent
+        )
+    }
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIGestureRecognizerDelegate {
+        private let onStackChanged: ([Screen]) -> Void
+        private var currentRoutes: [NavigationRoute] = []
+        private var applyingProgrammaticNavigation = false
+        weak var navigationController: UINavigationController?
+
+        init(onStackChanged: @escaping ([Screen]) -> Void) {
+            self.onStackChanged = onStackChanged
+        }
+
+        func update(
+            navigationController: UINavigationController,
+            routes: [NavigationRoute],
+            makeContent: (NavigationRoute) -> AnyView
+        ) {
+            let existingControllers = routeControllers(in: navigationController)
+            if existingControllers.map(\.route) == routes {
+                refresh(controllers: existingControllers, makeContent: makeContent)
+                currentRoutes = routes
+                return
+            }
+
+            let nextControllers = routes.map { route in
+                if let existing = existingControllers.first(where: { $0.route.identity == route.identity }) {
+                    existing.route = route
+                    existing.rootView = makeContent(route)
+                    return existing
+                }
+                return RouteHostingController(route: route, rootView: makeContent(route))
+            }
+
+            let oldRoutes = existingControllers.map(\.route)
+            let animated = shouldAnimate(from: oldRoutes, to: routes)
+            applyingProgrammaticNavigation = animated
+            currentRoutes = routes
+            navigationController.setViewControllers(nextControllers, animated: animated)
+            if !animated {
+                applyingProgrammaticNavigation = false
+            }
+        }
+
+        func navigationController(
+            _ navigationController: UINavigationController,
+            didShow viewController: UIViewController,
+            animated: Bool
+        ) {
+            let visibleRoutes = routeControllers(in: navigationController).map(\.route)
+            if applyingProgrammaticNavigation {
+                applyingProgrammaticNavigation = false
+                currentRoutes = visibleRoutes
+                return
+            }
+            guard visibleRoutes != currentRoutes else {
+                return
+            }
+            currentRoutes = visibleRoutes
+            onStackChanged(visibleRoutes.dropFirst().map(\.screen))
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (navigationController?.viewControllers.count ?? currentRoutes.count) > 1
+        }
+
+        private func refresh(
+            controllers: [RouteHostingController],
+            makeContent: (NavigationRoute) -> AnyView
+        ) {
+            controllers.forEach { controller in
+                controller.rootView = makeContent(controller.route)
+            }
+        }
+
+        private func routeControllers(in navigationController: UINavigationController) -> [RouteHostingController] {
+            navigationController.viewControllers.compactMap { $0 as? RouteHostingController }
+        }
+
+        private func shouldAnimate(from oldRoutes: [NavigationRoute], to newRoutes: [NavigationRoute]) -> Bool {
+            guard !oldRoutes.isEmpty, oldRoutes.first == newRoutes.first else {
+                return false
+            }
+            if newRoutes.count == oldRoutes.count + 1 {
+                return oldRoutes == Array(newRoutes.dropLast())
+            }
+            if newRoutes.count + 1 == oldRoutes.count {
+                return newRoutes == Array(oldRoutes.dropLast())
+            }
+            return false
+        }
+    }
+}
+
+private final class RouteHostingController: UIHostingController<AnyView> {
+    var route: NavigationRoute
+
+    init(route: NavigationRoute, rootView: AnyView) {
+        self.route = route
+        super.init(rootView: rootView)
+        view.backgroundColor = .clear
+    }
+
+    @MainActor
+    @preconcurrency required dynamic init?(coder aDecoder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+#endif
 
 private struct NavigationHeaderChrome: View {
     let palette: IrisPalette
@@ -923,29 +1146,6 @@ private struct OfflineStatusBanner: View {
     }
 }
 
-private struct IrisSwipeBackModifier: ViewModifier {
-    let enabled: Bool
-    let onBack: () -> Void
-
-    func body(content: Content) -> some View {
-        content
-            .contentShape(Rectangle())
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 18, coordinateSpace: .global)
-                    .onEnded { value in
-                        guard enabled, value.startLocation.x <= 28 else {
-                            return
-                        }
-                        let horizontal = value.translation.width
-                        let vertical = abs(value.translation.height)
-                        guard horizontal > 72, horizontal > vertical * 1.35 else {
-                            return
-                        }
-                        onBack()
-                    }
-            )
-    }
-}
 #endif
 
 #if os(iOS) || os(macOS)
@@ -4567,7 +4767,7 @@ struct SettingsScreen: View {
             }
         }
         .onAppear(perform: applyFocusedSection)
-        .onChange(of: focusedSection) { _ in
+        .irisOnChange(of: focusedSection) { _ in
             applyFocusedSection()
         }
         .accessibilityIdentifier("settingsScreen")
