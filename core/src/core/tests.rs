@@ -7211,6 +7211,24 @@ fn set_chat_message_ttl_action_sets_clears_and_persists() {
         .expect("persisted state");
     assert_eq!(loaded.chat_message_ttl_seconds.get(&chat_id), Some(&3600));
 
+    let notice_count = core
+        .threads
+        .get(&chat_id)
+        .map(|thread| thread.messages.len())
+        .unwrap_or_default();
+    core.handle_action(AppAction::SetChatMessageTtl {
+        chat_id: chat_id.clone(),
+        ttl_seconds: Some(3600),
+    });
+    assert_eq!(
+        core.threads
+            .get(&chat_id)
+            .map(|thread| thread.messages.len())
+            .unwrap_or_default(),
+        notice_count,
+        "reselecting the active timer must not publish another chat-settings notice"
+    );
+
     core.handle_action(AppAction::SetChatMessageTtl {
         chat_id: chat_id.clone(),
         ttl_seconds: None,

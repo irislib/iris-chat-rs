@@ -25,6 +25,10 @@ impl AppCore {
         let Some(normalized_chat_id) = self.normalize_chat_id(chat_id) else {
             return;
         };
+        let previous_ttl = self
+            .chat_message_ttl_seconds
+            .get(&normalized_chat_id)
+            .copied();
         let normalized_ttl = match ttl_seconds {
             Some(ttl_seconds) if ttl_seconds > 0 => {
                 self.chat_message_ttl_seconds
@@ -36,6 +40,9 @@ impl AppCore {
                 None
             }
         };
+        if previous_ttl == normalized_ttl {
+            return;
+        }
 
         let actor = self
             .logged_in

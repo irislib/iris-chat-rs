@@ -120,11 +120,11 @@ class IrisNearbyService(
     private var localNonce = newNonce()
     private var ownProfileEventId: String? = null
     private var maintenanceJob: Job? = null
+    @Volatile private var bluetoothPermissionGranted = readBluetoothPermission()
+    @Volatile private var localNetworkPermissionGranted = readLocalNetworkPermission()
 
     val snapshot: Snapshot
         get() {
-            val bluetoothPermissionGranted = hasBluetoothPermission()
-            val localNetworkPermissionGranted = hasLocalNetworkPermission()
             val sortedPeers =
                 peers.values
                     .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id })
@@ -150,12 +150,21 @@ class IrisNearbyService(
             )
         }
 
-    fun hasBluetoothPermission(): Boolean =
+    fun refreshPermissionState() {
+        bluetoothPermissionGranted = readBluetoothPermission()
+        localNetworkPermissionGranted = readLocalNetworkPermission()
+    }
+
+    fun hasBluetoothPermission(): Boolean = bluetoothPermissionGranted
+
+    fun hasLocalNetworkPermission(): Boolean = localNetworkPermissionGranted
+
+    private fun readBluetoothPermission(): Boolean =
         nearbyPermissions().all {
             ContextCompat.checkSelfPermission(appContext, it) == PackageManager.PERMISSION_GRANTED
         }
 
-    fun hasLocalNetworkPermission(): Boolean =
+    private fun readLocalNetworkPermission(): Boolean =
         localNetworkPermissions().all {
             ContextCompat.checkSelfPermission(appContext, it) == PackageManager.PERMISSION_GRANTED
         }
@@ -319,7 +328,7 @@ class IrisNearbyService(
     }
 
     private fun start() {
-        if (!hasBluetoothPermissions()) {
+        if (!hasBluetoothPermission()) {
             status = "No Bluetooth access"
             Log.w(TAG, "missing Bluetooth permissions")
             return
@@ -1361,7 +1370,7 @@ class IrisNearbyService(
             peers.size == 1 -> "1 nearby"
             peers.size > 1 -> "${peers.size} nearby"
             localNetworkVisible && !visible -> "Visible"
-            !hasBluetoothPermissions() -> "No Bluetooth access"
+            !hasBluetoothPermission() -> "No Bluetooth access"
             isBluetoothOn() -> "Visible"
             else -> "Bluetooth off"
         }
@@ -1627,28 +1636,11 @@ class IrisNearbyService(
         return content.optString("peer_id").trim().takeIf(String::isNotEmpty)
     }
 
-    private fun hasBluetoothPermissions(): Boolean {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
-            return ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH) ==
-                PackageManager.PERMISSION_GRANTED &&
-                ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_ADMIN) ==
-                PackageManager.PERMISSION_GRANTED &&
-                ContextCompat.checkSelfPermission(appContext, Manifest.permission.ACCESS_FINE_LOCATION) ==
-                PackageManager.PERMISSION_GRANTED
-        }
-        return ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_SCAN) ==
-            PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_CONNECT) ==
-            PackageManager.PERMISSION_GRANTED &&
-            ContextCompat.checkSelfPermission(appContext, Manifest.permission.BLUETOOTH_ADVERTISE) ==
-            PackageManager.PERMISSION_GRANTED
-    }
-
     private val scanCallback =
         object : ScanCallback() {
             override fun onScanResult(callbackType: Int, result: ScanResult) {
                 guardBluetooth("scan result", Unit, statusOnFailure = null) {
-                    if (hasBluetoothPermissions()) {
+                    if (hasBluetoothPermission()) {
                         val advertisedServices = result.scanRecord?.serviceUuids.orEmpty()
                         if (advertisedServices.isNotEmpty() && advertisedServices.none { it.uuid == SERVICE_UUID }) {
                             return@guardBluetooth
@@ -1874,7 +1866,7 @@ class IrisNearbyService(
             ) {
                 guardBluetooth("server characteristic write", Unit, statusOnFailure = null) {
                     ingestChunk(device.address, value, serverAssemblers)
-                    if (responseNeeded && hasBluetoothPermissions()) {
+                    if (responseNeeded && hasBluetoothPermission()) {
                         @SuppressLint("MissingPermission")
                         guardBluetooth("send write response", Unit, statusOnFailure = null) {
                             gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
@@ -1903,7 +1895,7 @@ class IrisNearbyService(
                             subscribedServerAddresses.remove(device.address)
                         }
                     }
-                    if (responseNeeded && hasBluetoothPermissions()) {
+                    if (responseNeeded && hasBluetoothPermission()) {
                         @SuppressLint("MissingPermission")
                         guardBluetooth("send descriptor response", Unit, statusOnFailure = null) {
                             gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)

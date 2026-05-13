@@ -37,6 +37,9 @@ class MainActivity : ComponentActivity() {
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
             val request = pendingPermissionRequest
             pendingPermissionRequest = null
+            if (::container.isInitialized) {
+                container.nearbyIrisService.refreshPermissionState()
+            }
             if (request != null) {
                 request.preferenceKeys.forEach(::markPermissionRequested)
                 if (request.permissions.all { permission ->
@@ -103,6 +106,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         Log.d(TAG, "onStart")
         requestNotificationPermissionIfNeeded()
+        container.nearbyIrisService.refreshPermissionState()
         container.appManager.appForegrounded()
         restoreNearbyVisibilityPreference()
     }
@@ -412,6 +416,7 @@ class MainActivity : ComponentActivity() {
             permissions.filter {
                 ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
             }
+        container.nearbyIrisService.refreshPermissionState()
         if (missing.isEmpty()) {
             onGranted()
             return

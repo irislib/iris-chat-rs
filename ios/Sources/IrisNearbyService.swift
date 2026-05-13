@@ -20,6 +20,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     @Published private(set) var status = "Off"
     @Published private(set) var lanStatus = "Off"
     @Published private(set) var lanPermissionNeedsSettings = false
+    @Published private(set) var bluetoothAuthorization: CBManagerAuthorization = CBManager.authorization
     @Published private(set) var peers: [IrisNearbyPeer] = []
 
     private static let serviceUUID = CBUUID(string: "8A0DAE01-D8E5-4F27-9F20-A616F1FBA6D0")
@@ -131,15 +132,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     var shouldShowBluetoothPermissionPrompt: Bool {
-        CBManager.authorization == .notDetermined
+        bluetoothAuthorization == .notDetermined
     }
 
     var bluetoothPermissionGranted: Bool {
-        CBManager.authorization == .allowedAlways
+        bluetoothAuthorization == .allowedAlways
     }
 
     var bluetoothPermissionNeedsSettings: Bool {
-        switch CBManager.authorization {
+        switch bluetoothAuthorization {
         case .denied, .restricted:
             return true
         default:
@@ -329,6 +330,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 options: [CBCentralManagerOptionShowPowerAlertKey: false]
             )
         }
+    }
+
+    func refreshBluetoothAuthorizationStatus() {
+        setBluetoothAuthorization(CBManager.authorization)
+    }
+
+    private func setBluetoothAuthorization(_ authorization: CBManagerAuthorization) {
+        guard bluetoothAuthorization != authorization else { return }
+        bluetoothAuthorization = authorization
     }
 
     func setVisible(_ visible: Bool) {
@@ -1686,6 +1696,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
 extension IrisNearbyService: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        setBluetoothAuthorization(CBManager.authorization)
         logBluetoothStates()
         if central.state == .poweredOn {
             startScanningIfReady()
@@ -1811,6 +1822,7 @@ extension IrisNearbyService: CBPeripheralDelegate {
 
 extension IrisNearbyService: CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
+        setBluetoothAuthorization(CBManager.authorization)
         logBluetoothStates()
         if peripheral.state == .poweredOn {
             startAdvertisingIfReady()

@@ -879,6 +879,8 @@ final class AppManager: ObservableObject {
 #endif
 #if os(iOS) || os(macOS)
     let nearbyIris = IrisNearbyService()
+    private var nearbyLanPermissionPromptAttempted = false
+    private var nearbyLanPermissionGranted = false
 #endif
 #if os(iOS)
     private let mobilePushRuntime = MobilePushRuntime()
@@ -964,6 +966,14 @@ final class AppManager: ObservableObject {
 #endif
         self.state = initialState
         self.lastRevApplied = initialState.rev
+#if os(iOS) || os(macOS)
+        self.nearbyLanPermissionPromptAttempted = UserDefaults.standard.bool(
+            forKey: Self.nearbyLanPermissionPromptAttemptedKey
+        )
+        self.nearbyLanPermissionGranted = UserDefaults.standard.bool(
+            forKey: Self.nearbyLanPermissionGrantedKey
+        )
+#endif
 
         resolvedRust.listenForUpdates(reconciler: reconciler)
         if AppPaths.testRunId(environment: environment) == nil {
@@ -1606,6 +1616,7 @@ final class AppManager: ObservableObject {
 #if os(iOS) || os(macOS)
         if nearbySettingsWasOpened {
             nearbySettingsWasOpened = false
+            nearbyIris.refreshBluetoothAuthorizationStatus()
             nearbyIris.clearLanPermissionSettingsHint()
         }
         if state.preferences.nearbyBluetoothEnabled,
@@ -1680,26 +1691,43 @@ final class AppManager: ObservableObject {
 
 #if os(iOS) || os(macOS)
     private var shouldRequestLanPermissionOnNearbyTap: Bool {
-        !UserDefaults.standard.bool(forKey: Self.nearbyLanPermissionPromptAttemptedKey) &&
+        !nearbyLanPermissionPromptAttempted &&
             !nearbyIris.lanPermissionNeedsSettings
     }
 
     private var canAutoStartNearbyLan: Bool {
-        UserDefaults.standard.bool(forKey: Self.nearbyLanPermissionGrantedKey)
+        nearbyLanPermissionGranted
     }
 
     private func markNearbyLanPermissionPromptAttempted() {
-        UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
+        setNearbyLanPermissionDefault(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
     }
 
     private func markNearbyLanPermissionGranted() {
-        UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
-        UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionGrantedKey)
+        setNearbyLanPermissionDefault(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
+        setNearbyLanPermissionDefault(true, forKey: Self.nearbyLanPermissionGrantedKey)
     }
 
     private func markNearbyLanPermissionDenied() {
-        UserDefaults.standard.set(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
-        UserDefaults.standard.set(false, forKey: Self.nearbyLanPermissionGrantedKey)
+        setNearbyLanPermissionDefault(true, forKey: Self.nearbyLanPermissionPromptAttemptedKey)
+        setNearbyLanPermissionDefault(false, forKey: Self.nearbyLanPermissionGrantedKey)
+    }
+
+    private func setNearbyLanPermissionDefault(_ value: Bool, forKey key: String) {
+        if key == Self.nearbyLanPermissionPromptAttemptedKey {
+            guard nearbyLanPermissionPromptAttempted != value else {
+                return
+            }
+            nearbyLanPermissionPromptAttempted = value
+        } else if key == Self.nearbyLanPermissionGrantedKey {
+            guard nearbyLanPermissionGranted != value else {
+                return
+            }
+            nearbyLanPermissionGranted = value
+        } else if UserDefaults.standard.bool(forKey: key) == value {
+            return
+        }
+        UserDefaults.standard.set(value, forKey: key)
     }
 
     private func handleNearbyBluetoothPermissionDenied() {
