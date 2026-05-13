@@ -735,14 +735,6 @@ impl AppCore {
             self.schedule_tracked_peer_catch_up(Duration::from_secs(PROTOCOL_RECONNECT_CHECK_SECS));
             return false;
         }
-        if let Some(delay) = self.protocol_fetch_rate_limit_delay() {
-            self.push_debug_log(
-                "protocol.engine_fetch.skip",
-                format!("reason={reason} rate limited for {}ms", delay.as_millis()),
-            );
-            self.schedule_tracked_peer_catch_up(delay);
-            return false;
-        }
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -1589,9 +1581,7 @@ impl AppCore {
         connected_after: u64,
         filter_count: u64,
     ) {
-        if generation != self.protocol_reconnect_token
-            || token != self.protocol_subscription_runtime.reconcile_token
-        {
+        if token != self.protocol_subscription_runtime.reconcile_token {
             return;
         }
         self.protocol_subscription_runtime.refresh_in_flight = false;

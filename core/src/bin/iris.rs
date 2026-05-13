@@ -561,6 +561,92 @@ impl CliApp {
         self.wait_for_quiet_after(before, timeout, true)
     }
 
+    fn wait_for_network_runtime_ready(
+        &self,
+        timeout: Duration,
+        require_protocol_idle: bool,
+    ) -> Result<AppState> {
+        let started = Instant::now();
+        let mut last_state = self.app.state();
+        while started.elapsed() < timeout {
+            last_state = self.app.state();
+            fail_on_toast(&last_state)?;
+            if self.network_runtime_ready(&last_state, require_protocol_idle) {
+                return Ok(last_state);
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        Ok(last_state)
+    }
+
+    fn network_runtime_ready(&self, state: &AppState, require_protocol_idle: bool) -> bool {
+        if is_busy(state) || state.busy.syncing_network {
+            return false;
+        }
+        if require_protocol_idle && has_pending_runtime_publishes(state) {
+            return false;
+        }
+        if state.preferences.nostr_relay_urls.is_empty() {
+            return true;
+        }
+        let Ok(bundle) = serde_json::from_str::<Value>(&self.app.export_support_bundle_json())
+        else {
+            return false;
+        };
+        let relay_connected = bundle
+            .pointer("/relay_transport/connected_relay_count")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+            > 0;
+        let subscription = bundle
+            .get("protocol_subscription")
+            .cloned()
+            .unwrap_or(Value::Null);
+        if !relay_connected {
+            return false;
+        }
+        let refresh_in_flight = subscription
+            .get("refresh_in_flight")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let refresh_dirty = subscription
+            .get("refresh_dirty")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let desired = subscription
+            .get("desired_plan")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let applied = subscription
+            .get("applied_plan")
+            .cloned()
+            .unwrap_or(Value::Null);
+        let applying = subscription
+            .get("applying_plan")
+            .cloned()
+            .unwrap_or(Value::Null);
+        if !require_protocol_idle {
+            return desired.is_null() || desired == applied || desired == applying;
+        }
+        if refresh_in_flight || refresh_dirty || desired != applied {
+            return false;
+        }
+        if require_protocol_idle {
+            let pending_inbound = bundle
+                .pointer("/protocol_engine/pending_inbound_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let pending_group = bundle
+                .pointer("/protocol_engine/pending_group_sender_key_message_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            if pending_inbound > 0 || pending_group > 0 {
+                return false;
+            }
+        }
+        true
+    }
+
     fn wait_for_quiet_after(
         &self,
         before_rev: u64,
@@ -961,10 +1047,9 @@ fn handle_maintenance_command(cli: &CliApp, command: MaintenanceTopCommands) -> 
     match command {
         MaintenanceTopCommands::State => Ok(state_json(&cli.app.state())),
         MaintenanceTopCommands::Sync { wait_ms } => {
-            let state = cli.dispatch_and_wait_network(
-                AppAction::AppForegrounded,
-                Duration::from_millis(wait_ms.max(100)),
-            )?;
+            let timeout = Duration::from_millis(wait_ms.max(100));
+            let _ = cli.dispatch_and_wait_network(AppAction::AppForegrounded, timeout)?;
+            let state = cli.wait_for_network_runtime_ready(timeout, true)?;
             Ok(state_json(&state))
         }
         MaintenanceTopCommands::Update(cmd) => {
@@ -1292,8 +1377,8 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
     } else {
         None
     };
-    let state =
-        cli.dispatch_and_wait_network(AppAction::AppForegrounded, Duration::from_secs(8))?;
+    let _ = cli.dispatch_and_wait_network(AppAction::AppForegrounded, Duration::from_secs(8))?;
+    let state = cli.wait_for_network_runtime_ready(Duration::from_secs(25), true)?;
     fail_on_toast(&state)?;
 
     print_stream_envelope(
@@ -1305,14 +1390,8 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
             "nearby_lan": nearby_lan,
         }),
     )?;
-    let mut last_foreground = Instant::now();
-
     loop {
         thread::sleep(interval);
-        if last_foreground.elapsed() >= Duration::from_secs(2) {
-            cli.app.dispatch(AppAction::AppForegrounded);
-            last_foreground = Instant::now();
-        }
         stream_new_messages(data_dir, chat_filter.as_deref(), &mut seen)?;
     }
 }
@@ -1745,11 +1824,14 @@ fn is_busy(state: &AppState) -> bool {
 }
 
 fn is_busy_or_syncing(state: &AppState) -> bool {
-    let pending_runtime_publishes = state
+    is_busy(state) || state.busy.syncing_network || has_pending_runtime_publishes(state)
+}
+
+fn has_pending_runtime_publishes(state: &AppState) -> bool {
+    state
         .network_status
         .as_ref()
-        .is_some_and(|status| status.pending_outbound_count > 0);
-    is_busy(state) || state.busy.syncing_network || pending_runtime_publishes
+        .is_some_and(|status| status.pending_outbound_count > 0)
 }
 
 fn chat_kind(kind: &ChatKind) -> &'static str {

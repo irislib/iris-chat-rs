@@ -966,8 +966,8 @@ fn stale_protocol_subscription_reconcile_completion_is_ignored() {
     core.protocol_subscription_runtime.refresh_in_flight = true;
 
     core.handle_protocol_subscription_reconcile_completed(
-        4,
-        7,
+        5,
+        6,
         "stale".to_string(),
         None,
         false,
@@ -980,6 +980,37 @@ fn stale_protocol_subscription_reconcile_completion_is_ignored() {
 
     assert!(core.protocol_subscription_runtime.refresh_in_flight);
     assert_eq!(core.relay_connected_count, 0);
+}
+
+#[test]
+fn liveness_token_does_not_stale_subscription_completion() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-liveness-token", &owner, &device);
+    let plan = protocol_plan_for_test(vec![device.public_key()], Vec::new());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applying_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+    core.protocol_subscription_runtime.reconcile_token = 9;
+    let apply_generation = core.protocol_reconnect_token;
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
+    assert_ne!(core.protocol_reconnect_token, apply_generation);
+
+    core.handle_protocol_subscription_reconcile_completed(
+        apply_generation,
+        9,
+        "test_success_after_liveness_schedule".to_string(),
+        Some(plan.clone()),
+        true,
+        None,
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        1,
+        1,
+        1,
+    );
+
+    assert!(!core.protocol_subscription_runtime.refresh_in_flight);
+    assert_eq!(core.protocol_subscription_runtime.applied_plan, Some(plan));
 }
 
 #[test]
@@ -1220,24 +1251,20 @@ fn targeted_protocol_fetch_is_single_flight() {
 fn protocol_fetch_start_is_rate_limited() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let peer = Keys::generate();
     let mut core = logged_in_test_core("protocol-fetch-rate-limit", &owner, &device);
 
     core.protocol_subscription_runtime
         .protocol_fetch_last_started_at = Some(Instant::now());
     core.debug_log.clear();
 
-    let filters = vec![Filter::new()
-        .author(peer.public_key())
-        .kind(Kind::Custom(APP_KEYS_EVENT_KIND as u16))];
     assert!(
-        !core.fetch_protocol_state_for_filters(filters, "test"),
-        "recent protocol fetch should rate-limit targeted engine fetches"
+        !core.fetch_recent_protocol_state(),
+        "recent protocol fetch should rate-limit broad catch-up fetches"
     );
     assert!(
         core.debug_log
             .iter()
-            .any(|entry| entry.category == "protocol.engine_fetch.skip"
+            .any(|entry| entry.category == "protocol.catch_up.skip"
                 && entry.detail.contains("rate limited")),
         "rate-limited fetch should be visible in debug output"
     );

@@ -1,6 +1,8 @@
 # Iris Chat 2026.5.13.5
 
 - Long chats no longer flicker on open or briefly lock scrolling after you scroll away from the latest message.
+- Opening or paging long chats no longer waits on slow message-server work before the UI can respond.
+- Live message subscriptions now finish reliably after reconnects, fixing missed group and linked-device updates.
 - Bluetooth nearby presence now stays visible even when the same device is also reachable over Wi-Fi.
 - Wi-Fi and Bluetooth nearby handshakes now keep liveness traffic small while avoiding duplicate bulk sync work.
 - Release checks now include a local core LAN discovery smoke test.

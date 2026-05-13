@@ -131,6 +131,13 @@ impl AppCore {
             }
             INVITE_RESPONSE_KIND => {
                 self.debug_event_counters.invite_response_events += 1;
+                if self.handle_private_chat_invite_response(&event) {
+                    self.remember_event(event_id);
+                    self.persist_best_effort();
+                    self.rebuild_state();
+                    self.emit_state();
+                    return;
+                }
                 let retry_results = self
                     .protocol_engine
                     .as_mut()
@@ -151,13 +158,6 @@ impl AppCore {
                         self.emit_state();
                         return;
                     }
-                }
-                if self.handle_private_chat_invite_response(&event) {
-                    self.remember_event(event_id);
-                    self.persist_best_effort();
-                    self.rebuild_state();
-                    self.emit_state();
-                    return;
                 }
             }
             MESSAGE_EVENT_KIND => {

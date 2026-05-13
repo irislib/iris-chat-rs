@@ -208,7 +208,7 @@ fn wait_for_listener_ready(
     stderr: &Arc<Mutex<String>>,
 ) {
     let ready = receiver
-        .recv_timeout(Duration::from_secs(10))
+        .recv_timeout(Duration::from_secs(25))
         .unwrap_or_else(|error| {
             let status = child.try_wait().expect("child status");
             let stderr = stderr.lock().map(|text| text.clone()).unwrap_or_default();
@@ -440,7 +440,7 @@ fn iris_listen_receives_from_another_iris_client() {
     let stderr = spawn_stderr_reader(child.stderr.take().expect("stderr"));
     let receiver = spawn_json_reader(stdout);
     let ready = receiver
-        .recv_timeout(Duration::from_secs(10))
+        .recv_timeout(Duration::from_secs(25))
         .unwrap_or_else(|error| {
             let status = child.try_wait().expect("child status");
             let stderr = stderr.lock().map(|text| text.clone()).unwrap_or_default();

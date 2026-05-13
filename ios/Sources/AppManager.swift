@@ -512,6 +512,32 @@ private final class SuspendPreparationRunner: @unchecked Sendable {
     }
 }
 
+private final class ChatPageLoadRunner: @unchecked Sendable {
+    private let rust: RustAppClient
+
+    init(rust: RustAppClient) {
+        self.rust = rust
+    }
+
+    func before(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot? {
+        rust.chatSnapshotBefore(chatId: chatId, beforeMessageId: beforeMessageId, limit: limit)
+    }
+
+    func around(
+        chatId: String,
+        messageId: String,
+        beforeLimit: UInt32,
+        afterLimit: UInt32
+    ) -> CurrentChatSnapshot? {
+        rust.chatSnapshotAroundMessage(
+            chatId: chatId,
+            messageId: messageId,
+            beforeLimit: beforeLimit,
+            afterLimit: afterLimit
+        )
+    }
+}
+
 enum AppPaths {
     static let appGroupIdentifier = "group.to.iris.chat"
 
@@ -857,6 +883,7 @@ final class AppManager: ObservableObject {
     private static let chatPageSize: UInt32 = 80
     private static let chatAroundBeforeLimit: UInt32 = 40
     private static let chatAroundAfterLimit: UInt32 = 40
+    private static let chatPageQueue = DispatchQueue(label: "to.iris.chat.chat-pages", qos: .userInitiated)
     private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
     private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
@@ -1255,32 +1282,45 @@ final class AppManager: ObservableObject {
     }
 
     @discardableResult
-    func loadOlderMessages(chatId: String) -> Bool {
+    func loadOlderMessages(chatId: String, completion: @escaping (Bool) -> Void = { _ in }) -> Bool {
         let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedChat.isEmpty,
-              !olderChatPageLoads.contains(trimmedChat),
               !exhaustedOlderChatPages.contains(trimmedChat),
               let current = state.currentChat,
               current.chatId == trimmedChat,
               let firstMessage = current.messages.first else {
             return false
         }
+        if olderChatPageLoads.contains(trimmedChat) {
+            return true
+        }
         olderChatPageLoads.insert(trimmedChat)
-        defer { olderChatPageLoads.remove(trimmedChat) }
-        guard let page = rust.chatSnapshotBefore(
-            chatId: trimmedChat,
-            beforeMessageId: firstMessage.id,
-            limit: Self.chatPageSize
-        ) else {
-            return false
+        let runner = ChatPageLoadRunner(rust: rust)
+        let firstMessageId = firstMessage.id
+        Self.chatPageQueue.async { [weak self] in
+            let page = runner.before(
+                chatId: trimmedChat,
+                beforeMessageId: firstMessageId,
+                limit: Self.chatPageSize
+            )
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.olderChatPageLoads.remove(trimmedChat)
+                if page?.messages.isEmpty != false {
+                    if page?.messages.isEmpty == true {
+                        self.exhaustedOlderChatPages.insert(trimmedChat)
+                    }
+                    completion(false)
+                    return
+                }
+                let loadedPage = page!
+                if loadedPage.messages.count < Int(Self.chatPageSize) {
+                    self.exhaustedOlderChatPages.insert(trimmedChat)
+                }
+                self.mergeCurrentChatSnapshot(loadedPage)
+                completion(true)
+            }
         }
-        if page.messages.isEmpty || page.messages.count < Int(Self.chatPageSize) {
-            exhaustedOlderChatPages.insert(trimmedChat)
-        }
-        guard !page.messages.isEmpty else {
-            return false
-        }
-        mergeCurrentChatSnapshot(page)
         return true
     }
 
@@ -1295,16 +1335,22 @@ final class AppManager: ObservableObject {
         let key = "\(trimmedChat)\u{1f}\(trimmedMessage)"
         guard !aroundChatPageLoads.contains(key) else { return }
         aroundChatPageLoads.insert(key)
-        defer { aroundChatPageLoads.remove(key) }
-        guard let page = rust.chatSnapshotAroundMessage(
-            chatId: trimmedChat,
-            messageId: trimmedMessage,
-            beforeLimit: Self.chatAroundBeforeLimit,
-            afterLimit: Self.chatAroundAfterLimit
-        ) else {
-            return
+        let runner = ChatPageLoadRunner(rust: rust)
+        Self.chatPageQueue.async { [weak self] in
+            let page = runner.around(
+                chatId: trimmedChat,
+                messageId: trimmedMessage,
+                beforeLimit: Self.chatAroundBeforeLimit,
+                afterLimit: Self.chatAroundAfterLimit
+            )
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.aroundChatPageLoads.remove(key)
+                if let page {
+                    self.mergeCurrentChatSnapshot(page)
+                }
+            }
         }
-        mergeCurrentChatSnapshot(page)
     }
 
     func handleChatLink(_ url: URL) {

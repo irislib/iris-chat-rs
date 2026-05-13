@@ -13,6 +13,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStoreFile
 import java.io.IOException
 import java.io.File
+import java.util.Collections
 import java.util.Locale
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -335,9 +336,9 @@ class AppManager(
     private var cachedAccountBundle: StoredAccountBundle? = null
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
     private var pendingNavigationOverride: PendingNavigationOverride? = null
-    private val olderChatPageLoads = mutableSetOf<String>()
-    private val exhaustedOlderChatPages = mutableSetOf<String>()
-    private val aroundChatPageLoads = mutableSetOf<String>()
+    private val olderChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
+    private val exhaustedOlderChatPages = Collections.synchronizedSet(mutableSetOf<String>())
+    private val aroundChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
 
     private val mutableState = MutableStateFlow(rust.state())
     private val mutableAppForegrounded = MutableStateFlow(false)
@@ -718,29 +719,37 @@ class AppManager(
         val firstMessage = current?.messages?.firstOrNull()
         if (
             trimmedChat.isEmpty() ||
-                trimmedChat in olderChatPageLoads ||
                 trimmedChat in exhaustedOlderChatPages ||
                 current?.chatId != trimmedChat ||
                 firstMessage == null
         ) {
             return false
         }
-        olderChatPageLoads += trimmedChat
-        val page =
-            runCatching {
-                rust.chatSnapshotBefore(trimmedChat, firstMessage.id, CHAT_PAGE_SIZE)
-            }.getOrNull()
-        olderChatPageLoads -= trimmedChat
-        if (page == null) {
-            return false
+        synchronized(olderChatPageLoads) {
+            if (trimmedChat in olderChatPageLoads) {
+                return true
+            }
+            olderChatPageLoads += trimmedChat
         }
-        if (page.messages.isEmpty() || page.messages.size.toUInt() < CHAT_PAGE_SIZE) {
-            exhaustedOlderChatPages += trimmedChat
+        val firstMessageId = firstMessage.id
+        applicationScope.launch(ioDispatcher) {
+            val page =
+                runCatching {
+                    rust.chatSnapshotBefore(trimmedChat, firstMessageId, CHAT_PAGE_SIZE)
+                }.getOrNull()
+            synchronized(olderChatPageLoads) {
+                olderChatPageLoads -= trimmedChat
+            }
+            if (page == null) {
+                return@launch
+            }
+            if (page.messages.isEmpty() || page.messages.size.toUInt() < CHAT_PAGE_SIZE) {
+                exhaustedOlderChatPages += trimmedChat
+            }
+            if (page.messages.isNotEmpty()) {
+                mergeCurrentChatSnapshot(page)
+            }
         }
-        if (page.messages.isEmpty()) {
-            return false
-        }
-        mergeCurrentChatSnapshot(page)
         return true
     }
 
@@ -755,22 +764,28 @@ class AppManager(
             return
         }
         val key = "$trimmedChat\u001F$trimmedMessage"
-        if (key in aroundChatPageLoads) {
-            return
+        synchronized(aroundChatPageLoads) {
+            if (key in aroundChatPageLoads) {
+                return
+            }
+            aroundChatPageLoads += key
         }
-        aroundChatPageLoads += key
-        val page =
-            runCatching {
-                rust.chatSnapshotAroundMessage(
-                    chatId = trimmedChat,
-                    messageId = trimmedMessage,
-                    beforeLimit = CHAT_AROUND_BEFORE_LIMIT,
-                    afterLimit = CHAT_AROUND_AFTER_LIMIT,
-                )
-            }.getOrNull()
-        aroundChatPageLoads -= key
-        if (page != null) {
-            mergeCurrentChatSnapshot(page)
+        applicationScope.launch(ioDispatcher) {
+            val page =
+                runCatching {
+                    rust.chatSnapshotAroundMessage(
+                        chatId = trimmedChat,
+                        messageId = trimmedMessage,
+                        beforeLimit = CHAT_AROUND_BEFORE_LIMIT,
+                        afterLimit = CHAT_AROUND_AFTER_LIMIT,
+                    )
+                }.getOrNull()
+            synchronized(aroundChatPageLoads) {
+                aroundChatPageLoads -= key
+            }
+            if (page != null) {
+                mergeCurrentChatSnapshot(page)
+            }
         }
     }
 

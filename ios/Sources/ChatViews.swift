@@ -392,10 +392,7 @@ struct ChatScreen: View {
 
                                 if timelineReadyForDisplay && !isNearBottom && !chat.messages.isEmpty {
                                     Button {
-                                        isComposerFocused = false
-                                        resumeTimelineAutoFollow()
-                                        shouldFollowLatest = true
-                                        scrollToBottom(proxy: proxy, animated: true)
+                                        jumpToLatest(proxy: proxy)
                                     } label: {
                                         // Signal-style glass capsule:
                                         // translucent pane that adapts to
@@ -583,7 +580,11 @@ struct ChatScreen: View {
         if pendingPrependAnchorMessageId == nil {
             pendingPrependAnchorMessageId = firstMessageId
         }
-        if !manager.loadOlderMessages(chatId: chat.chatId) {
+        if !manager.loadOlderMessages(chatId: chat.chatId, completion: { loaded in
+            if !loaded {
+                pendingPrependAnchorMessageId = nil
+            }
+        }) {
             pendingPrependAnchorMessageId = nil
         }
     }
@@ -599,10 +600,23 @@ struct ChatScreen: View {
         if vertical > 0 {
             shouldFollowLatest = false
             timelineAutoFollowSuppressedUntil = Date().addingTimeInterval(1.2)
-        } else if isNearBottom {
-            resumeTimelineAutoFollow()
-            shouldFollowLatest = true
+        } else {
+            pendingPrependAnchorMessageId = nil
+            if isNearBottom {
+                resumeTimelineAutoFollow()
+                shouldFollowLatest = true
+            }
         }
+    }
+
+    private func jumpToLatest(proxy: ScrollViewProxy) {
+        pendingPrependAnchorMessageId = nil
+        pendingScrollSettle?.cancel()
+        pendingScrollSettle = nil
+        isComposerFocused = false
+        resumeTimelineAutoFollow()
+        shouldFollowLatest = true
+        scrollToBottom(proxy: proxy, animated: true)
     }
 
     private func timelineAutoFollowIsSuppressed(now: Date = Date()) -> Bool {
