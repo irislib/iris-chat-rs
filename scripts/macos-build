@@ -8,6 +8,7 @@ if [[ -f "$ROOT/scripts/release_common.sh" ]]; then
   # shellcheck disable=SC1091
   source "$ROOT/scripts/release_common.sh"
   load_release_env "$ROOT"
+  resolve_shared_build_metadata "$ROOT"
 fi
 CORE_DIR="$ROOT/core"
 IOS_BINDINGS_DIR="$ROOT/ios/Bindings"

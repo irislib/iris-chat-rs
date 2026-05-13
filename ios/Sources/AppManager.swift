@@ -2879,10 +2879,9 @@ private func moveIrisDownloadedUpdate(_ downloadedUrl: URL, from assetUrl: URL) 
 }
 
 private func irisVersionIsNewer(_ candidate: String, than current: String) -> Bool {
-    // Dev builds use the Xcode placeholder "0.1.0" because MARKETING_VERSION
-    // is only set during release builds. Treat that (and anything with a
-    // major version below the year-style release scheme) as a local build
-    // that always supersedes whatever the manifest says.
+    // Very old dev builds used the Xcode placeholder "0.1.0". Treat that
+    // (and anything with a major version below the year-style release scheme)
+    // as a local build that always supersedes whatever the manifest says.
     if irisIsDevPlaceholderVersion(current) {
         return false
     }

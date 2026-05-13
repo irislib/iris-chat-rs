@@ -1584,6 +1584,10 @@ final class IrisChatTests: XCTestCase {
 
         XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: chatId)))
         XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
+        for _ in 0..<100 where manager.state.currentChat?.messages.contains(where: { $0.id == "25" }) != true {
+            await Task.yield()
+            try? await Task.sleep(nanoseconds: 10_000_000)
+        }
         XCTAssertTrue(manager.state.currentChat?.messages.contains(where: { $0.id == "25" }) == true)
     }
 

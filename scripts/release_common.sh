@@ -104,11 +104,13 @@ resolve_shared_build_metadata() {
   if [[ -z "${IRIS_BUILD_TIMESTAMP_UTC:-}" ]]; then
     IRIS_BUILD_TIMESTAMP_UTC="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   fi
+  IRIS_XCODE_MARKETING_VERSION="$(apple_marketing_version "$IRIS_APP_VERSION_NAME")"
 
   export IRIS_APP_VERSION_NAME
   export IRIS_APP_VERSION_CODE
   export IRIS_BUILD_GIT_SHA
   export IRIS_BUILD_TIMESTAMP_UTC
+  export IRIS_XCODE_MARKETING_VERSION
 }
 
 release_slug() {

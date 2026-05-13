@@ -22,6 +22,13 @@ val localProperties =
             file.inputStream().use(::load)
         }
     }
+val releaseEnvProperties =
+    Properties().apply {
+        val file = rootProject.file("../release.env")
+        if (file.exists()) {
+            file.inputStream().use(::load)
+        }
+    }
 val androidSdkDir =
     localProperties.getProperty("sdk.dir")
         ?: System.getenv("ANDROID_HOME")
@@ -64,11 +71,17 @@ val publicRelayFallbackCsv = "wss://relay.damus.io,wss://nos.lol,wss://relay.pri
 fun configValue(propertyName: String, envName: String): String? =
     localProperties.getProperty(propertyName)?.takeIf { it.isNotBlank() }
         ?: System.getenv(envName)?.takeIf { it.isNotBlank() }
+        ?: releaseEnvProperties.getProperty(envName)
+            ?.trim()
+            ?.removeSurrounding("\"")
+            ?.takeIf { it.isNotBlank() }
 
 fun configValueAllowEmpty(propertyName: String, envName: String): String? =
     when {
         localProperties.containsKey(propertyName) -> localProperties.getProperty(propertyName)
         System.getenv().containsKey(envName) -> System.getenv(envName)
+        releaseEnvProperties.containsKey(envName) ->
+            releaseEnvProperties.getProperty(envName).trim().removeSurrounding("\"")
         else -> null
     }
 
