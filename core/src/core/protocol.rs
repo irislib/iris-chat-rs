@@ -6,6 +6,7 @@ const PROTOCOL_SUBSCRIPTION_APPLY_TIMEOUT_SECS: u64 = 8;
 const PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS: u64 = 30;
 pub(super) const PROTOCOL_RECONNECT_CHECK_SECS: u64 = 2;
 const RELAY_TRANSPORT_RETRY_BACKOFF_SECS: [u64; 5] = [2, 5, 15, 30, 60];
+const PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE: usize = 64;
 #[cfg(not(test))]
 const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 2] = [2_500, 10_000];
 #[cfg(test)]
@@ -249,12 +250,30 @@ impl AppCore {
         owners
     }
 
-    pub(super) fn schedule_tracked_peer_catch_up(&self, after: Duration) {
+    pub(super) fn schedule_tracked_peer_catch_up(&mut self, after: Duration) {
+        let due_at = Instant::now() + after;
+        if self
+            .protocol_subscription_runtime
+            .tracked_peer_catch_up_due_at
+            .is_some_and(|existing| existing <= due_at)
+        {
+            return;
+        }
+        self.protocol_subscription_runtime
+            .tracked_peer_catch_up_due_at = Some(due_at);
+        self.protocol_subscription_runtime
+            .tracked_peer_catch_up_token = self
+            .protocol_subscription_runtime
+            .tracked_peer_catch_up_token
+            .wrapping_add(1);
+        let token = self
+            .protocol_subscription_runtime
+            .tracked_peer_catch_up_token;
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
-            sleep(after).await;
+            sleep_until(due_at).await;
             let _ = tx.send(CoreMsg::Internal(Box::new(
-                InternalEvent::FetchTrackedPeerCatchUp,
+                InternalEvent::FetchTrackedPeerCatchUp { token },
             )));
         });
     }
@@ -337,24 +356,28 @@ impl AppCore {
         if author_pubkeys.is_empty() {
             return;
         }
-        let filter = build_direct_message_backfill_filter(
-            author_pubkeys,
-            now.get().saturating_sub(lookback_secs),
-            DEVICE_INVITE_DISCOVERY_LIMIT,
-        );
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-            if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
-                let collected = events.iter().cloned().collect::<Vec<_>>();
-                if !collected.is_empty() {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::FetchCatchUpEvents(collected),
-                    )));
+        for author_chunk in author_pubkeys.chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE) {
+            let filter = build_direct_message_backfill_filter(
+                author_chunk.to_vec(),
+                now.get().saturating_sub(lookback_secs),
+                DEVICE_INVITE_DISCOVERY_LIMIT,
+            );
+            let tx = self.core_sender.clone();
+            let client = client.clone();
+            let relay_urls = relay_urls.clone();
+            self.runtime.spawn(async move {
+                ensure_session_relays_configured(&client, &relay_urls).await;
+                connect_client_with_timeout(&client, Duration::from_secs(5)).await;
+                if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
+                    let collected = events.iter().cloned().collect::<Vec<_>>();
+                    if !collected.is_empty() {
+                        let _ = tx.send(CoreMsg::Internal(Box::new(
+                            InternalEvent::FetchCatchUpEvents(collected),
+                        )));
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 
     fn schedule_new_message_author_backfill(
@@ -404,6 +427,19 @@ impl AppCore {
         now: UnixSeconds,
         lookback_secs: u64,
     ) {
+        self.fetch_recent_group_sender_key_messages_for_authors(
+            vec![author_pubkey],
+            now,
+            lookback_secs,
+        );
+    }
+
+    fn fetch_recent_group_sender_key_messages_for_authors(
+        &self,
+        author_pubkeys: Vec<PublicKey>,
+        now: UnixSeconds,
+        lookback_secs: u64,
+    ) {
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -411,24 +447,31 @@ impl AppCore {
         else {
             return;
         };
-        let filter = Filter::new()
-            .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
-            .authors(vec![author_pubkey])
-            .since(Timestamp::from(now.get().saturating_sub(lookback_secs)))
-            .limit(DEVICE_INVITE_DISCOVERY_LIMIT);
-        let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            ensure_session_relays_configured(&client, &relay_urls).await;
-            connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-            if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
-                let collected = events.iter().cloned().collect::<Vec<_>>();
-                if !collected.is_empty() {
-                    let _ = tx.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::FetchCatchUpEvents(collected),
-                    )));
+        if author_pubkeys.is_empty() {
+            return;
+        }
+        for author_chunk in author_pubkeys.chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE) {
+            let filter = Filter::new()
+                .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
+                .authors(author_chunk.to_vec())
+                .since(Timestamp::from(now.get().saturating_sub(lookback_secs)))
+                .limit(DEVICE_INVITE_DISCOVERY_LIMIT);
+            let tx = self.core_sender.clone();
+            let client = client.clone();
+            let relay_urls = relay_urls.clone();
+            self.runtime.spawn(async move {
+                ensure_session_relays_configured(&client, &relay_urls).await;
+                connect_client_with_timeout(&client, Duration::from_secs(5)).await;
+                if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
+                    let collected = events.iter().cloned().collect::<Vec<_>>();
+                    if !collected.is_empty() {
+                        let _ = tx.send(CoreMsg::Internal(Box::new(
+                            InternalEvent::FetchCatchUpEvents(collected),
+                        )));
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 
     pub(super) fn fetch_recent_messages_for_tracked_peers(&self, now: UnixSeconds) {
@@ -464,16 +507,16 @@ impl AppCore {
                     .map(ProtocolEngine::known_group_sender_event_pubkeys)
                     .unwrap_or_default()
             });
-        for author in direct_authors {
-            self.fetch_recent_messages_for_author(author, now, CATCH_UP_LOOKBACK_SECS);
+        if direct_authors.len() == 1 {
+            self.fetch_recent_messages_for_author(direct_authors[0], now, CATCH_UP_LOOKBACK_SECS);
+        } else {
+            self.fetch_recent_messages_for_authors(direct_authors, now, CATCH_UP_LOOKBACK_SECS);
         }
-        for author in group_authors {
-            self.fetch_recent_group_sender_key_messages_for_author(
-                author,
-                now,
-                CATCH_UP_LOOKBACK_SECS,
-            );
-        }
+        self.fetch_recent_group_sender_key_messages_for_authors(
+            group_authors,
+            now,
+            CATCH_UP_LOOKBACK_SECS,
+        );
     }
 
     pub(super) fn recent_protocol_filters(&self, now: UnixSeconds) -> Vec<Filter> {
@@ -607,6 +650,10 @@ impl AppCore {
     }
 
     pub(super) fn fetch_recent_protocol_state(&mut self) -> bool {
+        if self.protocol_subscription_runtime.protocol_fetch_in_flight {
+            self.push_debug_log("protocol.catch_up.skip", "fetch already in flight");
+            return false;
+        }
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -625,6 +672,7 @@ impl AppCore {
             format!("filters={}", filters.len()),
         );
         self.state.busy.syncing_network = true;
+        self.protocol_subscription_runtime.protocol_fetch_in_flight = true;
 
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {

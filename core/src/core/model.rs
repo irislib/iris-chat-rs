@@ -125,6 +125,9 @@ pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) refresh_dirty: bool,
     pub(super) force_reconnect_dirty: bool,
     pub(super) liveness_due_at: Option<Instant>,
+    pub(super) tracked_peer_catch_up_due_at: Option<Instant>,
+    pub(super) tracked_peer_catch_up_token: u64,
+    pub(super) protocol_fetch_in_flight: bool,
 }
 
 #[derive(Clone, Debug, Default)]

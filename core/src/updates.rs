@@ -59,7 +59,9 @@ pub(crate) enum InternalEvent {
         event: Event,
         transport: String,
     },
-    FetchTrackedPeerCatchUp,
+    FetchTrackedPeerCatchUp {
+        token: u64,
+    },
     ProtocolSubscriptionLivenessCheck {
         token: u64,
     },

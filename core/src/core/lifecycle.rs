@@ -119,7 +119,7 @@ impl AppCore {
                 InternalEvent::RelayEvent(_) => "RelayEvent",
                 InternalEvent::NearbyEvent { .. } => "NearbyEvent",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
-                InternalEvent::FetchTrackedPeerCatchUp => "FetchTrackedPeerCatchUp",
+                InternalEvent::FetchTrackedPeerCatchUp { .. } => "FetchTrackedPeerCatchUp",
                 InternalEvent::ProtocolSubscriptionLivenessCheck { .. } => {
                     "ProtocolSubscriptionLivenessCheck"
                 }
@@ -477,7 +477,16 @@ impl AppCore {
                 };
                 self.handle_relay_event_with_channel(event, channel);
             }
-            InternalEvent::FetchTrackedPeerCatchUp => {
+            InternalEvent::FetchTrackedPeerCatchUp { token } => {
+                if token
+                    != self
+                        .protocol_subscription_runtime
+                        .tracked_peer_catch_up_token
+                {
+                    return;
+                }
+                self.protocol_subscription_runtime
+                    .tracked_peer_catch_up_due_at = None;
                 let now = unix_now();
                 self.push_debug_log("protocol.catch_up.schedule", "fetch tracked peers");
                 self.fetch_recent_protocol_state();
@@ -596,6 +605,7 @@ impl AppCore {
                 self.handle_profile_picture_upload_finished(result);
             }
             InternalEvent::SyncComplete => {
+                self.protocol_subscription_runtime.protocol_fetch_in_flight = false;
                 self.state.busy.syncing_network = false;
                 self.rebuild_state();
                 self.emit_state();

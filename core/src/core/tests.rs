@@ -1089,6 +1089,70 @@ fn protocol_liveness_scheduling_keeps_earliest_reconnect_deadline() {
 }
 
 #[test]
+fn tracked_peer_catch_up_scheduling_coalesces_to_earliest_deadline() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("tracked-peer-catch-up-coalesce", &owner, &device);
+
+    core.schedule_tracked_peer_catch_up(Duration::from_secs(30));
+    let first_token = core
+        .protocol_subscription_runtime
+        .tracked_peer_catch_up_token;
+    let first_due = core
+        .protocol_subscription_runtime
+        .tracked_peer_catch_up_due_at
+        .expect("initial catch-up should be scheduled");
+
+    core.schedule_tracked_peer_catch_up(Duration::from_secs(30));
+    assert_eq!(
+        core.protocol_subscription_runtime
+            .tracked_peer_catch_up_token,
+        first_token,
+        "a later/equal tracked-peer catch-up must not spawn another timer"
+    );
+    assert_eq!(
+        core.protocol_subscription_runtime
+            .tracked_peer_catch_up_due_at,
+        Some(first_due)
+    );
+
+    core.schedule_tracked_peer_catch_up(Duration::from_secs(2));
+    assert!(
+        core.protocol_subscription_runtime
+            .tracked_peer_catch_up_token
+            > first_token,
+        "an earlier tracked-peer catch-up should replace the old timer"
+    );
+    assert!(
+        core.protocol_subscription_runtime
+            .tracked_peer_catch_up_due_at
+            .expect("fast catch-up should stay scheduled")
+            < first_due
+    );
+}
+
+#[test]
+fn protocol_state_fetch_is_single_flight() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("protocol-fetch-single-flight", &owner, &device);
+
+    core.protocol_subscription_runtime.protocol_fetch_in_flight = true;
+    core.debug_log.clear();
+
+    assert!(
+        !core.fetch_recent_protocol_state(),
+        "existing protocol fetch should block duplicate catch-up fetch"
+    );
+    assert!(
+        core.debug_log
+            .iter()
+            .any(|entry| entry.category == "protocol.catch_up.skip"),
+        "skipped duplicate fetch should be visible in debug output"
+    );
+}
+
+#[test]
 fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_session() {
     let owner = Keys::generate();
     let device = Keys::generate();
