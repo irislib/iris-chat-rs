@@ -1297,11 +1297,12 @@ final class AppManager: ObservableObject {
         olderChatPageLoads.insert(trimmedChat)
         let runner = ChatPageLoadRunner(rust: rust)
         let firstMessageId = firstMessage.id
+        let pageSize = Self.chatPageSize
         Self.chatPageQueue.async { [weak self] in
             let page = runner.before(
                 chatId: trimmedChat,
                 beforeMessageId: firstMessageId,
-                limit: Self.chatPageSize
+                limit: pageSize
             )
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -1314,7 +1315,7 @@ final class AppManager: ObservableObject {
                     return
                 }
                 let loadedPage = page!
-                if loadedPage.messages.count < Int(Self.chatPageSize) {
+                if loadedPage.messages.count < Int(pageSize) {
                     self.exhaustedOlderChatPages.insert(trimmedChat)
                 }
                 self.mergeCurrentChatSnapshot(loadedPage)
@@ -1336,12 +1337,14 @@ final class AppManager: ObservableObject {
         guard !aroundChatPageLoads.contains(key) else { return }
         aroundChatPageLoads.insert(key)
         let runner = ChatPageLoadRunner(rust: rust)
+        let beforeLimit = Self.chatAroundBeforeLimit
+        let afterLimit = Self.chatAroundAfterLimit
         Self.chatPageQueue.async { [weak self] in
             let page = runner.around(
                 chatId: trimmedChat,
                 messageId: trimmedMessage,
-                beforeLimit: Self.chatAroundBeforeLimit,
-                afterLimit: Self.chatAroundAfterLimit
+                beforeLimit: beforeLimit,
+                afterLimit: afterLimit
             )
             Task { @MainActor [weak self] in
                 guard let self else { return }

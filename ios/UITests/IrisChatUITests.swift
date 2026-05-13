@@ -83,6 +83,62 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
     }
 
+    func testMessageBubbleHorizontalSwipesOpenReplyAndInfo() throws {
+#if os(macOS)
+        throw XCTSkip("Message bubble swipe actions are iOS-only")
+#else
+        let app = launchCleanApp()
+
+        createAccount(app)
+        openChatWithPeer(app)
+
+        let message = "swipe actions \(UUID().uuidString) lorem ipsum"
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+        typeText(message, into: element(app, "chatMessageInput"), app: app)
+        element(app, "chatSendButton").tap()
+
+        let messageText = app.staticTexts[message].firstMatch
+        XCTAssertTrue(messageText.waitForExistence(timeout: 15))
+
+        dragHorizontally(messageText, from: 0.15, to: 0.98)
+        guard element(app, "chatReplyComposer").waitForExistence(timeout: 5) else {
+            XCTFail("right swipe on message bubble did not open reply composer")
+            return
+        }
+        let closeReply = element(app, "chatReplyCancelButton").exists
+            ? element(app, "chatReplyCancelButton")
+            : app.buttons["Close"].firstMatch
+        closeReply.tap()
+        XCTAssertFalse(element(app, "chatReplyComposer").waitForExistence(timeout: 2))
+
+        dragHorizontally(messageText, from: 0.85, to: 0.02)
+        XCTAssertTrue(
+            element(app, "messageInfoSheet").waitForExistence(timeout: 5),
+            "left swipe on message bubble did not open message details"
+        )
+#endif
+    }
+
+    func testChatListRowHorizontalSwipeStillShowsActions() throws {
+#if os(macOS)
+        throw XCTSkip("Chat list row swipes are iOS-only")
+#else
+        let app = launchCleanApp()
+
+        createAccount(app)
+        openChatWithPeer(app)
+        returnToChatList(app)
+
+        let row = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'chatRow-'"))
+            .firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+
+        dragHorizontally(row, from: 0.85, to: 0.05)
+        XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
+#endif
+    }
+
     // Opening a chat with enough messages to overflow the viewport
     // must land scrolled at the latest message. The oracle is the
     // "jump to bottom" affordance — it only renders when the timeline
@@ -167,8 +223,10 @@ final class IrisChatUITests: XCTestCase {
 
         let timeline = app.scrollViews["chatTimeline"].firstMatch
         XCTAssertTrue(timeline.waitForExistence(timeout: 10))
-        timeline.swipeDown()
-        timeline.swipeDown()
+        // Seeded messages are outgoing/right-aligned; this starts inside
+        // a visible bubble instead of the empty timeline gutter.
+        dragVertically(timeline, x: 0.75, fromY: 0.55, toY: 0.9)
+        dragVertically(timeline, x: 0.75, fromY: 0.55, toY: 0.9)
 
         XCTAssertTrue(
             element(app, "chatJumpToBottom").waitForExistence(timeout: 5),
@@ -180,7 +238,7 @@ final class IrisChatUITests: XCTestCase {
             "jump-to-bottom button did not disappear after tapping it"
         )
 
-        timeline.swipeDown()
+        dragVertically(timeline, x: 0.75, fromY: 0.55, toY: 0.9)
         XCTAssertTrue(
             element(app, "chatJumpToBottom").waitForExistence(timeout: 2),
             "timeline stayed pinned after a manual jump-to-bottom followed by user scroll"
@@ -620,6 +678,18 @@ final class IrisChatUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         } while Date() < deadline
         return condition()
+    }
+
+    private func dragHorizontally(_ element: XCUIElement, from startX: CGFloat, to endX: CGFloat) {
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: startX, dy: 0.5))
+        let end = element.coordinate(withNormalizedOffset: CGVector(dx: endX, dy: 0.5))
+        start.press(forDuration: 0.05, thenDragTo: end)
+    }
+
+    private func dragVertically(_ element: XCUIElement, x: CGFloat, fromY: CGFloat, toY: CGFloat) {
+        let start = element.coordinate(withNormalizedOffset: CGVector(dx: x, dy: fromY))
+        let end = element.coordinate(withNormalizedOffset: CGVector(dx: x, dy: toY))
+        start.press(forDuration: 0.05, thenDragTo: end)
     }
 
     private func openGroupDetails(_ app: XCUIApplication) {

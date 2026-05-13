@@ -30,6 +30,8 @@ struct ChatScreen: View {
     @State private var timelineReadyForDisplay = false
     @State private var renderedMessageCount = 0
     @State private var pendingPrependAnchorMessageId: String?
+    @StateObject private var timelineCoordinator = ChatTimelineInteractionCoordinator()
+    @State private var activeBubbleSwipe: ActiveMessageBubbleSwipe?
     @State private var replyTarget: ChatMessageSnapshot?
     @State private var imageViewerItem: ImageViewerItem?
     @State private var lastTypingSentAt: Date?
@@ -107,6 +109,7 @@ struct ChatScreen: View {
                                                     isFirstInCluster: isFirstInCluster,
                                                     isLastInCluster: isLastInCluster,
                                                     reactions: message.reactions,
+                                                    swipeOffset: activeBubbleSwipe?.messageId == message.id ? activeBubbleSwipe?.offset ?? 0 : 0,
                                                     onReply: {
                                                         replyTarget = message
                                                         isComposerFocused = true
@@ -214,6 +217,9 @@ struct ChatScreen: View {
                                     .irisDefaultScrollAnchorBottom()
                                     .coordinateSpace(name: ChatTimelineCoordinateSpace.name)
                                     .accessibilityIdentifier("chatTimeline")
+                                    .observeChatTimelineScroll(coordinator: timelineCoordinator) { translationY, velocityY in
+                                        handleTimelineUserPan(translationY: translationY, velocityY: velocityY)
+                                    }
                                     .overlay {
                                         GeometryReader { geometry in
                                             let frame = geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
@@ -229,12 +235,7 @@ struct ChatScreen: View {
                                         }
                                     }
                                     .irisInteractiveKeyboardDismiss()
-                                    .simultaneousGesture(
-                                        DragGesture(minimumDistance: 0)
-                                            .onChanged { value in
-                                                handleTimelineDrag(value)
-                                            }
-                                    )
+                                    .simultaneousGesture(timelineDragGesture)
                                     .opacity(timelineReadyForDisplay ? 1 : 0)
                                     .allowsHitTesting(timelineReadyForDisplay)
                                 }
@@ -247,6 +248,8 @@ struct ChatScreen: View {
                                     timelineAutoFollowSuppressedUntil = nil
                                     renderedMessageCount = 0
                                     pendingPrependAnchorMessageId = nil
+                                    activeBubbleSwipe = nil
+                                    timelineCoordinator.bubblePanRejected = false
                                     timelineTopMinY = -.greatestFiniteMagnitude
                                     timelineContentHeight = 0
                                     lastTypingSentAt = nil
@@ -310,6 +313,9 @@ struct ChatScreen: View {
                                     if !initialScrollPending, canAutoFollow, grew {
                                         scrollToBottom(proxy: proxy, animated: false)
                                     }
+                                }
+                                .onPreferenceChange(ChatMessageBubbleFramePreferenceKey.self) { value in
+                                    timelineCoordinator.messageBubbleFrames = value
                                 }
                                 .task(id: chatTimelineScrollTaskToken(for: chat)) {
                                     guard !chat.messages.isEmpty else {
@@ -571,6 +577,20 @@ struct ChatScreen: View {
         }
     }
 
+    private var timelineDragGesture: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .named(ChatTimelineCoordinateSpace.name))
+            .onChanged { value in
+                handleTimelineUserPan(
+                    translationY: value.translation.height,
+                    velocityY: value.predictedEndTranslation.height - value.translation.height
+                )
+                handleMessageBubbleDragChanged(value)
+            }
+            .onEnded { value in
+                handleMessageBubbleDragEnded(value)
+            }
+    }
+
     private func maybeLoadOlderMessages(chat: CurrentChatSnapshot) {
         guard !initialScrollPending,
               let firstMessageId = chat.messages.first?.id,
@@ -591,7 +611,7 @@ struct ChatScreen: View {
         }
     }
 
-    private func handleTimelineDrag(_ value: DragGesture.Value) {
+    private func handleTimelineUserPan(translationY: CGFloat, velocityY: CGFloat) {
         if pendingScrollSettle != nil {
             pendingScrollSettle?.cancel()
             pendingScrollSettle = nil
@@ -599,14 +619,10 @@ struct ChatScreen: View {
             timelineScrollSettleGeneration += 1
         }
 
-        let vertical = value.translation.height
-        let horizontal = value.translation.width
-        guard abs(vertical) > 6, abs(vertical) > abs(horizontal) else { return }
-
-        if vertical > 0 {
+        if translationY > 6 || velocityY > 60 {
             shouldFollowLatest = false
             timelineAutoFollowSuppressedUntil = Date().addingTimeInterval(1.2)
-        } else {
+        } else if translationY < -6 || velocityY < -60 {
             pendingPrependAnchorMessageId = nil
             if isNearBottom {
                 resumeTimelineAutoFollow()
@@ -622,6 +638,7 @@ struct ChatScreen: View {
         timelineScrollSettleGeneration += 1
         isComposerFocused = false
         resumeTimelineAutoFollow()
+        timelineCoordinator.stopScrolling()
         // Match Signal's behavior: the button is a one-shot request to
         // land on the newest message. The normal geometry observer will
         // re-enable latest-following once the viewport is actually at
@@ -629,6 +646,65 @@ struct ChatScreen: View {
         // down if they immediately drag upward again.
         shouldFollowLatest = false
         scrollToBottom(proxy: proxy, animated: true, settleAfterLayout: false)
+    }
+
+    private func handleMessageBubbleDragChanged(_ value: DragGesture.Value) {
+        guard !timelineCoordinator.bubblePanRejected else { return }
+
+        let horizontal = abs(value.translation.width)
+        let vertical = abs(value.translation.height)
+        if activeBubbleSwipe == nil {
+            guard horizontal > ChatMessageBubbleSwipeMetrics.activationDistance
+                    || vertical > ChatMessageBubbleSwipeMetrics.activationDistance else {
+                return
+            }
+            guard horizontal > vertical else {
+                timelineCoordinator.bubblePanRejected = true
+                return
+            }
+            guard let messageId = timelineCoordinator.messageBubbleId(at: value.startLocation)
+                    ?? timelineCoordinator.messageBubbleId(at: value.location) else {
+                timelineCoordinator.bubblePanRejected = true
+                return
+            }
+            activeBubbleSwipe = ActiveMessageBubbleSwipe(messageId: messageId, offset: 0, hasFedHaptic: false)
+        } else if vertical > horizontal && vertical > ChatMessageBubbleSwipeMetrics.activationDistance {
+            activeBubbleSwipe = nil
+            timelineCoordinator.bubblePanRejected = true
+            return
+        }
+
+        guard var swipe = activeBubbleSwipe else { return }
+        let clamped = max(
+            -ChatMessageBubbleSwipeMetrics.maxOffset,
+            min(ChatMessageBubbleSwipeMetrics.maxOffset, value.translation.width)
+        )
+        swipe.offset = clamped
+        let crossed = abs(clamped) >= ChatMessageBubbleSwipeMetrics.threshold
+        if crossed && !swipe.hasFedHaptic {
+            PlatformHaptics.messageMenuOpened()
+            swipe.hasFedHaptic = true
+        } else if !crossed {
+            swipe.hasFedHaptic = false
+        }
+        activeBubbleSwipe = swipe
+    }
+
+    private func handleMessageBubbleDragEnded(_: DragGesture.Value) {
+        timelineCoordinator.bubblePanRejected = false
+        guard let chat, let swipe = activeBubbleSwipe else { return }
+        activeBubbleSwipe = nil
+        guard let message = chat.messages.first(where: { $0.id == swipe.messageId }) else { return }
+        if swipe.offset >= ChatMessageBubbleSwipeMetrics.threshold {
+            replyTarget = message
+            isComposerFocused = true
+        } else if swipe.offset <= -ChatMessageBubbleSwipeMetrics.threshold {
+            messageInfoSelection = MessageInfoSelection(
+                chatId: chat.chatId,
+                messageId: message.id,
+                snapshot: message
+            )
+        }
     }
 
     private func timelineAutoFollowIsSuppressed(now: Date = Date()) -> Bool {
@@ -911,6 +987,41 @@ private enum ChatTimelineAnchor {
     static let bottom = "chatTimelineBottom"
 }
 
+private struct ActiveMessageBubbleSwipe {
+    let messageId: String
+    var offset: CGFloat
+    var hasFedHaptic: Bool
+}
+
+private enum ChatMessageBubbleSwipeMetrics {
+    static let threshold: CGFloat = 60
+    static let maxOffset: CGFloat = 90
+    static let activationDistance: CGFloat = 12
+}
+
+private final class ChatTimelineInteractionCoordinator: ObservableObject {
+#if os(iOS)
+    weak var scrollView: UIScrollView?
+#endif
+    var messageBubbleFrames: [String: CGRect] = [:]
+    var bubblePanRejected = false
+
+    func stopScrolling() {
+#if os(iOS)
+        guard let scrollView else { return }
+        scrollView.layer.removeAllAnimations()
+        scrollView.setContentOffset(scrollView.contentOffset, animated: false)
+#endif
+    }
+
+    func messageBubbleId(at location: CGPoint) -> String? {
+        messageBubbleFrames
+            .filter { _, frame in frame.insetBy(dx: -10, dy: -8).contains(location) }
+            .min { lhs, rhs in lhs.value.midY < rhs.value.midY }
+            .map(\.key)
+    }
+}
+
 private struct ChatTimelineViewportMinYPreferenceKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
 
@@ -957,6 +1068,14 @@ private struct ChatTimelineContentHeightPreferenceKey: PreferenceKey {
     }
 }
 
+private struct ChatMessageBubbleFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 private func chatTimelineIsNearBottom(viewportMaxY: CGFloat, bottomMaxY: CGFloat) -> Bool {
     guard viewportMaxY > 0, bottomMaxY.isFinite else {
         return true
@@ -988,6 +1107,7 @@ private struct ChatMessageRow: View, Equatable {
             && lhs.showDayChip == rhs.showDayChip
             && lhs.isFirstInCluster == rhs.isFirstInCluster
             && lhs.isLastInCluster == rhs.isLastInCluster
+            && lhs.swipeOffset == rhs.swipeOffset
     }
 
     @Environment(\.irisPalette) private var palette
@@ -997,6 +1117,7 @@ private struct ChatMessageRow: View, Equatable {
     let isFirstInCluster: Bool
     let isLastInCluster: Bool
     let reactions: [MessageReactionSnapshot]
+    let swipeOffset: CGFloat
     let onReply: () -> Void
     let onReact: (String) -> Void
     let onInfo: () -> Void
@@ -1202,12 +1323,20 @@ private struct ChatMessageRow: View, Equatable {
                         .irisDismissOnMacOutsideClick { showReactionPicker = false }
                     }
                     .accessibilityIdentifier("chatMessage-\(message.id)")
-                    // Swipe-to-reply is scoped to the bubble itself, not
-                    // the whole row, so dragging from the gutter or below a
-                    // reaction pill leaves the chat ScrollView free to
-                    // scroll — matches Signal's UIPanGestureRecognizer
-                    // attached to the cell's bubble subview.
-                    .applyMessageBubbleSwipe(onReply: onReply, onInfo: onInfo)
+                    .background(
+                        GeometryReader { geometry in
+                            Color.clear.preference(
+                                key: ChatMessageBubbleFramePreferenceKey.self,
+                                value: [
+                                    message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
+                                ]
+                            )
+                        }
+                    )
+                    // The actual pan is owned by the timeline scroll view.
+                    // This modifier only renders the offset/reveal state,
+                    // keeping vertical flicks on bubbles in the scroll path.
+                    .applyMessageBubbleSwipe(offset: swipeOffset)
                     // Two macOS-only fixes: cap bubble width (without
                     // this it stretches the full ~830pt pane), and
                     // render the hover dock as an overlay (without
@@ -2433,9 +2562,28 @@ private struct ReactionRow: View {
 
 extension View {
     @ViewBuilder
-    func applyMessageBubbleSwipe(onReply: @escaping () -> Void, onInfo: @escaping () -> Void) -> some View {
+    fileprivate func observeChatTimelineScroll(
+        coordinator: ChatTimelineInteractionCoordinator,
+        onPan: @escaping (CGFloat, CGFloat) -> Void
+    ) -> some View {
 #if os(iOS)
-        modifier(MessageBubbleSwipeActions(onReply: onReply, onInfo: onInfo))
+        background(
+            ChatTimelineScrollObserver(
+                timelineCoordinator: coordinator,
+                onPan: onPan
+            )
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+        )
+#else
+        self
+#endif
+    }
+
+    @ViewBuilder
+    func applyMessageBubbleSwipe(offset: CGFloat) -> some View {
+#if os(iOS)
+        modifier(MessageBubbleSwipeActions(offset: offset))
 #else
         self
 #endif
@@ -2443,42 +2591,99 @@ extension View {
 }
 
 #if os(iOS)
-// SwiftUI doesn't expose UIKit's `state = .failed` semantics, so we can't
-// match Signal's UIPanGestureRecognizer subclass approach (a previous
-// attempt wrapped the recognizer via UIHostingController, which broke
-// XCTest hit-testing on the inner Text). The simultaneousGesture path
-// below approximates the same intent: a 22pt activation distance keeps
-// short scroll drags from triggering us, and an axis lock based on the
-// first past-threshold sample keeps us from offsetting on diagonal drags
-// where vertical dominates.
+private struct ChatTimelineScrollObserver: UIViewRepresentable {
+    let timelineCoordinator: ChatTimelineInteractionCoordinator
+    let onPan: (CGFloat, CGFloat) -> Void
+
+    func makeUIView(context: Context) -> ChatTimelineScrollObserverView {
+        let view = ChatTimelineScrollObserverView()
+        view.timelineCoordinator = timelineCoordinator
+        view.onPan = onPan
+        return view
+    }
+
+    func updateUIView(_ uiView: ChatTimelineScrollObserverView, context: Context) {
+        uiView.timelineCoordinator = timelineCoordinator
+        uiView.onPan = onPan
+        uiView.bindToEnclosingScrollView()
+    }
+
+    static func dismantleUIView(_ uiView: ChatTimelineScrollObserverView, coordinator: ()) {
+        uiView.unbind()
+    }
+}
+
+private final class ChatTimelineScrollObserverView: UIView {
+    weak var timelineCoordinator: ChatTimelineInteractionCoordinator?
+    var onPan: ((CGFloat, CGFloat) -> Void)?
+
+    private weak var observedScrollView: UIScrollView?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        DispatchQueue.main.async { [weak self] in
+            self?.bindToEnclosingScrollView()
+        }
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        bindToEnclosingScrollView()
+    }
+
+    func bindToEnclosingScrollView() {
+        guard let scrollView = enclosingScrollView() else { return }
+        if observedScrollView === scrollView {
+            timelineCoordinator?.scrollView = scrollView
+            return
+        }
+
+        unbind()
+        observedScrollView = scrollView
+        timelineCoordinator?.scrollView = scrollView
+        scrollView.panGestureRecognizer.addTarget(self, action: #selector(handleScrollPan(_:)))
+    }
+
+    func unbind() {
+        if let scrollView = observedScrollView {
+            scrollView.panGestureRecognizer.removeTarget(self, action: #selector(handleScrollPan(_:)))
+        }
+        if timelineCoordinator?.scrollView === observedScrollView {
+            timelineCoordinator?.scrollView = nil
+        }
+        observedScrollView = nil
+    }
+
+    @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
+        guard let scrollView = observedScrollView else { return }
+        let translation = recognizer.translation(in: scrollView)
+        switch recognizer.state {
+        case .began, .changed:
+            let velocity = recognizer.velocity(in: scrollView)
+            onPan?(translation.y, velocity.y)
+        default:
+            break
+        }
+    }
+
+    private func enclosingScrollView() -> UIScrollView? {
+        var view: UIView? = self
+        while let current = view {
+            if let scrollView = current as? UIScrollView {
+                return scrollView
+            }
+            view = current.superview
+        }
+        return nil
+    }
+}
+
 private struct MessageBubbleSwipeActions: ViewModifier {
-    let onReply: () -> Void
-    let onInfo: () -> Void
-
-    @State private var dragOffset: CGFloat = 0
-    @State private var hasFedHaptic = false
-    @State private var locked: Axis? = nil
-
-    private let threshold: CGFloat = 60
-    private let maxOffset: CGFloat = 90
-    // High enough to clear the ScrollView's ~10pt pan threshold so vertical
-    // scrolls win the gesture race; low enough that a deliberate horizontal
-    // swipe still feels responsive.
-    private let activationDistance: CGFloat = 22
-
-    private enum Axis { case horizontal, vertical }
+    let offset: CGFloat
 
     func body(content: Content) -> some View {
-        // Use overlays anchored to the bubble's natural frame instead of a
-        // ZStack with a Spacer-expanded HStack — that pattern made the
-        // wrapper balloon to the row's full width, which centered the
-        // bubble and dropped invisible hint icons across the whole row
-        // (eating taps and scroll). With overlays, the hint icons sit on
-        // the bubble's leading/trailing edges and don't grow the layout
-        // frame; .allowsHitTesting(false) makes sure they never steal
-        // touches from the bubble below.
         content
-            .offset(x: dragOffset)
+            .offset(x: offset)
             .overlay(alignment: .leading) {
                 Image(systemName: "arrowshape.turn.up.left.fill")
                     .font(.system(size: 17, weight: .semibold))
@@ -2497,75 +2702,11 @@ private struct MessageBubbleSwipeActions: ViewModifier {
                     .padding(.trailing, 14)
                     .allowsHitTesting(false)
             }
-        // simultaneousGesture lets the chat ScrollView's pan run alongside us;
-        // the activation threshold + axis lock keep us from offsetting on
-        // vertical drags even when the gesture fires.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: activationDistance, coordinateSpace: .local)
-                .onChanged { value in
-                    let dx = value.translation.width
-                    let dy = value.translation.height
-                    if locked == nil {
-                        // First sample past the threshold sets the axis. If
-                        // vertical wins the slope test, lock to .vertical and
-                        // never touch dragOffset for the rest of this drag.
-                        locked = abs(dx) > abs(dy) ? .horizontal : .vertical
-                    }
-                    guard locked == .horizontal else { return }
-                    let clamped = max(-maxOffset, min(maxOffset, dx))
-                    dragOffset = clamped
-                    let crossed = abs(clamped) >= threshold
-                    if crossed && !hasFedHaptic {
-                        PlatformHaptics.messageMenuOpened()
-                        hasFedHaptic = true
-                    } else if !crossed {
-                        hasFedHaptic = false
-                    }
-                }
-                .onEnded { value in
-                    let final = locked == .horizontal ? max(-maxOffset, min(maxOffset, value.translation.width)) : 0
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.74)) {
-                        dragOffset = 0
-                    }
-                    if final >= threshold {
-                        onReply()
-                    } else if final <= -threshold {
-                        onInfo()
-                    }
-                    hasFedHaptic = false
-                    locked = nil
-                }
-        )
-    }
-
-    private func handleChange(_ dx: CGFloat) {
-        let clamped = max(-maxOffset, min(maxOffset, dx))
-        dragOffset = clamped
-        let crossed = abs(clamped) >= threshold
-        if crossed && !hasFedHaptic {
-            PlatformHaptics.messageMenuOpened()
-            hasFedHaptic = true
-        } else if !crossed {
-            hasFedHaptic = false
-        }
-    }
-
-    private func handleEnded(_ dx: CGFloat) {
-        let final = max(-maxOffset, min(maxOffset, dx))
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.74)) {
-            dragOffset = 0
-        }
-        if final >= threshold {
-            onReply()
-        } else if final <= -threshold {
-            onInfo()
-        }
-        hasFedHaptic = false
     }
 
     private func reveal(forwards: Bool) -> Double {
-        let v = forwards ? dragOffset : -dragOffset
-        return Double(min(1, max(0, v / threshold)))
+        let v = forwards ? offset : -offset
+        return Double(min(1, max(0, v / ChatMessageBubbleSwipeMetrics.threshold)))
     }
 }
 #endif
@@ -2615,6 +2756,7 @@ private struct IrisReplyComposerStrip: View {
                     .foregroundStyle(palette.muted)
             }
             .buttonStyle(.irisPlain)
+            .accessibilityIdentifier("chatReplyCancelButton")
         }
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 16)
         .padding(.vertical, 6)
