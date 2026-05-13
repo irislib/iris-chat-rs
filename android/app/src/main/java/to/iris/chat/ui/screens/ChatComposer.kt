@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -36,12 +35,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import to.iris.chat.rust.ChatMessageSnapshot
+import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.theme.IrisTheme
 
@@ -50,54 +51,131 @@ internal fun ReplyComposerStrip(
     message: ChatMessageSnapshot,
     onCancel: () -> Unit,
 ) {
-    Surface(
+    val authorName = if (message.isOutgoing) "You" else message.author
+    Box(
         modifier =
             Modifier
                 .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.background)
+                .padding(horizontal = 14.dp)
+                .padding(top = 8.dp, bottom = 2.dp)
                 .testTag("chatReplyComposer"),
-        color = IrisTheme.palette.toolbar,
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = IrisTheme.palette.panelAlt,
+            shape = RoundedCornerShape(12.dp),
         ) {
-            Box(
-                modifier =
-                    Modifier
-                        .size(width = 3.dp, height = 38.dp)
-                        .clip(CircleShape)
-                        .background(IrisTheme.palette.accent),
-            )
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.Top,
             ) {
-                Text(
-                    text = message.author,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Box(
+                    modifier =
+                        Modifier
+                            .padding(vertical = 8.dp)
+                            .size(width = 4.dp, height = 38.dp)
+                            .clip(CircleShape)
+                            .background(IrisTheme.palette.muted.copy(alpha = 0.55f)),
                 )
-                Text(
-                    text = replySnippet(message),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = IrisTheme.palette.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = onCancel) {
-                Icon(
-                    imageVector = IrisIcons.Close,
-                    contentDescription = "Cancel reply",
-                    tint = IrisTheme.palette.muted,
-                )
+                Column(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .padding(vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Text(
+                        text = authorName,
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = replySnippet(message),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = IrisTheme.palette.muted,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                message.attachments.firstOrNull()?.let { attachment ->
+                    ReplyComposerAttachmentBadge(
+                        icon = replyAttachmentIcon(attachment),
+                        label = replyAttachmentLabel(attachment),
+                        modifier = Modifier.padding(vertical = 6.dp),
+                    )
+                }
+                Box(
+                    modifier =
+                        Modifier
+                            .padding(top = 4.dp)
+                            .size(32.dp)
+                            .clickable(onClick = onCancel)
+                            .testTag("chatReplyCancelButton"),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(IrisTheme.palette.toolbar),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = IrisIcons.Close,
+                            contentDescription = "Cancel reply",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(15.dp),
+                        )
+                    }
+                }
             }
         }
     }
 }
+
+@Composable
+private fun ReplyComposerAttachmentBadge(
+    icon: ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier.size(46.dp),
+        color = IrisTheme.palette.toolbar,
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = IrisTheme.palette.muted,
+                modifier = Modifier.size(20.dp),
+            )
+        }
+    }
+}
+
+private fun replyAttachmentIcon(attachment: MessageAttachmentSnapshot): ImageVector =
+    when {
+        attachment.isImage -> IrisIcons.Image
+        attachment.isVideo -> IrisIcons.Movie
+        attachment.isAudio -> IrisIcons.Audio
+        else -> IrisIcons.File
+    }
+
+private fun replyAttachmentLabel(attachment: MessageAttachmentSnapshot): String =
+    when {
+        attachment.isImage -> "Image"
+        attachment.isVideo -> "Video"
+        attachment.isAudio -> "Audio"
+        else -> "File"
+    }
 
 @Composable
 internal fun ComposerBar(

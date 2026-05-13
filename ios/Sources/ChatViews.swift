@@ -2885,35 +2885,93 @@ private struct IrisReplyComposerStrip: View {
     let message: ChatMessageSnapshot
     let onCancel: () -> Void
 
+    private var authorName: String {
+        message.isOutgoing ? "You" : message.author
+    }
+
     var body: some View {
-        HStack(spacing: 10) {
-            Capsule()
-                .fill(palette.accent)
-                .frame(width: 3, height: 32)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(message.author)
-                    .font(.system(.caption, design: .rounded, weight: .bold))
-                    .foregroundStyle(palette.textPrimary)
-                    .lineLimit(1)
-                Text(replySnippet(for: message))
-                    .font(.system(.caption, design: .rounded, weight: .medium))
-                    .foregroundStyle(palette.muted)
-                    .lineLimit(1)
+        HStack(alignment: .top, spacing: 8) {
+            HStack(spacing: 8) {
+                Capsule()
+                    .fill(palette.muted.opacity(0.55))
+                    .frame(width: 4, height: 38)
+                    .padding(.vertical, 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(authorName)
+                        .font(.system(.caption, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineLimit(1)
+                    Text(replySnippet(for: message))
+                        .font(.system(.subheadline, design: .rounded, weight: .regular))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let attachment = message.attachments.first {
+                    IrisReplyComposerAttachmentBadge(attachment: attachment)
+                        .padding(.vertical, 6)
+                }
             }
-            Spacer()
-            Button(action: onCancel) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(palette.muted)
-            }
-            .buttonStyle(.irisPlain)
-            .accessibilityIdentifier("chatReplyCancelButton")
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            IrisReplyComposerCloseButton(action: onCancel)
+                .padding(.top, 4)
         }
-        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 16)
-        .padding(.vertical, 6)
-        .background(palette.toolbar)
-        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(palette.panelAlt)
+        )
+        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 8)
+        .padding(.top, 6)
+        .padding(.bottom, 2)
         .accessibilityIdentifier("chatReplyComposer")
+    }
+}
+
+private struct IrisReplyComposerCloseButton: View {
+    @Environment(\.irisPalette) private var palette
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .fill(palette.toolbar)
+                    .frame(width: 24, height: 24)
+                Image(systemName: "xmark")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(palette.textPrimary)
+            }
+            .frame(width: 32, height: 32)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Close")
+        .accessibilityIdentifier("chatReplyCancelButton")
+    }
+}
+
+private struct IrisReplyComposerAttachmentBadge: View {
+    @Environment(\.irisPalette) private var palette
+    let attachment: MessageAttachmentSnapshot
+
+    var body: some View {
+        let category = chatAttachmentCategory(for: attachment)
+        Image(systemName: category.systemIcon)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(palette.muted)
+            .frame(width: 46, height: 46)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(palette.toolbar)
+            )
+            .accessibilityLabel(category.rawValue)
     }
 }
 
