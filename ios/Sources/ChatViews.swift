@@ -2631,7 +2631,25 @@ private struct TouchDownControl: UIViewRepresentable {
 
 private final class TouchDownControlView: UIControl {
     var onTouchDown: (() -> Void)?
-    private var firedForCurrentTouch = false
+    private var lastFireAt: CFTimeInterval = 0
+    private weak var observedWindow: UIWindow?
+    private var windowRecognizer: WindowTouchDownGestureRecognizer?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        updateWindowRecognizer()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateWindowRecognizer()
+    }
+
+    deinit {
+        if let windowRecognizer, let observedWindow {
+            observedWindow.removeGestureRecognizer(windowRecognizer)
+        }
+    }
 
     override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
         fireOnce()
@@ -2642,18 +2660,85 @@ private final class TouchDownControlView: UIControl {
         true
     }
 
-    override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
-        firedForCurrentTouch = false
-    }
-
-    override func cancelTracking(with event: UIEvent?) {
-        firedForCurrentTouch = false
-    }
-
-    private func fireOnce() {
-        guard !firedForCurrentTouch else { return }
-        firedForCurrentTouch = true
+    func fireOnce() {
+        let now = CACurrentMediaTime()
+        guard now - lastFireAt > 0.15 else { return }
+        lastFireAt = now
         onTouchDown?()
+    }
+
+    private func updateWindowRecognizer() {
+        if observedWindow === window {
+            windowRecognizer?.targetView = self
+            return
+        }
+        if let windowRecognizer, let observedWindow {
+            observedWindow.removeGestureRecognizer(windowRecognizer)
+        }
+        observedWindow = window
+        guard let window else {
+            windowRecognizer = nil
+            return
+        }
+        // UIScrollView can consume the first touch while decelerating.
+        // Watching the window lets the jump button interrupt that coast.
+        let recognizer = WindowTouchDownGestureRecognizer()
+        recognizer.targetView = self
+        recognizer.cancelsTouchesInView = false
+        recognizer.delaysTouchesBegan = false
+        recognizer.delaysTouchesEnded = false
+        window.addGestureRecognizer(recognizer)
+        windowRecognizer = recognizer
+    }
+}
+
+private final class WindowTouchDownGestureRecognizer: UIGestureRecognizer, UIGestureRecognizerDelegate {
+    weak var targetView: TouchDownControlView?
+
+    override init(target: Any?, action: Selector?) {
+        super.init(target: target, action: action)
+        delegate = self
+    }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let touch = touches.first,
+              let window = view,
+              let targetView,
+              !targetView.isHidden,
+              targetView.alpha > 0.01 else {
+            state = .failed
+            return
+        }
+        let frame = targetView.convert(targetView.bounds, to: window).insetBy(dx: -8, dy: -8)
+        if frame.contains(touch.location(in: window)) {
+            targetView.fireOnce()
+            state = .recognized
+        } else {
+            state = .failed
+        }
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        if state == .possible {
+            state = .failed
+        }
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        if state == .possible {
+            state = .failed
+        }
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        state = .cancelled
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        true
     }
 }
 
