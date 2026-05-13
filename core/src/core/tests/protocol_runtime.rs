@@ -445,7 +445,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
         },
     );
 
-    core.handle_protocol_subscription_liveness_check(core.protocol_reconnect_token);
+    core.handle_protocol_subscription_liveness_check(core.protocol_liveness_token);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
@@ -993,6 +993,40 @@ fn successful_protocol_subscription_apply_sets_applied_plan() {
 }
 
 #[test]
+fn liveness_scheduling_does_not_invalidate_subscription_apply_completion() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("subscription-apply-liveness-generation", &owner, &device);
+    let plan = protocol_plan_for_test(vec![device.public_key()], Vec::new());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.applying_plan = Some(plan.clone());
+    core.protocol_subscription_runtime.refresh_in_flight = true;
+    core.protocol_subscription_runtime.reconcile_token = 9;
+    let apply_generation = core.protocol_reconnect_token;
+
+    core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
+
+    core.handle_protocol_subscription_reconcile_completed(
+        apply_generation,
+        9,
+        "test_success_after_liveness_schedule".to_string(),
+        Some(plan.clone()),
+        true,
+        None,
+        vec![("wss://relay.example".to_string(), RelayStatus::Connected)],
+        1,
+        1,
+        1,
+    );
+
+    assert!(
+        !core.protocol_subscription_runtime.refresh_in_flight,
+        "liveness timers must not leave subscription apply permanently in-flight"
+    );
+    assert_eq!(core.protocol_subscription_runtime.applied_plan, Some(plan));
+}
+
+#[test]
 fn stale_protocol_subscription_reconcile_completion_is_ignored() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1029,8 +1063,16 @@ fn liveness_token_does_not_stale_subscription_completion() {
     core.protocol_subscription_runtime.refresh_in_flight = true;
     core.protocol_subscription_runtime.reconcile_token = 9;
     let apply_generation = core.protocol_reconnect_token;
+    let liveness_generation = core.protocol_liveness_token;
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(30));
-    assert_ne!(core.protocol_reconnect_token, apply_generation);
+    assert_eq!(
+        core.protocol_reconnect_token, apply_generation,
+        "liveness scheduling must not invalidate subscription apply generation"
+    );
+    assert_ne!(
+        core.protocol_liveness_token, liveness_generation,
+        "liveness scheduling should still advance the independent liveness token"
+    );
 
     core.handle_protocol_subscription_reconcile_completed(
         apply_generation,
