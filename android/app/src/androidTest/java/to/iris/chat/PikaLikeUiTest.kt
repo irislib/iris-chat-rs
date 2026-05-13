@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
@@ -81,6 +82,32 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("deviceRosterCurrentDeviceNpub", useUnmergedTree = true)
             .assertIsDisplayed()
         composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true).assertIsDisplayed()
+    }
+
+    @Test
+    fun profile_sheet_toggles_debug_logging_and_exposes_debug_dump() {
+        composeRule.ensureChatList()
+        composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
+
+        composeRule.waitForTag("myProfileSheet")
+        composeRule.onNodeWithTag("myProfileDebugLoggingSwitch", useUnmergedTree = true)
+            .performScrollTo()
+            .assertIsOff()
+            .performClick()
+        composeRule.waitUntil(10_000) {
+            (composeRule.activity.application as IrisChatApp)
+                .container
+                .appManager
+                .state
+                .value
+                .preferences
+                .debugLoggingEnabled
+        }
+        composeRule.onNodeWithTag("myProfileDebugLoggingSwitch", useUnmergedTree = true)
+            .assertIsOn()
+        composeRule.onNodeWithTag("myProfileCopySupportBundleButton", useUnmergedTree = true)
+            .performScrollTo()
+            .assertIsDisplayed()
     }
 
     @Test

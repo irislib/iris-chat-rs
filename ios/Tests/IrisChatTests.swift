@@ -96,6 +96,7 @@ private final class MockRustApp: RustAppClient {
             imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
             mutedChatIds: [],
             pinnedChatIds: [],
+            debugLoggingEnabled: false,
             mobilePushServerUrl: ""
         ),
         toast: nil
@@ -257,6 +258,7 @@ private func makeAppState(
         imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
         mutedChatIds: [],
         pinnedChatIds: [],
+        debugLoggingEnabled: false,
         mobilePushServerUrl: ""
     ),
     toast: String? = nil
@@ -848,6 +850,33 @@ final class IrisChatTests: XCTestCase {
         XCTAssertTrue(options.isEmpty)
     }
 #endif
+
+    @MainActor
+    func testDebugLoggingToggleReachesCoreAndDebugDumpStaysAvailable() async throws {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir,
+            environment: [:]
+        )
+
+        manager.dispatch(.setDebugLoggingEnabled(enabled: true))
+        XCTAssertEqual(rust.dispatchedActions.last, .setDebugLoggingEnabled(enabled: true))
+
+        var preferences = makeLargeFixtureState().preferences
+        preferences.debugLoggingEnabled = true
+        rust.emit(.fullState(makeLargeFixtureState(rev: 2, account: makeAccount(), preferences: preferences)))
+
+        let updated = await waitUntil {
+            manager.state.preferences.debugLoggingEnabled
+        }
+        XCTAssertTrue(updated)
+        XCTAssertTrue(manager.supportBundleJson().contains("\"ok\":true"))
+    }
 
     @MainActor
     func testDesktopNotificationPostedForNewUnreadIncomingMessage() async {

@@ -1304,22 +1304,13 @@ struct IrisComposerBar: View {
                     .irisOnChange(of: draft) { _ in onDraftChange() }
                     .accessibilityIdentifier("chatMessageInput")
 
-                // Signal pattern: send button is hidden when there's
-                // nothing to send. It springs in from the right when
-                // text or an attachment lands, and out when the field
-                // empties again. The accent fill is wrapped in a
-                // bright outer ring so the button always reads as a
-                // distinct floating control even when it sits near an
-                // outgoing (same-accent) bubble.
-                if canSend || isSending {
+                // Mobile keeps the Signal-style explicit send affordance.
+                // Desktop sends with Return, so showing this button only
+                // after typing causes a distracting composer width shift.
+                if !IrisLayout.usesDesktopChrome && (canSend || isSending) {
                     Button(action: submitDraft) {
                         IrisSendButtonLabel(isSending: isSending)
-                            // Outer 48-pt content shape so a slightly
-                            // off-center thumb tap still lands on the
-                            // button rather than slipping past it to
-                            // an outgoing bubble visible through the
-                            // composer's transparent gaps.
-                            .frame(width: 48, height: 48)
+                            .frame(width: 40, height: 40)
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.irisPlain)
