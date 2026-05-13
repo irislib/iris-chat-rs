@@ -4434,6 +4434,77 @@ fn restored_authorized_linked_device_is_not_revoked_by_cached_roster() {
 }
 
 #[test]
+fn restored_linked_device_uses_persisted_protocol_session_for_authorization() {
+    let owner = Keys::generate();
+    let linked_device = Keys::generate();
+    let primary_device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_string_lossy().to_string();
+
+    {
+        let mut core = AppCore::new(
+            flume::unbounded().0,
+            flume::unbounded().0,
+            data_dir.clone(),
+            Arc::new(RwLock::new(AppState::empty())),
+        );
+        core.preferences.nostr_relay_urls.clear();
+        core.start_session(owner.public_key(), None, linked_device.clone(), false, false)
+            .expect("linked session");
+        core.app_keys.insert(
+            owner.public_key().to_hex(),
+            known_app_keys_from_ndr(
+                owner.public_key(),
+                &AppKeys::new(vec![
+                    DeviceEntry::new(primary_device.public_key(), 10),
+                    DeviceEntry::new(linked_device.public_key(), 11),
+                ]),
+                11,
+            ),
+        );
+        install_local_sibling_session_for_test(&mut core, &owner, &linked_device, &primary_device);
+        core.refresh_local_authorization_state();
+        core.persist_best_effort();
+
+        assert_eq!(
+            core.logged_in
+                .as_ref()
+                .expect("logged in")
+                .authorization_state,
+            LocalAuthorizationState::Authorized
+        );
+    }
+
+    let mut restored = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        data_dir,
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    restored
+        .start_session(owner.public_key(), None, linked_device, true, false)
+        .expect("restored linked session");
+
+    assert_eq!(
+        restored
+            .logged_in
+            .as_ref()
+            .expect("logged in")
+            .authorization_state,
+        LocalAuthorizationState::Authorized
+    );
+    assert_eq!(
+        restored
+            .state
+            .account
+            .as_ref()
+            .expect("account")
+            .authorization_state,
+        DeviceAuthorizationState::Authorized
+    );
+}
+
+#[test]
 fn linked_device_missing_local_session_exposes_link_code() {
     let owner = Keys::generate();
     let device = Keys::generate();
