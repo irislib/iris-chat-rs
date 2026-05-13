@@ -578,7 +578,7 @@ private struct ShareTargetSheet: View {
             HStack(spacing: 12) {
                 Image(systemName: selected ? "checkmark.square.fill" : "square")
                     .font(.system(size: 23, weight: .semibold))
-                    .foregroundStyle(selected ? palette.accent : palette.muted)
+                    .foregroundStyle(selected ? palette.textPrimary : palette.muted)
                     .frame(width: 28, height: 28)
                 IrisAvatar(
                     label: chat.displayName,
@@ -1452,6 +1452,7 @@ private struct DesktopUpdateStripe: View {
 
             Toggle("Install automatically", isOn: $updates.autoInstall)
                 .toggleStyle(.checkbox)
+                .irisControlTint()
                 .font(.system(.caption, design: .rounded, weight: .medium))
                 .foregroundStyle(palette.muted)
                 .accessibilityIdentifier("desktopUpdateAutoInstallToggle")
@@ -3100,6 +3101,7 @@ private struct NearbyIrisScreen: View {
                 Toggle("", isOn: isOn)
                     .labelsHidden()
                     .toggleStyle(.switch)
+                    .irisControlTint()
                     .accessibilityIdentifier(accessibilityID)
             }
             .frame(height: 52)
@@ -4508,6 +4510,7 @@ struct SettingsScreen: View {
                                 }
                             )
                         )
+                        .irisControlTint()
                         .accessibilityIdentifier("myProfileTypingIndicatorsToggle")
 
                         Toggle(
@@ -4519,6 +4522,7 @@ struct SettingsScreen: View {
                                 }
                             )
                         )
+                        .irisControlTint()
                         .accessibilityIdentifier("myProfileReadReceiptsToggle")
 
                         if PlatformStartupAtLogin.isSupported {
@@ -4531,6 +4535,7 @@ struct SettingsScreen: View {
                                     }
                                 )
                             )
+                            .irisControlTint()
                             .accessibilityIdentifier("myProfileStartupAtLoginToggle")
                         }
                     }
@@ -4644,6 +4649,7 @@ struct SettingsScreen: View {
                                 }
                             )
                         )
+                        .irisControlTint()
                         .accessibilityIdentifier("myProfileDebugLoggingToggle")
 
                         Text("Build \(manager.buildSummaryText())")
@@ -4816,6 +4822,7 @@ private struct NearbySettingsRows: View {
             Toggle("", isOn: isOn)
                 .labelsHidden()
                 .toggleStyle(.switch)
+                .irisControlTint()
                 .accessibilityIdentifier(accessibilityID)
         }
     }
@@ -4848,9 +4855,11 @@ private struct DesktopUpdateSettingsSection: View {
             }
 
             Toggle("Check automatically", isOn: $updates.autoCheck)
+                .irisControlTint()
                 .accessibilityIdentifier("desktopAutoCheckUpdatesToggle")
 
             Toggle("Install automatically", isOn: $updates.autoInstall)
+                .irisControlTint()
                 .accessibilityIdentifier("desktopAutoInstallUpdatesToggle")
 
             HStack(spacing: 10) {
@@ -4897,9 +4906,11 @@ private struct NotificationsSettingsSection: View {
 
     var body: some View {
         Toggle("Enabled", isOn: enabled)
+            .irisControlTint()
             .accessibilityIdentifier("myProfileDesktopNotificationsToggle")
 
         Toggle("Invite accepted", isOn: inviteAccepted)
+            .irisControlTint()
             .accessibilityIdentifier("myProfileInviteAcceptedNotificationsToggle")
 
         TextField(Self.defaultServerUrl, text: serverUrl)
@@ -4951,6 +4962,7 @@ private struct ImageProxySettingsSection: View {
 
     var body: some View {
         Toggle("Image proxy", isOn: imageProxyEnabled)
+            .irisControlTint()
             .accessibilityIdentifier("myProfileImageProxyToggle")
 
         imageProxyTextField(

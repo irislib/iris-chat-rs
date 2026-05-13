@@ -19,7 +19,7 @@ impl AppCore {
             .protocol_subscription_runtime
             .protocol_fetch_last_started_at?;
         let min_interval = Duration::from_secs(PROTOCOL_FETCH_MIN_INTERVAL_SECS);
-        let elapsed = last_started.elapsed();
+        let elapsed = Instant::now().saturating_duration_since(last_started);
         (elapsed < min_interval).then_some(min_interval - elapsed)
     }
 

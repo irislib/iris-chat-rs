@@ -325,36 +325,69 @@ final class InteropHarnessTests: XCTestCase {
         case "wait_for_peer_roster_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env))
-            _ = try await waitFor(label: "peer roster \(peerOwnerHex)", timeout: 180) {
+            let readiness = try await waitFor(label: "peer roster \(peerOwnerHex)", timeout: 180) { () -> (source: String, users: String)? in
                 if self.splitPersistenceHasPeerRoster(dataDir: dataDir, peerOwnerHex: peerOwnerHex) {
-                    return true
+                    return (
+                        "persisted",
+                        self.summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex)
+                    )
+                }
+                if let debug = self.readRuntimeDebugSnapshot(dataDir: dataDir),
+                   self.runtimeDebugHasPeerRoster(debug, peerOwnerHex: peerOwnerHex) {
+                    return (
+                        "runtime",
+                        self.summarizeRuntimeKnownUsers(self.arrayValue(debug["known_users"]))
+                    )
                 }
                 return nil
             }
             status("peer_owner_hex", peerOwnerHex)
-            status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
+            status("source", readiness.source)
+            status("users", readiness.users)
         case "wait_for_known_peer_session_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env))
-            _ = try await waitFor(label: "known peer session \(peerOwnerHex)", timeout: 180) {
+            let readiness = try await waitFor(label: "known peer session \(peerOwnerHex)", timeout: 180) { () -> (source: String, users: String)? in
                 if self.splitPersistenceHasPeerSession(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex) {
-                    return true
+                    return (
+                        "persisted",
+                        self.summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex)
+                    )
+                }
+                if let debug = self.readRuntimeDebugSnapshot(dataDir: dataDir),
+                   self.runtimeDebugHasPeerSession(debug, peerOwnerHex: peerOwnerHex) {
+                    return (
+                        "runtime",
+                        self.summarizeRuntimeKnownUsers(self.arrayValue(debug["known_users"]))
+                    )
                 }
                 return nil
             }
             status("peer_owner_hex", peerOwnerHex)
-            status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
+            status("source", readiness.source)
+            status("users", readiness.users)
         case "wait_for_peer_transport_ready_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env))
-            _ = try await waitFor(label: "peer transport ready \(peerOwnerHex)", timeout: 180) {
+            let readiness = try await waitFor(label: "peer transport ready \(peerOwnerHex)", timeout: 180) { () -> (source: String, users: String)? in
                 if self.splitPersistenceHasPeerSession(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex) {
-                    return true
+                    return (
+                        "persisted",
+                        self.summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex)
+                    )
+                }
+                if let debug = self.readRuntimeDebugSnapshot(dataDir: dataDir),
+                   self.runtimeDebugHasPeerTransportReady(debug, peerOwnerHex: peerOwnerHex) {
+                    return (
+                        "runtime",
+                        self.summarizeRuntimeKnownUsers(self.arrayValue(debug["known_users"]))
+                    )
                 }
                 return nil
             }
             status("peer_owner_hex", peerOwnerHex)
-            status("users", summarizeSplitPersistedPeer(dataDir: dataDir, manager: manager, peerOwnerHex: peerOwnerHex))
+            status("source", readiness.source)
+            status("users", readiness.users)
         case "create_chat_from_args":
             let rawPeer = try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env)
             let chatID = try await ensureChatOpen(manager: manager, dataDir: dataDir, chatID: nil, peerInput: rawPeer)
@@ -1304,6 +1337,45 @@ final class InteropHarnessTests: XCTestCase {
             guard let device = dictValue(entry) else { return false }
             return dictValue(device["active_session"]) != nil ||
                 !arrayValue(device["inactive_sessions"]).isEmpty
+        }
+    }
+
+    private func readRuntimeDebugSnapshot(dataDir: URL) -> JsonObject? {
+        readJsonObject(at: dataDir.appendingPathComponent(debugSnapshotFilename))
+    }
+
+    private func runtimeDebugHasPeerRoster(_ debug: JsonObject, peerOwnerHex: String) -> Bool {
+        runtimeDebugKnownPeer(debug, peerOwnerHex: peerOwnerHex) { user in
+            boolValue(user["has_roster"]) &&
+                intValue(user["roster_device_count"]) > 0
+        }
+    }
+
+    private func runtimeDebugHasPeerSession(_ debug: JsonObject, peerOwnerHex: String) -> Bool {
+        runtimeDebugKnownPeer(debug, peerOwnerHex: peerOwnerHex) { user in
+            intValue(user["active_session_device_count"]) > 0 ||
+                intValue(user["inactive_session_count"]) > 0
+        }
+    }
+
+    private func runtimeDebugHasPeerTransportReady(_ debug: JsonObject, peerOwnerHex: String) -> Bool {
+        runtimeDebugKnownPeer(debug, peerOwnerHex: peerOwnerHex) { user in
+            boolValue(user["has_roster"]) &&
+                intValue(user["roster_device_count"]) > 0 &&
+                intValue(user["device_count"]) > 0 &&
+                intValue(user["authorized_device_count"]) > 0
+        }
+    }
+
+    private func runtimeDebugKnownPeer(
+        _ debug: JsonObject,
+        peerOwnerHex: String,
+        predicate: (JsonObject) -> Bool
+    ) -> Bool {
+        arrayValue(debug["known_users"]).contains { entry in
+            guard let user = dictValue(entry) else { return false }
+            return sameIdentifier(stringValue(user["owner_pubkey_hex"]), peerOwnerHex) &&
+                predicate(user)
         }
     }
 

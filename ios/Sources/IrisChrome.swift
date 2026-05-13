@@ -47,6 +47,23 @@ extension ButtonStyle where Self == IrisPlainButtonStyle {
     static var irisPlain: IrisPlainButtonStyle { IrisPlainButtonStyle() }
 }
 
+private struct IrisControlTintModifier: ViewModifier {
+    @Environment(\.irisPalette) private var palette
+
+    func body(content: Content) -> some View {
+        content
+            // brand-purple ok: control tint colors switch tracks and
+            // other filled control surfaces, not custom text/icons.
+            .tint(palette.accent)
+    }
+}
+
+extension View {
+    func irisControlTint() -> some View {
+        modifier(IrisControlTintModifier())
+    }
+}
+
 // Translucent surface used for the chat composer, the floating
 // scroll-to-bottom button, and any other "floating chrome" element
 // that should let the timeline ghost through. Mirrors Signal-iOS's
@@ -251,7 +268,6 @@ struct IrisTheme<Content: View>: View {
         let palette = colorScheme == .dark ? IrisPalette.dark : IrisPalette.light
         content()
             .environment(\.irisPalette, palette)
-            .tint(palette.accent)
             .preferredColorScheme(nil)
     }
 }
@@ -1201,7 +1217,6 @@ struct IrisComposerBar: View {
     @State private var showingAttachmentPicker = false
     @State private var showingEmojiPicker = false
     @State private var isDropTargeted = false
-    @State private var showingAttachmentMenu = false
     #if canImport(PhotosUI)
     @State private var showingPhotoPicker = false
     @State private var pickedPhotos: [PhotosPickerItem] = []
@@ -1254,22 +1269,7 @@ struct IrisComposerBar: View {
             }
 
             HStack(alignment: .bottom, spacing: 8) {
-                Button {
-                    presentAttachmentSource()
-                } label: {
-                    // Signal-iOS 26 uses a plain "plus" glyph for the
-                    // attachment button instead of a paperclip — reads
-                    // as "more / add", matches their AttachmentButton
-                    // configuration.
-                    Image(systemName: isUploading ? "ellipsis" : "plus")
-                        .font(.system(size: 19, weight: .semibold))
-                        .foregroundStyle((isSending || isUploading) ? palette.muted.opacity(0.54) : palette.textPrimary)
-                        .frame(width: 40, height: 40)
-                        .irisGlassSurface(in: Circle())
-                }
-                .buttonStyle(.irisPlain)
-                .disabled(isSending || isUploading)
-                .accessibilityIdentifier("chatAttachButton")
+                attachmentControl
 
                 if IrisLayout.usesDesktopChrome {
                     Button {
@@ -1364,13 +1364,6 @@ struct IrisComposerBar: View {
             }
             onAttach(urls)
         }
-        .confirmationDialog("Attach", isPresented: $showingAttachmentMenu, titleVisibility: .hidden) {
-            #if canImport(PhotosUI)
-            Button("Photo Library") { showingPhotoPicker = true }
-            #endif
-            Button("Files") { showingAttachmentPicker = true }
-            Button("Cancel", role: .cancel) {}
-        }
         #if canImport(PhotosUI)
         .photosPicker(
             isPresented: $showingPhotoPicker,
@@ -1384,12 +1377,37 @@ struct IrisComposerBar: View {
         #endif
     }
 
-    private func presentAttachmentSource() {
-        #if canImport(PhotosUI)
-        showingAttachmentMenu = true
+    @ViewBuilder
+    private var attachmentControl: some View {
+        #if os(iOS) && canImport(PhotosUI)
+        Menu {
+            Button("Photo Library") { showingPhotoPicker = true }
+            Button("Files") { showingAttachmentPicker = true }
+        } label: {
+            attachmentControlLabel
+        }
+        .disabled(isSending || isUploading)
+        .accessibilityIdentifier("chatAttachButton")
         #else
-        showingAttachmentPicker = true
+        Button {
+            showingAttachmentPicker = true
+        } label: {
+            attachmentControlLabel
+        }
+        .buttonStyle(.irisPlain)
+        .disabled(isSending || isUploading)
+        .accessibilityIdentifier("chatAttachButton")
         #endif
+    }
+
+    private var attachmentControlLabel: some View {
+        Image(systemName: isUploading ? "ellipsis" : "plus")
+            .font(.system(size: 19, weight: .semibold))
+            .foregroundStyle((isSending || isUploading) ? palette.muted.opacity(0.54) : palette.textPrimary)
+            .frame(width: 40, height: 40)
+            .contentShape(Circle())
+            .irisGlassSurface(in: Circle())
+            .accessibilityLabel("Add")
     }
 
     #if canImport(PhotosUI)

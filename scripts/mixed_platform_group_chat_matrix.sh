@@ -410,15 +410,40 @@ else
   run_android_test "${ANDROID_ADMIN_SERIAL}" create_chat_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
   run_android_test "${ANDROID_ADMIN_SERIAL}" create_chat_from_args peer_input "${ANDROID_MEMBER_NPUB}" >/dev/null
   run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" create_chat_from_args peer_input "${ANDROID_ADMIN_NPUB}" >/dev/null
+  run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" create_chat_from_args peer_input "${ANDROID_MEMBER_NPUB}" >/dev/null
   run_android_test "${ANDROID_MEMBER_SERIAL}" create_chat_from_args peer_input "${ANDROID_ADMIN_NPUB}" >/dev/null
+  run_android_test "${ANDROID_MEMBER_SERIAL}" create_chat_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
   run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_peer_transport_ready_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
   run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_peer_transport_ready_from_args peer_input "${ANDROID_MEMBER_NPUB}" >/dev/null
 
   echo "Seeding direct chat for Android-created group"
+  echo "Sending Android creator seed to iOS member"
   run_android_test "${ANDROID_ADMIN_SERIAL}" send_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_android_to_ios" >/dev/null
+  echo "Waiting for iOS member to receive Android creator seed"
   run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_android_to_ios" direction "incoming" >/dev/null
+  run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_peer_transport_ready_from_args peer_input "${ANDROID_ADMIN_NPUB}" >/dev/null
+  echo "Sending iOS member seed to Android creator"
+  run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" send_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_ios_to_android_admin" >/dev/null
+  echo "Waiting for Android creator to receive iOS member seed"
+  run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_ios_to_android_admin" direction "incoming" >/dev/null
+  echo "Sending Android creator seed to Android member"
   run_android_test "${ANDROID_ADMIN_SERIAL}" send_message_from_args peer_input "${ANDROID_MEMBER_NPUB}" message "seed_android_to_android" >/dev/null
+  echo "Waiting for Android member to receive Android creator seed"
   run_android_test "${ANDROID_MEMBER_SERIAL}" wait_for_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_android_to_android" direction "incoming" >/dev/null
+  run_android_test "${ANDROID_MEMBER_SERIAL}" wait_for_peer_transport_ready_from_args peer_input "${ANDROID_ADMIN_NPUB}" >/dev/null
+  echo "Sending Android member seed to Android creator"
+  run_android_test "${ANDROID_MEMBER_SERIAL}" send_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_android_member_to_admin" >/dev/null
+  echo "Waiting for Android creator to receive Android member seed"
+  run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_message_from_args peer_input "${ANDROID_MEMBER_NPUB}" message "seed_android_member_to_admin" direction "incoming" >/dev/null
+  echo "Sending iOS member seed to Android member"
+  run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" send_message_from_args peer_input "${ANDROID_MEMBER_NPUB}" message "seed_ios_to_android_member" >/dev/null
+  echo "Waiting for Android member to receive iOS member seed"
+  run_android_test "${ANDROID_MEMBER_SERIAL}" wait_for_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_ios_to_android_member" direction "incoming" >/dev/null
+  echo "Sending Android member seed to iOS member"
+  run_android_test "${ANDROID_MEMBER_SERIAL}" send_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_android_member_to_ios" >/dev/null
+  echo "Waiting for iOS member to receive Android member seed"
+  run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_message_from_args peer_input "${ANDROID_MEMBER_NPUB}" message "seed_android_member_to_ios" direction "incoming" >/dev/null
+  run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_peer_transport_ready_from_args peer_input "${ANDROID_MEMBER_NPUB}" >/dev/null
 
   echo "Creating Android-owned mixed group"
   ANDROID_GROUP_CREATE="$(run_android_test "${ANDROID_ADMIN_SERIAL}" create_group_from_args \
@@ -429,18 +454,29 @@ else
 
   run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_group_chat_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" >/dev/null
   run_android_test "${ANDROID_MEMBER_SERIAL}" wait_for_group_chat_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" >/dev/null
+  run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_group_member_count_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" member_count "3" >/dev/null
+  run_android_test "${ANDROID_MEMBER_SERIAL}" wait_for_group_member_count_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" member_count "3" >/dev/null
 
   echo "Exchanging messages in Android-owned mixed group"
+  echo "Sending Android-owned group message from Android creator"
   run_android_test "${ANDROID_ADMIN_SERIAL}" send_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_admin" >/dev/null
+  echo "Waiting for iOS member to receive Android creator group message"
   run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_admin" direction "incoming" >/dev/null
+  echo "Waiting for Android member to receive Android creator group message"
   run_android_test "${ANDROID_MEMBER_SERIAL}" wait_for_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_admin" direction "incoming" >/dev/null
 
+  echo "Sending Android-owned group message from iOS member"
   run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" send_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_ios_member" >/dev/null
+  echo "Waiting for Android creator to receive iOS member group message"
   run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_ios_member" direction "incoming" >/dev/null
+  echo "Waiting for Android member to receive iOS member group message"
   run_android_test "${ANDROID_MEMBER_SERIAL}" wait_for_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_ios_member" direction "incoming" >/dev/null
 
+  echo "Sending Android-owned group message from Android member"
   run_android_test "${ANDROID_MEMBER_SERIAL}" send_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_android_member" >/dev/null
+  echo "Waiting for Android creator to receive Android member group message"
   run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_android_member" direction "incoming" >/dev/null
+  echo "Waiting for iOS member to receive Android member group message"
   run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_message_from_args chat_id "${ANDROID_GROUP_CHAT_ID}" message "android_creator_group_android_member" direction "incoming" >/dev/null
   write_state
 
@@ -461,17 +497,38 @@ echo "Stabilizing iOS creator -> Android member and iOS member transport"
 run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" create_chat_from_args peer_input "${ANDROID_ADMIN_NPUB}" >/dev/null
 run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" create_chat_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
 run_android_test "${ANDROID_ADMIN_SERIAL}" create_chat_from_args peer_input "${IOS_MEMBER_NPUB}" >/dev/null
+run_android_test "${ANDROID_ADMIN_SERIAL}" create_chat_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
 run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" create_chat_from_args peer_input "${IOS_MEMBER_NPUB}" >/dev/null
+run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" create_chat_from_args peer_input "${ANDROID_ADMIN_NPUB}" >/dev/null
 
 echo "Seeding direct chat for iOS-created group"
+echo "Sending Android member seed to iOS creator"
+run_android_test "${ANDROID_ADMIN_SERIAL}" send_message_from_args peer_input "${IOS_MEMBER_NPUB}" message "seed_android_to_ios_creator" >/dev/null
+echo "Waiting for iOS creator to receive Android member seed"
+run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" wait_for_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_android_to_ios_creator" direction "incoming" >/dev/null
+run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" wait_for_peer_transport_ready_from_args peer_input "${ANDROID_ADMIN_NPUB}" >/dev/null
 echo "Sending iOS-created seed to Android member"
 run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" send_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_ios_to_android" >/dev/null
 echo "Waiting for Android member seed from iOS creator"
 run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_message_from_args peer_input "${IOS_MEMBER_NPUB}" message "seed_ios_to_android" direction "incoming" >/dev/null
+echo "Sending iOS member seed to iOS creator"
+run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" send_message_from_args peer_input "${IOS_MEMBER_NPUB}" message "seed_ios_member_to_creator" >/dev/null
+echo "Waiting for iOS creator to receive iOS member seed"
+run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" wait_for_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_ios_member_to_creator" direction "incoming" >/dev/null
+run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" wait_for_peer_transport_ready_from_args peer_input "${IOS_PRIMARY_NPUB}" >/dev/null
 echo "Sending iOS-created seed to iOS member"
 run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" send_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_ios_to_ios" >/dev/null
 echo "Waiting for iOS member seed from iOS creator"
 run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_message_from_args peer_input "${IOS_MEMBER_NPUB}" message "seed_ios_to_ios" direction "incoming" >/dev/null
+echo "Sending Android member seed to iOS member"
+run_android_test "${ANDROID_ADMIN_SERIAL}" send_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_android_to_ios_member" >/dev/null
+echo "Waiting for iOS member to receive Android member seed"
+run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_android_to_ios_member" direction "incoming" >/dev/null
+run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_peer_transport_ready_from_args peer_input "${ANDROID_ADMIN_NPUB}" >/dev/null
+echo "Sending iOS member seed to Android member"
+run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" send_message_from_args peer_input "${ANDROID_ADMIN_NPUB}" message "seed_ios_member_to_android" >/dev/null
+echo "Waiting for Android member to receive iOS member seed"
+run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_message_from_args peer_input "${IOS_PRIMARY_NPUB}" message "seed_ios_member_to_android" direction "incoming" >/dev/null
 
 echo "Creating iOS-owned mixed group"
 IOS_GROUP_CREATE="$(run_ios_test "${IOS_MEMBER_UDID}" "${IOS_MEMBER_RUN_ID}" create_group_from_args \
@@ -483,6 +540,8 @@ write_state
 
 run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_group_chat_from_args chat_id "${IOS_GROUP_CHAT_ID}" >/dev/null
 run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_group_chat_from_args chat_id "${IOS_GROUP_CHAT_ID}" >/dev/null
+run_android_test "${ANDROID_ADMIN_SERIAL}" wait_for_group_member_count_from_args chat_id "${IOS_GROUP_CHAT_ID}" member_count "3" >/dev/null
+run_ios_test "${IOS_PRIMARY_UDID}" "${IOS_PRIMARY_RUN_ID}" wait_for_group_member_count_from_args chat_id "${IOS_GROUP_CHAT_ID}" member_count "3" >/dev/null
 
 echo "Exchanging messages in iOS-owned mixed group"
 echo "Sending iOS-owned group message from iOS creator"

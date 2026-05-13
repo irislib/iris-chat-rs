@@ -1277,6 +1277,35 @@ fn protocol_fetch_start_is_rate_limited() {
 }
 
 #[test]
+fn protocol_fetch_rate_limit_tolerates_future_start_time() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("protocol-fetch-future-rate-limit", &owner, &device);
+
+    core.protocol_subscription_runtime
+        .protocol_fetch_last_started_at = Some(Instant::now() + Duration::from_secs(30));
+    core.debug_log.clear();
+
+    assert!(
+        !core.fetch_recent_protocol_state(),
+        "future protocol fetch timestamp should rate-limit instead of panicking"
+    );
+    assert!(
+        core.debug_log
+            .iter()
+            .any(|entry| entry.category == "protocol.catch_up.skip"
+                && entry.detail.contains("rate limited")),
+        "future timestamp should be reported as a rate-limit skip"
+    );
+    assert!(
+        core.protocol_subscription_runtime
+            .tracked_peer_catch_up_due_at
+            .is_some(),
+        "future timestamp should schedule one coalesced retry"
+    );
+}
+
+#[test]
 fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_session() {
     let owner = Keys::generate();
     let device = Keys::generate();
