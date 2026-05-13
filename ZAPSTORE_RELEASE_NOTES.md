@@ -1,3 +1,9 @@
+# Iris Chat 2026.5.13.6
+
+- iOS message bubbles no longer steal fast vertical flicks from the chat timeline.
+- iOS message swipe gestures still open reply and message info, and chat-list row swipes still show row actions.
+- Jump to latest now stops in-flight timeline momentum before scrolling, avoiding temporary scroll lock near the bottom.
+
 # Iris Chat 2026.5.13.5
 
 - Long chats no longer flicker on open or briefly lock scrolling after you scroll away from the latest message.
