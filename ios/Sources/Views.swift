@@ -3117,31 +3117,43 @@ private struct ChatListTableView: UIViewRepresentable {
     }
 
     func updateUIView(_ tableView: UITableView, context: Context) {
-        let items = makeItems()
+        let sections = makeSections()
         let fingerprint = makeFingerprint()
         context.coordinator.manager = manager
         context.coordinator.preferences = preferences
         context.coordinator.relativeNow = relativeNow
         context.coordinator.palette = palette
         context.coordinator.onOpenNearby = onOpenNearby
-        context.coordinator.items = items
+        context.coordinator.sections = sections
         guard context.coordinator.fingerprint != fingerprint else { return }
         context.coordinator.fingerprint = fingerprint
         tableView.reloadData()
     }
 
-    private func makeItems() -> [Item] {
-        var items: [Item] = [.nearby]
+    private func makeSections() -> [Section] {
         if chats.isEmpty {
-            items.append(.empty)
-        } else {
-            items.append(contentsOf: chats.map(Item.chat))
+            return [
+                Section(title: nil, items: [.nearby, .empty])
+            ]
         }
-        return items
+
+        let pinnedChats = chats.filter(\.isPinned)
+        guard !pinnedChats.isEmpty else {
+            return [
+                Section(title: nil, items: [.nearby] + chats.map(Item.chat))
+            ]
+        }
+
+        let unpinnedChats = chats.filter { !$0.isPinned }
+        return [
+            Section(title: "Pinned", items: pinnedChats.map(Item.chat)),
+            Section(title: "Chats", items: [.nearby] + unpinnedChats.map(Item.chat)),
+        ]
     }
 
     private func makeFingerprint() -> [String] {
         var values = ["nearby:\(manager.nearbyIris.sidebarSubtitle):\(manager.nearbyIris.peers.count)"]
+        values.append("hasPinned:\(chats.contains { $0.isPinned })")
         if chats.isEmpty {
             values.append("empty")
         } else {
@@ -3170,19 +3182,28 @@ private struct ChatListTableView: UIViewRepresentable {
         case chat(ChatThreadSnapshot)
     }
 
+    struct Section {
+        let title: String?
+        let items: [Item]
+    }
+
     final class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate {
         static let cellReuseIdentifier = "ChatListTableCell"
 
         weak var manager: AppManager?
-        var items: [Item] = []
+        var sections: [Section] = []
         var preferences: PreferencesSnapshot?
         var relativeNow = Date()
         var palette = IrisPalette.light
         var onOpenNearby: (() -> Void)?
         var fingerprint: [String] = []
 
+        func numberOfSections(in tableView: UITableView) -> Int {
+            sections.count
+        }
+
         func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-            items.count
+            sections[section].items.count
         }
 
         func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -3193,7 +3214,7 @@ private struct ChatListTableView: UIViewRepresentable {
             cell.isAccessibilityElement = true
             cell.accessibilityTraits = []
 
-            switch items[indexPath.row] {
+            switch item(at: indexPath) {
             case .nearby:
                 configureNearby(cell)
             case .empty:
@@ -3207,7 +3228,7 @@ private struct ChatListTableView: UIViewRepresentable {
 
         func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
             tableView.deselectRow(at: indexPath, animated: true)
-            switch items[indexPath.row] {
+            switch item(at: indexPath) {
             case .nearby:
                 onOpenNearby?()
             case .empty:
@@ -3221,7 +3242,7 @@ private struct ChatListTableView: UIViewRepresentable {
             _ tableView: UITableView,
             leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath
         ) -> UISwipeActionsConfiguration? {
-            guard case let .chat(chat) = items[indexPath.row] else { return nil }
+            guard case let .chat(chat) = item(at: indexPath) else { return nil }
             let configuration = UISwipeActionsConfiguration(actions: [
                 contextualAction(
                     accessibilityTitle: chat.unreadCount > 0 ? "Read" : "Unread",
@@ -3246,7 +3267,7 @@ private struct ChatListTableView: UIViewRepresentable {
             _ tableView: UITableView,
             trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
         ) -> UISwipeActionsConfiguration? {
-            guard case let .chat(chat) = items[indexPath.row] else { return nil }
+            guard case let .chat(chat) = item(at: indexPath) else { return nil }
             let configuration = UISwipeActionsConfiguration(actions: [
                 deleteAction(chat: chat, presentingFrom: tableView),
                 contextualAction(
@@ -3262,10 +3283,39 @@ private struct ChatListTableView: UIViewRepresentable {
         }
 
         func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
-            if case .chat = items[indexPath.row] {
+            if case .chat = item(at: indexPath) {
                 return true
             }
             return false
+        }
+
+        func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
+            sections[section].title == nil ? .leastNormalMagnitude : UITableView.automaticDimension
+        }
+
+        func tableView(_ tableView: UITableView, heightForFooterInSection section: Int) -> CGFloat {
+            .leastNormalMagnitude
+        }
+
+        func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+            guard let title = sections[section].title else { return UIView() }
+            return UIHostingConfiguration {
+                Text(title)
+                    .font(.system(.headline, design: .rounded))
+                    .foregroundStyle(palette.textPrimary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 14)
+                    .padding(.bottom, 8)
+                    .accessibilityAddTraits(.isHeader)
+                    .environment(\.irisPalette, palette)
+            }
+            .margins(.all, 0)
+            .makeContentView()
+        }
+
+        private func item(at indexPath: IndexPath) -> Item {
+            sections[indexPath.section].items[indexPath.row]
         }
 
         private func configureNearby(_ cell: UITableViewCell) {
