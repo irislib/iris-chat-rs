@@ -16,6 +16,7 @@ public partial class SettingsView : UserControl
 
     private bool _suppressToggleDispatch;
     private string _selectedPage = "Profile";
+    private bool _profileQrVisible;
 
     public SettingsView()
     {
@@ -41,9 +42,17 @@ public partial class SettingsView : UserControl
             if (!ProfileNameInput.IsKeyboardFocused)
                 ProfileNameInput.Text = account.displayName;
             NpubText.Text = "Signed in";
+            ProfileQrName.Text = string.IsNullOrEmpty(account.displayName) ? "User ID" : account.displayName;
+            ProfileQr.Text = _profileQrVisible ? account.npub : null;
+            ProfileQrPanel.Visibility = _profileQrVisible ? Visibility.Visible : Visibility.Collapsed;
             ExportOwnerKeyButton.Visibility = account.hasOwnerSigningAuthority
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+        }
+        else
+        {
+            ProfileQrPanel.Visibility = Visibility.Collapsed;
+            ProfileQr.Text = null;
         }
 
         var prefs = App.CurrentManager.Preferences;
@@ -298,6 +307,12 @@ public partial class SettingsView : UserControl
     {
         var npub = App.CurrentManager.Account?.npub;
         if (!string.IsNullOrEmpty(npub)) App.CurrentManager.CopyToClipboard(npub);
+    }
+
+    private void OnToggleProfileQr(object sender, RoutedEventArgs e)
+    {
+        _profileQrVisible = !_profileQrVisible;
+        Refresh();
     }
 
     private void OnExportOwner(object sender, RoutedEventArgs e)

@@ -7,6 +7,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -48,6 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -70,6 +73,8 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.NetworkStatusSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
+import to.iris.chat.rust.isValidPeerInput
+import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
@@ -188,6 +193,7 @@ fun MyProfileSheet(
     var editingRelayDraft by remember { mutableStateOf("") }
     var selectedPage by remember { mutableStateOf<SettingsPage?>(null) }
     var showProfileQr by remember { mutableStateOf(false) }
+    var showProfileQrScanner by remember { mutableStateOf(false) }
     val trimmedPictureUrl = pictureUrl?.trim().orEmpty()
     val isHttpPictureUrl =
         trimmedPictureUrl.startsWith("http://") || trimmedPictureUrl.startsWith("https://")
@@ -220,6 +226,27 @@ fun MyProfileSheet(
         remember(npub) {
             createQrBitmap(npub, size = 768)
         }
+    val canShareProfileCode = remember(context) { canShareText(context) }
+
+    fun handleProfileQrScan(raw: String): String? {
+        val normalized = normalizePeerInput(raw)
+        if (normalized.isNotBlank() && isValidPeerInput(normalized)) {
+            showProfileQrScanner = false
+            showProfileQr = false
+            appManager.createChat(normalized)
+            return null
+        }
+
+        val trimmed = raw.trim()
+        if (trimmed.isNotBlank()) {
+            showProfileQrScanner = false
+            showProfileQr = false
+            appManager.dispatch(AppAction.AcceptInvite(trimmed))
+            return null
+        }
+
+        return "That code was empty."
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -755,8 +782,19 @@ fun MyProfileSheet(
     if (showProfileQr && qrBitmap != null) {
         ProfileQrDialog(
             qrBitmap = qrBitmap,
+            displayName = displayName,
+            canShare = canShareProfileCode,
             onDismiss = { showProfileQr = false },
             onCopy = { clipboard.setText("User ID", npub) },
+            onShare = { shareText(context, npub, "Share user ID") },
+            onScan = { showProfileQrScanner = true },
+        )
+    }
+
+    if (showProfileQrScanner) {
+        QrScannerDialog(
+            onDismiss = { showProfileQrScanner = false },
+            onScanned = ::handleProfileQrScan,
         )
     }
 
@@ -908,7 +946,7 @@ private fun ProfileSettingsPage(
 
         IrisListSection {
             ProfileActionRow(
-                title = "Show my code",
+                title = "Show code",
                 icon = IrisIcons.ScanQr,
                 onClick = onShowQr,
                 modifier = Modifier.testTag("myProfileShowQrButton"),
@@ -1116,39 +1154,216 @@ private fun ProfileActionRow(
 @Composable
 private fun ProfileQrDialog(
     qrBitmap: Bitmap,
+    displayName: String,
+    canShare: Boolean,
     onDismiss: () -> Unit,
     onCopy: () -> Unit,
+    onShare: () -> Unit,
+    onScan: () -> Unit,
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             color = IrisTheme.palette.panel,
             shape = RoundedCornerShape(20.dp),
-            border = androidx.compose.foundation.BorderStroke(1.dp, IrisTheme.palette.border),
+            border = BorderStroke(1.dp, IrisTheme.palette.border),
         ) {
             Column(
                 modifier = Modifier.padding(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(14.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                Text(
-                    text = "My code",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ProfileQrTabButton(
+                        text = "Code",
+                        selected = true,
+                        onClick = {},
+                    )
+                    ProfileQrTabButton(
+                        text = "Scan",
+                        selected = false,
+                        onClick = onScan,
+                    )
+                }
+
+                ProfileQrBadge(
+                    qrBitmap = qrBitmap,
+                    label = displayName.ifBlank { "User ID" },
+                    onCopy = onCopy,
                 )
-                IrisQrCodeImage(
-                    bitmap = qrBitmap,
-                    contentDescription = "My user ID code",
-                    size = 260.dp,
-                    tag = "settingsProfileQrCode",
-                )
-                IrisSecondaryButton(
-                    text = "Copy",
-                    onClick = onCopy,
-                    icon = {
-                        Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    ProfileQrIconAction(
+                        icon = IrisIcons.Copy,
+                        contentDescription = "Copy user ID",
+                        onClick = onCopy,
+                        modifier = Modifier.testTag("settingsProfileQrCopyButton"),
+                    )
+                    if (canShare) {
+                        ProfileQrIconAction(
+                            icon = IrisIcons.Share,
+                            contentDescription = "Share user ID",
+                            onClick = onShare,
+                            modifier = Modifier.testTag("settingsProfileQrShareButton"),
+                        )
+                    }
+                    IrisSecondaryButton(
+                        text = "Scan",
+                        onClick = onScan,
+                        modifier = Modifier.testTag("settingsProfileQrScanButton"),
+                        icon = {
+                            Icon(imageVector = IrisIcons.ScanQr, contentDescription = null)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileQrTabButton(
+    text: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
+    Surface(
+        color = if (selected) IrisTheme.palette.panelRaised else IrisTheme.palette.panelAlt,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(12.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .width(104.dp)
+                    .heightIn(min = 40.dp)
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                    ) {
+                        haptics.press()
+                        onClick()
                     },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileQrBadge(
+    qrBitmap: Bitmap,
+    label: String,
+    onCopy: () -> Unit,
+) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
+    Surface(
+        color = IrisTheme.palette.panelAlt,
+        shape = RoundedCornerShape(24.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .width(296.dp)
+                    .padding(top = 32.dp, start = 40.dp, end = 40.dp, bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            IrisQrCodeImage(
+                bitmap = qrBitmap,
+                contentDescription = "User ID code",
+                size = 216.dp,
+                tag = "settingsProfileQrCode",
+            )
+
+            Row(
+                modifier =
+                    Modifier
+                        .padding(top = 8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = null,
+                        ) {
+                            haptics.press()
+                            onCopy()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    imageVector = IrisIcons.Copy,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text(
+                    text = label,
+                    modifier = Modifier.padding(start = 6.dp),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ProfileQrIconAction(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
+    Surface(
+        modifier = modifier,
+        color = IrisTheme.palette.panel,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = CircleShape,
+        border = BorderStroke(1.dp, IrisTheme.palette.border),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .size(54.dp)
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                    ) {
+                        haptics.press()
+                        onClick()
+                    },
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                modifier = Modifier.size(22.dp),
+            )
         }
     }
 }
@@ -1227,7 +1442,7 @@ private fun SettingsProfileMenuRow(
             ) {
                 Icon(
                     imageVector = IrisIcons.ScanQr,
-                    contentDescription = "Show my code",
+                    contentDescription = "Show code",
                     tint = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.size(20.dp),
                 )

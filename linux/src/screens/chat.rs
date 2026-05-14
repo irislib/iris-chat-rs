@@ -1621,18 +1621,17 @@ fn reply_stripped_body(body: &str) -> &str {
     }
 }
 
-fn present_forward_dialog(
-    parent: Option<&gtk::Window>,
-    text: &str,
-    manager: &Rc<AppManager>,
-) {
+fn present_forward_dialog(parent: Option<&gtk::Window>, text: &str, manager: &Rc<AppManager>) {
     let text = text.trim().to_string();
     if text.is_empty() {
         return;
     }
 
     let chats = manager.current_state().chat_list;
-    let dialog = adw::Dialog::builder().title("Forward").content_width(360).build();
+    let dialog = adw::Dialog::builder()
+        .title("Forward")
+        .content_width(360)
+        .build();
     let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
     content.set_margin_top(16);
     content.set_margin_bottom(16);

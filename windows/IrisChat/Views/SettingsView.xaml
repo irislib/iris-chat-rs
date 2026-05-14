@@ -202,10 +202,42 @@
                         <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
                             <Button Style="{StaticResource SecondaryButton}"
                                     Click="OnCopyUserId"
-                                    HorizontalAlignment="Left">
+                                    HorizontalAlignment="Left"
+                                    Margin="0,0,8,0">
                                 <TextBlock Text="Copy user ID" />
                             </Button>
+                            <Button Style="{StaticResource SecondaryButton}"
+                                    Click="OnToggleProfileQr"
+                                    HorizontalAlignment="Left">
+                                <TextBlock Text="Code" />
+                            </Button>
                         </StackPanel>
+
+                        <Border x:Name="ProfileQrPanel"
+                                Background="{StaticResource PanelAlt}"
+                                CornerRadius="24"
+                                Padding="40,32,40,20"
+                                Width="296"
+                                HorizontalAlignment="Left"
+                                Margin="0,18,0,0"
+                                Visibility="Collapsed">
+                            <StackPanel HorizontalAlignment="Center">
+                                <chrome:QrCodeView x:Name="ProfileQr"
+                                                   Width="216"
+                                                   Height="216" />
+                                <Button Style="{StaticResource GhostButton}"
+                                        Click="OnCopyUserId"
+                                        Margin="0,8,0,0"
+                                        HorizontalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="Copy"
+                                                   Margin="0,0,6,0" />
+                                        <TextBlock x:Name="ProfileQrName"
+                                                   FontWeight="SemiBold" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Border>
 

@@ -7,7 +7,7 @@ use iris_chat_core::{AppAction, AppState, PreferencesSnapshot};
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;
 use crate::platform::startup;
-use crate::screens::{confirm_delete_app_data, device_roster};
+use crate::screens::{chat_input_action, confirm_delete_app_data, device_roster, scan_qr_button};
 use crate::widgets::{image_cache, qr};
 
 const IRIS_SOURCE_URL: &str =
@@ -556,7 +556,7 @@ fn profile_group(
     group.add(&name_row);
 
     let qr_row = adw::ActionRow::builder()
-        .title("Show my code")
+        .title("Show code")
         .subtitle("Show this code to link another device or start a chat")
         .activatable(true)
         .build();
@@ -567,43 +567,102 @@ fn profile_group(
     qr_row.add_suffix(&chevron);
     let npub = account.npub.clone();
     let display_name = account.display_name.clone();
+    let manager_for_qr = manager.clone();
     qr_row.connect_activated(move |row| {
         let parent = row.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-        present_qr_dialog(parent.as_ref(), &display_name, &npub);
+        present_qr_dialog(
+            parent.as_ref(),
+            &display_name,
+            &npub,
+            manager_for_qr.clone(),
+        );
     });
     group.add(&qr_row);
 
     group
 }
 
-fn present_qr_dialog(parent: Option<&gtk::Window>, name: &str, npub: &str) {
-    let dialog = adw::Dialog::builder()
-        .title(name)
-        .content_width(320)
-        .build();
+fn present_qr_dialog(
+    parent: Option<&gtk::Window>,
+    name: &str,
+    npub: &str,
+    manager: Rc<AppManager>,
+) {
+    let dialog = adw::Dialog::builder().content_width(360).build();
 
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 16);
     content.set_margin_top(24);
     content.set_margin_bottom(24);
     content.set_margin_start(24);
     content.set_margin_end(24);
     content.set_halign(gtk::Align::Center);
 
-    let header = gtk::Label::new(Some(name));
-    header.add_css_class("title-2");
-    header.set_halign(gtk::Align::Center);
-    content.append(&header);
+    let tabs = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    tabs.set_halign(gtk::Align::Center);
+    let code_tab = gtk::Button::with_label("Code");
+    code_tab.add_css_class("pill");
+    code_tab.set_width_request(104);
+    tabs.append(&code_tab);
 
-    content.append(&qr::build(npub, 240));
+    let dialog_for_scan = dialog.clone();
+    let manager_for_scan = manager.clone();
+    let scan_tab = scan_qr_button("Scan", move |text| {
+        manager_for_scan.dispatch(chat_input_action(text.trim()));
+        dialog_for_scan.close();
+    });
+    scan_tab.set_width_request(104);
+    tabs.append(&scan_tab);
+    content.append(&tabs);
 
+    let badge = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    badge.add_css_class("card");
+    badge.set_width_request(296);
+    badge.set_halign(gtk::Align::Center);
+    badge.set_margin_top(8);
+    badge.set_margin_bottom(4);
+    badge.set_margin_start(0);
+    badge.set_margin_end(0);
+
+    let qr_widget = qr::build(npub, 216);
+    qr_widget.set_margin_top(32);
+    qr_widget.set_margin_start(40);
+    qr_widget.set_margin_end(40);
+    badge.append(&qr_widget);
+
+    let name_button = gtk::Button::new();
+    name_button.add_css_class("flat");
+    name_button.set_halign(gtk::Align::Center);
+    name_button.set_margin_top(8);
+    name_button.set_margin_bottom(20);
+    let name_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    name_row.set_halign(gtk::Align::Center);
+    let copy_icon = gtk::Image::from_icon_name("edit-copy-symbolic");
+    name_row.append(&copy_icon);
+    let name_label = gtk::Label::new(Some(if name.is_empty() { "User ID" } else { name }));
+    name_label.add_css_class("title-3");
+    name_row.append(&name_label);
+    name_button.set_child(Some(&name_row));
+    let npub_for_name_copy = npub.to_string();
+    name_button.connect_clicked(move |_| clipboard::copy(&npub_for_name_copy));
+    badge.append(&name_button);
+    content.append(&badge);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    actions.set_halign(gtk::Align::Center);
     let copy = gtk::Button::with_label("Copy");
     copy.add_css_class("pill");
-    copy.add_css_class("suggested-action");
-    copy.set_halign(gtk::Align::Center);
-    copy.set_width_request(200);
     let npub_owned = npub.to_string();
     copy.connect_clicked(move |_| clipboard::copy(&npub_owned));
-    content.append(&copy);
+    actions.append(&copy);
+    let dialog_for_action_scan = dialog.clone();
+    let manager_for_action_scan = manager.clone();
+    let scan = scan_qr_button("Scan", move |text| {
+        manager_for_action_scan.dispatch(chat_input_action(text.trim()));
+        dialog_for_action_scan.close();
+    });
+    scan.add_css_class("suggested-action");
+    actions.append(&scan);
+    content.append(&actions);
 
     dialog.set_child(Some(&content));
     dialog.present(parent);
