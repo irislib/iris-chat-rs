@@ -3041,7 +3041,7 @@ private struct SwipeableChatListRow<Row: View>: View {
             row
                 .background(palette.background)
                 .offset(x: currentOffset)
-                .simultaneousGesture(rowDragGesture)
+                .highPriorityGesture(rowDragGesture)
                 .accessibilityAction(named: chat.isMuted ? "Unmute" : "Mute") {
                     onToggleMute()
                 }
@@ -3139,7 +3139,10 @@ private struct SwipeableChatListRow<Row: View>: View {
     }
 
     private var rowDragGesture: some Gesture {
-        DragGesture(minimumDistance: 12, coordinateSpace: .local)
+        // Keep vertical intent with the enclosing ScrollView. Signal uses
+        // UITableView swipe actions, whose recognizer only begins after a
+        // deliberate horizontal pan; this gate approximates that behavior.
+        DragGesture(minimumDistance: 24, coordinateSpace: .local)
             .updating($dragIsActive) { _, state, _ in
                 state = true
             }
