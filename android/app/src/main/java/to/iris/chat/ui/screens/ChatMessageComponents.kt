@@ -43,6 +43,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.ripple
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -98,8 +99,9 @@ import to.iris.chat.ui.components.formatMessageClock
 import to.iris.chat.ui.components.irisReactionQuickChoices
 import to.iris.chat.ui.components.isSameTimelineDay
 import to.iris.chat.ui.components.messageBubbleShape
-import to.iris.chat.ui.components.rememberRecentReactionEmoji
 import to.iris.chat.ui.components.rememberIrisClipboard
+import to.iris.chat.ui.components.rememberIrisHapticFeedback
+import to.iris.chat.ui.components.rememberRecentReactionEmoji
 import to.iris.chat.ui.components.uniqueReactionEmojis
 import to.iris.chat.ui.theme.IrisTheme
 import androidx.compose.foundation.layout.heightIn
@@ -107,6 +109,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.TextButton
 import java.text.DateFormat
 import java.util.Date
@@ -144,6 +147,7 @@ internal fun MessageBubble(
     }
     val showDesktopActionDock = LocalConfiguration.current.screenWidthDp >= 600
     val hoverInteractionSource = remember { MutableInteractionSource() }
+    val bubbleInteractionSource = remember { MutableInteractionSource() }
     val isHovering by hoverInteractionSource.collectIsHoveredAsState()
     val showActionDock = showDesktopActionDock && isHovering
     var isInfoOpen by remember(message.id) { mutableStateOf(false) }
@@ -332,6 +336,8 @@ internal fun MessageBubble(
                             .widthIn(max = 300.dp)
                             .clip(bubbleShape)
                             .combinedClickable(
+                                interactionSource = bubbleInteractionSource,
+                                indication = null,
                                 hapticFeedbackEnabled = false,
                                 onClick = {},
                                 onLongClick = {
@@ -377,12 +383,9 @@ internal fun MessageBubble(
                                     } else {
                                         MaterialTheme.colorScheme.onSurface
                                     },
-                                // Toggle was previously palette.accent (purple)
-                                // on the incoming side, which violates the
-                                // "no purple text/icons" rule. Mute it the
-                                // same way iOS does: bubble's own foreground
-                                // colour at reduced opacity, so it reads as a
-                                // quiet affordance rather than an accent CTA.
+                                // Keep this as bubble text instead of an
+                                // accent CTA so collapsed messages do not
+                                // introduce another colour into the thread.
                                 toggleColor =
                                     (if (message.isOutgoing) {
                                         MaterialTheme.colorScheme.onPrimary
@@ -665,6 +668,8 @@ private fun QuickReactionRow(
     onMore: () -> Unit,
 ) {
     val emojis = remember { irisReactionQuickChoices() }
+    val haptics = rememberIrisHapticFeedback()
+    val moreInteractionSource = remember { MutableInteractionSource() }
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = IrisTheme.palette.panel,
@@ -683,7 +688,13 @@ private fun QuickReactionRow(
                     Modifier
                         .size(38.dp)
                         .clip(CircleShape)
-                        .clickable(onClick = onMore)
+                        .clickable(
+                            interactionSource = moreInteractionSource,
+                            indication = ripple(radius = 19.dp),
+                        ) {
+                            haptics.press()
+                            onMore()
+                        }
                         .testTag("messageReactButton"),
                 contentAlignment = Alignment.Center,
             ) {
@@ -700,12 +711,20 @@ private fun QuickReactionRow(
 
 @Composable
 private fun QuickReactionButton(emoji: String, onClick: () -> Unit) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier =
             Modifier
                 .size(38.dp)
                 .clip(CircleShape)
-                .clickable(onClick = onClick),
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(radius = 19.dp),
+                ) {
+                    haptics.press()
+                    onClick()
+                },
         contentAlignment = Alignment.Center,
     ) {
         Text(text = emoji, style = MaterialTheme.typography.titleLarge)
@@ -776,12 +795,24 @@ private fun MessageActionRow(
         } else {
             MaterialTheme.colorScheme.onSurface
         }
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
-                .clickable(onClick = onClick)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                ) {
+                    if (destructive) {
+                        haptics.confirm()
+                    } else {
+                        haptics.press()
+                    }
+                    onClick()
+                }
                 .padding(horizontal = 12.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -807,12 +838,20 @@ private fun ActionDockIconButton(
     onClick: () -> Unit,
     testTag: String? = null,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     Box(
         modifier =
             Modifier
                 .size(28.dp)
                 .clip(CircleShape)
-                .clickable(onClick = onClick)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(radius = 14.dp),
+                ) {
+                    haptics.press()
+                    onClick()
+                }
                 .then(if (testTag != null) Modifier.testTag(testTag) else Modifier),
         contentAlignment = Alignment.Center,
     ) {
@@ -832,6 +871,8 @@ private fun ReplyPreview(
     onTap: () -> Unit,
 ) {
     val collapsedLineLimit = 4
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         color =
             if (isOutgoing) {
@@ -843,7 +884,16 @@ private fun ReplyPreview(
         // Stretch across the bubble Column's resolved width — when the
         // body Text below is wider, the reply preview matches it instead
         // of sitting as a narrow pill on the leading side.
-        modifier = Modifier.fillMaxWidth().clickable { onTap() },
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                ) {
+                    haptics.press()
+                    onTap()
+                },
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
@@ -926,8 +976,22 @@ private fun ReactionRow(
     modifier: Modifier = Modifier,
     onTap: (() -> Unit)? = null,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
+    val tapModifier =
+        if (onTap != null) {
+            Modifier.clickable(
+                interactionSource = interactionSource,
+                indication = null,
+            ) {
+                haptics.press()
+                onTap()
+            }
+        } else {
+            Modifier
+        }
     Row(
-        modifier = modifier.then(if (onTap != null) Modifier.clickable { onTap() } else Modifier),
+        modifier = modifier.then(tapModifier),
         horizontalArrangement = Arrangement.spacedBy(5.dp),
     ) {
         reactions.forEach { reaction ->
@@ -1069,6 +1133,8 @@ private fun TruncatableMessageBody(
     val collapsedMaxHeight = 320.dp
     var isExpanded by remember(text) { mutableStateOf(false) }
     var didOverflow by remember(text) { mutableStateOf(false) }
+    val haptics = rememberIrisHapticFeedback()
+    val toggleInteractionSource = remember { MutableInteractionSource() }
     val annotated = remember(text, color) {
         linkedMessageAnnotatedString(text, color)
     }
@@ -1100,17 +1166,21 @@ private fun TruncatableMessageBody(
                 modifier =
                     Modifier
                         .padding(top = 2.dp)
-                        .clickable { isExpanded = !isExpanded }
+                        .clickable(
+                            interactionSource = toggleInteractionSource,
+                            indication = null,
+                        ) {
+                            haptics.press()
+                            isExpanded = !isExpanded
+                        }
                         .testTag("chatMessageBodyToggle"),
             )
         }
     }
 }
 
-// Signal-style link styling: force the bubble's body text colour
-// (Material 3's default link tint is brand-primary purple, which
-// shifted URL hue between incoming and outgoing bubbles), and
-// underline.
+// Signal-style link styling: force the bubble's body text colour so URL hue
+// stays stable between incoming and outgoing bubbles, then underline.
 private fun linkedMessageAnnotatedString(text: String, color: Color): AnnotatedString =
     buildAnnotatedString {
         val linkStyle = SpanStyle(color = color, textDecoration = TextDecoration.Underline)
@@ -1174,6 +1244,7 @@ private fun MessageInfoDialog(
     onDismiss: () -> Unit,
 ) {
     val clipboard = rememberIrisClipboard()
+    val haptics = rememberIrisHapticFeedback()
     val palette = IrisTheme.palette
     val trace = message.deliveryTrace
     val account = appManager?.account?.collectAsStateWithLifecycle()?.value
@@ -1183,13 +1254,21 @@ private fun MessageInfoDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(
+                onClick = {
+                    haptics.press()
+                    onDismiss()
+                },
+                colors = messageInfoTextButtonColors(),
+            ) { Text("Close") }
         },
         dismissButton = {
             TextButton(
                 onClick = {
+                    haptics.press()
                     clipboard.setText("Message Details", messageInfoText(message, chat))
                 },
+                colors = messageInfoTextButtonColors(),
             ) { Text("Copy info") }
         },
         title = { Text("Message Details") },
@@ -1343,8 +1422,12 @@ private fun MessageInfoDialog(
                         color = MaterialTheme.colorScheme.onSurface,
                     )
                     TextButton(
-                        onClick = { clipboard.setText("Inner rumor", rumorJson) },
+                        onClick = {
+                            haptics.press()
+                            clipboard.setText("Inner rumor", rumorJson)
+                        },
                         modifier = Modifier.testTag("messageInfoRumorCopyButton"),
+                        colors = messageInfoTextButtonColors(),
                     ) { Text("Copy rumor JSON") }
                 }
             }
@@ -1416,6 +1499,7 @@ private fun MessageInfoValueRow(
 ) {
     val palette = IrisTheme.palette
     val clipboard = rememberIrisClipboard()
+    val haptics = rememberIrisHapticFeedback()
     Row(
         modifier = Modifier.padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -1440,10 +1524,22 @@ private fun MessageInfoValueRow(
             color = MaterialTheme.colorScheme.onSurface,
         )
         if (copyValue != null) {
-            TextButton(onClick = { clipboard.setText(label, copyValue) }) { Text("Copy") }
+            TextButton(
+                onClick = {
+                    haptics.press()
+                    clipboard.setText(label, copyValue)
+                },
+                colors = messageInfoTextButtonColors(),
+            ) { Text("Copy") }
         }
     }
 }
+
+@Composable
+private fun messageInfoTextButtonColors() =
+    ButtonDefaults.textButtonColors(
+        contentColor = MaterialTheme.colorScheme.onSurface,
+    )
 
 @Composable
 private fun MessageInfoMultiValueRow(

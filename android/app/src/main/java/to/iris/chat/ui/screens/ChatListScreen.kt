@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -36,9 +38,11 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.ripple
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -50,6 +54,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalDensity
@@ -79,6 +84,7 @@ import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisSearchViewMoreRow
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
+import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -93,6 +99,8 @@ fun ChatListScreen(
     val account = appState.account
 
     var searchQuery by remember { mutableStateOf("") }
+    val haptics = rememberIrisHapticFeedback()
+    val profileButtonInteractionSource = remember { MutableInteractionSource() }
     val trimmedQuery = searchQuery.trim()
     val searchActive = trimmedQuery.isNotEmpty()
     var expandedSearchSections by remember(trimmedQuery) { mutableStateOf(emptySet<SearchSection>()) }
@@ -141,14 +149,22 @@ fun ChatListScreen(
                         Box(
                             modifier =
                                 Modifier
-                                    .padding(start = 4.dp)
+                                    .size(48.dp)
+                                    .clip(CircleShape)
                                     .testTag("chatListProfileButton")
-                                    .clickable { appManager.pushScreen(Screen.Settings) },
+                                    .clickable(
+                                        interactionSource = profileButtonInteractionSource,
+                                        indication = ripple(bounded = false, radius = 24.dp),
+                                    ) {
+                                        haptics.press()
+                                        appManager.pushScreen(Screen.Settings)
+                                    },
+                            contentAlignment = Alignment.Center,
                         ) {
                             IrisAvatar(
                                 label = account.displayName,
                                 emphasize = true,
-                                size = 44.dp,
+                                size = 32.dp,
                                 imageUrl =
                                     account.pictureUrl
                                         ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
@@ -167,20 +183,18 @@ fun ChatListScreen(
                     }
                 },
                 actions = {
-                    Box(
-                        modifier =
-                            Modifier
-                                .padding(end = 4.dp)
-                                .size(40.dp)
-                                .background(IrisTheme.palette.accent, CircleShape)
-                                .clickable { appManager.pushScreen(Screen.NewChat) }
-                                .testTag("chatListNewChatButton"),
-                        contentAlignment = Alignment.Center,
+                    IconButton(
+                        onClick = {
+                            haptics.press()
+                            appManager.pushScreen(Screen.NewChat)
+                        },
+                        modifier = Modifier.testTag("chatListNewChatButton"),
                     ) {
                         Icon(
-                            imageVector = IrisIcons.NewChat,
+                            imageVector = Icons.Rounded.Add,
                             contentDescription = "New chat",
-                            tint = MaterialTheme.colorScheme.onPrimary,
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(26.dp),
                         )
                     }
                 },
@@ -413,15 +427,28 @@ fun ChatListScreen(
                 confirmButton = {
                     Button(
                         onClick = {
+                            haptics.confirm()
                             appManager.dispatch(AppAction.DeleteChat(chat.chatId))
                             pendingDeleteChat = null
                         },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                        ),
                     ) {
                         Text("Delete")
                     }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingDeleteChat = null }) {
+                    TextButton(
+                        onClick = {
+                            haptics.press()
+                            pendingDeleteChat = null
+                        },
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.onSurface,
+                        ),
+                    ) {
                         Text("Cancel")
                     }
                 },
@@ -458,6 +485,8 @@ private fun SwipeableChatListRow(
     val flingThresholdPx = with(density) { 700.dp.toPx() }
     var targetOffsetPx by remember(chat.chatId) { mutableFloatStateOf(0f) }
     var isDragging by remember(chat.chatId) { mutableStateOf(false) }
+    var lastHapticDirection by remember(chat.chatId) { mutableStateOf(0) }
+    val haptics = rememberIrisHapticFeedback()
     val rowOffsetPx by animateFloatAsState(
         targetValue = targetOffsetPx,
         animationSpec = if (isDragging) snap() else tween(durationMillis = 160),
@@ -466,6 +495,18 @@ private fun SwipeableChatListRow(
     val dragState =
         rememberDraggableState { delta ->
             targetOffsetPx = (targetOffsetPx + delta).coerceIn(-rowOffsetDistancePx, rowOffsetDistancePx)
+            val direction =
+                when {
+                    targetOffsetPx > rowOffsetDistancePx * 0.45f -> 1
+                    targetOffsetPx < -rowOffsetDistancePx * 0.45f -> -1
+                    else -> 0
+                }
+            if (direction != 0 && direction != lastHapticDirection) {
+                haptics.longPress()
+                lastHapticDirection = direction
+            } else if (direction == 0) {
+                lastHapticDirection = 0
+            }
         }
 
     LaunchedEffect(rowOffsetDistancePx) {
@@ -490,6 +531,7 @@ private fun SwipeableChatListRow(
                     onClick = {
                         onToggleUnread()
                         targetOffsetPx = 0f
+                        lastHapticDirection = 0
                     },
                 )
                 Spacer(modifier = Modifier.width(8.dp))
@@ -500,6 +542,7 @@ private fun SwipeableChatListRow(
                     onClick = {
                         onTogglePin()
                         targetOffsetPx = 0f
+                        lastHapticDirection = 0
                     },
                 )
             }
@@ -520,6 +563,7 @@ private fun SwipeableChatListRow(
                     onClick = {
                         onToggleMute()
                         targetOffsetPx = 0f
+                        lastHapticDirection = 0
                     },
                 )
                 Spacer(modifier = Modifier.width(8.dp))
@@ -530,6 +574,7 @@ private fun SwipeableChatListRow(
                     onClick = {
                         onDeleteRequest()
                         targetOffsetPx = 0f
+                        lastHapticDirection = 0
                     },
                 )
             }
@@ -557,7 +602,10 @@ private fun SwipeableChatListRow(
                                     velocity < -flingThresholdPx -> -rowOffsetDistancePx
                                     targetOffsetPx > rowOffsetDistancePx * 0.45f -> rowOffsetDistancePx
                                     targetOffsetPx < -rowOffsetDistancePx * 0.45f -> -rowOffsetDistancePx
-                                    else -> 0f
+                                    else -> {
+                                        lastHapticDirection = 0
+                                        0f
+                                    }
                                 }
                         },
                     ),
@@ -577,12 +625,22 @@ private fun ChatSwipeActionButton(
     color: Color,
     onClick: () -> Unit,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     Column(
         modifier =
             Modifier
                 .width(72.dp)
                 .height(58.dp)
-                .clickable(onClick = onClick),
+                .clip(RoundedCornerShape(14.dp))
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(),
+                    onClick = {
+                        haptics.press()
+                        onClick()
+                    },
+                ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -786,8 +844,10 @@ private fun ChatListSearchField(
 ) {
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
+    val haptics = rememberIrisHapticFeedback()
     var focused by remember { mutableStateOf(false) }
     val closeSearch: () -> Unit = {
+        haptics.press()
         if (query.isNotEmpty()) {
             onClear()
         }
@@ -893,6 +953,8 @@ private fun ChatInputShortcutRow(
     appManager: AppManager,
     shortcut: ChatInputShortcut,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     val (title, subtitle, icon, action) = when (shortcut) {
         is ChatInputShortcut.DirectPeer -> Quad(
             "Start chat",
@@ -911,7 +973,14 @@ private fun ChatInputShortcutRow(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable { action() }
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = {
+                        haptics.press()
+                        action()
+                    },
+                )
                 .padding(horizontal = 16.dp, vertical = 12.dp)
                 .testTag("chatListSearchShortcut"),
         verticalAlignment = Alignment.CenterVertically,

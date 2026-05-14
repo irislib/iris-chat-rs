@@ -3,6 +3,7 @@ package to.iris.chat.ui.screens
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +45,7 @@ import androidx.compose.ui.unit.dp
 import to.iris.chat.rust.ChatMessageSnapshot
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.ui.components.IrisIcons
+import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
 @Composable
@@ -51,6 +53,8 @@ internal fun ReplyComposerStrip(
     message: ChatMessageSnapshot,
     onCancel: () -> Unit,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val cancelInteractionSource = remember { MutableInteractionSource() }
     val authorName = if (message.isOutgoing) "You" else message.author
     Box(
         modifier =
@@ -114,7 +118,14 @@ internal fun ReplyComposerStrip(
                         Modifier
                             .padding(top = 4.dp)
                             .size(32.dp)
-                            .clickable(onClick = onCancel)
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = cancelInteractionSource,
+                                indication = null,
+                            ) {
+                                haptics.press()
+                                onCancel()
+                            }
                             .testTag("chatReplyCancelButton"),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -190,12 +201,14 @@ internal fun ComposerBar(
     onRemoveAttachment: (PickedAttachment) -> Unit,
     onSend: () -> Unit,
 ) {
+    val haptics = rememberIrisHapticFeedback()
     val isBusy = isSending || isUploading
     val canSend = (draft.isNotBlank() || selectedAttachments.isNotEmpty()) && !isBusy
     val showDesktopComposerTools = LocalConfiguration.current.screenWidthDp >= 600
     var showingEmojiPicker by remember { mutableStateOf(false) }
     fun submitDraft() {
         if (canSend) {
+            haptics.confirm()
             onSend()
         }
     }
@@ -274,7 +287,10 @@ internal fun ComposerBar(
                 verticalAlignment = Alignment.Bottom,
             ) {
                 IconButton(
-                    onClick = onAttach,
+                    onClick = {
+                        haptics.press()
+                        onAttach()
+                    },
                     enabled = !isBusy,
                     modifier =
                         Modifier
@@ -303,7 +319,10 @@ internal fun ComposerBar(
 
                 if (showDesktopComposerTools) {
                     IconButton(
-                        onClick = { showingEmojiPicker = !showingEmojiPicker },
+                        onClick = {
+                            haptics.press()
+                            showingEmojiPicker = !showingEmojiPicker
+                        },
                         enabled = !isBusy,
                         modifier =
                             Modifier
@@ -395,6 +414,7 @@ private fun EmojiPickerRow(
     enabled: Boolean,
     onEmoji: (String) -> Unit,
 ) {
+    val haptics = rememberIrisHapticFeedback()
     Surface(
         modifier =
             Modifier
@@ -412,12 +432,20 @@ private fun EmojiPickerRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             ChatEmojiChoices.forEach { emoji ->
+                val interactionSource = remember(emoji) { MutableInteractionSource() }
                 Box(
                     modifier =
                         Modifier
                             .size(36.dp)
                             .clip(RoundedCornerShape(8.dp))
-                            .clickable(enabled = enabled) { onEmoji(emoji) },
+                            .clickable(
+                                enabled = enabled,
+                                interactionSource = interactionSource,
+                                indication = null,
+                            ) {
+                                haptics.press()
+                                onEmoji(emoji)
+                            },
                     contentAlignment = Alignment.Center,
                 ) {
                     Text(

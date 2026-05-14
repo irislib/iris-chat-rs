@@ -15,7 +15,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -39,6 +38,7 @@ import to.iris.chat.ui.components.IrisListSection
 import to.iris.chat.ui.components.IrisMenuRow
 import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSecondaryButton
+import to.iris.chat.ui.components.IrisTextButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
 import to.iris.chat.ui.components.rememberIrisClipboard
@@ -371,12 +371,12 @@ private fun DeviceRosterRow(
                 Text("This device will no longer use your profile.")
             },
             dismissButton = {
-                TextButton(onClick = { confirmRemoval = false }) {
+                IrisTextButton(onClick = { confirmRemoval = false }) {
                     Text("Cancel")
                 }
             },
             confirmButton = {
-                TextButton(
+                IrisTextButton(
                     onClick = {
                         confirmRemoval = false
                         onRemove()
@@ -385,6 +385,7 @@ private fun DeviceRosterRow(
                         Modifier.testTag(
                             "deviceRosterConfirmRemove-${device.devicePubkeyHex.take(12)}",
                         ),
+                    destructive = true,
                 ) {
                     Text(
                         text = "Delete",

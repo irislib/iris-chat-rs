@@ -14,6 +14,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -29,7 +30,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -57,7 +57,9 @@ import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.ui.components.IrisOfflineBannerState
+import to.iris.chat.ui.components.IrisTextButton
 import to.iris.chat.ui.components.LocalIrisOfflineBannerState
+import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.screens.ChatListScreen
 import to.iris.chat.ui.screens.ChatScreen
 import to.iris.chat.ui.screens.CreateAccountScreen
@@ -499,6 +501,7 @@ private fun ShareTargetDialog(
 ) {
     var query by remember { mutableStateOf("") }
     var selectedChatIds by remember { mutableStateOf(emptySet<String>()) }
+    val haptics = rememberIrisHapticFeedback()
     val availableChatIds = remember(chats) { chats.mapTo(mutableSetOf()) { it.chatId } }
     val filteredChats =
         remember(chats, query) {
@@ -522,12 +525,12 @@ private fun ShareTargetDialog(
             onDismissRequest = onDismiss,
             title = { Text("Start a chat first") },
             confirmButton = {
-                TextButton(onClick = onNewChat) {
+                IrisTextButton(onClick = onNewChat, confirm = true) {
                     Text("New chat")
                 }
             },
             dismissButton = {
-                TextButton(onClick = onDismiss) {
+                IrisTextButton(onClick = onDismiss) {
                     Text("Cancel")
                 }
             },
@@ -550,11 +553,16 @@ private fun ShareTargetDialog(
                 LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
                     items(filteredChats, key = { it.chatId }) { chat ->
                         val selected = chat.chatId in selectedChatIds
+                        val interactionSource = remember(chat.chatId) { MutableInteractionSource() }
                         Row(
                             modifier =
                                 Modifier
                                     .fillMaxWidth()
-                                    .clickable {
+                                    .clickable(
+                                        interactionSource = interactionSource,
+                                        indication = null,
+                                    ) {
+                                        haptics.press()
                                         selectedChatIds =
                                             if (selected) {
                                                 selectedChatIds - chat.chatId
@@ -568,6 +576,7 @@ private fun ShareTargetDialog(
                             Checkbox(
                                 checked = selected,
                                 onCheckedChange = { checked ->
+                                    haptics.press()
                                     selectedChatIds =
                                         if (checked) {
                                             selectedChatIds + chat.chatId
@@ -609,11 +618,12 @@ private fun ShareTargetDialog(
             }
         },
         confirmButton = {
-            TextButton(
+            IrisTextButton(
                 enabled = selectedChatIds.isNotEmpty(),
                 onClick = {
                     onSend(chats.map { it.chatId }.filter { it in selectedChatIds })
                 },
+                confirm = true,
             ) {
                 Text(
                     text =
@@ -626,7 +636,7 @@ private fun ShareTargetDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            IrisTextButton(onClick = onDismiss) {
                 Text("Cancel")
             }
         },

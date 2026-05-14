@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -39,6 +38,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import to.iris.chat.ui.components.IrisTextButton
 
 internal object QrScannerTestOverrides {
     @Volatile
@@ -108,12 +108,12 @@ fun QrScannerDialog(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
+                IrisTextButton(onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }) {
                     Text("Retry")
                 }
             },
             dismissButton = {
-                TextButton(onClick = onDismiss) {
+                IrisTextButton(onClick = onDismiss) {
                     Text("Close")
                 }
             },
@@ -237,7 +237,7 @@ fun QrScannerDialog(
         },
         confirmButton = {},
         dismissButton = {
-            TextButton(onClick = onDismiss) {
+            IrisTextButton(onClick = onDismiss) {
                 Text("Close")
             }
         },

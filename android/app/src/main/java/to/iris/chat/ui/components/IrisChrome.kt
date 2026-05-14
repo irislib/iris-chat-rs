@@ -13,7 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -71,11 +71,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -86,6 +88,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.toggleableState
 import androidx.compose.ui.state.ToggleableState
@@ -135,6 +138,8 @@ fun IrisTopBar(
 ) {
     val palette = IrisTheme.palette
     val offlineBanner = LocalIrisOfflineBannerState.current
+    val haptics = rememberIrisHapticFeedback()
+    val titleInteractionSource = remember { MutableInteractionSource() }
     Column(
         modifier =
             modifier
@@ -146,6 +151,7 @@ fun IrisTopBar(
                     .fillMaxWidth()
                     .statusBarsPadding(),
             color = palette.toolbar,
+            contentColor = MaterialTheme.colorScheme.onSurface,
             tonalElevation = 0.dp,
             shadowElevation = 0.dp,
         ) {
@@ -164,18 +170,21 @@ fun IrisTopBar(
                                 if (backBadgeCount > 0uL) {
                                     Badge(
                                         containerColor = IrisTheme.palette.accent,
-                                        contentColor = Color.White,
+                                        contentColor = MaterialTheme.colorScheme.onPrimary,
                                     ) {
                                         Text(
                                             if (backBadgeCount > 99uL) "99+" else backBadgeCount.toString(),
-                                            color = Color.White,
+                                            color = MaterialTheme.colorScheme.onPrimary,
                                         )
                                     }
                                 }
                             },
                         ) {
                             IconButton(
-                                onClick = onBack,
+                                onClick = {
+                                    haptics.press()
+                                    onBack()
+                                },
                                 modifier = Modifier.size(40.dp),
                             ) {
                                 Icon(
@@ -206,7 +215,14 @@ fun IrisTopBar(
                             .let { base ->
                                 if (onTitleClick != null) {
                                     base
-                                        .clickable(onClick = onTitleClick)
+                                        .clickable(
+                                            interactionSource = titleInteractionSource,
+                                            indication = null,
+                                            onClick = {
+                                                haptics.press()
+                                                onTitleClick()
+                                            },
+                                        )
                                         .testTag("chatHeaderTitleButton")
                                 } else {
                                     base
@@ -455,7 +471,6 @@ fun IrisSectionCard(
         modifier = modifier.fillMaxWidth(),
         color = palette.panel,
         shape = CardShape,
-        border = BorderStroke(1.dp, palette.border),
         shadowElevation = 0.dp,
         tonalElevation = 0.dp,
     ) {
@@ -493,11 +508,20 @@ fun IrisMenuRow(
     leading: (@Composable () -> Unit)? = null,
     trailing: (@Composable RowScope.() -> Unit)? = null,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier =
             modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = {
+                        haptics.press()
+                        onClick()
+                    },
+                )
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -567,6 +591,7 @@ fun IrisToggleRow(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
 ) {
+    val haptics = rememberIrisHapticFeedback()
     IrisMenuRow(
         title = title,
         subtitle = subtitle,
@@ -578,7 +603,19 @@ fun IrisToggleRow(
         trailing = {
             Switch(
                 checked = checked,
-                onCheckedChange = onCheckedChange,
+                onCheckedChange = { value ->
+                    haptics.press()
+                    onCheckedChange(value)
+                },
+                colors =
+                    SwitchDefaults.colors(
+                        checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                        checkedTrackColor = MaterialTheme.colorScheme.primary,
+                        checkedBorderColor = MaterialTheme.colorScheme.primary,
+                        uncheckedThumbColor = IrisTheme.palette.muted,
+                        uncheckedTrackColor = IrisTheme.palette.panelAlt,
+                        uncheckedBorderColor = IrisTheme.palette.border,
+                    ),
             )
         },
     )
@@ -592,8 +629,12 @@ fun IrisPrimaryButton(
     enabled: Boolean = true,
     icon: (@Composable () -> Unit)? = null,
 ) {
+    val haptics = rememberIrisHapticFeedback()
     Button(
-        onClick = onClick,
+        onClick = {
+            haptics.confirm()
+            onClick()
+        },
         enabled = enabled,
         modifier = modifier,
         shape = PillShape,
@@ -619,8 +660,12 @@ fun IrisSecondaryButton(
     enabled: Boolean = true,
     icon: (@Composable () -> Unit)? = null,
 ) {
+    val haptics = rememberIrisHapticFeedback()
     OutlinedButton(
-        onClick = onClick,
+        onClick = {
+            haptics.press()
+            onClick()
+        },
         enabled = enabled,
         modifier = modifier,
         shape = PillShape,
@@ -646,12 +691,48 @@ fun IrisInlineAction(
     modifier: Modifier = Modifier,
     icon: (@Composable () -> Unit)? = null,
 ) {
-    TextButton(onClick = onClick, modifier = modifier) {
+    IrisTextButton(onClick = onClick, modifier = modifier) {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
             icon?.invoke()
             Text(text)
         }
     }
+}
+
+@Composable
+fun IrisTextButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    destructive: Boolean = false,
+    confirm: Boolean = false,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val haptics = rememberIrisHapticFeedback()
+    val contentColor =
+        if (destructive) {
+            MaterialTheme.colorScheme.error
+        } else {
+            MaterialTheme.colorScheme.onSurface
+        }
+    TextButton(
+        onClick = {
+            if (confirm || destructive) {
+                haptics.confirm()
+            } else {
+                haptics.press()
+            }
+            onClick()
+        },
+        modifier = modifier,
+        enabled = enabled,
+        colors =
+            ButtonDefaults.textButtonColors(
+                contentColor = contentColor,
+                disabledContentColor = contentColor.copy(alpha = 0.38f),
+            ),
+        content = content,
+    )
 }
 
 @Composable
@@ -672,6 +753,8 @@ fun IrisChatListRow(
     modifier: Modifier = Modifier,
 ) {
     val palette = IrisTheme.palette
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     // Signal-Android spec: 48dp avatar, BodyLarge title in onSurface,
     // BodyMedium preview in secondary tint, BodyMedium time in
     // tertiary tint, 16dp side gutter, 10dp top/bottom padding so the
@@ -680,7 +763,14 @@ fun IrisChatListRow(
         modifier =
             modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = {
+                        haptics.press()
+                        onClick()
+                    },
+                )
                 .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         // 20dp matches Signal-Android's conversation_list_item_view
@@ -764,10 +854,13 @@ fun IrisChatListRow(
                     if (unreadCount > 0) {
                         BadgedBox(
                             badge = {
-                                Badge(containerColor = palette.accent, contentColor = Color.White) {
+                                Badge(
+                                    containerColor = palette.accent,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary,
+                                ) {
                                     Text(
                                         if (unreadCount > 99) "99+" else unreadCount.toString(),
-                                        color = Color.White,
+                                        color = MaterialTheme.colorScheme.onPrimary,
                                     )
                                 }
                             },

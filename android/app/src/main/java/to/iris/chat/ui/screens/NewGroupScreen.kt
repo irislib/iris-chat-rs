@@ -3,6 +3,7 @@ package to.iris.chat.ui.screens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -52,6 +53,7 @@ import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.rememberIrisClipboard
+import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
 @Composable
@@ -525,6 +527,8 @@ private fun MemberChip(
     subtitle: String?,
     onRemove: () -> Unit,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val removeInteractionSource = remember { MutableInteractionSource() }
     Surface(
         color = IrisTheme.palette.panelAlt,
         shape = RoundedCornerShape(14.dp),
@@ -553,7 +557,16 @@ private fun MemberChip(
             }
             Text(
                 text = "Remove",
-                modifier = Modifier.testTag("memberChipRemove").clickable(onClick = onRemove),
+                modifier =
+                    Modifier
+                        .testTag("memberChipRemove")
+                        .clickable(
+                            interactionSource = removeInteractionSource,
+                            indication = null,
+                        ) {
+                            haptics.press()
+                            onRemove()
+                        },
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.error,
             )
@@ -568,11 +581,19 @@ private fun ExistingMemberRow(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                ) {
+                    haptics.press()
+                    onClick()
+                }
                 .padding(vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,

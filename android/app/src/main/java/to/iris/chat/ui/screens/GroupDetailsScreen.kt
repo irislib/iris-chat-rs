@@ -3,6 +3,7 @@ package to.iris.chat.ui.screens
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -48,6 +49,7 @@ import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.rememberIrisClipboard
+import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
 @Composable
@@ -60,6 +62,7 @@ fun GroupDetailsScreen(
     val clipboard = rememberIrisClipboard()
     val context = androidx.compose.ui.platform.LocalContext.current
     val coroutineScope = rememberCoroutineScope()
+    val haptics = rememberIrisHapticFeedback()
     var renameValue by remember(groupId, details?.name) { mutableStateOf(details?.name.orEmpty()) }
     var memberInput by remember(groupId) { mutableStateOf("") }
     var showScanner by remember { mutableStateOf(false) }
@@ -255,6 +258,10 @@ fun GroupDetailsScreen(
                                 }
                             }
                             if (details.canManage && !member.isLocalOwner) {
+                                val toggleAdminInteractionSource =
+                                    remember(member.ownerPubkeyHex, member.isAdmin) { MutableInteractionSource() }
+                                val removeInteractionSource =
+                                    remember(member.ownerPubkeyHex) { MutableInteractionSource() }
                                 Column(
                                     horizontalAlignment = Alignment.End,
                                     verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -264,7 +271,11 @@ fun GroupDetailsScreen(
                                         modifier =
                                             Modifier
                                                 .testTag("groupDetailsToggleAdmin-${member.ownerPubkeyHex.take(12)}")
-                                                .clickable {
+                                                .clickable(
+                                                    interactionSource = toggleAdminInteractionSource,
+                                                    indication = null,
+                                                ) {
+                                                    haptics.press()
                                                     appManager.setGroupAdmin(
                                                         groupId,
                                                         member.ownerPubkeyHex,
@@ -280,7 +291,11 @@ fun GroupDetailsScreen(
                                         modifier =
                                             Modifier
                                                 .testTag("groupDetailsRemoveMember-${member.ownerPubkeyHex.take(12)}")
-                                                .clickable {
+                                                .clickable(
+                                                    interactionSource = removeInteractionSource,
+                                                    indication = null,
+                                                ) {
+                                                    haptics.confirm()
                                                     appManager.removeGroupMember(groupId, member.ownerPubkeyHex)
                                                 },
                                         color = MaterialTheme.colorScheme.error,
@@ -421,11 +436,16 @@ fun GroupDetailsScreen(
                                     }
                                 val subtitle =
                                     chat.subtitle?.takeIf { it.isNotBlank() && it != title }
+                                val interactionSource = remember(chat.chatId) { MutableInteractionSource() }
                                 Row(
                                     modifier =
                                         Modifier
                                             .fillMaxWidth()
-                                            .clickable {
+                                            .clickable(
+                                                interactionSource = interactionSource,
+                                                indication = null,
+                                            ) {
+                                                haptics.press()
                                                 appManager.addGroupMembers(groupId, listOf(chat.chatId))
                                                 memberInput = ""
                                             }

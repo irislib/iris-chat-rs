@@ -3,6 +3,7 @@ package to.iris.chat.ui.components
 import android.content.Context
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -76,6 +77,7 @@ fun IrisEmojiPicker(
     var query by remember { mutableStateOf("") }
     val palette = IrisTheme.palette
     val context = LocalContext.current.applicationContext
+    val haptics = rememberIrisHapticFeedback()
     var recentEmojis by remember { mutableStateOf(loadRecentReactionEmojis(context)) }
     val trimmed = query.trim()
     val visibleCategories =
@@ -150,11 +152,18 @@ fun IrisEmojiPicker(
                 }
                 items(emojis.size, key = { index -> "$name-$index-${emojis[index]}" }) { index ->
                     val emoji = emojis[index]
+                    val interactionSource = remember(name, emoji, index) { MutableInteractionSource() }
                     Box(
                         modifier =
                             Modifier
                                 .size(44.dp)
-                                .clickable { pick(emoji) },
+                                .clickable(
+                                    interactionSource = interactionSource,
+                                    indication = null,
+                                ) {
+                                    haptics.press()
+                                    pick(emoji)
+                                },
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(text = emoji, fontSize = 26.sp)

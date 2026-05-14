@@ -17,6 +17,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -77,6 +78,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.rust.MessageAttachmentSnapshot
 import to.iris.chat.ui.components.IrisIcons
+import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 
@@ -87,6 +89,7 @@ internal fun SelectedAttachmentChip(
     onRemove: () -> Unit,
 ) {
     val selectedAttachmentType = attachmentType(attachment)
+    val haptics = rememberIrisHapticFeedback()
 
     Surface(
         color = IrisTheme.palette.panel,
@@ -126,7 +129,10 @@ internal fun SelectedAttachmentChip(
                 )
             }
             IconButton(
-                onClick = onRemove,
+                onClick = {
+                    haptics.press()
+                    onRemove()
+                },
                 enabled = enabled,
                 modifier =
                     Modifier
@@ -262,6 +268,9 @@ internal fun AttachmentChip(
     val context = LocalContext.current
     val clipboard = rememberIrisClipboard()
     val scope = rememberCoroutineScope()
+    val haptics = rememberIrisHapticFeedback()
+    val imageInteractionSource = remember(attachment.htreeUrl) { MutableInteractionSource() }
+    val attachmentInteractionSource = remember(attachment.htreeUrl) { MutableInteractionSource() }
     var localImageData by remember(attachment.htreeUrl) { mutableStateOf<ByteArray?>(null) }
     var localPreviewBitmap by remember(attachment.htreeUrl) {
         mutableStateOf(ChatAttachmentPreviewBitmapCache.get(attachment.htreeUrl))
@@ -319,7 +328,11 @@ internal fun AttachmentChip(
                     .size(width = 220.dp, height = 150.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(foreground.copy(alpha = 0.12f))
-                    .clickable {
+                    .clickable(
+                        interactionSource = imageInteractionSource,
+                        indication = null,
+                    ) {
+                        haptics.press()
                         val data = localImageData
                         if (data != null) {
                             onOpenImage(data, attachment.filename)
@@ -370,10 +383,13 @@ internal fun AttachmentChip(
                 .clip(RoundedCornerShape(12.dp))
                 .background(foreground.copy(alpha = 0.12f))
                 .combinedClickable(
+                    interactionSource = attachmentInteractionSource,
+                    indication = null,
                     onClick = {
                         if (attachmentOpening) {
                             return@combinedClickable
                         }
+                        haptics.press()
                         scope.launch {
                             attachmentOpening = true
                             val data = downloadAttachment(attachment)
@@ -537,6 +553,8 @@ internal fun ImageViewerDialog(
     onDismiss: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
+    val haptics = rememberIrisHapticFeedback()
+    val dismissInteractionSource = remember { MutableInteractionSource() }
     val bitmap = remember(item.data) {
         item.data
             .takeUnless { data -> isAnimatedImage(data, item.filename) }
@@ -557,7 +575,13 @@ internal fun ImageViewerDialog(
                 Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.92f))
-                    .clickable(onClick = onDismiss)
+                    .clickable(
+                        interactionSource = dismissInteractionSource,
+                        indication = null,
+                    ) {
+                        haptics.press()
+                        onDismiss()
+                    }
                     .focusRequester(focusRequester)
                     .focusable()
                     .onPreviewKeyEvent { event ->

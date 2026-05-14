@@ -23,6 +23,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.stopScroll
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -41,9 +42,9 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.ripple
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
@@ -104,6 +105,7 @@ import androidx.compose.foundation.lazy.items
 import to.iris.chat.ui.components.formatTimelineDay
 import to.iris.chat.ui.components.isSameTimelineDay
 import to.iris.chat.ui.components.rememberIrisClipboard
+import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
 private val DisappearingMessageOptions =
@@ -157,6 +159,8 @@ fun ChatScreen(
     var selectedAttachments by remember(chatId) { mutableStateOf<List<PickedAttachment>>(emptyList()) }
     val listState = rememberLazyListState()
     val coroutineScope = rememberCoroutineScope()
+    val haptics = rememberIrisHapticFeedback()
+    val jumpInteractionSource = remember { MutableInteractionSource() }
     var shouldFollowLatest by remember(chatId) { mutableStateOf(true) }
     var forceScrollToLatest by remember(chatId) { mutableStateOf(false) }
     var initialScrollPending by remember(chatId) { mutableStateOf(true) }
@@ -688,7 +692,11 @@ fun ChatScreen(
                             .padding(end = 12.dp, bottom = 92.dp)
                             .size(36.dp)
                             .clip(CircleShape)
-                            .clickable {
+                            .clickable(
+                                interactionSource = jumpInteractionSource,
+                                indication = ripple(radius = 18.dp),
+                            ) {
+                                haptics.press()
                                 coroutineScope.launch {
                                     listState.stopScroll()
                                     val total = chat.messages.size
@@ -897,12 +905,20 @@ private fun DirectChatAdvancedCard(
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     IrisSectionCard(modifier = modifier) {
         Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .clickable(onClick = onToggle),
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                    ) {
+                        haptics.press()
+                        onToggle()
+                    },
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -996,6 +1012,7 @@ internal fun DisappearingMessagesCard(
     onSelect: (ULong?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val haptics = rememberIrisHapticFeedback()
     IrisSectionCard(modifier = modifier) {
         Text(
             text = "Disappearing messages",
@@ -1009,11 +1026,18 @@ internal fun DisappearingMessagesCard(
         )
         Column {
             DisappearingMessageOptions.forEach { (label, ttlSeconds) ->
+                val interactionSource = remember(ttlSeconds) { MutableInteractionSource() }
                 Row(
                     modifier =
                         Modifier
                             .fillMaxWidth()
-                            .clickable { onSelect(ttlSeconds) }
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = null,
+                            ) {
+                                haptics.press()
+                                onSelect(ttlSeconds)
+                            }
                             .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween,
