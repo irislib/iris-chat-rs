@@ -2574,6 +2574,13 @@ private struct ChatListSearchField: View {
     @FocusState private var isFocused: Bool
 
     var body: some View {
+#if os(iOS)
+        IrisChatListSearchBar(text: $text)
+            .frame(height: 52)
+            .padding(.horizontal, 8)
+            .padding(.top, 4)
+            .padding(.bottom, 2)
+#else
         HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 14, weight: .semibold))
@@ -2616,8 +2623,93 @@ private struct ChatListSearchField: View {
         .padding(.horizontal, 12)
         .padding(.top, 10)
         .padding(.bottom, 4)
+#endif
     }
 }
+
+#if os(iOS)
+private struct IrisChatListSearchBar: UIViewRepresentable {
+    @Binding var text: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeUIView(context: Context) -> UISearchBar {
+        let searchBar = UISearchBar(frame: .zero)
+        searchBar.delegate = context.coordinator
+        searchBar.searchBarStyle = .minimal
+        searchBar.placeholder = "Search chats, groups, messages"
+        searchBar.autocapitalizationType = .none
+        searchBar.autocorrectionType = .no
+        searchBar.returnKeyType = .search
+        searchBar.enablesReturnKeyAutomatically = false
+        searchBar.backgroundImage = UIImage()
+        searchBar.searchTextField.accessibilityIdentifier = "chatListSearchField"
+        searchBar.searchTextField.clearButtonMode = .never
+        searchBar.searchTextField.backgroundColor = .secondarySystemFill
+        context.coordinator.attach(to: searchBar)
+        return searchBar
+    }
+
+    func updateUIView(_ searchBar: UISearchBar, context: Context) {
+        if searchBar.text != text {
+            searchBar.text = text
+        }
+        context.coordinator.updateCloseButton(for: searchBar)
+    }
+
+    final class Coordinator: NSObject, UISearchBarDelegate {
+        @Binding private var text: String
+        private var isFocused = false
+        private lazy var closeButton: UIButton = {
+            let button = UIButton(type: .system)
+            button.setImage(UIImage(systemName: "xmark.circle.fill"), for: .normal)
+            button.tintColor = .secondaryLabel
+            button.accessibilityLabel = "Close search"
+            button.accessibilityIdentifier = "chatListSearchCloseButton"
+            button.addTarget(self, action: #selector(closeSearch), for: .touchUpInside)
+            button.frame = CGRect(x: 0, y: 0, width: 28, height: 28)
+            return button
+        }()
+
+        init(text: Binding<String>) {
+            self._text = text
+        }
+
+        func attach(to searchBar: UISearchBar) {
+            updateCloseButton(for: searchBar)
+        }
+
+        func updateCloseButton(for searchBar: UISearchBar) {
+            searchBar.searchTextField.rightView = isFocused ? closeButton : nil
+            searchBar.searchTextField.rightViewMode = isFocused ? .always : .never
+        }
+
+        func searchBarTextDidBeginEditing(_ searchBar: UISearchBar) {
+            isFocused = true
+            updateCloseButton(for: searchBar)
+        }
+
+        func searchBarTextDidEndEditing(_ searchBar: UISearchBar) {
+            isFocused = false
+            updateCloseButton(for: searchBar)
+        }
+
+        func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+            text = searchText
+        }
+
+        func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+            searchBar.resignFirstResponder()
+        }
+
+        @objc private func closeSearch(_ sender: UIButton) {
+            sender.window?.endEditing(true)
+        }
+    }
+}
+#endif
 
 private struct SearchResultsList: View {
     @Environment(\.irisPalette) private var palette
