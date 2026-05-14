@@ -3466,7 +3466,8 @@ private struct ChatListTableView: UIViewRepresentable {
 
             let container = UIView()
             container.backgroundColor = .clear
-            container.layoutMargins = UIEdgeInsets(top: 14, left: 16, bottom: 8, right: 16)
+            let topMargin: CGFloat = section == 0 ? 14 : 6
+            container.layoutMargins = UIEdgeInsets(top: topMargin, left: 16, bottom: 8, right: 16)
 
             let label = UILabel()
             label.translatesAutoresizingMaskIntoConstraints = false
@@ -3484,6 +3485,10 @@ private struct ChatListTableView: UIViewRepresentable {
                 label.bottomAnchor.constraint(equalTo: container.layoutMarginsGuide.bottomAnchor),
             ])
             return container
+        }
+
+        func tableView(_ tableView: UITableView, viewForFooterInSection section: Int) -> UIView? {
+            UIView()
         }
 
         private func item(at indexPath: IndexPath) -> Item {
