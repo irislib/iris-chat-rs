@@ -1743,7 +1743,7 @@ private struct IrisUIKitComposerTextView: UIViewRepresentable {
         textView.isScrollEnabled = false
         textView.returnKeyType = .default
         textView.keyboardDismissMode = .interactive
-        textView.autocapitalizationType = .none
+        textView.autocapitalizationType = .sentences
         textView.autocorrectionType = .yes
         textView.spellCheckingType = .yes
         textView.accessibilityIdentifier = "chatMessageInput"
