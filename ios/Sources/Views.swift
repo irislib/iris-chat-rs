@@ -3111,6 +3111,7 @@ private struct ChatListTableView: UIViewRepresentable {
         tableView.estimatedRowHeight = 72
         tableView.contentInsetAdjustmentBehavior = .never
         tableView.keyboardDismissMode = .interactive
+        tableView.sectionHeaderTopPadding = 0
         tableView.register(UITableViewCell.self, forCellReuseIdentifier: Coordinator.cellReuseIdentifier)
         tableView.accessibilityIdentifier = "chatListTable"
         return tableView
@@ -3299,19 +3300,27 @@ private struct ChatListTableView: UIViewRepresentable {
 
         func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
             guard let title = sections[section].title else { return UIView() }
-            return UIHostingConfiguration {
-                Text(title)
-                    .font(.system(.headline, design: .rounded))
-                    .foregroundStyle(palette.textPrimary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 14)
-                    .padding(.bottom, 8)
-                    .accessibilityAddTraits(.isHeader)
-                    .environment(\.irisPalette, palette)
-            }
-            .margins(.all, 0)
-            .makeContentView()
+
+            let container = UIView()
+            container.backgroundColor = .clear
+            container.layoutMargins = UIEdgeInsets(top: 14, left: 16, bottom: 8, right: 16)
+
+            let label = UILabel()
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.font = .preferredFont(forTextStyle: .headline)
+            label.textColor = UIColor(palette.textPrimary)
+            label.text = title
+            label.adjustsFontForContentSizeCategory = true
+            label.accessibilityTraits.insert(.header)
+
+            container.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: container.layoutMarginsGuide.leadingAnchor),
+                label.trailingAnchor.constraint(equalTo: container.layoutMarginsGuide.trailingAnchor),
+                label.topAnchor.constraint(equalTo: container.layoutMarginsGuide.topAnchor),
+                label.bottomAnchor.constraint(equalTo: container.layoutMarginsGuide.bottomAnchor),
+            ])
+            return container
         }
 
         private func item(at indexPath: IndexPath) -> Item {
