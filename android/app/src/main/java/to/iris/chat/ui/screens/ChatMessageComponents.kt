@@ -93,6 +93,7 @@ import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.ui.components.DeliveryGlyph
 import to.iris.chat.ui.components.IrisAvatar
+import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisEmojiPickerSheet
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.formatMessageClock
@@ -122,6 +123,7 @@ internal fun MessageBubble(
     isLastInCluster: Boolean,
     reactions: List<MessageReactionSnapshot>,
     onReply: () -> Unit,
+    onForward: () -> Unit,
     onReact: (String) -> Unit,
     onDelete: () -> Unit,
     onScrollToQuote: () -> Unit,
@@ -188,6 +190,10 @@ internal fun MessageBubble(
             onReply = {
                 isActionsSheetOpen = false
                 onReply()
+            },
+            onForward = {
+                isActionsSheetOpen = false
+                onForward()
             },
             onCopy = {
                 isActionsSheetOpen = false
@@ -340,6 +346,7 @@ internal fun MessageBubble(
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
+                        onForward = onForward,
                         onCopy = { clipboard.setText("Message", copyableMessageText(message)) },
                         onInfo = { isInfoOpen = true },
                         onDelete = onDelete,
@@ -415,6 +422,7 @@ internal fun MessageBubble(
                                 isOutgoing = message.isOutgoing,
                                 downloadAttachment = downloadAttachment,
                                 onOpenImage = onOpenImage,
+                                onForward = { onForwardAttachment(attachment, appManager) },
                             )
                         }
                         if (isLastInCluster) {
@@ -464,6 +472,7 @@ internal fun MessageBubble(
                         postReactionSuggestions = postReactionSuggestions,
                         onReact = { emoji -> pickReaction(emoji) },
                         onReply = onReply,
+                        onForward = onForward,
                         onCopy = { clipboard.setText("Message", copyableMessageText(message)) },
                         onInfo = { isInfoOpen = true },
                         onDelete = onDelete,
@@ -533,6 +542,7 @@ private fun MessageActionDock(
     postReactionSuggestions: List<String>,
     onReact: (String) -> Unit,
     onReply: () -> Unit,
+    onForward: () -> Unit,
     onCopy: () -> Unit,
     onInfo: () -> Unit,
     onDelete: () -> Unit,
@@ -566,6 +576,7 @@ private fun MessageActionDock(
                 )
             }
             ActionDockIconButton(Icons.AutoMirrored.Rounded.Reply, "Reply", onClick = onReply)
+            ActionDockIconButton(IrisIcons.Share, "Forward", onClick = onForward)
             Box {
                 ActionDockIconButton(Icons.Rounded.MoreHoriz, "More", { menuOpen = true })
                 DropdownMenu(
@@ -580,7 +591,7 @@ private fun MessageActionDock(
                         },
                     )
                     DropdownMenuItem(
-                        text = { Text("Message Details") },
+                        text = { Text("Info") },
                         onClick = {
                             menuOpen = false
                             onInfo()
@@ -627,6 +638,7 @@ private fun MessageActionsSheet(
     onReact: (String) -> Unit,
     onShowFullReactionPicker: () -> Unit,
     onReply: () -> Unit,
+    onForward: () -> Unit,
     onCopy: () -> Unit,
     onInfo: () -> Unit,
     onDelete: () -> Unit,
@@ -657,13 +669,18 @@ private fun MessageActionsSheet(
                     onClick = onReply,
                 )
                 MessageActionRow(
+                    icon = IrisIcons.Share,
+                    label = "Forward",
+                    onClick = onForward,
+                )
+                MessageActionRow(
                     icon = Icons.Rounded.ContentCopy,
                     label = "Copy",
                     onClick = onCopy,
                 )
                 MessageActionRow(
                     icon = Icons.Rounded.Info,
-                    label = "Message Details",
+                    label = "Info",
                     onClick = onInfo,
                 )
                 MessageActionRow(
@@ -1131,7 +1148,7 @@ internal fun replySnippet(message: ChatMessageSnapshot): String {
     return normalized.take(96)
 }
 
-private const val ReplyMessagePrefix = "↩ "
+internal const val ReplyMessagePrefix = "↩ "
 
 // Caps tall message bubbles behind a Show more/less toggle. The
 // `heightIn` cap is the real backstop — weird unicode that renders as
@@ -1249,6 +1266,30 @@ private fun copyableMessageText(message: ChatMessageSnapshot): String {
         }
     }
     return pieces.joinToString("\n")
+}
+
+internal fun forwardableMessageText(message: ChatMessageSnapshot): String {
+    val parsed = parseReplyEncodedMessage(message.body)
+    val pieces = buildList {
+        val body = parsed.body.trim()
+        if (body.isNotBlank()) {
+            add(body)
+        }
+        message.attachments.forEach { attachment ->
+            forwardableAttachmentText(attachment).takeIf { it.isNotBlank() }?.let(::add)
+        }
+    }
+    return pieces.joinToString("\n")
+}
+
+internal fun forwardableAttachmentText(attachment: MessageAttachmentSnapshot): String =
+    attachment.htreeUrl.trim()
+
+private fun onForwardAttachment(
+    attachment: MessageAttachmentSnapshot,
+    appManager: AppManager?,
+) {
+    appManager?.startForward(forwardableAttachmentText(attachment))
 }
 
 @Composable

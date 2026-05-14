@@ -291,6 +291,7 @@ data class NearbyPublishedEvent(
 data class PendingShare(
     val text: String,
     val attachments: List<OutgoingAttachment>,
+    val isForward: Boolean = false,
 )
 
 private data class PendingNavigationOverride(
@@ -963,6 +964,14 @@ class AppManager(
         }
         mutablePendingShare.value = PendingShare(trimmedText, outgoing)
         dispatchToRust(AppAction.UpdateScreenStack(emptyList()))
+    }
+
+    fun startForward(text: String) {
+        val trimmedText = text.trim()
+        if (trimmedText.isEmpty()) {
+            return
+        }
+        mutablePendingShare.value = PendingShare(trimmedText, emptyList(), isForward = true)
     }
 
     fun clearPendingShare() {

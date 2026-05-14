@@ -35,11 +35,14 @@ import androidx.compose.material.icons.rounded.Image
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -257,13 +260,14 @@ private fun safeAttachmentName(value: String): String {
     return basename.ifEmpty { "attachment" }
 }
 
-@OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun AttachmentChip(
     attachment: MessageAttachmentSnapshot,
     isOutgoing: Boolean,
     downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
     onOpenImage: (ByteArray, String) -> Unit,
+    onForward: () -> Unit,
 ) {
     val context = LocalContext.current
     val clipboard = rememberIrisClipboard()
@@ -278,6 +282,7 @@ internal fun AttachmentChip(
     var imageLoadFailed by remember(attachment.htreeUrl) { mutableStateOf(false) }
     var imageLoading by remember(attachment.htreeUrl) { mutableStateOf(false) }
     var attachmentOpening by remember(attachment.htreeUrl) { mutableStateOf(false) }
+    var actionsOpen by remember(attachment.htreeUrl) { mutableStateOf(false) }
     val foreground =
         if (isOutgoing) {
             MaterialTheme.colorScheme.onPrimary
@@ -285,6 +290,21 @@ internal fun AttachmentChip(
             MaterialTheme.colorScheme.onSurface
         }
     val type = attachmentType(attachment)
+
+    if (actionsOpen) {
+        AttachmentActionsSheet(
+            attachment = attachment,
+            onDismiss = { actionsOpen = false },
+            onForward = {
+                actionsOpen = false
+                onForward()
+            },
+            onCopy = {
+                actionsOpen = false
+                clipboard.setText(attachment.filename, attachment.htreeUrl)
+            },
+        )
+    }
 
     suspend fun loadImageIfNeeded(): ByteArray? {
         localImageData?.let { return it }
@@ -328,9 +348,13 @@ internal fun AttachmentChip(
                     .size(width = 220.dp, height = 150.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(foreground.copy(alpha = 0.12f))
-                    .clickable(
+                    .combinedClickable(
                         interactionSource = imageInteractionSource,
                         indication = null,
+                        onLongClick = {
+                            haptics.press()
+                            actionsOpen = true
+                        },
                     ) {
                         haptics.press()
                         val data = localImageData
@@ -403,7 +427,8 @@ internal fun AttachmentChip(
                         }
                     },
                     onLongClick = {
-                        clipboard.setText(attachment.filename, attachment.htreeUrl)
+                        haptics.press()
+                        actionsOpen = true
                     },
                 )
                 .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -443,6 +468,82 @@ internal fun AttachmentChip(
                 overflow = TextOverflow.Ellipsis,
             )
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AttachmentActionsSheet(
+    attachment: MessageAttachmentSnapshot,
+    onDismiss: () -> Unit,
+    onForward: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surface,
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            Text(
+                text = attachment.filename.ifBlank { "Attachment" },
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+            AttachmentActionRow(
+                icon = IrisIcons.Share,
+                label = "Forward",
+                onClick = onForward,
+            )
+            AttachmentActionRow(
+                icon = IrisIcons.Copy,
+                label = "Copy link",
+                onClick = onCopy,
+            )
+        }
+    }
+}
+
+@Composable
+private fun AttachmentActionRow(
+    icon: ImageVector,
+    label: String,
+    onClick: () -> Unit,
+) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier =
+            Modifier
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                ) {
+                    haptics.press()
+                    onClick()
+                }
+                .padding(horizontal = 12.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(20.dp),
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 

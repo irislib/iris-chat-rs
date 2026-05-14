@@ -718,7 +718,7 @@ fn render_message(
         message.attachments.iter().filter(|a| !a.is_image).collect();
 
     for attachment in &image_attachments {
-        bubble.append(&image_bubble(attachment, prefs));
+        bubble.append(&image_bubble(attachment, prefs, manager));
     }
 
     if !message.body.is_empty() {
@@ -726,10 +726,7 @@ fn render_message(
     }
 
     if !other_attachments.is_empty() {
-        let attach_summary = gtk::Label::new(Some(&attachment_summary(&other_attachments)));
-        attach_summary.add_css_class("bubble-meta");
-        attach_summary.set_xalign(0.0);
-        bubble.append(&attach_summary);
+        bubble.append(&attachment_summary_widget(&other_attachments, manager));
     }
 
     if cluster_end {
@@ -892,6 +889,23 @@ fn build_message_popover(
     reactions_row.append(&more);
     column.append(&reactions_row);
 
+    let forward = gtk::Button::with_label("Forward");
+    forward.add_css_class("flat");
+    forward.set_halign(gtk::Align::Fill);
+    let forward_message = message.clone();
+    let manager_for_forward = manager.clone();
+    let popover_for_forward = popover.clone();
+    forward.connect_clicked(move |btn| {
+        let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+        present_forward_dialog(
+            parent.as_ref(),
+            &forwardable_message_text(&forward_message),
+            &manager_for_forward,
+        );
+        popover_for_forward.popdown();
+    });
+    column.append(&forward);
+
     let copy = gtk::Button::with_label("Copy text");
     copy.add_css_class("flat");
     copy.set_halign(gtk::Align::Fill);
@@ -903,7 +917,7 @@ fn build_message_popover(
     });
     column.append(&copy);
 
-    let info_btn = gtk::Button::with_label("Message Details");
+    let info_btn = gtk::Button::with_label("Info");
     info_btn.add_css_class("flat");
     info_btn.set_halign(gtk::Align::Fill);
     let popover_for_info = popover.clone();
@@ -1530,9 +1544,189 @@ fn attachment_summary(attachments: &[&MessageAttachmentSnapshot]) -> String {
     format!("📎 {} attachments", attachments.len())
 }
 
+fn attachment_summary_widget(
+    attachments: &[&MessageAttachmentSnapshot],
+    manager: &Rc<AppManager>,
+) -> gtk::Widget {
+    let label = gtk::Label::new(Some(&attachment_summary(attachments)));
+    label.add_css_class("bubble-meta");
+    label.set_xalign(0.0);
+
+    let text = attachments
+        .iter()
+        .map(|attachment| forwardable_attachment_text(attachment))
+        .filter(|url| !url.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if text.is_empty() {
+        return label.upcast();
+    }
+
+    let popover = build_attachment_text_popover(text, manager);
+    popover.set_parent(&label);
+
+    let popover_for_click = popover.clone();
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(3);
+    gesture.connect_pressed(move |_, _, x, y| {
+        popover_for_click
+            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover_for_click.popup();
+    });
+    label.add_controller(gesture);
+
+    let popover_for_long = popover.clone();
+    let long_press = gtk::GestureLongPress::new();
+    long_press.connect_pressed(move |_, x, y| {
+        popover_for_long.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover_for_long.popup();
+    });
+    label.add_controller(long_press);
+
+    label.upcast()
+}
+
+fn forwardable_message_text(message: &ChatMessageSnapshot) -> String {
+    let mut pieces = Vec::new();
+    let body = reply_stripped_body(&message.body).trim().to_string();
+    if !body.is_empty() {
+        pieces.push(body);
+    }
+    pieces.extend(
+        message
+            .attachments
+            .iter()
+            .map(forwardable_attachment_text)
+            .filter(|url| !url.is_empty()),
+    );
+    pieces.join("\n")
+}
+
+fn forwardable_attachment_text(attachment: &MessageAttachmentSnapshot) -> String {
+    attachment.htree_url.trim().to_string()
+}
+
+fn reply_stripped_body(body: &str) -> &str {
+    let Some(rest) = body.strip_prefix("↩ ") else {
+        return body;
+    };
+    let Some(separator) = rest.find("\n\n") else {
+        return body;
+    };
+    let header = &rest[..separator];
+    if header.contains(':') {
+        &rest[(separator + 2)..]
+    } else {
+        body
+    }
+}
+
+fn present_forward_dialog(
+    parent: Option<&gtk::Window>,
+    text: &str,
+    manager: &Rc<AppManager>,
+) {
+    let text = text.trim().to_string();
+    if text.is_empty() {
+        return;
+    }
+
+    let chats = manager.current_state().chat_list;
+    let dialog = adw::Dialog::builder().title("Forward").content_width(360).build();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.set_margin_top(16);
+    content.set_margin_bottom(16);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+
+    if chats.is_empty() {
+        let empty = gtk::Label::new(Some("Start a chat first"));
+        empty.add_css_class("dim-label");
+        empty.set_vexpand(true);
+        content.append(&empty);
+        dialog.set_child(Some(&content));
+        dialog.present(parent);
+        return;
+    }
+
+    let selected = Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
+    let send = gtk::Button::with_label("Send");
+    send.add_css_class("suggested-action");
+    send.set_sensitive(false);
+
+    let scrolled = gtk::ScrolledWindow::new();
+    scrolled.set_min_content_height(280);
+    scrolled.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+    let list = gtk::Box::new(gtk::Orientation::Vertical, 2);
+
+    for chat in chats {
+        let row = gtk::CheckButton::with_label(&chat.display_name);
+        row.set_halign(gtk::Align::Fill);
+        row.set_margin_top(4);
+        row.set_margin_bottom(4);
+        row.set_margin_start(4);
+        row.set_margin_end(4);
+        let chat_id = chat.chat_id.clone();
+        let selected_for_toggle = selected.clone();
+        let send_for_toggle = send.clone();
+        row.connect_toggled(move |check| {
+            let mut selected = selected_for_toggle.borrow_mut();
+            if check.is_active() {
+                if !selected.iter().any(|id| id == &chat_id) {
+                    selected.push(chat_id.clone());
+                }
+            } else {
+                selected.retain(|id| id != &chat_id);
+            }
+            send_for_toggle.set_sensitive(!selected.is_empty());
+        });
+        list.append(&row);
+    }
+    scrolled.set_child(Some(&list));
+    content.append(&scrolled);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    actions.set_halign(gtk::Align::End);
+    let cancel = gtk::Button::with_label("Cancel");
+    actions.append(&cancel);
+    actions.append(&send);
+    content.append(&actions);
+
+    let dialog_for_cancel = dialog.clone();
+    cancel.connect_clicked(move |_| {
+        dialog_for_cancel.close();
+    });
+
+    let dialog_for_send = dialog.clone();
+    let selected_for_send = selected.clone();
+    let manager_for_send = manager.clone();
+    send.connect_clicked(move |_| {
+        let targets = selected_for_send.borrow().clone();
+        if targets.is_empty() {
+            return;
+        }
+        for chat_id in &targets {
+            manager_for_send.dispatch(AppAction::SendMessage {
+                chat_id: chat_id.clone(),
+                text: text.clone(),
+            });
+        }
+        if let Some(first) = targets.first() {
+            manager_for_send.dispatch(AppAction::OpenChat {
+                chat_id: first.clone(),
+            });
+        }
+        dialog_for_send.close();
+    });
+
+    dialog.set_child(Some(&content));
+    dialog.present(parent);
+}
+
 fn image_bubble(
     attachment: &MessageAttachmentSnapshot,
     prefs: &PreferencesSnapshot,
+    manager: &Rc<AppManager>,
 ) -> gtk::Widget {
     let picture = gtk::Picture::new();
     picture.set_can_shrink(true);
@@ -1548,7 +1742,74 @@ fn image_bubble(
         false,
     );
     image_cache::fetch_into_picture(&picture, &url);
+
+    let popover = build_attachment_popover(attachment, manager);
+    popover.set_parent(&picture);
+    let popover_for_click = popover.clone();
+    let gesture = gtk::GestureClick::new();
+    gesture.set_button(3);
+    gesture.connect_pressed(move |_, _, x, y| {
+        popover_for_click
+            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover_for_click.popup();
+    });
+    picture.add_controller(gesture);
+
+    let popover_for_long = popover.clone();
+    let long_press = gtk::GestureLongPress::new();
+    long_press.connect_pressed(move |_, x, y| {
+        popover_for_long.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
+        popover_for_long.popup();
+    });
+    picture.add_controller(long_press);
+
     picture.upcast()
+}
+
+fn build_attachment_popover(
+    attachment: &MessageAttachmentSnapshot,
+    manager: &Rc<AppManager>,
+) -> gtk::Popover {
+    build_attachment_text_popover(forwardable_attachment_text(attachment), manager)
+}
+
+fn build_attachment_text_popover(text: String, manager: &Rc<AppManager>) -> gtk::Popover {
+    let popover = gtk::Popover::new();
+    popover.set_has_arrow(false);
+    popover.set_position(gtk::PositionType::Top);
+
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    column.set_margin_top(6);
+    column.set_margin_bottom(6);
+    column.set_margin_start(6);
+    column.set_margin_end(6);
+
+    let forward = gtk::Button::with_label("Forward");
+    forward.add_css_class("flat");
+    forward.set_halign(gtk::Align::Fill);
+    let manager_for_forward = manager.clone();
+    let text_for_forward = text.clone();
+    let popover_for_forward = popover.clone();
+    forward.connect_clicked(move |btn| {
+        let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+        present_forward_dialog(parent.as_ref(), &text_for_forward, &manager_for_forward);
+        popover_for_forward.popdown();
+    });
+    column.append(&forward);
+
+    let copy = gtk::Button::with_label("Copy link");
+    copy.add_css_class("flat");
+    copy.set_halign(gtk::Align::Fill);
+    let text_for_copy = text;
+    let popover_for_copy = popover.clone();
+    copy.connect_clicked(move |_| {
+        crate::platform::clipboard::copy(&text_for_copy);
+        popover_for_copy.popdown();
+    });
+    column.append(&copy);
+
+    popover.set_child(Some(&column));
+    popover
 }
 
 fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {

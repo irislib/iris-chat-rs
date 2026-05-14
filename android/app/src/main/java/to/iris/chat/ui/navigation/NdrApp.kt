@@ -392,6 +392,7 @@ fun NdrApp(
                     appManager = appManager,
                     chats = chatList,
                     preferences = preferences,
+                    title = if (pendingShare?.isForward == true) "Forward" else "Share",
                     onSend = { chatIds -> appManager.sendPendingShareToChats(chatIds) },
                     onNewChat = {
                         appManager.clearPendingShare()
@@ -527,6 +528,7 @@ private fun ShareTargetDialog(
     appManager: AppManager,
     chats: List<ChatThreadSnapshot>,
     preferences: PreferencesSnapshot,
+    title: String,
     onSend: (List<String>) -> Unit,
     onNewChat: () -> Unit,
     onDismiss: () -> Unit,
@@ -569,7 +571,7 @@ private fun ShareTargetDialog(
                     .navigationBarsPadding(),
         ) {
             Text(
-                text = "Share",
+                text = title,
                 modifier =
                     Modifier
                         .fillMaxWidth()

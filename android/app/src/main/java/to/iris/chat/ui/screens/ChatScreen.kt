@@ -568,6 +568,9 @@ fun ChatScreen(
                                     replyTarget = message
                                     composerFocusRequester.requestFocus()
                                 },
+                                onForward = {
+                                    appManager.startForward(forwardableMessageText(message))
+                                },
                                 onReact = { emoji ->
                                     appManager.dispatch(
                                         AppAction.ToggleReaction(

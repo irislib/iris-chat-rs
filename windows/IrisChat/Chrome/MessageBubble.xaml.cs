@@ -131,11 +131,15 @@ public partial class MessageBubble : UserControl
             menu.Items.Add(new Separator());
         }
 
+        var forward = new MenuItem { Header = "Forward" };
+        forward.Click += OnForwardMessage;
+        menu.Items.Add(forward);
+
         var copy = new MenuItem { Header = "Copy text" };
         copy.Click += OnCopyText;
         menu.Items.Add(copy);
 
-        var info = new MenuItem { Header = "Message Details" };
+        var info = new MenuItem { Header = "Info" };
         info.Click += OnShowInfo;
         menu.Items.Add(info);
 
@@ -277,6 +281,7 @@ public partial class MessageBubble : UserControl
                 Margin = new Thickness(0, 0, 0, 4),
             };
             btn.Click += (_, _) => OpenAttachment(att);
+            btn.ContextMenu = BuildAttachmentContextMenu(att);
             return btn;
         }
 
@@ -302,7 +307,25 @@ public partial class MessageBubble : UserControl
             },
         };
         fileBtn.Click += (_, _) => OpenAttachment(att);
+        fileBtn.ContextMenu = BuildAttachmentContextMenu(att);
         return fileBtn;
+    }
+
+    private ContextMenu BuildAttachmentContextMenu(MessageAttachmentSnapshot attachment)
+    {
+        var menu = new ContextMenu();
+        var forward = new MenuItem { Header = "Forward" };
+        forward.Click += (_, _) => PresentForwardPicker(ForwardableAttachmentText(attachment));
+        menu.Items.Add(forward);
+
+        var copy = new MenuItem { Header = "Copy link" };
+        copy.Click += (_, _) =>
+        {
+            try { Clipboard.SetText(attachment.htreeUrl ?? string.Empty); }
+            catch { /* clipboard contention */ }
+        };
+        menu.Items.Add(copy);
+        return menu;
     }
 
     private static async Task LoadImageAsync(MessageAttachmentSnapshot att, System.Windows.Controls.Image control)
@@ -431,6 +454,110 @@ public partial class MessageBubble : UserControl
         if (pieces.Count == 0) return;
         try { Clipboard.SetText(string.Join("\n", pieces)); }
         catch { /* clipboard contention */ }
+    }
+
+    private void OnForwardMessage(object sender, RoutedEventArgs e)
+    {
+        if (_message == null) return;
+        PresentForwardPicker(ForwardableMessageText(_message));
+    }
+
+    private static string ForwardableMessageText(ChatMessageSnapshot message)
+    {
+        var pieces = new List<string>();
+        var body = ReplyStrippedBody(message.body ?? string.Empty).Trim();
+        if (!string.IsNullOrEmpty(body)) pieces.Add(body);
+        if (message.attachments != null)
+        {
+            pieces.AddRange(message.attachments
+                .Select(ForwardableAttachmentText)
+                .Where(s => !string.IsNullOrEmpty(s)));
+        }
+        return string.Join("\n", pieces);
+    }
+
+    private static string ForwardableAttachmentText(MessageAttachmentSnapshot attachment) =>
+        (attachment.htreeUrl ?? string.Empty).Trim();
+
+    private static string ReplyStrippedBody(string body)
+    {
+        const string prefix = "↩ ";
+        if (!body.StartsWith(prefix, StringComparison.Ordinal)) return body;
+        var separator = body.IndexOf("\n\n", StringComparison.Ordinal);
+        if (separator < 0) return body;
+        var header = body.Substring(prefix.Length, separator - prefix.Length);
+        return header.Contains(':') ? body[(separator + 2)..] : body;
+    }
+
+    private void PresentForwardPicker(string text)
+    {
+        var trimmed = text.Trim();
+        if (string.IsNullOrEmpty(trimmed)) return;
+
+        var chats = App.CurrentManager.ChatList;
+        var owner = Window.GetWindow(this);
+        var window = new Window
+        {
+            Title = "Forward",
+            Owner = owner,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Width = 360,
+            Height = 480,
+            MinWidth = 320,
+            MinHeight = 360,
+            Background = (Brush)FindResource("Background"),
+        };
+
+        var root = new DockPanel { Margin = new Thickness(16) };
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+        var cancel = new Button
+        {
+            Content = "Cancel",
+            Style = (Style)FindResource("GhostButton"),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        var send = new Button
+        {
+            Content = "Send",
+            Style = (Style)FindResource("PrimaryButton"),
+            IsEnabled = false,
+        };
+        actions.Children.Add(cancel);
+        actions.Children.Add(send);
+        DockPanel.SetDock(actions, Dock.Bottom);
+        root.Children.Add(actions);
+
+        var list = new ListBox
+        {
+            SelectionMode = SelectionMode.Multiple,
+            ItemsSource = chats,
+            DisplayMemberPath = "displayName",
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+        };
+        list.SelectionChanged += (_, _) => send.IsEnabled = list.SelectedItems.Count > 0;
+        root.Children.Add(list);
+
+        cancel.Click += (_, _) => window.Close();
+        send.Click += (_, _) =>
+        {
+            var targets = list.SelectedItems.Cast<ChatThreadSnapshot>().ToArray();
+            if (targets.Length == 0) return;
+            foreach (var chat in targets)
+            {
+                App.CurrentManager.SendMessage(chat.chatId, trimmed);
+            }
+            App.CurrentManager.OpenChat(targets[0].chatId);
+            window.Close();
+        };
+
+        window.Content = root;
+        window.ShowDialog();
     }
 
     private void OnShowInfo(object sender, RoutedEventArgs e)

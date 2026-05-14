@@ -2,6 +2,11 @@ package to.iris.chat.ui.screens
 
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import to.iris.chat.rust.ChatMessageKind
+import to.iris.chat.rust.ChatMessageSnapshot
+import to.iris.chat.rust.DeliveryState
+import to.iris.chat.rust.MessageAttachmentSnapshot
+import to.iris.chat.rust.MessageDeliveryTraceSnapshot
 import to.iris.chat.rust.MessageReactionSnapshot
 
 class ChatMessageComponentsTest {
@@ -16,4 +21,77 @@ class ChatMessageComponentsTest {
 
         assertEquals(listOf("🔥", "😂"), postReactionSuggestionEmojis(reactions))
     }
+
+    @Test
+    fun forwardableMessageTextStripsQuotedReplyAndKeepsAttachments() {
+        val attachment =
+            MessageAttachmentSnapshot(
+                nhash = "nhash1photo",
+                filename = "photo.jpg",
+                filenameEncoded = "photo.jpg",
+                htreeUrl = "htree://nhash1photo/photo.jpg",
+                isImage = true,
+                isVideo = false,
+                isAudio = false,
+            )
+        val message =
+            makeMessage(
+                body = "${ReplyMessagePrefix}Alice: old text\n\nnew text",
+                attachments = listOf(attachment),
+            )
+
+        assertEquals(
+            "new text\nhtree://nhash1photo/photo.jpg",
+            forwardableMessageText(message),
+        )
+    }
+
+    @Test
+    fun forwardableMessageTextCanBeOnlyAttachment() {
+        val attachment =
+            MessageAttachmentSnapshot(
+                nhash = "nhash1clip",
+                filename = "clip.mp4",
+                filenameEncoded = "clip.mp4",
+                htreeUrl = "htree://nhash1clip/clip.mp4",
+                isImage = false,
+                isVideo = true,
+                isAudio = false,
+            )
+
+        assertEquals(
+            "htree://nhash1clip/clip.mp4",
+            forwardableMessageText(makeMessage(body = "", attachments = listOf(attachment))),
+        )
+    }
+
+    private fun makeMessage(
+        body: String,
+        attachments: List<MessageAttachmentSnapshot> = emptyList(),
+    ): ChatMessageSnapshot =
+        ChatMessageSnapshot(
+            id = "1",
+            chatId = "chat-1",
+            kind = ChatMessageKind.USER,
+            author = "owner-hex",
+            body = body,
+            attachments = attachments,
+            reactions = emptyList(),
+            reactors = emptyList(),
+            isOutgoing = true,
+            createdAtSecs = 1u,
+            expiresAtSecs = null,
+            delivery = DeliveryState.SENT,
+            recipientDeliveries = emptyList(),
+            deliveryTrace =
+                MessageDeliveryTraceSnapshot(
+                    outerEventIds = emptyList(),
+                    pendingRelayEventIds = emptyList(),
+                    queuedProtocolTargets = emptyList(),
+                    targetDeviceIds = emptyList(),
+                    transportChannels = emptyList(),
+                    lastTransportError = null,
+                ),
+            sourceEventId = null,
+        )
 }
