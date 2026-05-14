@@ -1175,23 +1175,12 @@ private fun SettingsProfileMenuRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Surface(
-                modifier = Modifier.size(36.dp),
-                color = IrisTheme.palette.panelAlt,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-                shape = CircleShape,
-                tonalElevation = 0.dp,
-                shadowElevation = 0.dp,
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = IrisIcons.ScanQr,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
-            }
+            Icon(
+                imageVector = IrisIcons.ScanQr,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(24.dp),
+            )
         }
     }
 }
