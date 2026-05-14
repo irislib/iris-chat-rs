@@ -644,6 +644,41 @@ final class IrisChatTests: XCTestCase {
         XCTAssertFalse(irisShowsGroupSenderName(previous: nil, message: outgoing, chatKind: .group))
     }
 
+    func testFloatingDaySeparatorUsesSignalHandoffThreshold() throws {
+        let previous = daySeparatorFrame(messageId: "yesterday", text: "Yesterday", y: -34)
+        let next = daySeparatorFrame(messageId: "today", text: "Today", y: 11)
+
+        let separator = try XCTUnwrap(irisFloatingDaySeparator(
+            frames: [previous, next],
+            viewportMinY: 0,
+            stickyTopY: 12
+        ))
+
+        XCTAssertEqual(separator.messageId, "today")
+        XCTAssertEqual(separator.text, "Today")
+        XCTAssertEqual(separator.offsetY, CGFloat(12), accuracy: 0.001)
+    }
+
+    func testFloatingDaySeparatorPushesPreviousBeforeHandoff() throws {
+        let previous = daySeparatorFrame(messageId: "yesterday", text: "Yesterday", y: -34)
+        let next = daySeparatorFrame(messageId: "today", text: "Today", y: 30)
+
+        let separator = try XCTUnwrap(irisFloatingDaySeparator(
+            frames: [previous, next],
+            viewportMinY: 0,
+            stickyTopY: 12
+        ))
+
+        XCTAssertEqual(separator.messageId, "yesterday")
+        XCTAssertEqual(separator.offsetY, CGFloat(3), accuracy: 0.001)
+    }
+
+    func testFloatingDaySeparatorDoesNotDuplicateFirstVisibleHeader() {
+        let today = daySeparatorFrame(messageId: "today", text: "Today", y: 20)
+
+        XCTAssertNil(irisFloatingDaySeparator(frames: [today], viewportMinY: 0, stickyTopY: 12))
+    }
+
     func testLaunchRecoveryDefaultsAreClearedWithoutAffectingAuthStartup() {
         let (defaults, suiteName) = makeIsolatedUserDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -661,6 +696,14 @@ final class IrisChatTests: XCTestCase {
         XCTAssertNil(defaults.string(forKey: LaunchRecoveryDefaults.versionKey))
         XCTAssertNil(defaults.object(forKey: LaunchRecoveryDefaults.startedAtKey))
         XCTAssertNil(defaults.string(forKey: LaunchRecoveryDefaults.disabledVersionKey))
+    }
+
+    private func daySeparatorFrame(messageId: String, text: String, y: CGFloat) -> ChatTimelineDaySeparatorFrame {
+        ChatTimelineDaySeparatorFrame(
+            messageId: messageId,
+            text: text,
+            frame: CGRect(x: 0, y: y, width: 140, height: 22)
+        )
     }
 
 #if os(iOS)

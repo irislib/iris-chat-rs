@@ -52,6 +52,7 @@ struct ChatScreen: View {
     }
 
     var body: some View {
+        let floatingSeparator = floatingDaySeparator()
         VStack(spacing: 0) {
             Group {
                 if let chat {
@@ -116,11 +117,13 @@ struct ChatScreen: View {
                                                     next: next,
                                                     chatKind: chat.kind
                                                 )
+                                                let hidesInlineDayChip = floatingSeparator?.messageId == message.id
 
                                                 EquatableView(content: ChatMessageRow(
                                                     message: message,
                                                     chatKind: chat.kind,
                                                     showDayChip: showDayChip,
+                                                    hidesInlineDayChip: hidesInlineDayChip,
                                                     isFirstInCluster: isFirstInCluster,
                                                     isLastInCluster: isLastInCluster,
                                                     showsGroupSenderName: showsGroupSenderName,
@@ -454,7 +457,7 @@ struct ChatScreen: View {
                                 }
 
                                 if timelineReadyForDisplay,
-                                   let separator = floatingDaySeparator() {
+                                   let separator = floatingSeparator {
                                     HStack {
                                         Spacer()
                                         IrisDayChip(text: separator.text)
@@ -969,25 +972,13 @@ struct ChatScreen: View {
         return (message?.reactors ?? [], currentChat)
     }
 
-    private func floatingDaySeparator() -> (text: String, offsetY: CGFloat)? {
+    private func floatingDaySeparator() -> ChatFloatingDaySeparator? {
         let topY = timelineViewportMinY + SignalConversationLayout.stickyDateHeaderTopSpacing
-        let sortedFrames = timelineDaySeparatorFrames.values.sorted { lhs, rhs in
-            lhs.frame.minY < rhs.frame.minY
-        }
-        guard let currentIndex = sortedFrames.lastIndex(where: { $0.frame.maxY <= topY }) else {
-            return nil
-        }
-
-        let current = sortedFrames[currentIndex]
-        let next = sortedFrames.indices.contains(currentIndex + 1) ? sortedFrames[currentIndex + 1] : nil
-        let currentHeight = max(current.frame.height, SignalConversationLayout.daySeparatorMinimumHeight)
-        var offsetY = SignalConversationLayout.stickyDateHeaderTopSpacing
-        if let next {
-            let nextOffset = next.frame.minY - timelineViewportMinY
-            let maxOffsetY = nextOffset - currentHeight - SignalConversationLayout.stickyDateHeaderMinimumSpacing
-            offsetY = min(offsetY, maxOffsetY)
-        }
-        return (current.text, offsetY)
+        return irisFloatingDaySeparator(
+            frames: Array(timelineDaySeparatorFrames.values),
+            viewportMinY: timelineViewportMinY,
+            stickyTopY: topY
+        )
     }
 
 }
@@ -1293,9 +1284,56 @@ private struct ChatMessageBubbleFramePreferenceKey: PreferenceKey {
     }
 }
 
-private struct ChatTimelineDaySeparatorFrame: Equatable {
+struct ChatTimelineDaySeparatorFrame: Equatable {
+    let messageId: String
     let text: String
     let frame: CGRect
+}
+
+struct ChatFloatingDaySeparator: Equatable {
+    let messageId: String
+    let text: String
+    let offsetY: CGFloat
+}
+
+func irisFloatingDaySeparator(
+    frames: [ChatTimelineDaySeparatorFrame],
+    viewportMinY: CGFloat,
+    stickyTopY: CGFloat
+) -> ChatFloatingDaySeparator? {
+    let sortedFrames = frames.sorted { lhs, rhs in
+        lhs.frame.minY < rhs.frame.minY
+    }
+    guard !sortedFrames.isEmpty else {
+        return nil
+    }
+
+    let currentIndex: Int
+    let next: ChatTimelineDaySeparatorFrame?
+    if let firstInOrBelowViewport = sortedFrames.firstIndex(where: { $0.frame.minY >= stickyTopY }) {
+        guard firstInOrBelowViewport > sortedFrames.startIndex else {
+            return nil
+        }
+        currentIndex = sortedFrames.index(before: firstInOrBelowViewport)
+        next = sortedFrames[firstInOrBelowViewport]
+    } else {
+        currentIndex = sortedFrames.index(before: sortedFrames.endIndex)
+        next = nil
+    }
+
+    let current = sortedFrames[currentIndex]
+    let currentHeight = max(current.frame.height, SignalConversationLayout.daySeparatorMinimumHeight)
+    var offsetY = SignalConversationLayout.stickyDateHeaderTopSpacing
+    if let next {
+        let nextOffset = next.frame.minY - viewportMinY
+        let maxOffsetY = nextOffset - currentHeight - SignalConversationLayout.stickyDateHeaderMinimumSpacing
+        offsetY = min(offsetY, maxOffsetY)
+    }
+    return ChatFloatingDaySeparator(
+        messageId: current.messageId,
+        text: current.text,
+        offsetY: offsetY
+    )
 }
 
 private struct ChatTimelineDaySeparatorFramePreferenceKey: PreferenceKey {
@@ -1338,6 +1376,7 @@ private struct ChatMessageRow: View, Equatable {
             && lhs.reactions == rhs.reactions
             && lhs.chatKind == rhs.chatKind
             && lhs.showDayChip == rhs.showDayChip
+            && lhs.hidesInlineDayChip == rhs.hidesInlineDayChip
             && lhs.isFirstInCluster == rhs.isFirstInCluster
             && lhs.isLastInCluster == rhs.isLastInCluster
             && lhs.showsGroupSenderName == rhs.showsGroupSenderName
@@ -1350,6 +1389,7 @@ private struct ChatMessageRow: View, Equatable {
     let message: ChatMessageSnapshot
     let chatKind: ChatKind
     let showDayChip: Bool
+    let hidesInlineDayChip: Bool
     let isFirstInCluster: Bool
     let isLastInCluster: Bool
     let showsGroupSenderName: Bool
@@ -1418,6 +1458,7 @@ private struct ChatMessageRow: View, Equatable {
                             key: ChatTimelineDaySeparatorFramePreferenceKey.self,
                             value: [
                                 message.id: ChatTimelineDaySeparatorFrame(
+                                    messageId: message.id,
                                     text: dayText,
                                     frame: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
                                 )
@@ -1425,6 +1466,8 @@ private struct ChatMessageRow: View, Equatable {
                         )
                     }
                 )
+                .opacity(hidesInlineDayChip ? 0 : 1)
+                .accessibilityHidden(hidesInlineDayChip)
             }
 
             if message.kind == .system {
