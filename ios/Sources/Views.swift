@@ -2571,6 +2571,7 @@ private enum ChatListSearchSection: Hashable {
 private struct ChatListSearchField: View {
     @Environment(\.irisPalette) private var palette
     @Binding var text: String
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -2583,8 +2584,20 @@ private struct ChatListSearchField: View {
 #if os(iOS)
                 .textInputAutocapitalization(.never)
 #endif
+                .focused($isFocused)
                 .accessibilityIdentifier("chatListSearchField")
-            if !text.isEmpty {
+            if isFocused {
+                Button {
+                    isFocused = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close search")
+                .accessibilityIdentifier("chatListSearchCloseButton")
+            } else if !text.isEmpty {
                 Button {
                     text = ""
                 } label: {

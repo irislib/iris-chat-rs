@@ -42,6 +42,28 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(waitForChatList(app, timeout: 20))
     }
 
+    func testChatListSearchCloseButtonDismissesKeyboard() {
+#if os(macOS)
+        return
+#else
+        let app = launchCleanApp()
+
+        createAccount(app)
+
+        let searchField = element(app, "chatListSearchField")
+        XCTAssertTrue(searchField.waitForExistence(timeout: 10))
+        searchField.tap()
+
+        let closeButton = element(app, "chatListSearchCloseButton")
+        XCTAssertTrue(closeButton.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+
+        closeButton.tap()
+        XCTAssertFalse(closeButton.waitForExistence(timeout: 2))
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+#endif
+    }
+
     func testCreateChatAndSendMessageLocally() {
         let app = launchCleanApp()
 
