@@ -456,6 +456,7 @@ final class InteropHarnessTests: XCTestCase {
                 throw HarnessError.unexpected("outgoing message failed to publish")
             }
 
+            try await waitForRelayDrainIfRequested(manager: manager, env: env)
             status("chat_id", chatID)
             status("message", message)
             status("delivery", finalizedDelivery)

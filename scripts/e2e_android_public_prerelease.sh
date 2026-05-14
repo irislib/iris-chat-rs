@@ -317,14 +317,16 @@ fi
 ALICE_TO_BOB="android-public-alice-to-bob-${STAMP}"
 ALICE_TO_CHARLIE="android-public-alice-to-charlie-${STAMP}"
 run_android_test "${ALICE_SERIAL}" send_message_from_args \
-  peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" >/dev/null
+  peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
 run_android_test "${BOB_SERIAL}" wait_for_message_from_args \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_BOB}" direction incoming >/dev/null
 run_android_test "${ALICE_LINKED_SERIAL}" wait_for_message_from_args \
   peer_input "${BOB_NPUB}" message "${ALICE_TO_BOB}" direction outgoing >/dev/null
 
 run_android_test "${ALICE_SERIAL}" send_message_from_args \
-  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" >/dev/null
+  peer_input "${CHARLIE_NPUB}" message "${ALICE_TO_CHARLIE}" \
+  wait_for_relay_drain true relay_drain_timeout_secs 240 >/dev/null
 run_android_test "${CHARLIE_SERIAL}" wait_for_message_from_args \
   peer_input "${ALICE_NPUB}" message "${ALICE_TO_CHARLIE}" direction incoming >/dev/null
 run_android_test "${ALICE_LINKED_SERIAL}" wait_for_message_from_args \
