@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -16,15 +17,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.Composable
@@ -35,11 +38,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import to.iris.chat.rust.ChatMessageSnapshot
@@ -203,9 +207,14 @@ internal fun ComposerBar(
 ) {
     val haptics = rememberIrisHapticFeedback()
     val isBusy = isSending || isUploading
-    val canSend = (draft.isNotBlank() || selectedAttachments.isNotEmpty()) && !isBusy
+    val hasSendContent = draft.isNotBlank() || selectedAttachments.isNotEmpty()
+    val canSend = hasSendContent && !isBusy
+    val sendButtonFilled = canSend || isSending
     val showDesktopComposerTools = LocalConfiguration.current.screenWidthDp >= 600
     var showingEmojiPicker by remember { mutableStateOf(false) }
+    val attachInteractionSource = remember { MutableInteractionSource() }
+    val emojiInteractionSource = remember { MutableInteractionSource() }
+    val sendInteractionSource = remember { MutableInteractionSource() }
     fun submitDraft() {
         if (canSend) {
             haptics.confirm()
@@ -231,7 +240,7 @@ internal fun ComposerBar(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             if (selectedAttachments.isNotEmpty()) {
@@ -283,19 +292,24 @@ internal fun ComposerBar(
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                IconButton(
-                    onClick = {
-                        haptics.press()
-                        onAttach()
-                    },
-                    enabled = !isBusy,
+                Box(
                     modifier =
                         Modifier
-                            .size(48.dp)
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .clickable(
+                                enabled = !isBusy,
+                                interactionSource = attachInteractionSource,
+                                indication = null,
+                            ) {
+                                haptics.press()
+                                onAttach()
+                            }
                             .testTag("chatAttachButton"),
+                    contentAlignment = Alignment.Center,
                 ) {
                     if (isUploading) {
                         CircularProgressIndicator(
@@ -305,29 +319,35 @@ internal fun ComposerBar(
                         )
                     } else {
                         Icon(
-                            imageVector = IrisIcons.Attach,
-                            contentDescription = "Attach",
+                            imageVector = Icons.Rounded.Add,
+                            contentDescription = "Add",
                             tint =
                                 if (isBusy) {
                                     IrisTheme.palette.muted.copy(alpha = 0.54f)
                                 } else {
                                     MaterialTheme.colorScheme.onSurface
                                 },
+                            modifier = Modifier.size(24.dp),
                         )
                     }
                 }
 
                 if (showDesktopComposerTools) {
-                    IconButton(
-                        onClick = {
-                            haptics.press()
-                            showingEmojiPicker = !showingEmojiPicker
-                        },
-                        enabled = !isBusy,
+                    Box(
                         modifier =
                             Modifier
-                                .size(48.dp)
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .clickable(
+                                    enabled = !isBusy,
+                                    interactionSource = emojiInteractionSource,
+                                    indication = null,
+                                ) {
+                                    haptics.press()
+                                    showingEmojiPicker = !showingEmojiPicker
+                                }
                                 .testTag("chatEmojiButton"),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             text = "☺",
@@ -342,66 +362,82 @@ internal fun ComposerBar(
                     }
                 }
 
-                Surface(
-                    modifier = Modifier.weight(1f),
-                    // Use panelAlt so the pill is visibly lifted from
-                    // the now-background-toned outer composer.
-                    color = IrisTheme.palette.panelAlt,
-                    shape = RoundedCornerShape(24.dp),
-                ) {
-                    TextField(
-                        value = draft,
-                        onValueChange = onDraftChange,
-                        placeholder = {
-                            Text(
-                                text = "Message",
-                                color = IrisTheme.palette.muted,
-                            )
-                        },
-                        modifier =
-                            (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
-                                .fillMaxWidth()
-                                .testTag("chatMessageInput"),
-                        minLines = 1,
-                        maxLines = 5,
-                        colors =
-                            TextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                disabledContainerColor = Color.Transparent,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                disabledIndicatorColor = Color.Transparent,
-                            ),
-                    )
-                }
+                BasicTextField(
+                    value = draft,
+                    onValueChange = onDraftChange,
+                    modifier =
+                        (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                            .weight(1f)
+                            .heightIn(min = 44.dp, max = 132.dp)
+                            .background(IrisTheme.palette.panelAlt, RoundedCornerShape(22.dp))
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                            .testTag("chatMessageInput"),
+                    textStyle =
+                        MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                    cursorBrush = SolidColor(IrisTheme.palette.accent),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                    keyboardActions = KeyboardActions(onSend = { submitDraft() }),
+                    minLines = 1,
+                    maxLines = 5,
+                    decorationBox = { innerTextField ->
+                        Box(
+                            modifier = Modifier.fillMaxWidth(),
+                            contentAlignment = Alignment.CenterStart,
+                        ) {
+                            if (draft.isEmpty()) {
+                                Text(
+                                    text = "Message",
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    color = IrisTheme.palette.muted,
+                                )
+                            }
+                            innerTextField()
+                        }
+                    },
+                )
 
-                Surface(
+                Box(
                     modifier =
                         Modifier
-                            .size(52.dp)
-                            .clip(CircleShape),
-                    color = IrisTheme.palette.accent,
-                    shape = CircleShape,
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (sendButtonFilled) {
+                                    IrisTheme.palette.accent
+                                } else {
+                                    IrisTheme.palette.panelAlt
+                                },
+                            )
+                            .clickable(
+                                enabled = canSend,
+                                interactionSource = sendInteractionSource,
+                                indication = null,
+                            ) {
+                                submitDraft()
+                            }
+                            .testTag("chatSendButton"),
+                    contentAlignment = Alignment.Center,
                 ) {
-                    IconButton(
-                        onClick = { submitDraft() },
-                        enabled = canSend,
-                        modifier = Modifier.testTag("chatSendButton"),
-                    ) {
-                        if (isSending) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        } else {
-                            Icon(
-                                imageVector = IrisIcons.Send,
-                                contentDescription = "Send",
-                                tint = MaterialTheme.colorScheme.onPrimary,
-                            )
-                        }
+                    if (isSending) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    } else {
+                        Icon(
+                            imageVector = IrisIcons.Send,
+                            contentDescription = "Send",
+                            tint =
+                                if (sendButtonFilled) {
+                                    MaterialTheme.colorScheme.onPrimary
+                                } else {
+                                    IrisTheme.palette.muted.copy(alpha = 0.54f)
+                                },
+                            modifier = Modifier.size(22.dp),
+                        )
                     }
                 }
             }

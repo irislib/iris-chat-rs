@@ -123,6 +123,16 @@ fn ffi_search_returns_grouped_contacts_groups_and_messages() {
     let group_chat =
         create_group_and_send(&app, &inbox, "Project Hello", &dora_npub, "kickoff agenda");
     let _ = group_chat; // group chat id consumed for grouping assertions below
+    app.dispatch(AppAction::SetChatDraft {
+        chat_id: bob_chat.clone(),
+        text: "unsent draft idea".to_string(),
+    });
+    inbox.wait_until(Duration::from_secs(5), |state| {
+        state
+            .chat_list
+            .iter()
+            .any(|c| c.chat_id == bob_chat && c.draft == "unsent draft idea")
+    });
 
     let final_state = inbox.snapshot();
     assert!(
@@ -154,6 +164,14 @@ fn ffi_search_returns_grouped_contacts_groups_and_messages() {
         }
         assert!(!hit.chat_display_name.is_empty(), "{hit:?}");
     }
+
+    // Draft text participates in thread search so a saved unsent
+    // message can keep its chat visible in the chat-list search.
+    let draft_result = app.search("unsent".to_string(), None, 20);
+    assert!(draft_result
+        .contacts
+        .iter()
+        .any(|contact| contact.chat_id == bob_chat && contact.draft == "unsent draft idea"));
 
     // Scoping limits messages to the named chat and suppresses the
     // contacts/groups sections (the in-conversation pill UI mode).

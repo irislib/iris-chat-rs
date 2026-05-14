@@ -1054,9 +1054,10 @@ fn filter_threads_for_search(
 }
 
 fn thread_matches_query(chat: &ChatThreadSnapshot, needle_lower: &str) -> bool {
-    let candidates: [&str; 3] = [
+    let candidates: [&str; 4] = [
         &chat.display_name,
         chat.subtitle.as_deref().unwrap_or(""),
+        &chat.draft,
         &chat.chat_id,
     ];
     candidates

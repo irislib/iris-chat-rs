@@ -385,17 +385,11 @@ fun ChatListScreen(
                             },
                             onDeleteRequest = { pendingDeleteChat = chat },
                         ) {
-                            val draftPreview = chat.draft.trim()
                             IrisChatListRow(
                                 title = chat.displayName,
                                 isMuted = chat.isMuted,
                                 isPinned = chat.isPinned,
-                                preview =
-                                    when {
-                                        chat.isTyping -> "Typing"
-                                        draftPreview.isNotEmpty() -> "Draft: $draftPreview"
-                                        else -> chat.lastMessagePreview ?: subtitle.orEmpty()
-                                    },
+                                preview = chat.chatListPreview(),
                                 timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
                                 imageUrl = avatarUrl,
                                 imageData = avatarData,
@@ -462,6 +456,8 @@ private enum class SearchSection {
     Groups,
     Messages,
 }
+
+private val ChatPreviewWhitespace = Regex("\\s+")
 
 private fun <T> visibleSearchRows(
     rows: List<T>,
@@ -937,7 +933,7 @@ private fun SearchChatRow(
         title = chat.displayName,
         isMuted = chat.isMuted,
         isPinned = chat.isPinned,
-        preview = chat.lastMessagePreview ?: chat.subtitle.orEmpty(),
+        preview = chat.chatListPreview(),
         timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
         imageUrl = avatarUrl,
         imageData = avatarData,
@@ -946,6 +942,15 @@ private fun SearchChatRow(
         lastDelivery = chat.lastMessageDelivery,
         onClick = { appManager.openChat(chat.chatId) },
     )
+}
+
+private fun ChatThreadSnapshot.chatListPreview(): String {
+    val draftPreview = draft.trim().replace(ChatPreviewWhitespace, " ")
+    return when {
+        isTyping -> "Typing"
+        draftPreview.isNotEmpty() -> "Draft: $draftPreview"
+        else -> lastMessagePreview ?: subtitle.orEmpty()
+    }
 }
 
 @Composable

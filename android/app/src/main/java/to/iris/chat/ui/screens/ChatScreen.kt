@@ -55,6 +55,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -169,6 +170,9 @@ fun ChatScreen(
     var imageViewerItem by remember(chatId) { mutableStateOf<DownloadedImageAttachment?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
+    val latestDraft by rememberUpdatedState(draft)
+    val latestLastPersistedDraft by rememberUpdatedState(lastPersistedDraft)
+    val latestHasSentTyping by rememberUpdatedState(hasSentTyping)
     var directChatInfoOpen by remember(chatId) { mutableStateOf(false) }
     var inChatSearchOpen by remember(chatId) { mutableStateOf(false) }
     var composerBounds by remember { mutableStateOf<Rect?>(null) }
@@ -214,31 +218,39 @@ fun ChatScreen(
         observedMessageCount = 0
     }
 
-    // Seed the composer from the persisted thread draft once we have
-    // a matching snapshot — matches Signal's `currentDraft(transaction:)`
-    // load. Only paint the value once per chat appearance; subsequent
-    // user typing owns the buffer.
+    // Keep the composer aligned with the persisted thread draft without
+    // clobbering unsaved local typing. This handles the initial load, a
+    // draft restored after the screen appears, and external clears after send.
     LaunchedEffect(chatId, chat?.draft) {
         val persisted = chat?.draft ?: return@LaunchedEffect
-        if (lastPersistedDraft == null) {
-            if (persisted.isNotEmpty() && draft.isEmpty()) {
+        val previousPersisted = lastPersistedDraft
+        when {
+            previousPersisted == null -> {
                 draft = persisted
+                lastPersistedDraft = persisted
             }
-            lastPersistedDraft = persisted
+            persisted != previousPersisted && draft == previousPersisted -> {
+                draft = persisted
+                lastPersistedDraft = persisted
+            }
+            else -> {
+                lastPersistedDraft = persisted
+            }
         }
     }
 
     // Debounced persist: 500ms after the user stops typing, push the
     // current text into the thread's `draft` column. The Rust side
     // dedups against the previous value so no-op writes are cheap.
-    LaunchedEffect(draft) {
-        if (lastPersistedDraft == draft) {
+    LaunchedEffect(chatId, draft) {
+        val currentDraft = draft
+        if (lastPersistedDraft == currentDraft) {
             return@LaunchedEffect
         }
         delay(500)
-        if (lastPersistedDraft != draft) {
-            appManager.dispatch(AppAction.SetChatDraft(chatId, draft))
-            lastPersistedDraft = draft
+        if (lastPersistedDraft != currentDraft) {
+            appManager.dispatch(AppAction.SetChatDraft(chatId, currentDraft))
+            lastPersistedDraft = currentDraft
         }
     }
 
@@ -361,15 +373,16 @@ fun ChatScreen(
 
     DisposableEffect(chatId) {
         onDispose {
-            if (hasSentTyping) {
+            if (latestHasSentTyping) {
                 hasSentTyping = false
                 lastTypingSentMs = 0L
                 appManager.dispatch(AppAction.StopTyping(chatId))
             }
             // Flush any pending draft on the way out so the latest
             // text always hits SQLite before this screen tears down.
-            if (lastPersistedDraft != draft) {
-                appManager.dispatch(AppAction.SetChatDraft(chatId, draft))
+            val draftOnDispose = latestDraft
+            if (latestLastPersistedDraft != draftOnDispose) {
+                appManager.dispatch(AppAction.SetChatDraft(chatId, draftOnDispose))
             }
         }
     }
@@ -672,6 +685,8 @@ fun ChatScreen(
                             selectedAttachments = emptyList()
                         }
                         draft = ""
+                        lastPersistedDraft = ""
+                        appManager.dispatch(AppAction.SetChatDraft(chatId, ""))
                         if (hasSentTyping) {
                             hasSentTyping = false
                             lastTypingSentMs = 0L
