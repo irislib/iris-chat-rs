@@ -457,8 +457,8 @@ struct ChatScreen: View {
                                                 manager.showAttachmentOpenError()
                                             }
                                         }
-                                    ) {
-                                        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                    ) { composerText in
+                                        let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
                                         guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
                                         stopTypingIfNeeded()
                                         resumeTimelineAutoFollow()

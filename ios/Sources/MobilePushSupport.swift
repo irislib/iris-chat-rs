@@ -10,8 +10,17 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        guard !AppPaths.notificationsDisabledForAutomation(
+            environment: ProcessInfo.processInfo.environment
+        ) else {
+            return true
+        }
+#if targetEnvironment(simulator)
+        return true
+#else
         UNUserNotificationCenter.current().delegate = self
         return true
+#endif
     }
 
     func application(
@@ -108,6 +117,14 @@ final class MobilePushRuntime {
 
     @MainActor
     func sync(state: AppState, ownerNsec: String?) {
+        guard !AppPaths.notificationsDisabledForAutomation(
+            environment: ProcessInfo.processInfo.environment
+        ) else {
+            return
+        }
+#if targetEnvironment(simulator)
+        return
+#else
         let owner = state.mobilePush.ownerPubkeyHex?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let ownerSecret = ownerNsec?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
         let authors = state.mobilePush.messageAuthorPubkeys
@@ -138,6 +155,7 @@ final class MobilePushRuntime {
                 serverOverride: serverOverride
             )
         }
+#endif
     }
 
     @MainActor
@@ -207,6 +225,12 @@ final class MobilePushRuntime {
     }
 
     private func requestApnsToken() async -> String? {
+#if targetEnvironment(simulator)
+        return nil
+#else
+        guard AppPaths.testRunId(environment: ProcessInfo.processInfo.environment) == nil else {
+            return nil
+        }
         let center = UNUserNotificationCenter.current()
         let settings = await center.notificationSettings()
         var status = settings.authorizationStatus
@@ -232,6 +256,7 @@ final class MobilePushRuntime {
             return token
         }
         return await MobilePushTokenCenter.shared.waitForApnsToken(timeoutNanoseconds: 15_000_000_000)
+#endif
     }
 
     private func resolveExistingSubscriptionId(

@@ -74,6 +74,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
         typeText("hello from ios ui test", into: element(app, "chatMessageInput"), app: app)
         element(app, "chatSendButton").tap()
+        dismissNotificationPromptIfPresent(app: app)
 
         let messageText = app.staticTexts["hello from ios ui test"].firstMatch
         XCTAssertTrue(messageText.waitForExistence(timeout: 15))
@@ -140,6 +141,7 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
         typeText(message, into: element(app, "chatMessageInput"), app: app)
         element(app, "chatSendButton").tap()
+        dismissNotificationPromptIfPresent(app: app)
 
         let messageText = app.staticTexts[message].firstMatch
         XCTAssertTrue(messageText.waitForExistence(timeout: 15))
@@ -381,6 +383,7 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertFalse(app.staticTexts["hello from return key"].waitForExistence(timeout: 2))
         element(app, "chatSendButton").tap()
+        dismissNotificationPromptIfPresent(app: app)
         XCTAssertTrue(app.staticTexts["hello from return key"].waitForExistence(timeout: 15))
 #endif
     }
@@ -600,6 +603,7 @@ final class IrisChatUITests: XCTestCase {
         }
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = runId
         app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
+        app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
         if let qrValue {
             app.launchEnvironment["IRIS_QR_TEST_VALUE"] = qrValue
         }
@@ -613,6 +617,30 @@ final class IrisChatUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         return app
+    }
+
+    private func dismissNotificationPromptIfPresent(app: XCUIApplication) {
+#if os(iOS)
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let denyButtons = [
+            springboard.buttons["Don’t Allow"],
+            springboard.buttons["Don't Allow"],
+            springboard.descendants(matching: .button)
+                .matching(NSPredicate(format: "label == %@ OR label == %@", "Don’t Allow", "Don't Allow"))
+                .firstMatch
+        ]
+        for denyButton in denyButtons {
+            if denyButton.waitForExistence(timeout: 1) {
+                denyButton.tap()
+                XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+                return
+            }
+        }
+        if springboard.wait(for: .runningForeground, timeout: 1) {
+            springboard.coordinate(withNormalizedOffset: CGVector(dx: 0.31, dy: 0.67)).tap()
+            XCTAssertTrue(app.wait(for: .runningForeground, timeout: 5))
+        }
+#endif
     }
 
     func testUploadProfilePictureUpdatesAvatarsInSettingsAndChatList() throws {
@@ -822,7 +850,13 @@ final class IrisChatUITests: XCTestCase {
         let target = target.identifier.isEmpty ? target : element(app, target.identifier)
 #endif
         target.tap()
-        target.typeText(text)
+        if target.elementType == .textView {
+            for character in text {
+                target.typeText(String(character))
+            }
+        } else {
+            target.typeText(text)
+        }
     }
 
     private func assertKeyboardFocused(

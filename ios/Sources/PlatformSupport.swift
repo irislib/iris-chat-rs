@@ -483,8 +483,16 @@ final class NoopDesktopNotificationPoster: DesktopNotificationPosting {
 
 final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
     private let center = UNUserNotificationCenter.current()
+    private let environment: [String: String]
+
+    init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        self.environment = environment
+    }
 
     func post(title: String, body: String) {
+        guard !AppPaths.notificationsDisabledForAutomation(environment: environment) else {
+            return
+        }
         center.getNotificationSettings { [center] settings in
             switch settings.authorizationStatus {
             case .authorized, .provisional, .ephemeral:

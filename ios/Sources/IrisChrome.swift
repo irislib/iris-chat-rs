@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 #if canImport(AppKit)
 import AppKit
 #endif
+#if canImport(UIKit)
+import UIKit
+#endif
 #if canImport(PhotosUI)
 import PhotosUI
 #endif
@@ -1228,7 +1231,7 @@ struct IrisComposerBar: View {
     @FocusState.Binding var isFocused: Bool
     let onDraftChange: () -> Void
     let onAttach: ([URL]) -> Void
-    let onSend: () -> Void
+    let onSend: (String) -> Void
 
     private var canSend: Bool {
         (
@@ -1292,20 +1295,7 @@ struct IrisComposerBar: View {
                     .accessibilityIdentifier("chatEmojiButton")
                 }
 
-                TextField(placeholder, text: $draft, axis: .vertical)
-                    .lineLimit(1...5)
-                    .irisDraftInputModifiers()
-                    .irisInputField()
-                    .irisDesktopSubmit(submitDraft)
-                    .focused($isFocused)
-                    .contentShape(Rectangle())
-                    .simultaneousGesture(
-                        TapGesture().onEnded {
-                            isFocused = true
-                        }
-                    )
-                    .irisOnChange(of: draft) { _ in onDraftChange() }
-                    .accessibilityIdentifier("chatMessageInput")
+                composerInput
 
                 // Mobile keeps the Signal-style explicit send affordance.
                 // Desktop sends with Return, so showing this button only
@@ -1351,6 +1341,9 @@ struct IrisComposerBar: View {
             }
         }
         .frame(maxWidth: .infinity)
+        .irisOnChange(of: draft) { _ in
+            onDraftChange()
+        }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted) { providers in
             handleDroppedFiles(providers)
         }
@@ -1374,6 +1367,50 @@ struct IrisComposerBar: View {
         .irisOnChange(of: pickedPhotos) { items in
             handlePickedPhotos(items)
         }
+        #endif
+    }
+
+    @ViewBuilder
+    private var composerInput: some View {
+        #if os(iOS)
+        ZStack(alignment: .topLeading) {
+            if draft.isEmpty {
+                Text(placeholder)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(palette.muted)
+                    .padding(.top, 1)
+                    .allowsHitTesting(false)
+            }
+            IrisUIKitComposerTextView(
+                text: $draft,
+                isFocused: $isFocused
+            )
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .irisGlassSurface(in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(palette.border.opacity(0.32), lineWidth: 0.5)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isFocused = true
+        }
+        #else
+        TextField(placeholder, text: $draft, axis: .vertical)
+            .lineLimit(1...5)
+            .irisDraftInputModifiers()
+            .irisInputField()
+            .irisDesktopSubmit(submitDraft)
+            .focused($isFocused)
+            .contentShape(Rectangle())
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    isFocused = true
+                }
+            )
+            .accessibilityIdentifier("chatMessageInput")
         #endif
     }
 
@@ -1452,7 +1489,12 @@ struct IrisComposerBar: View {
         guard canSend else {
             return
         }
-        onSend()
+        #if os(iOS)
+        let text = IrisUIKitComposerTextView.currentText ?? draft
+        #else
+        let text = draft
+        #endif
+        onSend(text)
     }
 
     private func handleDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
@@ -1489,6 +1531,116 @@ struct IrisComposerBar: View {
         return true
     }
 }
+
+#if os(iOS)
+private struct IrisUIKitComposerTextView: UIViewRepresentable {
+    private static weak var activeTextView: UITextView?
+
+    static var currentText: String? {
+        activeTextView?.text
+    }
+
+    @Binding var text: String
+    @FocusState.Binding var isFocused: Bool
+
+    func makeUIView(context: Context) -> UITextView {
+        let textView = UITextView()
+        Self.activeTextView = textView
+        textView.delegate = context.coordinator
+        textView.backgroundColor = .clear
+        textView.font = UIFont.preferredFont(forTextStyle: .body)
+        textView.adjustsFontForContentSizeCategory = true
+        textView.textColor = UIColor.label
+        textView.tintColor = UIColor.tintColor
+        textView.textContainerInset = .zero
+        textView.textContainer.lineFragmentPadding = 0
+        textView.isScrollEnabled = false
+        textView.returnKeyType = .default
+        textView.keyboardDismissMode = .interactive
+        textView.autocapitalizationType = .none
+        textView.autocorrectionType = .yes
+        textView.spellCheckingType = .yes
+        textView.accessibilityIdentifier = "chatMessageInput"
+        textView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return textView
+    }
+
+    func updateUIView(_ uiView: UITextView, context: Context) {
+        Self.activeTextView = uiView
+        context.coordinator.parent = self
+        if !isFocused && !uiView.isFirstResponder && uiView.text != text {
+            uiView.text = text
+        }
+        let shouldScroll = measuredHeight(for: uiView, width: uiView.bounds.width) >= maxHeight(for: uiView)
+        if uiView.isScrollEnabled != shouldScroll {
+            uiView.isScrollEnabled = shouldScroll
+        }
+        if isFocused && !uiView.isFirstResponder {
+            DispatchQueue.main.async {
+                uiView.becomeFirstResponder()
+            }
+        }
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UITextView, context: Context) -> CGSize? {
+        let width = proposal.width ?? uiView.bounds.width
+        guard width > 0 else { return nil }
+        let height = min(max(measuredHeight(for: uiView, width: width), minHeight(for: uiView)), maxHeight(for: uiView))
+        return CGSize(width: width, height: height)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    private func measuredHeight(for textView: UITextView, width: CGFloat) -> CGFloat {
+        textView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height
+    }
+
+    private func minHeight(for textView: UITextView) -> CGFloat {
+        ceil((textView.font ?? UIFont.preferredFont(forTextStyle: .body)).lineHeight)
+    }
+
+    private func maxHeight(for textView: UITextView) -> CGFloat {
+        ceil((textView.font ?? UIFont.preferredFont(forTextStyle: .body)).lineHeight * 5)
+    }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: IrisUIKitComposerTextView
+
+        init(parent: IrisUIKitComposerTextView) {
+            self.parent = parent
+        }
+
+        func textView(
+            _ textView: UITextView,
+            shouldChangeTextIn range: NSRange,
+            replacementText text: String
+        ) -> Bool {
+            guard let current = textView.text as NSString? else { return true }
+            let updated = current.replacingCharacters(in: range, with: text)
+            if parent.text != updated {
+                parent.text = updated
+            }
+            return true
+        }
+
+        func textViewDidChange(_ textView: UITextView) {
+            guard parent.text != textView.text else { return }
+            parent.text = textView.text
+        }
+
+        func textViewDidBeginEditing(_ textView: UITextView) {
+            parent.isFocused = true
+        }
+
+        func textViewDidEndEditing(_ textView: UITextView) {
+            parent.isFocused = false
+        }
+    }
+}
+#endif
 
 private func droppedFileURL(from item: NSSecureCoding?) -> URL? {
     if let url = item as? URL {

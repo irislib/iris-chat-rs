@@ -600,6 +600,10 @@ enum AppPaths {
         return nil
     }
 
+    static func notificationsDisabledForAutomation(environment: [String: String]) -> Bool {
+        environment["IRIS_DISABLE_NOTIFICATIONS"] == "1" || testRunId(environment: environment) != nil
+    }
+
     static func keychainService(environment: [String: String]) -> String {
         let base = "to.iris.chat"
         guard let runId = testRunId(environment: environment) else {
@@ -980,6 +984,7 @@ final class AppManager: ObservableObject {
         appGroupIdentifier: AppPaths.appGroupIdentifier
     )
     private var iosSideEffectGate = IosStateSideEffectGate()
+    private let isUiTestRun: Bool
 #endif
     private var clientDebugLog: [ClientDebugLogEntry] = []
     private var lastRevApplied: UInt64
@@ -1040,9 +1045,10 @@ final class AppManager: ObservableObject {
         self.rust = resolvedRust
         self.secretStore = resolvedSecretStore
 #if os(iOS)
+        self.isUiTestRun = AppPaths.testRunId(environment: environment) != nil
         self.desktopNotifications = desktopNotifications ?? NoopDesktopNotificationPoster()
 #else
-        self.desktopNotifications = desktopNotifications ?? SystemDesktopNotificationPoster()
+        self.desktopNotifications = desktopNotifications ?? SystemDesktopNotificationPoster(environment: environment)
 #endif
         self.dataDir = resolvedDataDir
 #if os(macOS)
@@ -1761,6 +1767,20 @@ final class AppManager: ObservableObject {
     private func postForegroundDecryptedPush(
         resolution: MobilePushNotificationResolution
     ) async {
+        guard !AppPaths.notificationsDisabledForAutomation(
+            environment: ProcessInfo.processInfo.environment
+        ) else {
+            return
+        }
+#if targetEnvironment(simulator)
+        return
+#else
+#if os(iOS)
+        guard !isUiTestRun,
+              AppPaths.testRunId(environment: ProcessInfo.processInfo.environment) == nil else {
+            return
+        }
+#endif
         let content = UNMutableNotificationContent()
         content.title = resolution.title.isEmpty ? "Iris Chat" : resolution.title
         content.body = resolution.body
@@ -1772,6 +1792,7 @@ final class AppManager: ObservableObject {
             trigger: nil
         )
         try? await UNUserNotificationCenter.current().add(request)
+#endif
     }
 
     private func isPushChatOpen(_ chatID: String) -> Bool {
@@ -1934,7 +1955,9 @@ final class AppManager: ObservableObject {
 #if os(iOS)
         processPendingShareFilesIfNeeded()
 #endif
-        UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        if !AppPaths.notificationsDisabledForAutomation(environment: ProcessInfo.processInfo.environment) {
+            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
+        }
 #endif
     }
 
@@ -2381,6 +2404,10 @@ final class AppManager: ObservableObject {
     }
 
     private func syncMobilePushIfNeeded(state: AppState) {
+        guard !isUiTestRun else {
+            iosSideEffectGate.resetMobilePush()
+            return
+        }
         guard nonEmptyTrimmedString(state.mobilePush.ownerPubkeyHex) != nil else {
             iosSideEffectGate.resetMobilePush()
             return
