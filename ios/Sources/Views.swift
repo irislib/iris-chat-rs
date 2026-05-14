@@ -307,6 +307,7 @@ struct RootView: View {
                 title: screenTitle(screen),
                 subtitle: chatHeaderSubtitle(for: screen),
                 subtitleSystemImage: chatHeaderSubtitleSystemImage(for: screen),
+                isChatHeader: isChatScreen(screen),
                 canGoBack: route.depth > 0,
                 onBack: manager.navigateBack,
                 backBadgeCount: backUnreadCount(for: screen),
@@ -331,6 +332,11 @@ struct RootView: View {
         case .chatList, .newChat, .newGroup, .createInvite, .joinInvite, .settings, .chat, .groupDetails, .deviceRoster:
             return true
         }
+    }
+
+    private func isChatScreen(_ screen: Screen) -> Bool {
+        if case .chat = screen { return true }
+        return false
     }
 
     private var currentNavigationRoutes: [NavigationRoute] {
@@ -430,8 +436,9 @@ struct RootView: View {
                     inChatSearch = target
                 } label: {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .semibold))
-                        .frame(width: 36, height: 36)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(Color.primary)
+                        .frame(width: 40, height: 40)
                 }
                 .buttonStyle(.irisPlain)
                 .accessibilityLabel("Search in this chat")
@@ -475,7 +482,7 @@ struct RootView: View {
         return AnyView(
             IrisAvatar(
                 label: chat.displayName,
-                size: 34,
+                size: 40,
                 pictureUrl: chat.pictureUrl,
                 preferences: manager.state.preferences,
                 manager: manager
@@ -748,6 +755,7 @@ struct NavigationShell<Content: View>: View {
     let title: String
     let subtitle: String?
     let subtitleSystemImage: String?
+    let isChatHeader: Bool
     let canGoBack: Bool
     let onBack: () -> Void
     let backBadgeCount: UInt64
@@ -762,6 +770,7 @@ struct NavigationShell<Content: View>: View {
         title: String,
         subtitle: String? = nil,
         subtitleSystemImage: String? = nil,
+        isChatHeader: Bool = false,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
         backBadgeCount: UInt64 = 0,
@@ -775,6 +784,7 @@ struct NavigationShell<Content: View>: View {
         self.title = title
         self.subtitle = subtitle
         self.subtitleSystemImage = subtitleSystemImage
+        self.isChatHeader = isChatHeader
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.backBadgeCount = backBadgeCount
@@ -801,6 +811,7 @@ struct NavigationShell<Content: View>: View {
                         title: title,
                         subtitle: subtitle,
                         subtitleSystemImage: subtitleSystemImage,
+                        isChatHeader: isChatHeader,
                         canGoBack: canGoBack,
                         onBack: onBack,
                         backBadgeCount: backBadgeCount,

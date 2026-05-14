@@ -290,6 +290,7 @@ struct IrisTopBar: View {
     let title: String
     let subtitle: String?
     let subtitleSystemImage: String?
+    let isChatHeader: Bool
     let canGoBack: Bool
     let onBack: () -> Void
     let backBadgeCount: UInt64
@@ -302,6 +303,7 @@ struct IrisTopBar: View {
         title: String,
         subtitle: String? = nil,
         subtitleSystemImage: String? = nil,
+        isChatHeader: Bool = false,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
         backBadgeCount: UInt64 = 0,
@@ -313,6 +315,7 @@ struct IrisTopBar: View {
         self.title = title
         self.subtitle = subtitle
         self.subtitleSystemImage = subtitleSystemImage
+        self.isChatHeader = isChatHeader
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.backBadgeCount = backBadgeCount
@@ -324,11 +327,15 @@ struct IrisTopBar: View {
 
     @ViewBuilder
     private var titleContent: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: isChatHeader ? 12 : 8) {
             titleAccessoryLeading
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .font(
+                        isChatHeader
+                            ? .system(size: 17, weight: .semibold)
+                            : .system(.title3, design: .rounded, weight: .bold)
+                    )
                     .lineLimit(1)
                     .foregroundStyle(palette.textPrimary)
 
@@ -340,9 +347,13 @@ struct IrisTopBar: View {
                         }
 
                         Text(subtitle)
-                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                            .font(
+                                isChatHeader
+                                    ? .system(size: 13, weight: .medium)
+                                    : .system(.caption2, design: .rounded, weight: .semibold)
+                            )
                     }
-                    .foregroundStyle(palette.muted)
+                    .foregroundStyle(isChatHeader ? palette.textPrimary : palette.muted)
                     .lineLimit(1)
                 }
             }
@@ -350,11 +361,9 @@ struct IrisTopBar: View {
     }
 
     var body: some View {
-        // 14pt spacing between the back chevron and the chat avatar
-        // cluster — 8pt felt too tight on the chat screen, fat thumbs
-        // tapping the avatar were catching the chevron and bouncing
-        // back to the list instead.
-        HStack(spacing: 14) {
+        // Chat headers use Signal's tighter navigation-title cluster;
+        // other screens keep the roomier Iris top-bar spacing.
+        HStack(spacing: isChatHeader ? 8 : 14) {
             if canGoBack {
                 Button(action: onBack) {
                     ZStack(alignment: .topTrailing) {
@@ -419,7 +428,7 @@ struct IrisTopBar: View {
         // beneath the bar (the offline banner stripe, the day chip
         // at the top of the timeline, …).
         .padding(.horizontal, IrisLayout.usesDesktopChrome ? 12 : 8)
-        .padding(.bottom, 6)
+        .padding(.bottom, isChatHeader ? 4 : 6)
         .frame(maxWidth: IrisLayout.chromeMaxWidth)
         .frame(maxWidth: .infinity)
     }
@@ -1204,10 +1213,10 @@ struct IrisDayChip: View {
 
     var body: some View {
         Text(text)
-            .font(.system(.caption, design: .rounded, weight: .semibold))
+            .font(.system(.footnote, weight: .medium))
             .foregroundStyle(palette.textPrimary)
             .padding(.horizontal, 12)
-            .padding(.vertical, 6)
+            .padding(.vertical, 3)
             // Signal-style glass day separator. iOS 26+ gets a real
             // capsule glass effect; older iOS falls back to a
             // regular-material blur — both via IrisGlassSurface so

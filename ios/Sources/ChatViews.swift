@@ -26,6 +26,7 @@ struct ChatScreen: View {
     @State private var timelineTopMinY: CGFloat = -.greatestFiniteMagnitude
     @State private var timelineBottomMaxY: CGFloat = .greatestFiniteMagnitude
     @State private var timelineContentHeight: CGFloat = 0
+    @State private var timelineDaySeparatorFrames: [String: ChatTimelineDaySeparatorFrame] = [:]
     @State private var initialScrollPending = true
     @State private var timelineReadyForDisplay = false
     @State private var renderedMessageCount = 0
@@ -162,8 +163,12 @@ struct ChatScreen: View {
                                                 .id(message.id)
                                             }
                                         }
-                                        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 18 : 14)
-                                        .padding(.vertical, 10)
+                                        .padding(
+                                            .horizontal,
+                                            IrisLayout.usesDesktopChrome ? 18 : SignalConversationLayout.contentGutter
+                                        )
+                                        .padding(.top, SignalConversationLayout.contentTopMargin)
+                                        .padding(.bottom, SignalConversationLayout.contentBottomMargin)
                                         .contentShape(Rectangle())
                                         .simultaneousGesture(
                                             TapGesture().onEnded {
@@ -259,6 +264,7 @@ struct ChatScreen: View {
                                     timelineCoordinator.bubblePanRejected = false
                                     timelineTopMinY = -.greatestFiniteMagnitude
                                     timelineContentHeight = 0
+                                    timelineDaySeparatorFrames = [:]
                                     lastTypingSentAt = nil
                                     sentTypingIndicator = false
                                 }
@@ -323,6 +329,9 @@ struct ChatScreen: View {
                                 }
                                 .onPreferenceChange(ChatMessageBubbleFramePreferenceKey.self) { value in
                                     timelineCoordinator.messageBubbleFrames = value
+                                }
+                                .onPreferenceChange(ChatTimelineDaySeparatorFramePreferenceKey.self) { value in
+                                    timelineDaySeparatorFrames = value
                                 }
                                 .task(id: chatTimelineScrollTaskToken(for: chat)) {
                                     guard !chat.messages.isEmpty else {
@@ -421,6 +430,19 @@ struct ChatScreen: View {
                                         .padding(.trailing, 76)
                                         .padding(.bottom, 16)
                                         .allowsHitTesting(false)
+                                }
+
+                                if timelineReadyForDisplay,
+                                   let separator = floatingDaySeparator() {
+                                    HStack {
+                                        Spacer()
+                                        IrisDayChip(text: separator.text)
+                                        Spacer()
+                                    }
+                                    .padding(.top, separator.offsetY)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                    .allowsHitTesting(false)
+                                    .zIndex(3)
                                 }
                             }
                             // Float the reply strip + composer over the
@@ -906,6 +928,27 @@ struct ChatScreen: View {
         return (message?.reactors ?? [], currentChat)
     }
 
+    private func floatingDaySeparator() -> (text: String, offsetY: CGFloat)? {
+        let topY = timelineViewportMinY + SignalConversationLayout.stickyDateHeaderTopSpacing
+        let sortedFrames = timelineDaySeparatorFrames.values.sorted { lhs, rhs in
+            lhs.frame.minY < rhs.frame.minY
+        }
+        guard let currentIndex = sortedFrames.lastIndex(where: { $0.frame.maxY <= topY }) else {
+            return nil
+        }
+
+        let current = sortedFrames[currentIndex]
+        let next = sortedFrames.indices.contains(currentIndex + 1) ? sortedFrames[currentIndex + 1] : nil
+        let currentHeight = max(current.frame.height, SignalConversationLayout.daySeparatorMinimumHeight)
+        var offsetY = SignalConversationLayout.stickyDateHeaderTopSpacing
+        if let next {
+            let nextOffset = next.frame.minY - timelineViewportMinY
+            let maxOffsetY = nextOffset - currentHeight - SignalConversationLayout.stickyDateHeaderMinimumSpacing
+            offsetY = min(offsetY, maxOffsetY)
+        }
+        return (current.text, offsetY)
+    }
+
 }
 
 private struct MessageReactorsSelection: Identifiable {
@@ -924,6 +967,27 @@ private struct MessageInfoSelection: Identifiable {
 }
 
 private let irisMessageClusterGapSecs: UInt64 = 60
+
+private enum SignalConversationLayout {
+    static let bubbleWideCornerRadius: CGFloat = 18
+    static let bubbleSharpCornerRadius: CGFloat = 4
+    static let messageStackSpacing: CGFloat = 8
+    static let defaultMessageSpacing: CGFloat = 12
+    static let compactMessageSpacing: CGFloat = 2
+    static let systemMessageSpacing: CGFloat = 20
+    static let groupMessageAvatarSize: CGFloat = 28
+    static let messageDirectionSpacing: CGFloat = 12
+    static let textInsetHorizontal: CGFloat = 12
+    static let textInsetVertical: CGFloat = 7
+    static let contentGutter: CGFloat = 16
+    static let contentTopMargin: CGFloat = 24
+    static let contentBottomMargin: CGFloat = 8
+    static let daySeparatorTopPadding: CGFloat = 12
+    static let daySeparatorBottomPadding: CGFloat = 8
+    static let daySeparatorMinimumHeight: CGFloat = 22
+    static let stickyDateHeaderTopSpacing: CGFloat = 12
+    static let stickyDateHeaderMinimumSpacing: CGFloat = 5
+}
 
 private func irisStartsMessageCluster(
     previous: ChatMessageSnapshot?,
@@ -1098,6 +1162,22 @@ private struct ChatMessageBubbleFramePreferenceKey: PreferenceKey {
     }
 }
 
+private struct ChatTimelineDaySeparatorFrame: Equatable {
+    let text: String
+    let frame: CGRect
+}
+
+private struct ChatTimelineDaySeparatorFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [String: ChatTimelineDaySeparatorFrame] = [:]
+
+    static func reduce(
+        value: inout [String: ChatTimelineDaySeparatorFrame],
+        nextValue: () -> [String: ChatTimelineDaySeparatorFrame]
+    ) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
+    }
+}
+
 private func chatTimelineIsNearBottom(viewportMaxY: CGFloat, bottomMaxY: CGFloat) -> Bool {
     guard viewportMaxY > 0, bottomMaxY.isFinite else {
         return true
@@ -1181,6 +1261,7 @@ private struct ChatMessageRow: View, Equatable {
         // access. SwiftUI re-evaluates body whenever the parent ChatScreen
         // re-runs, which happens on any AppManager publish.
         let parsed = parseReplyEncodedMessage(message.body)
+        let dayText = irisTimelineDay(message.createdAtSecs)
         let bubble = ChatMessageBubbleShape(
             isOutgoing: message.isOutgoing,
             isFirstInCluster: isFirstInCluster,
@@ -1190,10 +1271,24 @@ private struct ChatMessageRow: View, Equatable {
             if showDayChip {
                 HStack {
                     Spacer()
-                    IrisDayChip(text: irisTimelineDay(message.createdAtSecs))
+                    IrisDayChip(text: dayText)
                     Spacer()
                 }
-                .padding(.vertical, 14)
+                .padding(.top, SignalConversationLayout.daySeparatorTopPadding)
+                .padding(.bottom, SignalConversationLayout.daySeparatorBottomPadding)
+                .background(
+                    GeometryReader { geometry in
+                        Color.clear.preference(
+                            key: ChatTimelineDaySeparatorFramePreferenceKey.self,
+                            value: [
+                                message.id: ChatTimelineDaySeparatorFrame(
+                                    text: dayText,
+                                    frame: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
+                                )
+                            ]
+                        )
+                    }
+                )
             }
 
             if message.kind == .system {
@@ -1209,202 +1304,225 @@ private struct ChatMessageRow: View, Equatable {
                     Spacer(minLength: 24)
                 }
                 .padding(.vertical, 8)
+                .padding(.top, showDayChip ? 0 : SignalConversationLayout.systemMessageSpacing)
                 .accessibilityIdentifier("chatSystemMessage-\(message.id)")
             } else {
-            VStack(
-                alignment: message.isOutgoing ? .trailing : .leading,
-                spacing: 6
-            ) {
-                if chatKind == .group && !message.isOutgoing && isFirstInCluster {
-                    Text(message.author)
-                        .font(.system(.caption, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.muted)
-                }
+                VStack(
+                    alignment: message.isOutgoing ? .trailing : .leading,
+                    spacing: 0
+                ) {
+                    HStack(alignment: .bottom, spacing: SignalConversationLayout.messageStackSpacing) {
+                        if message.isOutgoing {
+                            Spacer(minLength: SignalConversationLayout.messageDirectionSpacing)
+                        } else if chatKind == .group {
+                            groupSenderAvatar
+                        }
 
-                HStack(alignment: .center, spacing: 6) {
-                    if message.isOutgoing {
-                        Spacer(minLength: 56)
-                    }
-
-                    VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 8) {
-                        if let reply = parsed.reply {
-                            ReplyPreviewView(
-                                reply: reply,
-                                isOutgoing: message.isOutgoing,
-                                onTap: { onScrollToQuote(reply) }
-                            )
-                        }
-                        if !parsed.body.isEmpty {
-                            TruncatableMessageBody(
-                                attributed: linkedMessageAttributedString(
-                                    parsed.body,
-                                    foreground: message.isOutgoing
-                                        ? palette.onBubbleMine
-                                        : palette.onBubbleTheirs
-                                ),
-                                isOutgoing: message.isOutgoing
-                            )
-                        }
-                        ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
-                            ChatAttachmentView(
-                                attachment: attachment,
-                                isOutgoing: message.isOutgoing,
-                                downloadAttachment: downloadAttachment,
-                                openAttachment: openAttachment,
-                                onOpenImage: onOpenImage
-                            )
-                        }
-                        if isLastInCluster {
-                            HStack(spacing: 6) {
-                                if message.expiresAtSecs != nil {
-                                    Image(systemName: "timer")
-                                        .font(.system(.caption2, design: .rounded, weight: .semibold))
-                                        .accessibilityLabel("Disappearing message")
-                                        .accessibilityIdentifier("chatMessageDisappearing-\(message.id)")
-                                }
-                                Text(irisMessageClock(message.createdAtSecs))
-                                    .font(.system(.caption2, design: .rounded, weight: .medium))
-                                if message.isOutgoing {
-                                    IrisDeliveryGlyph(delivery: message.delivery)
-                                }
+                        VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
+                            if chatKind == .group && !message.isOutgoing && isFirstInCluster {
+                                Text(message.author)
+                                    .font(.system(.footnote, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(palette.accent)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
-                            .foregroundStyle(
-                                (message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
-                                    .opacity(0.72)
-                            )
+
+                            if let reply = parsed.reply {
+                                ReplyPreviewView(
+                                    reply: reply,
+                                    isOutgoing: message.isOutgoing,
+                                    onTap: { onScrollToQuote(reply) }
+                                )
+                            }
+                            if !parsed.body.isEmpty {
+                                TruncatableMessageBody(
+                                    attributed: linkedMessageAttributedString(
+                                        parsed.body,
+                                        foreground: message.isOutgoing
+                                            ? palette.onBubbleMine
+                                            : palette.onBubbleTheirs
+                                    ),
+                                    isOutgoing: message.isOutgoing
+                                )
+                            }
+                            ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                                ChatAttachmentView(
+                                    attachment: attachment,
+                                    isOutgoing: message.isOutgoing,
+                                    downloadAttachment: downloadAttachment,
+                                    openAttachment: openAttachment,
+                                    onOpenImage: onOpenImage
+                                )
+                            }
+                            if isLastInCluster {
+                                HStack(spacing: 6) {
+                                    if message.expiresAtSecs != nil {
+                                        Image(systemName: "timer")
+                                            .font(.system(.caption2, design: .rounded, weight: .semibold))
+                                            .accessibilityLabel("Disappearing message")
+                                            .accessibilityIdentifier("chatMessageDisappearing-\(message.id)")
+                                    }
+                                    Text(irisMessageClock(message.createdAtSecs))
+                                        .font(.system(.caption2, design: .rounded, weight: .medium))
+                                    if message.isOutgoing {
+                                        IrisDeliveryGlyph(delivery: message.delivery)
+                                    }
+                                }
+                                .foregroundStyle(
+                                    (message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
+                                        .opacity(0.72)
+                                )
+                            }
                         }
-                    }
-                    .foregroundStyle(message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 11)
-                    .background(
-                        bubble
-                            .fill(message.isOutgoing ? palette.bubbleMine : palette.bubbleTheirs)
-                    )
-                    .clipShape(bubble)
-                    .contentShape(bubble)
-                    // Long-press → actions sheet is an iOS-only
-                    // gesture (desktop has the hover-revealed action
-                    // dock instead). Attaching it on macOS — even
-                    // with a no-op closure — captures the mouse
-                    // press, which swallows AttributedString link
-                    // clicks and prevents SwiftUI from drawing the
-                    // pointing-hand cursor over URL spans. Gating it
-                    // here is the actual fix for "link clicks dead +
-                    // no link cursor" on the macOS chat view.
+                        .foregroundStyle(message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
+                        .padding(.horizontal, SignalConversationLayout.textInsetHorizontal)
+                        .padding(.vertical, SignalConversationLayout.textInsetVertical)
+                        .background(
+                            bubble
+                                .fill(message.isOutgoing ? palette.bubbleMine : palette.bubbleTheirs)
+                        )
+                        .clipShape(bubble)
+                        .contentShape(bubble)
+                        // Long-press -> actions sheet is an iOS-only
+                        // gesture (desktop has the hover-revealed action
+                        // dock instead). Attaching it on macOS, even
+                        // with a no-op closure, captures the mouse
+                        // press, which swallows AttributedString link
+                        // clicks and prevents SwiftUI from drawing the
+                        // pointing-hand cursor over URL spans. Gating it
+                        // here is the actual fix for "link clicks dead +
+                        // no link cursor" on the macOS chat view.
 #if os(iOS)
-                    .onLongPressGesture(minimumDuration: 0.4) {
-                        if !IrisLayout.usesDesktopChrome {
-                            PlatformHaptics.messageMenuOpened()
-                            showActionsSheet = true
+                        .onLongPressGesture(minimumDuration: 0.4) {
+                            if !IrisLayout.usesDesktopChrome {
+                                PlatformHaptics.messageMenuOpened()
+                                showActionsSheet = true
+                            }
                         }
-                    }
 #endif
-                    .sheet(isPresented: $showActionsSheet) {
-                        ChatMessageActionsSheet(
-                            message: message,
-                            bodyText: parsed.body,
-                            onReact: { emoji in
-                                showActionsSheet = false
+                        .sheet(isPresented: $showActionsSheet) {
+                            ChatMessageActionsSheet(
+                                message: message,
+                                bodyText: parsed.body,
+                                onReact: { emoji in
+                                    showActionsSheet = false
+                                    onReact(emoji)
+                                },
+                                onShowFullReactionPicker: {
+                                    showActionsSheet = false
+                                    showReactionPicker = true
+                                },
+                                onReply: {
+                                    showActionsSheet = false
+                                    onReply()
+                                },
+                                onCopy: {
+                                    showActionsSheet = false
+                                    PlatformClipboard.setString(copyableMessageText(message))
+                                },
+                                onInfo: {
+                                    showActionsSheet = false
+                                    onInfo()
+                                },
+                                onDelete: {
+                                    showActionsSheet = false
+                                    onDelete()
+                                }
+                            )
+                            .presentationDetents([.medium])
+                            .presentationDragIndicator(.visible)
+                        }
+                        .sheet(isPresented: $showReactionPicker) {
+                            IrisEmojiPicker(
+                                suggestedEmojis: postReactionSuggestions,
+                                onClose: { showReactionPicker = false }
+                            ) { emoji in
+                                showReactionPicker = false
                                 onReact(emoji)
-                            },
-                            onShowFullReactionPicker: {
-                                showActionsSheet = false
-                                showReactionPicker = true
-                            },
-                            onReply: {
-                                showActionsSheet = false
-                                onReply()
-                            },
-                            onCopy: {
-                                showActionsSheet = false
-                                PlatformClipboard.setString(copyableMessageText(message))
-                            },
-                            onInfo: {
-                                showActionsSheet = false
-                                onInfo()
-                            },
-                            onDelete: {
-                                showActionsSheet = false
-                                onDelete()
+                            }
+                            .presentationDetents([.medium, .large])
+                            .presentationDragIndicator(.visible)
+                            .irisDismissOnMacOutsideClick { showReactionPicker = false }
+                        }
+                        .accessibilityIdentifier("chatMessage-\(message.id)")
+                        .background(
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: ChatMessageBubbleFramePreferenceKey.self,
+                                    value: [
+                                        message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
+                                    ]
+                                )
                             }
                         )
-                        .presentationDetents([.medium])
-                        .presentationDragIndicator(.visible)
-                    }
-                    .sheet(isPresented: $showReactionPicker) {
-                        IrisEmojiPicker(
-                            suggestedEmojis: postReactionSuggestions,
-                            onClose: { showReactionPicker = false }
-                        ) { emoji in
-                            showReactionPicker = false
-                            onReact(emoji)
-                        }
-                        .presentationDetents([.medium, .large])
-                        .presentationDragIndicator(.visible)
-                        .irisDismissOnMacOutsideClick { showReactionPicker = false }
-                    }
-                    .accessibilityIdentifier("chatMessage-\(message.id)")
-                    .background(
-                        GeometryReader { geometry in
-                            Color.clear.preference(
-                                key: ChatMessageBubbleFramePreferenceKey.self,
-                                value: [
-                                    message.id: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
-                                ]
-                            )
-                        }
-                    )
-                    // The actual pan is owned by the timeline scroll view.
-                    // This modifier only renders the offset/reveal state,
-                    // keeping vertical flicks on bubbles in the scroll path.
-                    .applyMessageBubbleSwipe(offset: swipeOffset)
-                    // Two macOS-only fixes: cap bubble width (without
-                    // this it stretches the full ~830pt pane), and
-                    // render the hover dock as an overlay (without
-                    // this its appearance reflows the bubble width).
-                    // iOS has no hover and phone widths self-limit.
+                        // The actual pan is owned by the timeline scroll view.
+                        // This modifier only renders the offset/reveal state,
+                        // keeping vertical flicks on bubbles in the scroll path.
+                        .applyMessageBubbleSwipe(offset: swipeOffset)
+                        // Two macOS-only fixes: cap bubble width (without
+                        // this it stretches the full ~830pt pane), and
+                        // render the hover dock as an overlay (without
+                        // this its appearance reflows the bubble width).
+                        // iOS has no hover and phone widths self-limit.
 #if canImport(AppKit)
-                    .frame(maxWidth: IrisLayout.chatBubbleMaxWidth)
-                    .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
-                        if showActionDock {
-                            actionDock()
-                                .fixedSize()
-                                .offset(x: message.isOutgoing ? -132 : 132)
+                        .frame(maxWidth: IrisLayout.chatBubbleMaxWidth)
+                        .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
+                            if showActionDock {
+                                actionDock()
+                                    .fixedSize()
+                                    .offset(x: message.isOutgoing ? -132 : 132)
+                            }
+                        }
+#endif
+                        if !message.isOutgoing {
+                            Spacer(minLength: SignalConversationLayout.messageDirectionSpacing)
                         }
                     }
-#endif
-                    if !message.isOutgoing {
-                        Spacer(minLength: 56)
-                    }
-                }
 
-                if !reactions.isEmpty {
-                    ReactionRow(
-                        reactions: reactions,
-                        isOutgoing: message.isOutgoing,
-                        onTap: onShowReactors
-                    )
+                    if !reactions.isEmpty {
                         // Tuck the reaction pills up under the bubble's
                         // bottom edge so they read as attached to the
                         // message rather than a separate row below it.
+                        ReactionRow(
+                            reactions: reactions,
+                            isOutgoing: message.isOutgoing,
+                            onTap: onShowReactors
+                        )
                         .padding(.top, -14)
                         .padding(message.isOutgoing ? .trailing : .leading, 6)
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
+                .contentShape(Rectangle())
+                .onHover { isHovering = $0 }
+                .padding(.top, rowTopSpacing)
             }
-            .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
-            .contentShape(Rectangle())
-            .onHover { isHovering = $0 }
-            // Within-cluster gap was 4pt (top=4, bottom=0) — visually
-            // smushed once the dark theme moved to pure-black panels,
-            // because the thin slice of background between two
-            // similarly-coloured bubbles read as zero. Bumped to
-            // ~8pt so consecutive same-author messages stay obviously
-            // distinct without losing the visual grouping. Between
-            // clusters stays at the previous ~20pt.
-            .padding(.top, isFirstInCluster ? 10 : 8)
-            .padding(.bottom, isLastInCluster ? 10 : 0)
-            }
+        }
+    }
+
+    private var rowTopSpacing: CGFloat {
+        if showDayChip { return 0 }
+        if message.kind == .system { return SignalConversationLayout.systemMessageSpacing }
+        return isFirstInCluster
+            ? SignalConversationLayout.defaultMessageSpacing
+            : SignalConversationLayout.compactMessageSpacing
+    }
+
+    @ViewBuilder
+    private var groupSenderAvatar: some View {
+        if isLastInCluster {
+            IrisAvatar(
+                label: message.author,
+                size: SignalConversationLayout.groupMessageAvatarSize
+            )
+            .accessibilityHidden(true)
+        } else {
+            Color.clear
+                .frame(
+                    width: SignalConversationLayout.groupMessageAvatarSize,
+                    height: SignalConversationLayout.groupMessageAvatarSize
+                )
+                .accessibilityHidden(true)
         }
     }
 }
@@ -1928,8 +2046,8 @@ private struct ChatMessageBubbleShape: Shape {
     let isLastInCluster: Bool
 
     func path(in rect: CGRect) -> Path {
-        let large: CGFloat = 22
-        let tail: CGFloat = 6
+        let large = SignalConversationLayout.bubbleWideCornerRadius
+        let tail = SignalConversationLayout.bubbleSharpCornerRadius
         let radii: (topLeft: CGFloat, topRight: CGFloat, bottomRight: CGFloat, bottomLeft: CGFloat)
 
         if isFirstInCluster && isLastInCluster {
