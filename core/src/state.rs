@@ -306,6 +306,11 @@ pub struct GroupDetailsSnapshot {
     pub members: Vec<GroupMemberSnapshot>,
 }
 
+#[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]
+pub struct MutualGroupsSnapshot {
+    pub groups: Vec<ChatThreadSnapshot>,
+}
+
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct RelayConnectionSnapshot {
     pub url: String,

@@ -150,6 +150,7 @@ impl AppCore {
             CoreMsg::BuildNearbyPresenceEvent { .. } => "BuildNearbyPresenceEvent",
             CoreMsg::ExportSupportBundle(_) => "ExportSupportBundle",
             CoreMsg::PeerProfileDebug { .. } => "PeerProfileDebug",
+            CoreMsg::MutualGroups { .. } => "MutualGroups",
             CoreMsg::CorePerfCounters(_) => "CorePerfCounters",
             CoreMsg::PrepareForSuspend(_) => "PrepareForSuspend",
             CoreMsg::Shutdown(_) => "Shutdown",
@@ -181,6 +182,12 @@ impl AppCore {
                 reply_tx,
             } => {
                 let _ = reply_tx.send(self.build_peer_profile_debug_snapshot(&owner_input));
+            }
+            CoreMsg::MutualGroups {
+                owner_input,
+                reply_tx,
+            } => {
+                let _ = reply_tx.send(self.mutual_groups_snapshot(&owner_input));
             }
             CoreMsg::PrepareForSuspend(reply_tx) => {
                 self.prepare_for_suspend();

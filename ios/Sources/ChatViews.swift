@@ -7,6 +7,30 @@ import UIKit
 import AppKit
 #endif
 
+private struct IrisBlockedComposerBar: View {
+    @Environment(\.irisPalette) private var palette
+    let onUnblock: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "nosign")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.red)
+            Text("User blocked")
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+            Spacer(minLength: 0)
+            Button("Unblock", action: onUnblock)
+                .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .accessibilityIdentifier("blockedComposerBar")
+    }
+}
+
 struct ChatScreen: View {
     @Environment(\.irisPalette) private var palette
     @Environment(\.irisNavigationHeaderTopInset) private var navigationHeaderTopInset
@@ -95,92 +119,14 @@ struct ChatScreen: View {
                                             ForEach(Array(visibleMessages.enumerated()), id: \.element.id) { index, message in
                                                 let previous = index > 0 ? visibleMessages[index - 1] : nil
                                                 let next = index + 1 < visibleMessages.count ? visibleMessages[index + 1] : nil
-                                                let showDayChip = previous == nil || !irisSameTimelineDay(previous!.createdAtSecs, message.createdAtSecs)
-                                                let isFirstInCluster = irisStartsMessageCluster(
+                                                chatMessageRow(
+                                                    message: message,
                                                     previous: previous,
-                                                    message: message,
-                                                    chatKind: chat.kind
-                                                )
-                                                let isLastInCluster = next.map {
-                                                    irisStartsMessageCluster(
-                                                        previous: message,
-                                                        message: $0,
-                                                        chatKind: chat.kind
-                                                    )
-                                                } ?? true
-                                                let showsGroupSenderName = irisShowsGroupSenderName(
-                                                    previous: previous,
-                                                    message: message,
-                                                    chatKind: chat.kind
-                                                )
-                                                let showsGroupSenderAvatar = irisShowsGroupSenderAvatar(
-                                                    message: message,
                                                     next: next,
-                                                    chatKind: chat.kind
+                                                    chat: chat,
+                                                    hidesInlineDayChip: floatingSeparator?.messageId == message.id,
+                                                    proxy: proxy
                                                 )
-                                                let hidesInlineDayChip = floatingSeparator?.messageId == message.id
-
-                                                EquatableView(content: ChatMessageRow(
-                                                    message: message,
-                                                    chatKind: chat.kind,
-                                                    showDayChip: showDayChip,
-                                                    hidesInlineDayChip: hidesInlineDayChip,
-                                                    isFirstInCluster: isFirstInCluster,
-                                                    isLastInCluster: isLastInCluster,
-                                                    showsGroupSenderName: showsGroupSenderName,
-                                                    showsGroupSenderAvatar: showsGroupSenderAvatar,
-                                                    reactions: message.reactions,
-                                                    swipeOffset: activeBubbleSwipe?.messageId == message.id ? activeBubbleSwipe?.offset ?? 0 : 0,
-                                                    onReply: {
-                                                        replyTarget = message
-                                                        isComposerFocused = true
-                                                    },
-                                                    onReact: { emoji in
-                                                        manager.dispatch(
-                                                            .toggleReaction(
-                                                                chatId: chatId,
-                                                                messageId: message.id,
-                                                                emoji: emoji
-                                                            )
-                                                        )
-                                                    },
-                                                    onInfo: {
-                                                        messageInfoSelection = MessageInfoSelection(
-                                                            chatId: chat.chatId,
-                                                            messageId: message.id,
-                                                            snapshot: message
-                                                        )
-                                                    },
-                                                    onDelete: {
-                                                        manager.dispatch(
-                                                            .deleteLocalMessage(chatId: chatId, messageId: message.id)
-                                                        )
-                                                        if replyTarget?.id == message.id {
-                                                            replyTarget = nil
-                                                        }
-                                                    },
-                                                    onScrollToQuote: { reply in
-                                                        scrollToQuotedMessage(
-                                                            from: message,
-                                                            reply: reply,
-                                                            in: chat.messages,
-                                                            proxy: proxy
-                                                        )
-                                                    },
-                                                    onShowReactors: {
-                                                        reactorsSelection = MessageReactorsSelection(messageId: message.id)
-                                                    },
-                                                    downloadAttachment: { attachment in
-                                                        await manager.downloadAttachment(attachment)
-                                                    },
-                                                    openAttachment: { attachment in
-                                                        await manager.openAttachment(attachment)
-                                                    },
-                                                    onOpenImage: { data, filename in
-                                                        imageViewerItem = ImageViewerItem(data: data, filename: filename)
-                                                    }
-                                                ))
-                                                .id(message.id)
                                             }
                                         }
                                         .padding(
@@ -482,48 +428,55 @@ struct ChatScreen: View {
                             // band below the ScrollView, with no content
                             // behind it for the blur to reveal.
                             .safeAreaInset(edge: .bottom, spacing: 0) {
+                                let composerBlocked = chat.kind == .direct && manager.isUserBlocked(chat.chatId)
                                 VStack(spacing: 0) {
-                                    if let replyTarget {
+                                    if let replyTarget, !composerBlocked {
                                         IrisReplyComposerStrip(message: replyTarget) {
                                             self.replyTarget = nil
                                         }
                                     }
-                                    IrisComposerBar(
-                                        draft: $draft,
-                                        attachments: $selectedAttachments,
-                                        placeholder: "Message",
-                                        isSending: manager.state.busy.sendingMessage,
-                                        isUploading: manager.state.busy.uploadingAttachment,
-                                        isFocused: $isComposerFocused,
-                                        onDraftChange: {
-                                            sendTypingIfNeeded()
-                                        },
-                                        onAttach: { urls in
-                                            do {
-                                                selectedAttachments.append(
-                                                    contentsOf: try manager.stageOutgoingAttachments(urls)
-                                                )
-                                            } catch {
-                                                manager.showAttachmentOpenError()
-                                            }
+                                    if composerBlocked {
+                                        IrisBlockedComposerBar {
+                                            manager.setUserBlocked(chat.chatId, blocked: false)
                                         }
-                                    ) { composerText in
-                                        let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
-                                        stopTypingIfNeeded()
-                                        resumeTimelineAutoFollow()
-                                        shouldFollowLatest = true
-                                        forceScrollToLatest = true
-                                        let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
-                                        replyTarget = nil
-                                        if selectedAttachments.isEmpty {
-                                            draft = ""
-                                            manager.dispatch(.sendMessage(chatId: chatId, text: outgoingText))
-                                        } else {
-                                            let attachments = selectedAttachments
-                                            selectedAttachments = []
-                                            draft = ""
-                                            manager.sendAttachments(chatId: chatId, attachments: attachments, caption: outgoingText)
+                                    } else {
+                                        IrisComposerBar(
+                                            draft: $draft,
+                                            attachments: $selectedAttachments,
+                                            placeholder: "Message",
+                                            isSending: manager.state.busy.sendingMessage,
+                                            isUploading: manager.state.busy.uploadingAttachment,
+                                            isFocused: $isComposerFocused,
+                                            onDraftChange: {
+                                                sendTypingIfNeeded()
+                                            },
+                                            onAttach: { urls in
+                                                do {
+                                                    selectedAttachments.append(
+                                                        contentsOf: try manager.stageOutgoingAttachments(urls)
+                                                    )
+                                                } catch {
+                                                    manager.showAttachmentOpenError()
+                                                }
+                                            }
+                                        ) { composerText in
+                                            let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+                                            guard !text.isEmpty || !selectedAttachments.isEmpty else { return }
+                                            stopTypingIfNeeded()
+                                            resumeTimelineAutoFollow()
+                                            shouldFollowLatest = true
+                                            forceScrollToLatest = true
+                                            let outgoingText = replyEncodedMessage(reply: replyTarget, text: text)
+                                            replyTarget = nil
+                                            if selectedAttachments.isEmpty {
+                                                draft = ""
+                                                manager.dispatch(.sendMessage(chatId: chatId, text: outgoingText))
+                                            } else {
+                                                let attachments = selectedAttachments
+                                                selectedAttachments = []
+                                                draft = ""
+                                                manager.sendAttachments(chatId: chatId, attachments: attachments, caption: outgoingText)
+                                            }
                                         }
                                     }
                                 }
@@ -546,7 +499,10 @@ struct ChatScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .modifier(EscDismissesReply(replyTarget: $replyTarget))
-        .modifier(ChatImageViewerPresenter(item: $imageViewerItem))
+        .modifier(ChatImageViewerPresenter(item: $imageViewerItem) { text in
+            imageViewerItem = nil
+            manager.startForward(text: text)
+        })
         .sheet(item: $messageInfoSelection) { selection in
             let context = messageInfoContext(for: selection)
             MessageInfoSheet(message: context.message, chat: context.chat, manager: manager) {
@@ -609,6 +565,109 @@ struct ChatScreen: View {
             .onEnded { value in
                 handleMessageBubbleDragEnded(value)
             }
+    }
+
+    private func chatMessageRow(
+        message: ChatMessageSnapshot,
+        previous: ChatMessageSnapshot?,
+        next: ChatMessageSnapshot?,
+        chat: CurrentChatSnapshot,
+        hidesInlineDayChip: Bool,
+        proxy: ScrollViewProxy
+    ) -> some View {
+        let showDayChip = previous == nil || !irisSameTimelineDay(previous!.createdAtSecs, message.createdAtSecs)
+        let isFirstInCluster = irisStartsMessageCluster(
+            previous: previous,
+            message: message,
+            chatKind: chat.kind
+        )
+        let isLastInCluster = next.map {
+            irisStartsMessageCluster(
+                previous: message,
+                message: $0,
+                chatKind: chat.kind
+            )
+        } ?? true
+        let showsGroupSenderName = irisShowsGroupSenderName(
+            previous: previous,
+            message: message,
+            chatKind: chat.kind
+        )
+        let showsGroupSenderAvatar = irisShowsGroupSenderAvatar(
+            message: message,
+            next: next,
+            chatKind: chat.kind
+        )
+
+        return EquatableView(content: ChatMessageRow(
+            message: message,
+            chatKind: chat.kind,
+            showDayChip: showDayChip,
+            hidesInlineDayChip: hidesInlineDayChip,
+            isFirstInCluster: isFirstInCluster,
+            isLastInCluster: isLastInCluster,
+            showsGroupSenderName: showsGroupSenderName,
+            showsGroupSenderAvatar: showsGroupSenderAvatar,
+            reactions: message.reactions,
+            swipeOffset: activeBubbleSwipe?.messageId == message.id ? activeBubbleSwipe?.offset ?? 0 : 0,
+            onReply: {
+                replyTarget = message
+                isComposerFocused = true
+            },
+            onForward: {
+                manager.startForward(text: forwardableMessageText(message))
+            },
+            onForwardAttachment: { attachment in
+                manager.startForward(text: forwardableAttachmentText(attachment))
+            },
+            onReact: { emoji in
+                manager.dispatch(
+                    .toggleReaction(
+                        chatId: chatId,
+                        messageId: message.id,
+                        emoji: emoji
+                    )
+                )
+            },
+            onInfo: {
+                messageInfoSelection = MessageInfoSelection(
+                    chatId: chat.chatId,
+                    messageId: message.id,
+                    snapshot: message
+                )
+            },
+            onDelete: {
+                manager.dispatch(.deleteLocalMessage(chatId: chatId, messageId: message.id))
+                if replyTarget?.id == message.id {
+                    replyTarget = nil
+                }
+            },
+            onScrollToQuote: { reply in
+                scrollToQuotedMessage(
+                    from: message,
+                    reply: reply,
+                    in: chat.messages,
+                    proxy: proxy
+                )
+            },
+            onShowReactors: {
+                reactorsSelection = MessageReactorsSelection(messageId: message.id)
+            },
+            downloadAttachment: { attachment in
+                await manager.downloadAttachment(attachment)
+            },
+            openAttachment: { attachment in
+                await manager.openAttachment(attachment)
+            },
+            onOpenImage: { data, attachment in
+                imageViewerItem = ImageViewerItem(
+                    data: data,
+                    filename: attachment.filename,
+                    forwardText: forwardableAttachmentText(attachment)
+                )
+            }
+        ))
+        .id(message.id)
     }
 
     private func maybeLoadOlderMessages(chat: CurrentChatSnapshot) {
@@ -839,6 +898,7 @@ struct ChatScreen: View {
     }
 
     private func sendTypingIfNeeded() {
+        guard !manager.isUserBlocked(chatId) else { return }
         let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             stopTypingIfNeeded()
@@ -1399,6 +1459,8 @@ private struct ChatMessageRow: View, Equatable {
     let reactions: [MessageReactionSnapshot]
     let swipeOffset: CGFloat
     let onReply: () -> Void
+    let onForward: () -> Void
+    let onForwardAttachment: (MessageAttachmentSnapshot) -> Void
     let onReact: (String) -> Void
     let onInfo: () -> Void
     let onDelete: () -> Void
@@ -1406,7 +1468,7 @@ private struct ChatMessageRow: View, Equatable {
     let onShowReactors: () -> Void
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
-    let onOpenImage: (Data, String) -> Void
+    let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
 
     @State private var isHovering = false
     @State private var showReactionPicker = false
@@ -1425,6 +1487,7 @@ private struct ChatMessageRow: View, Equatable {
         ChatMessageActionDock(
             onShowReactionPicker: { showReactionPicker = true },
             onReply: onReply,
+            onForward: onForward,
             onCopy: {
                 PlatformClipboard.setString(copyableMessageText(message))
             },
@@ -1536,7 +1599,10 @@ private struct ChatMessageRow: View, Equatable {
                                     isOutgoing: message.isOutgoing,
                                     downloadAttachment: downloadAttachment,
                                     openAttachment: openAttachment,
-                                    onOpenImage: onOpenImage
+                                    onOpenImage: onOpenImage,
+                                    onForward: {
+                                        onForwardAttachment(attachment)
+                                    }
                                 )
                             }
                             if isLastInCluster {
@@ -1601,6 +1667,10 @@ private struct ChatMessageRow: View, Equatable {
                                     showActionsSheet = false
                                     onReply()
                                 },
+                                onForward: {
+                                    showActionsSheet = false
+                                    onForward()
+                                },
                                 onCopy: {
                                     showActionsSheet = false
                                     PlatformClipboard.setString(copyableMessageText(message))
@@ -1653,7 +1723,7 @@ private struct ChatMessageRow: View, Equatable {
                             if showActionDock {
                                 actionDock()
                                     .fixedSize()
-                                    .offset(x: message.isOutgoing ? -132 : 132)
+                                    .offset(x: message.isOutgoing ? -164 : 164)
                             }
                         }
 #endif
@@ -2339,6 +2409,7 @@ private struct ChatMessageActionDock: View {
     @Environment(\.irisPalette) private var palette
     let onShowReactionPicker: () -> Void
     let onReply: () -> Void
+    let onForward: () -> Void
     let onCopy: () -> Void
     let onInfo: () -> Void
     let onDelete: () -> Void
@@ -2358,9 +2429,10 @@ private struct ChatMessageActionDock: View {
             .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageReactButton")
             dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
+            dockButton("arrowshape.turn.up.right", identifier: "messageForwardButton", action: onForward)
             Menu {
                 Button("Copy text", action: onCopy)
-                Button("Message Details", action: onInfo)
+                Button("Info", action: onInfo)
                 Button("Delete message", role: .destructive, action: onDelete)
             } label: {
                 Image(systemName: "ellipsis")
@@ -2491,6 +2563,7 @@ private struct ChatMessageActionsSheet: View {
     let onReact: (String) -> Void
     let onShowFullReactionPicker: () -> Void
     let onReply: () -> Void
+    let onForward: () -> Void
     let onCopy: () -> Void
     let onInfo: () -> Void
     let onDelete: () -> Void
@@ -2501,8 +2574,9 @@ private struct ChatMessageActionsSheet: View {
             previewCard
             VStack(spacing: 0) {
                 actionRow(icon: "arrowshape.turn.up.left", label: "Reply", action: onReply)
+                actionRow(icon: "arrowshape.turn.up.right", label: "Forward", action: onForward)
                 actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
-                actionRow(icon: "info.circle", label: "Message Details", action: onInfo)
+                actionRow(icon: "info.circle", label: "Info", action: onInfo)
                 actionRow(icon: "trash", label: "Delete locally", destructive: true, action: onDelete)
             }
             .background(
@@ -3498,7 +3572,8 @@ private struct ChatAttachmentView: View {
     let isOutgoing: Bool
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
     let openAttachment: (MessageAttachmentSnapshot) async -> Void
-    let onOpenImage: (Data, String) -> Void
+    let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
+    let onForward: () -> Void
 
     @State private var localImageData: Data?
     @State private var localPreviewImage: PlatformImage?
@@ -3510,12 +3585,12 @@ private struct ChatAttachmentView: View {
         if attachment.isImage {
             Button {
                 if let localImageData {
-                    onOpenImage(localImageData, attachment.filename)
+                    onOpenImage(localImageData, attachment)
                 } else {
                     Task {
                         await loadImageIfNeeded()
                         if let localImageData {
-                            onOpenImage(localImageData, attachment.filename)
+                            onOpenImage(localImageData, attachment)
                         }
                     }
                 }
@@ -3547,6 +3622,12 @@ private struct ChatAttachmentView: View {
             }
             .buttonStyle(.irisPlain)
             .accessibilityLabel(attachment.filename)
+            .contextMenu {
+                Button("Forward", action: onForward)
+                Button("Copy link") {
+                    PlatformClipboard.setString(attachment.htreeUrl)
+                }
+            }
             .task(id: attachment.htreeUrl) {
                 await loadImageIfNeeded()
             }
@@ -3591,6 +3672,7 @@ private struct ChatAttachmentView: View {
             .buttonStyle(.irisPlain)
             .disabled(isOpeningAttachment)
             .contextMenu {
+                Button("Forward", action: onForward)
                 Button("Copy link") {
                     PlatformClipboard.setString(attachment.htreeUrl)
                 }
@@ -3634,6 +3716,7 @@ private struct ImageViewerItem: Identifiable, Equatable {
     let id = UUID()
     let data: Data
     let filename: String
+    let forwardText: String?
 
     var isAnimated: Bool {
         isAnimatedImage(data: data, filename: filename)
@@ -3653,12 +3736,13 @@ private struct ImageViewerItem: Identifiable, Equatable {
 
 private struct ChatImageViewerPresenter: ViewModifier {
     @Binding var item: ImageViewerItem?
+    let onForwardText: (String) -> Void
 
     func body(content: Content) -> some View {
         #if os(iOS)
         content
             .fullScreenCover(item: $item) { viewerItem in
-                IrisImageViewer(item: viewerItem) {
+                IrisImageViewer(item: viewerItem, onForwardText: onForwardText) {
                     item = nil
                 }
             }
@@ -3666,7 +3750,7 @@ private struct ChatImageViewerPresenter: ViewModifier {
         content
             .overlay {
                 if let item {
-                    IrisImageViewer(item: item) {
+                    IrisImageViewer(item: item, onForwardText: onForwardText) {
                         self.item = nil
                     }
                 }
@@ -3680,6 +3764,7 @@ private struct IrisImageViewer: View {
     @Environment(\.verticalSizeClass) private var verticalSizeClass
     #endif
     let item: ImageViewerItem
+    let onForwardText: (String) -> Void
     let onClose: () -> Void
     @State private var sharedFileURL: URL?
 
@@ -3742,6 +3827,7 @@ private struct IrisImageViewer: View {
     private func topChrome(topInset: CGFloat) -> some View {
         HStack(spacing: 10) {
             if usesCompactTopActions {
+                IrisImageViewerForwardButton(item: item, onForwardText: onForwardText)
                 IrisImageViewerShareButton(sharedFileURL: sharedFileURL)
             }
             Spacer(minLength: 0)
@@ -3760,6 +3846,8 @@ private struct IrisImageViewer: View {
 
     private func bottomChrome(bottomInset: CGFloat) -> some View {
         HStack(spacing: 0) {
+            IrisImageViewerForwardButton(item: item, onForwardText: onForwardText)
+            Spacer(minLength: 12)
             IrisImageViewerShareButton(sharedFileURL: sharedFileURL)
             Spacer(minLength: 0)
         }
@@ -3814,6 +3902,25 @@ private struct IrisImageViewerShareButton: View {
         .buttonStyle(.irisPlain)
         .accessibilityLabel("Share image")
         .accessibilityIdentifier("imageViewerShareButton")
+    }
+}
+
+private struct IrisImageViewerForwardButton: View {
+    let item: ImageViewerItem
+    let onForwardText: (String) -> Void
+
+    var body: some View {
+        if let forwardText = item.forwardText,
+           !forwardText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Button {
+                onForwardText(forwardText)
+            } label: {
+                IrisImageViewerIconButtonLabel(systemName: "arrowshape.turn.up.right")
+            }
+            .buttonStyle(.irisPlain)
+            .accessibilityLabel("Forward")
+            .accessibilityIdentifier("imageViewerForwardButton")
+        }
     }
 }
 
@@ -4005,6 +4112,21 @@ private func copyableMessageText(_ message: ChatMessageSnapshot) -> String {
     }
     pieces.append(contentsOf: message.attachments.map(\.htreeUrl))
     return pieces.joined(separator: "\n")
+}
+
+private func forwardableMessageText(_ message: ChatMessageSnapshot) -> String {
+    let parsed = parseReplyEncodedMessage(message.body)
+    var pieces: [String] = []
+    let body = parsed.body.trimmingCharacters(in: .whitespacesAndNewlines)
+    if !body.isEmpty {
+        pieces.append(body)
+    }
+    pieces.append(contentsOf: message.attachments.map(forwardableAttachmentText).filter { !$0.isEmpty })
+    return pieces.joined(separator: "\n")
+}
+
+private func forwardableAttachmentText(_ attachment: MessageAttachmentSnapshot) -> String {
+    attachment.htreeUrl.trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 private func messageInfoText(_ message: ChatMessageSnapshot, chat: CurrentChatSnapshot? = nil) -> String {

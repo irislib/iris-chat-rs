@@ -77,6 +77,7 @@ pub(crate) struct FfiPerfCounters {
     pub ingest_nearby_event_json: AtomicU64,
     pub export_support_bundle_json: AtomicU64,
     pub peer_profile_debug: AtomicU64,
+    pub mutual_groups: AtomicU64,
     pub prepare_for_suspend: AtomicU64,
 }
 
@@ -88,6 +89,7 @@ pub struct FfiPerfCountersSnapshot {
     pub ingest_nearby_event_json: u64,
     pub export_support_bundle_json: u64,
     pub peer_profile_debug: u64,
+    pub mutual_groups: u64,
     pub prepare_for_suspend: u64,
 }
 
@@ -277,6 +279,7 @@ impl FfiApp {
                 .export_support_bundle_json
                 .load(Ordering::Relaxed),
             peer_profile_debug: self.perf.peer_profile_debug.load(Ordering::Relaxed),
+            mutual_groups: self.perf.mutual_groups.load(Ordering::Relaxed),
             prepare_for_suspend: self.perf.prepare_for_suspend.load(Ordering::Relaxed),
         }
     }
@@ -582,6 +585,30 @@ impl FfiApp {
             }
             reply_rx.recv_timeout(Duration::from_secs(2)).ok().flatten()
         })
+    }
+
+    pub fn mutual_groups(&self, owner_input: String) -> MutualGroupsSnapshot {
+        self.perf.mutual_groups.fetch_add(1, Ordering::Relaxed);
+        ffi_or(
+            "ffiapp.mutual_groups",
+            MutualGroupsSnapshot::default(),
+            || {
+                let (reply_tx, reply_rx) = flume::bounded(1);
+                if self
+                    .foreground_tx
+                    .send(CoreMsg::MutualGroups {
+                        owner_input,
+                        reply_tx,
+                    })
+                    .is_err()
+                {
+                    return MutualGroupsSnapshot::default();
+                }
+                reply_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .unwrap_or_default()
+            },
+        )
     }
 
     pub fn prepare_for_suspend(&self) {

@@ -170,6 +170,24 @@ extension FfiApp {
         }
     }
 
+    func mutualGroupsSafely(ownerInput: String) -> [ChatThreadSnapshot] {
+        do {
+            uniffiEnsureIrisChatCoreInitialized()
+            var callStatus = makeRustCallStatus()
+            let input = try lowerString(ownerInput)
+            let buffer = uniffi_iris_chat_core_fn_method_ffiapp_mutual_groups(
+                self.uniffiClonePointer(),
+                input,
+                &callStatus
+            )
+            try checkRustCallStatus(callStatus)
+            return try FfiConverterTypeMutualGroupsSnapshot_lift(buffer).groups
+        } catch {
+            logSafeFfiFailure("ffiapp.mutualGroups", error)
+            return []
+        }
+    }
+
     func prepareForSuspendSafely() {
         ffiVoid("ffiapp.prepareForSuspend") { status in
             uniffi_iris_chat_core_fn_method_ffiapp_prepare_for_suspend(

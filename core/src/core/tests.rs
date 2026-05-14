@@ -7427,6 +7427,70 @@ fn test_group_snapshot(
 }
 
 #[test]
+fn appcore_mutual_groups_snapshot_filters_to_visible_shared_groups() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let other = Keys::generate();
+    let mut core = logged_in_test_core("mutual-groups", &owner, &device);
+
+    let shared = test_group_snapshot(
+        "shared-group",
+        "Shared group",
+        owner.public_key(),
+        vec![owner.public_key(), peer.public_key()],
+        vec![owner.public_key()],
+        2,
+    );
+    let not_shared = test_group_snapshot(
+        "other-group",
+        "Other group",
+        owner.public_key(),
+        vec![owner.public_key(), other.public_key()],
+        vec![owner.public_key()],
+        3,
+    );
+    let hidden = test_group_snapshot(
+        "hidden-group",
+        "Hidden group",
+        owner.public_key(),
+        vec![owner.public_key(), peer.public_key()],
+        vec![owner.public_key()],
+        4,
+    );
+
+    for group in [&shared, &not_shared, &hidden] {
+        core.groups.insert(group.group_id.clone(), group.clone());
+    }
+    for group in [&shared, &not_shared] {
+        let chat_id = group_chat_id(&group.group_id);
+        core.threads.insert(
+            chat_id.clone(),
+            ThreadRecord {
+                chat_id: chat_id.clone(),
+                unread_count: 0,
+                updated_at_secs: group.updated_at.get(),
+                messages: vec![test_chat_message(
+                    &chat_id,
+                    &format!("msg-{}", group.group_id),
+                    "hello",
+                    group.updated_at.get(),
+                    false,
+                )],
+                draft: String::new(),
+            },
+        );
+    }
+
+    let snapshot = core.mutual_groups_snapshot(&peer.public_key().to_hex());
+
+    assert_eq!(snapshot.groups.len(), 1);
+    assert_eq!(snapshot.groups[0].chat_id, group_chat_id("shared-group"));
+    assert_eq!(snapshot.groups[0].display_name, "Shared group");
+    assert_eq!(snapshot.groups[0].member_count, 2);
+}
+
+#[test]
 fn group_runtime_chat_message_is_persisted() {
     let owner = Keys::generate();
     let device = Keys::generate();

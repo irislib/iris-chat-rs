@@ -665,7 +665,7 @@ private struct ShareTargetSheet: View {
                     chatList
                 }
             }
-            .navigationTitle("Choose recipients")
+            .navigationTitle(share.isForwarding ? "Forward" : "Choose recipients")
 #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
             .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
@@ -2052,6 +2052,10 @@ private struct DirectChatInfoScreen: View {
     @State private var profileDebug: PeerProfileDebugSnapshot?
     @State private var loadedProfileDebugFor: String?
     @State private var profilePictureViewerItem: IrisProfilePictureViewerItem?
+    @State private var commonGroups: [ChatThreadSnapshot] = []
+    @State private var commonGroupsLoadedFor: String?
+    @State private var showingBlockConfirmation = false
+    @State private var showingUnblockConfirmation = false
 
     private var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
@@ -2061,42 +2065,68 @@ private struct DirectChatInfoScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if let chat {
-                    HStack(spacing: 14) {
+                    VStack(spacing: 10) {
                         directChatAvatar(chat)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(chat.displayName)
-                                .font(.system(.title3, design: .rounded, weight: .bold))
+                        Text(chat.displayName)
+                            .font(.system(.title2, design: .rounded, weight: .bold))
+                            .foregroundStyle(palette.textPrimary)
+                            .multilineTextAlignment(.center)
+                        if let subtitle = chat.subtitle, !subtitle.isEmpty {
+                            Text(subtitle)
+                                .font(.system(.subheadline, design: .rounded))
+                                .foregroundStyle(palette.muted)
+                                .multilineTextAlignment(.center)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 22)
+
+                    if !commonGroups.isEmpty {
+                        IrisSectionCard {
+                            Text("Groups in common")
+                                .font(.system(.headline, design: .rounded, weight: .semibold))
                                 .foregroundStyle(palette.textPrimary)
-                            if let subtitle = chat.subtitle, !subtitle.isEmpty {
-                                Text(subtitle)
-                                    .font(.system(.footnote, design: .rounded))
-                                    .foregroundStyle(palette.muted)
+
+                            VStack(spacing: 0) {
+                                ForEach(Array(commonGroups.enumerated()), id: \.element.chatId) { index, group in
+                                    commonGroupRow(group)
+                                    if index < commonGroups.count - 1 {
+                                        Divider().overlay(palette.border)
+                                            .padding(.leading, 50)
+                                    }
+                                }
                             }
                         }
-                        Spacer(minLength: 0)
                     }
-                    .padding(.top, 8)
 
-                    IrisCopyButton(label: "Copy user ID", value: peerInputToNpub(input: chatId))
-                        .accessibilityIdentifier("directChatCopyUserIdButton")
-
-                    Button {
-                        manager.dispatch(.setChatMuted(chatId: chatId, muted: !chat.isMuted))
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: chat.isMuted ? "bell.fill" : "bell.slash.fill")
-                            Text(chat.isMuted ? "Unmute chat" : "Mute chat")
+                    IrisSectionCard {
+                        Button {
+                            manager.dispatch(.setChatMuted(chatId: chatId, muted: !chat.isMuted))
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: chat.isMuted ? "bell.fill" : "bell.slash.fill")
+                                    .frame(width: 24)
+                                Text(chat.isMuted ? "Unmute chat" : "Mute chat")
+                                    .font(.system(.body, design: .rounded, weight: .semibold))
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(palette.textPrimary)
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
                         }
-                        .foregroundStyle(palette.textPrimary)
-                        .padding(.vertical, 8)
+                        .buttonStyle(.irisPlain)
+                        .accessibilityIdentifier("directChatMuteButton")
+
+                        Divider().overlay(palette.border)
+
+                        IrisCopyButton(label: "Copy user ID", value: peerInputToNpub(input: chatId), compact: false)
+                            .accessibilityIdentifier("directChatCopyUserIdButton")
                     }
-                    .buttonStyle(.irisPlain)
-                    .accessibilityIdentifier("directChatMuteButton")
 
                     IrisSectionCard {
                         CardHeader(
                             title: "Disappearing messages",
-                            subtitle: "Messages auto-delete after the chosen interval."
+                            subtitle: nil
                         )
                         VStack(spacing: 0) {
                             ForEach(disappearingMessageOptions, id: \.0) { label, ttlSeconds in
@@ -2131,19 +2161,46 @@ private struct DirectChatInfoScreen: View {
                         loadProfileDebugIfNeeded()
                     }
 
-                    Button {
-                        manager.dispatch(.deleteChat(chatId: chatId))
-                        onClose()
-                    } label: {
-                        HStack(spacing: 8) {
-                            Image(systemName: "trash")
-                            Text("Delete chat")
+                    IrisSectionCard {
+                        Button(role: manager.isUserBlocked(chatId) ? nil : .destructive) {
+                            if manager.isUserBlocked(chatId) {
+                                showingUnblockConfirmation = true
+                            } else {
+                                showingBlockConfirmation = true
+                            }
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: manager.isUserBlocked(chatId) ? "checkmark.shield.fill" : "nosign")
+                                    .frame(width: 24)
+                                Text(manager.isUserBlocked(chatId) ? "Unblock user" : "Block user")
+                                    .font(.system(.body, design: .rounded, weight: .semibold))
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(manager.isUserBlocked(chatId) ? palette.textPrimary : .red)
+                            .contentShape(Rectangle())
                         }
-                        .foregroundStyle(.red)
-                        .padding(.vertical, 8)
+                        .buttonStyle(.irisPlain)
+                        .accessibilityIdentifier("directChatBlockButton")
+
+                        Divider().overlay(palette.border)
+
+                        Button(role: .destructive) {
+                            manager.dispatch(.deleteChat(chatId: chatId))
+                            onClose()
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "trash")
+                                    .frame(width: 24)
+                                Text("Delete chat")
+                                    .font(.system(.body, design: .rounded, weight: .semibold))
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(.red)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.irisPlain)
+                        .accessibilityIdentifier("directChatDeleteButton")
                     }
-                    .buttonStyle(.irisPlain)
-                    .accessibilityIdentifier("directChatDeleteButton")
                 } else {
                     ProgressView()
                         .padding(.top, 40)
@@ -2160,6 +2217,31 @@ private struct DirectChatInfoScreen: View {
             preferences: manager.state.preferences,
             manager: manager
         )
+        .task(id: chatId) {
+            loadCommonGroups()
+        }
+        .confirmationDialog(
+            "Block user?",
+            isPresented: $showingBlockConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Block user", role: .destructive) {
+                manager.setUserBlocked(chatId, blocked: true)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("You will not send messages to this user.")
+        }
+        .confirmationDialog(
+            "Unblock user?",
+            isPresented: $showingUnblockConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Unblock user") {
+                manager.setUserBlocked(chatId, blocked: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     @ViewBuilder
@@ -2185,13 +2267,46 @@ private struct DirectChatInfoScreen: View {
     private func directChatAvatarImage(_ chat: CurrentChatSnapshot) -> some View {
         IrisAvatar(
             label: chat.displayName,
-            size: 72,
+            size: 96,
             emphasize: true,
             pictureUrl: chat.pictureUrl,
             preferences: manager.state.preferences,
             manager: manager,
             loadedImageIdentifier: "directChatProfileAvatarImage"
         )
+    }
+
+    @ViewBuilder
+    private func commonGroupRow(_ group: ChatThreadSnapshot) -> some View {
+        Button {
+            if let groupId = groupId(from: group.chatId) {
+                manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
+            }
+        } label: {
+            HStack(spacing: 12) {
+                IrisAvatar(
+                    label: group.displayName,
+                    size: 38,
+                    emphasize: false,
+                    pictureUrl: group.pictureUrl,
+                    preferences: manager.state.preferences,
+                    manager: manager
+                )
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(group.displayName)
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineLimit(1)
+                    Text("\(group.memberCount) people")
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.vertical, 9)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
     }
 
     private func loadProfileDebugIfNeeded() {
@@ -2202,6 +2317,22 @@ private struct DirectChatInfoScreen: View {
         }
         guard profileDebug == nil else { return }
         profileDebug = manager.peerProfileDebug(ownerInput: chatId)
+    }
+
+    private func loadCommonGroups() {
+        guard commonGroupsLoadedFor != chatId else { return }
+        commonGroupsLoadedFor = chatId
+        commonGroups = manager.mutualGroups(ownerInput: chatId)
+    }
+
+    private func groupId(from chatId: String) -> String? {
+        let prefix = "group:"
+        guard chatId.lowercased().hasPrefix(prefix) else {
+            return nil
+        }
+        let raw = String(chatId.dropFirst(prefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return raw.isEmpty ? nil : raw
     }
 }
 
@@ -7077,14 +7208,15 @@ private struct ProfileEditorCard: View {
 
     var body: some View {
         IrisSectionCard(accent: true) {
-            HStack(spacing: 14) {
+            VStack(spacing: 10) {
                 profileAvatar
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(account.displayName.isEmpty ? "Profile" : account.displayName)
-                        .font(.system(.title3, design: .rounded, weight: .bold))
-                        .foregroundStyle(palette.textPrimary)
-                }
+                Text(account.displayName.isEmpty ? "Profile" : account.displayName)
+                    .font(.system(.title2, design: .rounded, weight: .bold))
+                    .foregroundStyle(palette.textPrimary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
             }
+            .frame(maxWidth: .infinity)
             .onAppear {
                 profileName = account.displayName
             }
@@ -7221,7 +7353,7 @@ private struct ProfileEditorCard: View {
             } label: {
                 IrisAvatar(
                     label: label,
-                    size: 52,
+                    size: 96,
                     emphasize: true,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
@@ -7235,7 +7367,7 @@ private struct ProfileEditorCard: View {
         } else {
             IrisAvatar(
                 label: label,
-                size: 52,
+                size: 96,
                 emphasize: true,
                 pictureUrl: account.pictureUrl,
                 preferences: manager.state.preferences,

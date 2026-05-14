@@ -269,6 +269,7 @@ fn countDelta(
         export_support_bundle_json: after.export_support_bundle_json
             - before.export_support_bundle_json,
         peer_profile_debug: after.peer_profile_debug - before.peer_profile_debug,
+        mutual_groups: after.mutual_groups - before.mutual_groups,
         prepare_for_suspend: after.prepare_for_suspend - before.prepare_for_suspend,
     }
 }

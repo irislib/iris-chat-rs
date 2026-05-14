@@ -1,5 +1,5 @@
 use crate::actions::AppAction;
-use crate::state::{AppState, PeerProfileDebugSnapshot};
+use crate::state::{AppState, MutualGroupsSnapshot, PeerProfileDebugSnapshot};
 use flume::Sender;
 use nostr_sdk::prelude::{Event, RelayStatus};
 
@@ -36,6 +36,10 @@ pub(crate) enum CoreMsg {
     PeerProfileDebug {
         owner_input: String,
         reply_tx: Sender<Option<PeerProfileDebugSnapshot>>,
+    },
+    MutualGroups {
+        owner_input: String,
+        reply_tx: Sender<MutualGroupsSnapshot>,
     },
     PrepareForSuspend(Sender<()>),
     /// Snapshot of core-internal perf counters (debug-snapshot

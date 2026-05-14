@@ -1,4 +1,5 @@
 use super::*;
+use crate::state::MutualGroupsSnapshot;
 
 /// Compare two `AppState` snapshots ignoring `rev`. Returns true if the UI
 /// would render identically.
@@ -427,6 +428,72 @@ impl AppCore {
     pub(super) fn group_snapshot_for_chat_id(&self, chat_id: &str) -> Option<GroupSnapshot> {
         let group_id = parse_group_id_from_chat_id(chat_id)?;
         self.groups.get(&group_id).cloned()
+    }
+
+    pub(super) fn mutual_groups_snapshot(&self, owner_input: &str) -> MutualGroupsSnapshot {
+        let Ok((owner_hex, _)) = parse_peer_input(owner_input) else {
+            return MutualGroupsSnapshot::default();
+        };
+        let Some(local_owner_hex) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex())
+        else {
+            return MutualGroupsSnapshot::default();
+        };
+
+        let mut groups = self
+            .groups
+            .values()
+            .filter_map(|group| {
+                let has_peer = group
+                    .members
+                    .iter()
+                    .any(|member| member.to_string() == owner_hex);
+                let has_local_owner = group
+                    .members
+                    .iter()
+                    .any(|member| member.to_string() == local_owner_hex);
+                if !has_peer || !has_local_owner {
+                    return None;
+                }
+
+                let chat_id = group_chat_id(&group.group_id);
+                let thread = self.threads.get(&chat_id)?;
+                let last_message = thread.messages.last();
+                Some(ChatThreadSnapshot {
+                    chat_id,
+                    kind: ChatKind::Group,
+                    display_name: group.name.clone(),
+                    subtitle: None,
+                    picture_url: None,
+                    member_count: group.members.len() as u64,
+                    last_message_preview: last_message.map(message_preview),
+                    last_message_at_secs: last_message.map(|message| message.created_at_secs),
+                    last_message_is_outgoing: last_message.map(|message| message.is_outgoing),
+                    last_message_delivery: last_message.map(|message| message.delivery.clone()),
+                    unread_count: thread.unread_count,
+                    is_typing: false,
+                    is_muted: self.is_chat_muted(&thread.chat_id),
+                    is_pinned: self.is_chat_pinned(&thread.chat_id),
+                    draft: thread.draft.clone(),
+                })
+            })
+            .collect::<Vec<_>>();
+
+        groups.sort_by(|left, right| {
+            right
+                .is_pinned
+                .cmp(&left.is_pinned)
+                .then_with(|| {
+                    right
+                        .last_message_at_secs
+                        .unwrap_or_default()
+                        .cmp(&left.last_message_at_secs.unwrap_or_default())
+                })
+                .then_with(|| left.display_name.cmp(&right.display_name))
+        });
+        MutualGroupsSnapshot { groups }
     }
 
     pub(super) fn build_group_details_snapshot(

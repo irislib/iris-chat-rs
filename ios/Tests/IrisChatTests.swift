@@ -37,6 +37,7 @@ private final class MockRustApp: RustAppClient {
     var currentState: AppState
     var supportBundleJson = "{\"ok\":true}"
     var peerDebug: PeerProfileDebugSnapshot?
+    var mutualGroupsByOwner: [String: [ChatThreadSnapshot]] = [:]
     var dispatchError: Error?
     var onDispatch: ((AppAction) -> Void)?
     var pagesBefore: [String: CurrentChatSnapshot] = [:]
@@ -225,6 +226,10 @@ private final class MockRustApp: RustAppClient {
 
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
         peerDebug
+    }
+
+    func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot] {
+        mutualGroupsByOwner[ownerInput] ?? []
     }
 
     func prepareForSuspend() {
@@ -537,7 +542,8 @@ private func writePendingShare(
         attachments: attachments,
         suggestedChatId: chatIds.first,
         suggestedChatIds: chatIds,
-        autoSend: autoSend
+        autoSend: autoSend,
+        isForward: nil
     )
     let url = shareContainer
         .appendingPathComponent("pending-shares", isDirectory: true)
@@ -692,6 +698,36 @@ final class IrisChatTests: XCTestCase {
         let today = daySeparatorFrame(messageId: "today", text: "Today", y: 20)
 
         XCTAssertNil(irisFloatingDaySeparator(frames: [today], viewportMinY: 0, stickyTopY: 12))
+    }
+
+    @MainActor
+    func testBlockedUserPreventsOutgoingDirectMessagesAndPersists() {
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dataDir) }
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir
+        )
+
+        manager.setUserBlocked("owner", blocked: true)
+        manager.dispatch(.sendMessage(chatId: "owner", text: "hello"))
+
+        XCTAssertTrue(manager.isUserBlocked("owner"))
+        XCTAssertFalse(rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "hello")))
+
+        let restored = AppManager(
+            rust: MockRustApp(state: makeLargeFixtureState(rev: 2, account: makeAccount())),
+            secretStore: InMemorySecretStore(),
+            dataDir: dataDir
+        )
+        XCTAssertTrue(restored.isUserBlocked("owner"))
+
+        manager.setUserBlocked("owner", blocked: false)
+        manager.dispatch(.sendMessage(chatId: "owner", text: "hello"))
+        XCTAssertTrue(rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "hello")))
     }
 
     func testLaunchRecoveryDefaultsAreClearedWithoutAffectingAuthStartup() {

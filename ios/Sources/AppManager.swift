@@ -44,6 +44,11 @@ struct PendingShare: Codable, Identifiable, Equatable {
     let suggestedChatId: String?
     let suggestedChatIds: [String]?
     let autoSend: Bool?
+    let isForward: Bool?
+
+    var isForwarding: Bool {
+        isForward == true
+    }
 
     var suggestedTargetChatIds: [String] {
         var seen = Set<String>()
@@ -70,9 +75,14 @@ struct PendingShare: Codable, Identifiable, Equatable {
             attachments: attachments,
             suggestedChatId: suggestedChatId,
             suggestedChatIds: suggestedChatIds,
-            autoSend: autoSend == true || enabled
+            autoSend: autoSend == true || enabled,
+            isForward: isForward
         )
     }
+}
+
+private struct BlockedUsersFile: Codable, Equatable {
+    var userIds: [String]
 }
 
 #if os(iOS)
@@ -396,6 +406,7 @@ protocol RustAppClient: AnyObject {
     func chatSnapshot(chatId: String, limit: UInt32) -> CurrentChatSnapshot?
     func chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot?
     func chatSnapshotAroundMessage(chatId: String, messageId: String, beforeLimit: UInt32, afterLimit: UInt32) -> CurrentChatSnapshot?
+    func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot]
     func ingestNearbyEventJson(eventJson: String) -> Bool
     func ingestNearbyEventJsonWithTransport(eventJson: String, transport: String) -> Bool
     func buildNearbyPresenceEventJson(peerID: String, myNonce: String, theirNonce: String, profileEventID: String) -> String
@@ -443,6 +454,10 @@ final class LiveRustAppClient: RustAppClient {
             beforeLimit: beforeLimit,
             afterLimit: afterLimit
         )
+    }
+
+    func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot] {
+        ffi.mutualGroupsSafely(ownerInput: ownerInput)
     }
 
     func ingestNearbyEventJson(eventJson: String) -> Bool {
@@ -925,6 +940,7 @@ final class AppManager: ObservableObject {
     private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
     private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
+    private static let blockedUsersFilename = "blocked-users.json"
 
     @Published private(set) var state: AppState
     @Published private(set) var bootstrapInFlight = true
@@ -932,6 +948,7 @@ final class AppManager: ObservableObject {
     @Published private(set) var lastForegroundedAt = Date()
     @Published private(set) var appSceneIsActive = true
     @Published private(set) var lastUserActivityAt = Date()
+    @Published private(set) var blockedUserIds: Set<String> = []
     /// Set when the user taps a hit in the search bar's Messages
     /// section — ChatScreen reads it on appear, scrolls the timeline
     /// to that message id, then clears via `consumePendingScroll()`.
@@ -1057,6 +1074,7 @@ final class AppManager: ObservableObject {
         self.desktopNotifications = desktopNotifications ?? SystemDesktopNotificationPoster(environment: environment)
 #endif
         self.dataDir = resolvedDataDir
+        self.blockedUserIds = Self.loadBlockedUserIds(dataDir: resolvedDataDir, fileManager: fileManager)
 #if os(macOS)
         self.currentAppVersion = appVersion
         let manifestUrl = environment["IRIS_UPDATE_MANIFEST_URL"]
@@ -1177,6 +1195,24 @@ final class AppManager: ObservableObject {
         !state.router.screenStack.isEmpty
     }
 
+    func isUserBlocked(_ userId: String) -> Bool {
+        let normalized = Self.normalizedBlockedUserId(userId)
+        return !normalized.isEmpty && blockedUserIds.contains(normalized)
+    }
+
+    func setUserBlocked(_ userId: String, blocked: Bool) {
+        let normalized = Self.normalizedBlockedUserId(userId)
+        guard !normalized.isEmpty else { return }
+        if blocked {
+            blockedUserIds.insert(normalized)
+            showToast("User blocked")
+        } else {
+            blockedUserIds.remove(normalized)
+            showToast("User unblocked")
+        }
+        persistBlockedUserIds()
+    }
+
     func navigateBack() {
         let currentStack = state.router.screenStack
         guard !currentStack.isEmpty else {
@@ -1191,10 +1227,75 @@ final class AppManager: ObservableObject {
     }
 
     func dispatch(_ action: AppAction) {
+        if shouldBlockOutgoingAction(action) {
+            showToast("User is blocked")
+            return
+        }
         if handleOptimisticNavigation(action) {
             return
         }
         dispatchToRust(action)
+    }
+
+    func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot] {
+        rust.mutualGroups(ownerInput: ownerInput)
+    }
+
+    private func shouldBlockOutgoingAction(_ action: AppAction) -> Bool {
+        switch action {
+        case .sendMessage(chatId: let chatId, text: _),
+             .sendDisappearingMessage(chatId: let chatId, text: _, expiresAtSecs: _),
+             .sendAttachment(chatId: let chatId, filePath: _, filename: _, caption: _),
+             .sendAttachments(chatId: let chatId, attachments: _, caption: _),
+             .sendTyping(chatId: let chatId):
+            return shouldBlockOutgoingChat(chatId: chatId)
+        default:
+            return false
+        }
+    }
+
+    private func shouldBlockOutgoingChat(chatId: String) -> Bool {
+        let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.lowercased().hasPrefix("group:") else {
+            return false
+        }
+        return isUserBlocked(trimmed)
+    }
+
+    private static func normalizedBlockedUserId(_ input: String) -> String {
+        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let hex = peerInputToHex(input: trimmed)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !hex.isEmpty {
+            return hex
+        }
+        return normalizePeerInput(input: trimmed)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+    }
+
+    private static func blockedUsersURL(dataDir: URL) -> URL {
+        dataDir.appendingPathComponent(blockedUsersFilename, isDirectory: false)
+    }
+
+    private static func loadBlockedUserIds(dataDir: URL, fileManager: FileManager) -> Set<String> {
+        let url = blockedUsersURL(dataDir: dataDir)
+        guard fileManager.fileExists(atPath: url.path),
+              let data = try? Data(contentsOf: url),
+              let file = try? JSONDecoder().decode(BlockedUsersFile.self, from: data) else {
+            return []
+        }
+        return Set(file.userIds.map(normalizedBlockedUserId).filter { !$0.isEmpty })
+    }
+
+    private func persistBlockedUserIds() {
+        let file = BlockedUsersFile(userIds: blockedUserIds.sorted())
+        guard let data = try? JSONEncoder().encode(file) else {
+            return
+        }
+        try? data.write(to: Self.blockedUsersURL(dataDir: dataDir), options: [.atomic])
     }
 
     private func handleOptimisticNavigation(_ action: AppAction) -> Bool {
@@ -1485,6 +1586,22 @@ final class AppManager: ObservableObject {
         pendingShare = nil
     }
 
+    func startForward(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return
+        }
+        pendingShare = PendingShare(
+            id: UUID().uuidString,
+            text: trimmed,
+            attachments: [],
+            suggestedChatId: nil,
+            suggestedChatIds: nil,
+            autoSend: false,
+            isForward: true
+        )
+    }
+
     func sendPendingShare(to chatId: String) {
         sendPendingShare(to: [chatId])
     }
@@ -1506,6 +1623,10 @@ final class AppManager: ObservableObject {
         }
         var dispatchedAll = true
         for chatId in targets {
+            if shouldBlockOutgoingChat(chatId: chatId) {
+                dispatchedAll = false
+                continue
+            }
             if stagedAttachments.isEmpty {
                 dispatchedAll = dispatchToRust(.sendMessage(chatId: chatId, text: share.text)) && dispatchedAll
             } else {
@@ -1818,9 +1939,17 @@ final class AppManager: ObservableObject {
         }
     }
 
+    private func isPushChatBlocked(_ chatID: String) -> Bool {
+        let trimmed = chatID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.lowercased().hasPrefix(mobilePushGroupChatPrefix) else {
+            return false
+        }
+        return isUserBlocked(trimmed)
+    }
+
     private func shouldBlockPushNotification(payloadJson: String) -> Bool {
         chatIDs(fromPushPayloadJson: payloadJson).contains { chatID in
-            isPushChatOpen(chatID) || isPushChatMuted(chatID)
+            isPushChatOpen(chatID) || isPushChatMuted(chatID) || isPushChatBlocked(chatID)
         }
     }
 
@@ -2234,6 +2363,10 @@ final class AppManager: ObservableObject {
         guard !trimmedChatId.isEmpty else {
             return
         }
+        guard !shouldBlockOutgoingChat(chatId: trimmedChatId) else {
+            showToast("User is blocked")
+            return
+        }
 
         do {
             let staged = try stageOutgoingAttachment(fileURL)
@@ -2253,6 +2386,10 @@ final class AppManager: ObservableObject {
     func sendAttachments(chatId: String, attachments: [StagedAttachment], caption: String) {
         let trimmedChatId = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedChatId.isEmpty, !attachments.isEmpty else {
+            return
+        }
+        guard !shouldBlockOutgoingChat(chatId: trimmedChatId) else {
+            showToast("User is blocked")
             return
         }
         dispatchToRust(
