@@ -12,6 +12,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -370,11 +371,7 @@ fun MyProfileSheet(
                         }
 
                         SettingsPage.Messaging -> {
-                            IrisSectionCard {
-                                Text(
-                                    text = "Messaging",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                            SettingsRowsSection {
                                 SettingsToggleRow(
                                     title = "Typing indicators",
                                     checked = sendTypingIndicators,
@@ -395,11 +392,7 @@ fun MyProfileSheet(
                         }
 
                         SettingsPage.Notifications -> {
-                            IrisSectionCard {
-                                Text(
-                                    text = "Notifications",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                            SettingsFormSection {
                                 SettingsToggleRow(
                                     title = "Enabled",
                                     checked = desktopNotificationsEnabled,
@@ -443,11 +436,7 @@ fun MyProfileSheet(
                         }
 
                         SettingsPage.Media -> {
-                            IrisSectionCard {
-                                Text(
-                                    text = "Media",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                            SettingsFormSection {
                                 SettingsToggleRow(
                                     title = "Image proxy",
                                     checked = imageProxyEnabled,
@@ -496,11 +485,7 @@ fun MyProfileSheet(
                         }
 
                         SettingsPage.Nearby -> {
-                            IrisSectionCard {
-                                Text(
-                                    text = "Nearby",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                            SettingsRowsSection {
                                 SettingsToggleRow(
                                     title = "Bluetooth",
                                     checked = preferences.nearbyBluetoothEnabled,
@@ -517,11 +502,7 @@ fun MyProfileSheet(
                         }
 
                         SettingsPage.MessageServers -> {
-                            IrisSectionCard {
-                                Text(
-                                    text = "Message servers",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                            SettingsFormSection {
                                 relayUrls.forEach { relayUrl ->
                                     if (editingRelayUrl == relayUrl) {
                                         Row(
@@ -633,44 +614,26 @@ fun MyProfileSheet(
                         }
 
                         SettingsPage.Security -> {
-                            IrisSectionCard {
-                                Text(
-                                    text = "Security",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                            SettingsRowsSection {
                                 if (canManageDevices) {
-                                    IrisSecondaryButton(
-                                        text = "Export secret key",
+                                    IrisMenuRow(
+                                        title = "Export secret key",
                                         onClick = { pendingSecretExport = SecretExportKind.Owner },
+                                        icon = IrisIcons.Key,
                                         modifier = Modifier.testTag("myProfileExportOwnerKeyButton"),
-                                        icon = {
-                                            Icon(
-                                                imageVector = IrisIcons.Key,
-                                                contentDescription = null,
-                                            )
-                                        },
                                     )
                                 }
-                                IrisSecondaryButton(
-                                    text = "Export this device's key",
+                                IrisMenuRow(
+                                    title = "Export this device's key",
                                     onClick = { pendingSecretExport = SecretExportKind.Device },
+                                    icon = IrisIcons.Key,
                                     modifier = Modifier.testTag("myProfileExportDeviceKeyButton"),
-                                    icon = {
-                                        Icon(
-                                            imageVector = IrisIcons.Key,
-                                            contentDescription = null,
-                                        )
-                                    },
                                 )
                             }
                         }
 
                         SettingsPage.About -> {
-                            IrisSectionCard {
-                                Text(
-                                    text = "About",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                            SettingsFormSection {
                                 if (appManager.isTrustedTestBuild()) {
                                     Text(
                                         text = "Test build",
@@ -707,11 +670,7 @@ fun MyProfileSheet(
                         }
 
                         SettingsPage.Support -> {
-                            IrisSectionCard {
-                                Text(
-                                    text = "Support",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
+                            SettingsFormSection {
                                 SettingsToggleRow(
                                     title = "Debug logging",
                                     checked = preferences.debugLoggingEnabled,
@@ -787,10 +746,10 @@ fun MyProfileSheet(
                         }
 
                         SettingsPage.AccountData -> {
-                            IrisSectionCard {
+                            SettingsFormSection {
                                 Text(
-                                    text = "Account data",
-                                    style = MaterialTheme.typography.titleMedium,
+                                    text = "Remove this profile from this device.",
+                                    style = MaterialTheme.typography.bodyLarge,
                                     color = MaterialTheme.colorScheme.error,
                                 )
                                 Text(
@@ -949,6 +908,32 @@ private fun SettingsProfileMenuRow(
 private fun SettingsMenuSection(content: @Composable () -> Unit) {
     IrisListSection {
         content()
+    }
+}
+
+@Composable
+private fun SettingsRowsSection(
+    content: @Composable () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        IrisListSection {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun SettingsFormSection(
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        IrisListSection {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+                content = content,
+            )
+        }
     }
 }
 

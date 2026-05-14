@@ -35,8 +35,9 @@ import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
+import to.iris.chat.ui.components.IrisListSection
+import to.iris.chat.ui.components.IrisMenuRow
 import to.iris.chat.ui.components.IrisPrimaryButton
-import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
@@ -99,32 +100,35 @@ fun DeviceRosterScreen(
                     .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            IrisSectionCard {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "Linked devices",
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                 )
-                Text(
-                    text = "These devices can use your profile.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = IrisTheme.palette.muted,
-                )
-                IrisSecondaryButton(
-                    text = "Copy user ID",
-                    onClick = { clipboard.setText("User ID", roster.ownerNpub) },
-                    modifier = Modifier.fillMaxWidth().testTag("deviceRosterOwnerNpub"),
-                )
-                IrisSecondaryButton(
-                    text = "Copy this device code",
-                    onClick = { clipboard.setText("Link code", roster.currentDeviceNpub) },
-                    modifier = Modifier.fillMaxWidth().testTag("deviceRosterCurrentDeviceNpub"),
-                )
+                IrisListSection {
+                    IrisMenuRow(
+                        title = "Copy user ID",
+                        icon = IrisIcons.Copy,
+                        onClick = { clipboard.setText("User ID", roster.ownerNpub) },
+                        modifier = Modifier.testTag("deviceRosterOwnerNpub"),
+                    )
+                    IrisMenuRow(
+                        title = "Copy this device code",
+                        icon = IrisIcons.Copy,
+                        onClick = { clipboard.setText("Link code", roster.currentDeviceNpub) },
+                        modifier = Modifier.testTag("deviceRosterCurrentDeviceNpub"),
+                    )
+                }
             }
 
-            IrisSectionCard {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
                     text = "Link another device",
                     style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                 )
                 Text(
                     text =
@@ -220,18 +224,23 @@ fun DeviceRosterScreen(
             ) {
                 if (roster.devices.isEmpty()) {
                     item {
-                        IrisSectionCard(
+                        IrisListSection(
                             modifier = Modifier.testTag("deviceRosterEmptyState"),
                         ) {
-                            Text(
-                                text = "No linked devices",
-                                style = MaterialTheme.typography.titleMedium,
-                            )
-                            Text(
-                                text = "Linked devices will appear here.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = IrisTheme.palette.muted,
-                            )
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Text(
+                                    text = "No linked devices",
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Text(
+                                    text = "Linked devices will appear here.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = IrisTheme.palette.muted,
+                                )
+                            }
                         }
                     }
                 }
@@ -282,11 +291,13 @@ private fun DeviceRosterRow(
     val displaySubtitle = deviceDisplaySubtitle(device)
     var confirmRemoval by remember { mutableStateOf(false) }
 
-    IrisSectionCard(
+    IrisListSection(
         modifier = Modifier.testTag("deviceRosterRow-${device.devicePubkeyHex.take(12)}"),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             IrisAvatar(label = displayTitle, size = 42.dp)
@@ -323,7 +334,10 @@ private fun DeviceRosterRow(
         }
 
         if (canManageDevices && !device.isCurrentDevice) {
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
                 if (!device.isAuthorized) {
                     IrisPrimaryButton(
                         text = if (isUpdatingRoster) "Linking…" else "Link",

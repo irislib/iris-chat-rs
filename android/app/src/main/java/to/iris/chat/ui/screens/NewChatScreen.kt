@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -55,8 +54,9 @@ import to.iris.chat.rust.classifyChatInput
 import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.components.IrisIcons
+import to.iris.chat.ui.components.IrisListSection
+import to.iris.chat.ui.components.IrisMenuRow
 import to.iris.chat.ui.components.IrisPrimaryButton
-import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.rememberIrisClipboard
@@ -142,25 +142,16 @@ fun NewChatScreen(
                     .padding(horizontal = 16.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            // New Chat card
-            IrisSectionCard {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
-                    text = "New Chat",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    text = "Share invite",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                 )
 
                 if (inviteUrl != null) {
-                    Text(
-                        text = "Share an invite to start a chat",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = IrisTheme.palette.muted,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                    )
-
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         NewChatInviteActionButton(
                             text = "Copy",
@@ -193,14 +184,13 @@ fun NewChatScreen(
                 }
             }
 
-            // Join Chat card
-            IrisSectionCard {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 Text(
-                    text = "Join Chat",
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    text = "Start chat",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                 )
 
                 TextField(
@@ -246,12 +236,14 @@ fun NewChatScreen(
                 )
             }
 
-            NewChatActionRow(
-                text = "Create group",
-                icon = { Icon(imageVector = IrisIcons.NewGroup, contentDescription = null) },
-                modifier = Modifier.testTag("newChatNewGroupButton"),
-                onClick = { appManager.pushScreen(Screen.NewGroup) },
-            )
+            IrisListSection {
+                IrisMenuRow(
+                    title = "Create group",
+                    icon = IrisIcons.NewGroup,
+                    onClick = { appManager.pushScreen(Screen.NewGroup) },
+                    modifier = Modifier.testTag("newChatNewGroupButton"),
+                )
+            }
         }
     }
 
@@ -325,12 +317,12 @@ private fun NewChatInviteActionButton(
     OutlinedButton(
         onClick = onClick,
         modifier = modifier.defaultMinSize(minHeight = 66.dp),
-        shape = RoundedCornerShape(999.dp),
+        shape = RoundedCornerShape(8.dp),
         border = BorderStroke(1.dp, IrisTheme.palette.border),
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
         colors =
             ButtonDefaults.outlinedButtonColors(
-                containerColor = IrisTheme.palette.panel,
+                containerColor = MaterialTheme.colorScheme.background,
                 contentColor = MaterialTheme.colorScheme.onSurface,
             ),
     ) {
@@ -347,49 +339,6 @@ private fun NewChatInviteActionButton(
                 softWrap = false,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
-}
-
-@Composable
-private fun NewChatActionRow(
-    text: String,
-    icon: @Composable () -> Unit,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-) {
-    Surface(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
-        color = IrisTheme.palette.panel,
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, IrisTheme.palette.border),
-        tonalElevation = 0.dp,
-        shadowElevation = 0.dp,
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Surface(
-                modifier = Modifier.width(22.dp),
-                color = Color.Transparent,
-                contentColor = MaterialTheme.colorScheme.onBackground,
-            ) {
-                icon()
-            }
-            Text(
-                text = text,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-            Icon(
-                imageVector = IrisIcons.ChevronRight,
-                contentDescription = null,
-                tint = IrisTheme.palette.muted,
             )
         }
     }
