@@ -156,7 +156,7 @@ final class IrisChatUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(row.waitForExistence(timeout: 10))
 
-        dragHorizontally(row, from: 0.85, to: 0.05)
+        row.swipeLeft()
         XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
 #endif
     }
@@ -660,7 +660,7 @@ final class IrisChatUITests: XCTestCase {
     }
 
     private func seededChatRowPreview(_ app: XCUIApplication) -> XCUIElement {
-        app.buttons.matching(
+        app.descendants(matching: .any).matching(
             NSPredicate(
                 format: "label CONTAINS 'FIRST_SCROLL_SENTINEL' OR label CONTAINS 'seed-msg-' OR label CONTAINS 'LAST_SCROLL_SENTINEL'"
             )

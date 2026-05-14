@@ -2403,6 +2403,48 @@ struct ChatListScreen: View {
     var body: some View {
         let relativeNow = Date()
 
+#if os(iOS)
+        VStack(spacing: 0) {
+            ChatListSearchField(text: $searchText)
+
+            if searchActive {
+                ScrollView {
+                    if let results = cachedSearchResults {
+                        SearchResultsList(
+                            manager: manager,
+                            results: results,
+                            relativeNow: relativeNow,
+                            expandedSections: expandedSearchSections,
+                            messageLimit: searchMessageLimit,
+                            onViewMore: viewMoreSearchResults
+                        )
+                    }
+                }
+            } else {
+                ChatListTableView(
+                    manager: manager,
+                    chats: manager.state.chatList,
+                    preferences: manager.state.preferences,
+                    relativeNow: relativeNow,
+                    palette: palette,
+                    onOpenNearby: onOpenNearby
+                )
+            }
+        }
+        .background(palette.background)
+        .irisOnChange(of: searchText) { _ in
+            resetSearchExpansionIfNeeded()
+            autoProceedIfShortcut()
+        }
+        .task(id: searchRequestToken) {
+            // Refresh the search cache once per query change. Body
+            // re-runs on every state push otherwise — the cache turns
+            // an O(state-push) FTS5 query into an O(keystroke) one.
+            cachedSearchResults = trimmedQuery.isEmpty
+                ? nil
+                : manager.search(trimmedQuery, limit: searchMessageLimit)
+        }
+#else
         ScrollView {
             LazyVStack(spacing: 0) {
                 ChatListSearchField(text: $searchText)
@@ -2458,6 +2500,7 @@ struct ChatListScreen: View {
                 ? nil
                 : manager.search(trimmedQuery, limit: searchMessageLimit)
         }
+#endif
     }
 
     private func resetSearchExpansionIfNeeded() {
@@ -2982,24 +3025,7 @@ private struct ChatListRowContainer: View {
     var body: some View {
         let row = chatRow
 
-#if os(iOS)
-        SwipeableChatListRow(
-            chat: chat,
-            row: row,
-            onToggleUnread: {
-                manager.dispatch(.setChatUnread(chatId: chat.chatId, unread: chat.unreadCount == 0))
-            },
-            onTogglePin: {
-                manager.dispatch(.setChatPinned(chatId: chat.chatId, pinned: !chat.isPinned))
-            },
-            onToggleMute: {
-                manager.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
-            },
-            onDelete: {
-                manager.dispatch(.deleteChat(chatId: chat.chatId))
-            }
-        )
-#elseif os(macOS)
+#if os(macOS)
         row.contextMenu {
             chatListItemContextMenu(manager: manager, chat: chat)
         }
@@ -3034,243 +3060,428 @@ private struct ChatListRowContainer: View {
 }
 
 #if os(iOS)
-private struct SwipeableChatListRow<Row: View>: View {
+private struct ChatListTableView: UIViewRepresentable {
+    let manager: AppManager
+    let chats: [ChatThreadSnapshot]
+    let preferences: PreferencesSnapshot
+    let relativeNow: Date
+    let palette: IrisPalette
+    let onOpenNearby: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeUIView(context: Context) -> UITableView {
+        let tableView = UITableView(frame: .zero, style: .plain)
+        tableView.dataSource = context.coordinator
+        tableView.delegate = context.coordinator
+        tableView.backgroundColor = .clear
+        tableView.separatorStyle = .none
+        tableView.rowHeight = UITableView.automaticDimension
+        tableView.estimatedRowHeight = 72
+        tableView.contentInsetAdjustmentBehavior = .never
+        tableView.keyboardDismissMode = .interactive
+        tableView.register(UITableViewCell.self, forCellReuseIdentifier: Coordinator.cellReuseIdentifier)
+        tableView.accessibilityIdentifier = "chatListTable"
+        return tableView
+    }
+
+    func updateUIView(_ tableView: UITableView, context: Context) {
+        let items = makeItems()
+        let fingerprint = makeFingerprint()
+        context.coordinator.manager = manager
+        context.coordinator.preferences = preferences
+        context.coordinator.relativeNow = relativeNow
+        context.coordinator.palette = palette
+        context.coordinator.onOpenNearby = onOpenNearby
+        context.coordinator.items = items
+        guard context.coordinator.fingerprint != fingerprint else { return }
+        context.coordinator.fingerprint = fingerprint
+        tableView.reloadData()
+    }
+
+    private func makeItems() -> [Item] {
+        var items: [Item] = [.nearby]
+        if chats.isEmpty {
+            items.append(.empty)
+        } else {
+            items.append(contentsOf: chats.map(Item.chat))
+        }
+        return items
+    }
+
+    private func makeFingerprint() -> [String] {
+        var values = ["nearby:\(manager.nearbyIris.sidebarSubtitle):\(manager.nearbyIris.peers.count)"]
+        if chats.isEmpty {
+            values.append("empty")
+        } else {
+            for chat in chats {
+                var chatValues: [String] = []
+                chatValues.append(chat.chatId)
+                chatValues.append(chat.displayName)
+                chatValues.append(chat.lastMessagePreview ?? "")
+                chatValues.append(chat.subtitle ?? "")
+                chatValues.append(chat.draft)
+                chatValues.append(chat.lastMessageAtSecs.map(String.init) ?? "")
+                chatValues.append(String(chat.unreadCount))
+                chatValues.append(String(chat.isMuted))
+                chatValues.append(String(chat.isPinned))
+                chatValues.append(String(chat.isTyping))
+                chatValues.append(chat.pictureUrl ?? "")
+                values.append(chatValues.joined(separator: "\u{1F}"))
+            }
+        }
+        return values
+    }
+
+    enum Item {
+        case nearby
+        case empty
+        case chat(ChatThreadSnapshot)
+    }
+
+    final class Coordinator: NSObject, UITableViewDataSource, UITableViewDelegate {
+        static let cellReuseIdentifier = "ChatListTableCell"
+
+        weak var manager: AppManager?
+        var items: [Item] = []
+        var preferences: PreferencesSnapshot?
+        var relativeNow = Date()
+        var palette = IrisPalette.light
+        var onOpenNearby: (() -> Void)?
+        var fingerprint: [String] = []
+
+        func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
+            items.count
+        }
+
+        func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
+            let cell = tableView.dequeueReusableCell(withIdentifier: Self.cellReuseIdentifier, for: indexPath)
+            cell.backgroundColor = .clear
+            cell.selectedBackgroundView = UIView()
+            cell.accessoryType = .none
+            cell.isAccessibilityElement = true
+            cell.accessibilityTraits = []
+
+            switch items[indexPath.row] {
+            case .nearby:
+                configureNearby(cell)
+            case .empty:
+                configureEmpty(cell)
+            case let .chat(chat):
+                configureChat(cell, chat: chat)
+            }
+
+            return cell
+        }
+
+        func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
+            tableView.deselectRow(at: indexPath, animated: true)
+            switch items[indexPath.row] {
+            case .nearby:
+                onOpenNearby?()
+            case .empty:
+                break
+            case let .chat(chat):
+                manager?.dispatch(.openChat(chatId: chat.chatId))
+            }
+        }
+
+        func tableView(
+            _ tableView: UITableView,
+            leadingSwipeActionsConfigurationForRowAt indexPath: IndexPath
+        ) -> UISwipeActionsConfiguration? {
+            guard case let .chat(chat) = items[indexPath.row] else { return nil }
+            let configuration = UISwipeActionsConfiguration(actions: [
+                contextualAction(
+                    title: chat.unreadCount > 0 ? "Read" : "Unread",
+                    color: .systemPurple
+                ) { [weak self] in
+                    self?.manager?.dispatch(.setChatUnread(chatId: chat.chatId, unread: chat.unreadCount == 0))
+                },
+                contextualAction(
+                    title: chat.isPinned ? "Unpin" : "Pin",
+                    color: .systemOrange
+                ) { [weak self] in
+                    self?.manager?.dispatch(.setChatPinned(chatId: chat.chatId, pinned: !chat.isPinned))
+                },
+            ])
+            configuration.performsFirstActionWithFullSwipe = false
+            return configuration
+        }
+
+        func tableView(
+            _ tableView: UITableView,
+            trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath
+        ) -> UISwipeActionsConfiguration? {
+            guard case let .chat(chat) = items[indexPath.row] else { return nil }
+            let configuration = UISwipeActionsConfiguration(actions: [
+                deleteAction(chat: chat, presentingFrom: tableView),
+                contextualAction(
+                    title: chat.isMuted ? "Unmute" : "Mute",
+                    color: .systemOrange
+                ) { [weak self] in
+                    self?.manager?.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
+                },
+            ])
+            configuration.performsFirstActionWithFullSwipe = false
+            return configuration
+        }
+
+        func tableView(_ tableView: UITableView, canEditRowAt indexPath: IndexPath) -> Bool {
+            if case .chat = items[indexPath.row] {
+                return true
+            }
+            return false
+        }
+
+        private func configureNearby(_ cell: UITableViewCell) {
+            guard let manager else { return }
+            cell.accessibilityIdentifier = "nearbyChatRow"
+            cell.accessibilityLabel = "Nearby, \(manager.nearbyIris.sidebarSubtitle)"
+            cell.accessibilityTraits = [.button]
+            cell.contentConfiguration = UIHostingConfiguration {
+                ChatListTableRowContent(
+                    title: "Nearby",
+                    preview: manager.nearbyIris.sidebarSubtitle,
+                    subtitle: nil,
+                    timeLabel: nil,
+                    unreadCount: 0,
+                    preferences: manager.state.preferences,
+                    manager: manager,
+                    leading: AnyView(NearbyWirelessAvatar()),
+                    previewLeading: nearbyPreviewLeading(service: manager.nearbyIris, manager: manager)
+                )
+                .accessibilityHidden(true)
+                .environment(\.irisPalette, palette)
+            }
+            .margins(.all, 0)
+        }
+
+        private func configureEmpty(_ cell: UITableViewCell) {
+            cell.accessibilityIdentifier = "chatListEmpty"
+            cell.accessibilityLabel = "No chats yet"
+            cell.accessibilityTraits = [.staticText]
+            cell.contentConfiguration = UIHostingConfiguration {
+                Text("No chats yet")
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 20)
+                    .accessibilityHidden(true)
+                    .environment(\.irisPalette, palette)
+            }
+            .margins(.all, 0)
+        }
+
+        private func configureChat(_ cell: UITableViewCell, chat: ChatThreadSnapshot) {
+            guard let manager else { return }
+            let preview = chatListPreview(for: chat)
+            let timeLabel = irisRelativeTime(chat.lastMessageAtSecs, relativeTo: relativeNow)
+            cell.accessibilityIdentifier = "chatRow-\(String(chat.chatId.prefix(12)))"
+            cell.accessibilityLabel = [chat.displayName, preview, timeLabel].compactMap { $0 }.joined(separator: ", ")
+            cell.accessibilityTraits = [.button]
+            cell.contentConfiguration = UIHostingConfiguration {
+                ChatListTableRowContent(
+                    title: chat.displayName,
+                    isMuted: chat.isMuted,
+                    isPinned: chat.isPinned,
+                    preview: preview,
+                    subtitle: nil,
+                    timeLabel: timeLabel,
+                    unreadCount: chat.unreadCount,
+                    pictureUrl: chat.pictureUrl,
+                    preferences: preferences,
+                    manager: manager
+                )
+                .accessibilityHidden(true)
+                .environment(\.irisPalette, palette)
+            }
+            .margins(.all, 0)
+        }
+
+        private func nearbyPreviewLeading(service: IrisNearbyService, manager: AppManager) -> AnyView? {
+            guard !service.peers.isEmpty else { return nil }
+            return AnyView(
+                NearbyAvatarStack(
+                    peers: Array(service.peers.prefix(3)),
+                    preferences: manager.state.preferences,
+                    manager: manager
+                )
+            )
+        }
+
+        private func contextualAction(
+            title: String,
+            style: UIContextualAction.Style = .normal,
+            color: UIColor,
+            handler: @escaping () -> Void
+        ) -> UIContextualAction {
+            let action = UIContextualAction(style: style, title: title) { _, _, completion in
+                handler()
+                completion(true)
+            }
+            action.backgroundColor = color
+            return action
+        }
+
+        private func deleteAction(chat: ChatThreadSnapshot, presentingFrom tableView: UITableView) -> UIContextualAction {
+            let action = UIContextualAction(style: .destructive, title: "Delete") { [weak self, weak tableView] _, _, completion in
+                guard let self, let tableView else {
+                    completion(false)
+                    return
+                }
+                let alert = UIAlertController(title: "Delete chat?", message: nil, preferredStyle: .alert)
+                alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in
+                    completion(false)
+                })
+                alert.addAction(UIAlertAction(title: "Delete", style: .destructive) { _ in
+                    self.manager?.dispatch(.deleteChat(chatId: chat.chatId))
+                    completion(true)
+                })
+                guard let presenter = tableView.window?.rootViewController else {
+                    completion(false)
+                    return
+                }
+                presenter.present(alert, animated: true)
+            }
+            action.backgroundColor = .systemRed
+            return action
+        }
+
+        private func chatListPreview(for chat: ChatThreadSnapshot) -> String {
+            let trimmedDraft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            if chat.isTyping { return "Typing" }
+            if !trimmedDraft.isEmpty { return "Draft: \(trimmedDraft)" }
+            return chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"
+        }
+    }
+}
+
+private struct ChatListTableRowContent: View {
     @Environment(\.irisPalette) private var palette
 
-    let chat: ChatThreadSnapshot
-    let row: Row
-    let onToggleUnread: () -> Void
-    let onTogglePin: () -> Void
-    let onToggleMute: () -> Void
-    let onDelete: () -> Void
+    let title: String
+    let isMuted: Bool
+    let isPinned: Bool
+    let preview: String
+    let subtitle: String?
+    let timeLabel: String?
+    let unreadCount: UInt64
+    let pictureUrl: String?
+    let preferences: PreferencesSnapshot?
+    let manager: AppManager?
+    let leading: AnyView?
+    let previewLeading: AnyView?
 
-    @State private var restingOffset: CGFloat = 0
-    @State private var displayedOffset: CGFloat = 0
-    @State private var activeDragAxis: DragAxis?
-    @State private var showingDeleteConfirmation = false
-    @GestureState private var dragIsActive = false
-
-    private let actionWidth: CGFloat = 152
-    private let revealThreshold: CGFloat = 42
-
-    private enum DragAxis {
-        case horizontal
-        case vertical
-    }
-
-    private var currentOffset: CGFloat {
-        displayedOffset
-    }
-
-    private var snapAnimation: Animation {
-        .spring(response: 0.24, dampingFraction: 0.86)
+    init(
+        title: String,
+        isMuted: Bool = false,
+        isPinned: Bool = false,
+        preview: String,
+        subtitle: String?,
+        timeLabel: String?,
+        unreadCount: UInt64,
+        pictureUrl: String? = nil,
+        preferences: PreferencesSnapshot? = nil,
+        manager: AppManager? = nil,
+        leading: AnyView? = nil,
+        previewLeading: AnyView? = nil
+    ) {
+        self.title = title
+        self.isMuted = isMuted
+        self.isPinned = isPinned
+        self.preview = preview
+        self.subtitle = subtitle
+        self.timeLabel = timeLabel
+        self.unreadCount = unreadCount
+        self.pictureUrl = pictureUrl
+        self.preferences = preferences
+        self.manager = manager
+        self.leading = leading
+        self.previewLeading = previewLeading
     }
 
     var body: some View {
-        ZStack {
-            leadingActions
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .allowsHitTesting(currentOffset > 1)
-                .accessibilityHidden(currentOffset <= 1)
+        HStack(alignment: .top, spacing: 12) {
+            if let leading {
+                leading
+            } else {
+                IrisAvatar(
+                    label: title,
+                    size: 48,
+                    emphasize: unreadCount > 0,
+                    pictureUrl: pictureUrl,
+                    preferences: preferences,
+                    manager: manager
+                )
+            }
 
-            trailingActions
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .allowsHitTesting(currentOffset < -1)
-                .accessibilityHidden(currentOffset >= -1)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+                        Text(title)
+                            .font(.system(.headline, design: .rounded))
+                            .foregroundStyle(palette.textPrimary)
+                            .lineLimit(1)
 
-            row
-                .background(palette.background)
-                .offset(x: currentOffset)
-                .highPriorityGesture(rowDragGesture)
-                .accessibilityAction(named: chat.isMuted ? "Unmute" : "Mute") {
-                    onToggleMute()
-                }
-                .accessibilityAction(named: chat.unreadCount > 0 ? "Mark read" : "Mark as unread") {
-                    onToggleUnread()
-                }
-                .accessibilityAction(named: chat.isPinned ? "Unpin" : "Pin") {
-                    onTogglePin()
-                }
-                .accessibilityAction(named: "Delete") {
-                    showingDeleteConfirmation = true
-                }
-        }
-        .clipped()
-        .onChange(of: dragIsActive) { isActive in
-            guard !isActive else { return }
-            activeDragAxis = nil
-            if displayedOffset != restingOffset {
-                displayOffset(restingOffset, animated: true)
-            }
-        }
-        .alert("Delete chat?", isPresented: $showingDeleteConfirmation) {
-            Button("Delete", role: .destructive) {
-                onDelete()
-                setRestingOffset(0, animated: false)
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-    }
+                        if isMuted {
+                            Image(systemName: "bell.slash.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(palette.muted)
+                                .accessibilityLabel("muted")
+                        }
 
-    private var leadingActions: some View {
-        HStack(spacing: 0) {
-            swipeButton(
-                title: chat.unreadCount > 0 ? "Read" : "Unread",
-                systemImage: chat.unreadCount > 0 ? "envelope.open.fill" : "envelope.badge.fill",
-                tint: palette.accent
-            ) {
-                onToggleUnread()
-                setRestingOffset(0, animated: true)
-            }
-            swipeButton(
-                title: chat.isPinned ? "Unpin" : "Pin",
-                systemImage: chat.isPinned ? "pin.slash.fill" : "pin.fill",
-                tint: palette.accentAlt
-            ) {
-                onTogglePin()
-                setRestingOffset(0, animated: true)
-            }
-        }
-        .frame(width: actionWidth)
-    }
+                        if isPinned {
+                            Image(systemName: "pin.fill")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(palette.muted)
+                                .accessibilityLabel("pinned")
+                        }
+                    }
+                    .layoutPriority(1)
 
-    private var trailingActions: some View {
-        HStack(spacing: 0) {
-            swipeButton(
-                title: chat.isMuted ? "Unmute" : "Mute",
-                systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill",
-                tint: palette.accentAlt
-            ) {
-                onToggleMute()
-                setRestingOffset(0, animated: true)
-            }
-            swipeButton(
-                title: "Delete",
-                systemImage: "trash.fill",
-                tint: .red
-            ) {
-                showingDeleteConfirmation = true
-            }
-        }
-        .frame(width: actionWidth)
-    }
+                    Spacer(minLength: 8)
 
-    private func swipeButton(
-        title: String,
-        systemImage: String,
-        tint: Color,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            VStack(spacing: 4) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 16, weight: .semibold))
-                Text(title)
-                    .font(.system(.caption2, design: .rounded, weight: .bold))
-                    .lineLimit(1)
-            }
-            .foregroundStyle(Color.white)
-            .frame(width: actionWidth / 2)
-            .frame(maxHeight: .infinity)
-            .background(tint)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.irisPlain)
-    }
-
-    private var rowDragGesture: some Gesture {
-        // Keep vertical intent with the enclosing ScrollView. Signal uses
-        // UITableView swipe actions, whose recognizer only begins after a
-        // deliberate horizontal pan; this gate approximates that behavior.
-        DragGesture(minimumDistance: 24, coordinateSpace: .local)
-            .updating($dragIsActive) { _, state, _ in
-                state = true
-            }
-            .onChanged { value in
-                let horizontal = abs(value.translation.width)
-                let vertical = abs(value.translation.height)
-
-                if activeDragAxis == nil {
-                    if horizontal >= 10, horizontal > vertical * 1.35 {
-                        activeDragAxis = .horizontal
-                    } else if vertical >= 6, vertical > horizontal {
-                        activeDragAxis = .vertical
-                    } else {
-                        return
+                    if let timeLabel, !timeLabel.isEmpty {
+                        Text(timeLabel)
+                            .font(.system(.subheadline, design: .rounded))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(1)
                     }
                 }
 
-                guard activeDragAxis == .horizontal else { return }
-                displayOffset(restingOffset + value.translation.width, animated: false)
-            }
-            .onEnded { value in
-                guard activeDragAxis == .horizontal else {
-                    activeDragAxis = nil
-                    return
+                HStack(alignment: .center, spacing: 6) {
+                    if let previewLeading {
+                        previewLeading
+                    }
+                    Text(preview)
+                        .font(.system(.subheadline, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(previewLeading == nil ? 2 : 1)
                 }
 
-                setRestingOffset(targetOffset(for: value), animated: true)
-                activeDragAxis = nil
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
             }
-    }
 
-    private func targetOffset(for value: DragGesture.Value) -> CGFloat {
-        let projectedOffset = clampedOffset(restingOffset + value.translation.width)
-        let predictedOffset = clampedOffset(restingOffset + value.predictedEndTranslation.width)
-
-        if restingOffset > actionWidth / 2 {
-            let shouldClose = projectedOffset < actionWidth - revealThreshold || predictedOffset < actionWidth / 2
-            return shouldClose ? 0 : actionWidth
+            Text(unreadCount > 99 ? "99+" : "\(max(unreadCount, 1))")
+                .font(.system(.footnote, design: .rounded, weight: .semibold))
+                .foregroundStyle(unreadCount > 0 ? palette.onAccent : Color.clear)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .frame(minWidth: 22)
+                .background(Capsule(style: .continuous).fill(unreadCount > 0 ? palette.accent : Color.clear))
+                .padding(.top, 2)
+                .accessibilityHidden(unreadCount == 0)
         }
-
-        if restingOffset < -actionWidth / 2 {
-            let shouldClose = projectedOffset > -actionWidth + revealThreshold || predictedOffset > -actionWidth / 2
-            return shouldClose ? 0 : -actionWidth
-        }
-
-        let shouldRevealLeading = projectedOffset > revealThreshold || predictedOffset > actionWidth / 2
-        if shouldRevealLeading {
-            return actionWidth
-        }
-
-        let shouldReveal = projectedOffset < -revealThreshold || predictedOffset < -actionWidth / 2
-        return shouldReveal ? -actionWidth : 0
-    }
-
-    private func setRestingOffset(_ offset: CGFloat, animated: Bool) {
-        let offset = clampedOffset(offset)
-        let changes = {
-            restingOffset = offset
-            displayedOffset = offset
-        }
-
-        if animated {
-            withAnimation(snapAnimation, changes)
-        } else {
-            withoutAnimation(changes)
-        }
-    }
-
-    private func displayOffset(_ offset: CGFloat, animated: Bool) {
-        let changes = {
-            displayedOffset = clampedOffset(offset)
-        }
-
-        if animated {
-            withAnimation(snapAnimation, changes)
-        } else {
-            withoutAnimation(changes)
-        }
-    }
-
-    private func withoutAnimation(_ changes: () -> Void) {
-        var transaction = Transaction()
-        transaction.disablesAnimations = true
-        withTransaction(transaction, changes)
-    }
-
-    private func clampedOffset(_ offset: CGFloat) -> CGFloat {
-        min(actionWidth, max(-actionWidth, offset))
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
     }
 }
 #endif
