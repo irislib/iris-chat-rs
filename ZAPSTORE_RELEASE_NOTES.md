@@ -2,6 +2,7 @@
 
 - Settings now has Devices as its own page, and profile QR codes only open when you tap for them.
 - Chat screens are closer to Signal, with better headers, message spacing, day labels, reactions, drafts, and composer behavior.
+- The iOS new chat button is easier to tap reliably.
 - Profile photos, QR sharing, image previews, and share sheets now feel cleaner across mobile.
 - Blocking users, linked devices, and group chats are steadier, with more crash and error recovery fixes.
 

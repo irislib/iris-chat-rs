@@ -182,7 +182,6 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
 struct RootView: View {
     @ObservedObject var manager: AppManager
     @State private var directChatInfoChatId: String?
-    @State private var inChatSearch: InChatSearchTarget?
     @State private var settingsFocus: SettingsFocusSection?
 #if os(iOS)
     @State private var showingSettingsSheet = false
@@ -231,19 +230,6 @@ struct RootView: View {
                 }
 
                 ToastOverlay(center: manager.toasts)
-            }
-            .sheet(item: $inChatSearch) { target in
-                InChatSearchSheet(manager: manager, target: target) {
-                    inChatSearch = nil
-                }
-                .irisModalSurface()
-#if os(iOS)
-                .presentationDetents([.large])
-                .presentationDragIndicator(.visible)
-#elseif os(macOS)
-                .frame(minWidth: 420, minHeight: 520)
-#endif
-                .irisDismissOnMacOutsideClick { inChatSearch = nil }
             }
 #if os(iOS)
             .sheet(isPresented: $showingSettingsSheet) {
@@ -469,18 +455,7 @@ struct RootView: View {
         // retype the chat name.
         if let target = chatHeaderSearchTarget(for: screen) {
             return AnyView(
-                Button {
-                    inChatSearch = target
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Color.primary)
-                        .frame(width: 40, height: 40)
-                }
-                .buttonStyle(.irisPlain)
-                .accessibilityLabel("Search in this chat")
-                .accessibilityIdentifier("chatHeaderSearchButton")
-                .padding(.trailing, 8)
+                InChatSearchButton(manager: manager, target: target)
             )
         }
 
@@ -2991,6 +2966,14 @@ private struct ChatListSearchField: View {
 private struct IrisChatListSearchBar: UIViewRepresentable {
     @Binding var text: String
 
+    private static var signalSearchFieldBackground: UIColor {
+        UIColor { traitCollection in
+            traitCollection.userInterfaceStyle == .dark
+                ? UIColor(red: 0x1C / 255.0, green: 0x1C / 255.0, blue: 0x1E / 255.0, alpha: 1)
+                : UIColor(red: 0xEF / 255.0, green: 0xEF / 255.0, blue: 0xF0 / 255.0, alpha: 1)
+        }
+    }
+
     func makeCoordinator() -> Coordinator {
         Coordinator(text: $text)
     }
@@ -3007,7 +2990,7 @@ private struct IrisChatListSearchBar: UIViewRepresentable {
         searchBar.backgroundColor = .clear
         searchBar.backgroundImage = UIImage()
         searchBar.tintColor = .label
-        searchBar.searchTextField.backgroundColor = .secondarySystemFill
+        searchBar.searchTextField.backgroundColor = Self.signalSearchFieldBackground
         searchBar.searchTextField.textColor = .label
         searchBar.searchTextField.accessibilityIdentifier = "chatListSearchField"
         searchBar.searchTextField.clearButtonMode = .never
@@ -3019,6 +3002,7 @@ private struct IrisChatListSearchBar: UIViewRepresentable {
         if searchBar.text != text {
             searchBar.text = text
         }
+        searchBar.searchTextField.backgroundColor = Self.signalSearchFieldBackground
         context.coordinator.updateCloseButton(for: searchBar)
     }
 
@@ -3345,6 +3329,43 @@ struct InChatSearchTarget: Identifiable, Hashable {
     var id: String { chatId }
 }
 
+private struct InChatSearchButton: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    let target: InChatSearchTarget
+    @State private var presentedTarget: InChatSearchTarget?
+
+    var body: some View {
+        Button {
+            presentedTarget = target
+        } label: {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+                .frame(width: 40, height: 40)
+                .frame(width: 48, height: 48)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityLabel("Search in this chat")
+        .accessibilityIdentifier("chatHeaderSearchButton")
+        .padding(.trailing, 4)
+        .sheet(item: $presentedTarget) { target in
+            InChatSearchSheet(manager: manager, target: target) {
+                presentedTarget = nil
+            }
+            .irisModalSurface()
+#if os(iOS)
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+#elseif os(macOS)
+            .frame(minWidth: 420, minHeight: 520)
+#endif
+            .irisDismissOnMacOutsideClick { presentedTarget = nil }
+        }
+    }
+}
+
 /// Scoped message search bound to a single conversation. Reached from
 /// the chat / group-details header magnifying-glass icon. Tapping a
 /// hit dismisses the sheet and opens the chat at that conversation.
@@ -3481,13 +3502,20 @@ private struct NewChatCircleButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "square.and.pencil")
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(palette.textPrimary)
-                .frame(width: 40, height: 40)
-                .irisGlassSurface(in: Circle())
+            ZStack(alignment: .trailing) {
+                Color.clear
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .frame(width: 40, height: 40)
+                    .irisGlassSurface(in: Circle())
+            }
+            .frame(width: 60, height: 48, alignment: .trailing)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
+        .frame(width: 60, height: 48, alignment: .trailing)
+        .contentShape(Rectangle())
         .accessibilityLabel("New chat")
         .accessibilityIdentifier("chatListNewChatButton")
     }

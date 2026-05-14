@@ -74,34 +74,37 @@ def with_overrides(base, overrides):
 android_overrides = PALETTE.get("androidOverrides", {})
 android_light = with_overrides(light, android_overrides.get("light", {}))
 android_dark = with_overrides(dark, android_overrides.get("dark", {}))
+ios_overrides = PALETTE.get("iosOverrides", {})
+ios_light = with_overrides(light, ios_overrides.get("light", {}))
+ios_dark = with_overrides(dark, ios_overrides.get("dark", {}))
 
 checks = []
 
 checks += assert_contains(
     "ios/Sources/IrisChrome.swift",
     [
-        ("light.background", f"background: Color(hex: {swift_rgb(light['background'])})"),
-        ("light.panel", f"panel: Color(hex: {swift_rgb(light['panel'])})"),
-        ("light.panelAlt", f"panelAlt: Color(hex: {swift_rgb(light['panelAlt'])})"),
-        ("light.border", f"border: Color.black.opacity({alpha_text(light['border'])})"),
-        ("light.toolbar", f"toolbar: Color(hex: {swift_rgb(light['toolbar'])}).opacity({alpha_text(light['toolbar'])})"),
-        ("light.bubbleMine", f"bubbleMine: Color(hex: {swift_rgb(light['bubbleMine'])})"),
-        ("light.bubbleTheirs", f"bubbleTheirs: Color(hex: {swift_rgb(light['bubbleTheirs'])})"),
-        ("light.accent", f"accent: Color(hex: {swift_rgb(light['accent'])})"),
-        ("light.accentAlt", f"accentAlt: Color(hex: {swift_rgb(light['accentAlt'])})"),
-        ("light.textPrimary", f"textPrimary: Color(hex: {swift_rgb(light['textPrimary'])})"),
-        ("light.muted", f"muted: Color(hex: {swift_rgb(light['muted'])})"),
-        ("light.onBubbleTheirs", f"onBubbleTheirs: Color(hex: {swift_rgb(light['onBubbleTheirs'])})"),
-        ("dark.background", f"background: Color(hex: {swift_rgb(dark['background'])})"),
-        ("dark.panel", f"panel: Color(hex: {swift_rgb(dark['panel'])})"),
-        ("dark.panelAlt", f"panelAlt: Color(hex: {swift_rgb(dark['panelAlt'])})"),
-        ("dark.border", f"border: Color.white.opacity({alpha_text(dark['border'])})"),
-        ("dark.toolbar", f"toolbar: Color(hex: {swift_rgb(dark['toolbar'])}).opacity({alpha_text(dark['toolbar'])})"),
-        ("dark.bubbleMine", f"bubbleMine: Color(hex: {swift_rgb(dark['bubbleMine'])})"),
-        ("dark.bubbleTheirs", f"bubbleTheirs: Color(hex: {swift_rgb(dark['bubbleTheirs'])})"),
-        ("dark.accent", f"accent: Color(hex: {swift_rgb(dark['accent'])})"),
-        ("dark.accentAlt", f"accentAlt: Color(hex: {swift_rgb(dark['accentAlt'])})"),
-        ("dark.muted", f"muted: Color(hex: {swift_rgb(dark['muted'])})"),
+        ("light.background", f"background: Color(hex: {swift_rgb(ios_light['background'])})"),
+        ("light.panel", f"panel: Color(hex: {swift_rgb(ios_light['panel'])})"),
+        ("light.panelAlt", f"panelAlt: Color(hex: {swift_rgb(ios_light['panelAlt'])})"),
+        ("light.border", f"border: Color.black.opacity({alpha_text(ios_light['border'])})"),
+        ("light.toolbar", f"toolbar: Color(hex: {swift_rgb(ios_light['toolbar'])}).opacity({alpha_text(ios_light['toolbar'])})"),
+        ("light.bubbleMine", f"bubbleMine: Color(hex: {swift_rgb(ios_light['bubbleMine'])})"),
+        ("light.bubbleTheirs", f"bubbleTheirs: Color(hex: {swift_rgb(ios_light['bubbleTheirs'])})"),
+        ("light.accent", f"accent: Color(hex: {swift_rgb(ios_light['accent'])})"),
+        ("light.accentAlt", f"accentAlt: Color(hex: {swift_rgb(ios_light['accentAlt'])})"),
+        ("light.textPrimary", f"textPrimary: Color(hex: {swift_rgb(ios_light['textPrimary'])})"),
+        ("light.muted", f"muted: Color(hex: {swift_rgb(ios_light['muted'])})"),
+        ("light.onBubbleTheirs", f"onBubbleTheirs: Color(hex: {swift_rgb(ios_light['onBubbleTheirs'])})"),
+        ("dark.background", f"background: Color(hex: {swift_rgb(ios_dark['background'])})"),
+        ("dark.panel", f"panel: Color(hex: {swift_rgb(ios_dark['panel'])})"),
+        ("dark.panelAlt", f"panelAlt: Color(hex: {swift_rgb(ios_dark['panelAlt'])})"),
+        ("dark.border", f"border: Color.white.opacity({alpha_text(ios_dark['border'])})"),
+        ("dark.toolbar", f"toolbar: Color(hex: {swift_rgb(ios_dark['toolbar'])}).opacity({alpha_text(ios_dark['toolbar'])})"),
+        ("dark.bubbleMine", f"bubbleMine: Color(hex: {swift_rgb(ios_dark['bubbleMine'])})"),
+        ("dark.bubbleTheirs", f"bubbleTheirs: Color(hex: {swift_rgb(ios_dark['bubbleTheirs'])})"),
+        ("dark.accent", f"accent: Color(hex: {swift_rgb(ios_dark['accent'])})"),
+        ("dark.accentAlt", f"accentAlt: Color(hex: {swift_rgb(ios_dark['accentAlt'])})"),
+        ("dark.muted", f"muted: Color(hex: {swift_rgb(ios_dark['muted'])})"),
         ("dark.textPrimary", "textPrimary: .white"),
         ("onAccent", "onAccent: .white"),
         ("onBubbleMine", "onBubbleMine: .white"),

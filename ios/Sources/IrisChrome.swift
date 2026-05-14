@@ -325,6 +325,7 @@ private extension Color {
 
 struct IrisTopBar: View {
     @Environment(\.irisPalette) private var palette
+    private static let centeredSideSlotWidth: CGFloat = 64
 
     let title: String
     let subtitle: String?
@@ -451,15 +452,20 @@ struct IrisTopBar: View {
         ZStack {
             titleContent
                 .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.horizontal, 72)
+                .padding(.horizontal, Self.centeredSideSlotWidth + 24)
+                .allowsHitTesting(false)
+                .zIndex(0)
 
             HStack(spacing: 0) {
                 leadingSlot
-                    .frame(width: 52, alignment: .leading)
+                    .frame(width: Self.centeredSideSlotWidth, alignment: .leading)
+                    .zIndex(2)
                 Spacer(minLength: 0)
                 trailing
-                    .frame(width: 52, alignment: .trailing)
+                    .frame(width: Self.centeredSideSlotWidth, height: 48, alignment: .trailing)
+                    .zIndex(2)
             }
+            .zIndex(1)
         }
         .frame(height: 48)
     }

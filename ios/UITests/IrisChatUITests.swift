@@ -103,8 +103,9 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "messageMoreButton").waitForExistence(timeout: 5))
         element(app, "messageMoreButton").tap()
 #endif
-        XCTAssertTrue(app.buttons["Message Details"].waitForExistence(timeout: 5))
-        app.buttons["Message Details"].tap()
+        let messageInfoAction = app.buttons["Info"].firstMatch
+        XCTAssertTrue(messageInfoAction.waitForExistence(timeout: 5))
+        messageInfoAction.tap()
         XCTAssertTrue(element(app, "messageInfoSheet").waitForExistence(timeout: 5))
         XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
     }
@@ -920,7 +921,11 @@ final class IrisChatUITests: XCTestCase {
             XCTFail("New chat control never appeared", file: file, line: line)
             return
         }
-        newChat.tap()
+        if newChat.identifier == "chatListNewChatButton" {
+            newChat.coordinate(withNormalizedOffset: CGVector(dx: 0.12, dy: 0.5)).tap()
+        } else {
+            newChat.tap()
+        }
     }
 
     private func returnToChatList(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {

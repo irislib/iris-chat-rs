@@ -31,13 +31,35 @@
     "onBubbleMine": { "rgb": "#FFFFFF", "alpha": 1.0 },
     "onBubbleTheirs": { "rgb": "#FFFFFF", "alpha": 1.0 }
   },
-  "androidOverrides": {
-    "_comment": "Android shells use Signal-Android's surface-variant for the incoming bubble (conversation_item_recv_bubble_color_normal) instead of the shared bubbleTheirs token — neutral Iris greys felt off next to Material 3's surfaceVariant. Introduced in 8303a1d.",
+  "iosOverrides": {
+    "_comment": "iOS follows Signal-iOS neutral incoming bubble fills while the shared palette remains the desktop/web baseline.",
     "light": {
-      "bubbleTheirs": { "rgb": "#E7EBF3", "alpha": 1.0 }
+      "bubbleTheirs": { "rgb": "#E9E9E9", "alpha": 1.0 }
     },
     "dark": {
-      "bubbleTheirs": { "rgb": "#303133", "alpha": 1.0 }
+      "bubbleTheirs": { "rgb": "#2C2C2E", "alpha": 1.0 }
+    }
+  },
+  "androidOverrides": {
+    "_comment": "Android follows Signal-Android Material 3 surface tokens while Iris keeps the outgoing bubble/accent color.",
+    "light": {
+      "background": { "rgb": "#FBFCFF", "alpha": 1.0 },
+      "panel": { "rgb": "#FBFCFF", "alpha": 1.0 },
+      "panelAlt": { "rgb": "#E7EBF3", "alpha": 1.0 },
+      "border": { "rgb": "#808389", "alpha": 1.0 },
+      "toolbar": { "rgb": "#FBFCFF", "alpha": 1.0 },
+      "bubbleTheirs": { "rgb": "#E7EBF3", "alpha": 1.0 },
+      "textPrimary": { "rgb": "#1B1B1D", "alpha": 1.0 },
+      "muted": { "rgb": "#545863", "alpha": 1.0 }
+    },
+    "dark": {
+      "panel": { "rgb": "#1B1C1F", "alpha": 1.0 },
+      "panelAlt": { "rgb": "#303133", "alpha": 1.0 },
+      "border": { "rgb": "#5C5E65", "alpha": 1.0 },
+      "toolbar": { "rgb": "#000000", "alpha": 1.0 },
+      "bubbleTheirs": { "rgb": "#303133", "alpha": 1.0 },
+      "textPrimary": { "rgb": "#E2E1E5", "alpha": 1.0 },
+      "muted": { "rgb": "#BEBFC5", "alpha": 1.0 }
     }
   }
 }
