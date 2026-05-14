@@ -66,9 +66,11 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("myProfileSheet")
+        composeRule.onNodeWithTag("settingsProfileQrButton", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("settingsDevicesRow", useUnmergedTree = true).assertIsDisplayed()
         composeRule.openSettingsPage("settingsProfileRow")
-        composeRule.onNodeWithTag("myProfileQrCode", useUnmergedTree = true).assertIsDisplayed()
-        composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("myProfileShowQrButton", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("myProfileDisplayNameInput", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
@@ -76,10 +78,7 @@ class PikaLikeUiTest {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
 
-        composeRule.openSettingsPage("settingsProfileRow")
-        composeRule.waitForTag("myProfileManageDevicesButton")
-        composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
-            .performClick()
+        composeRule.openSettingsPage("settingsDevicesRow")
 
         composeRule.waitForTag("deviceRosterOwnerNpub")
         composeRule.onNodeWithTag("deviceRosterCurrentDeviceNpub", useUnmergedTree = true)
@@ -141,10 +140,7 @@ class PikaLikeUiTest {
     fun manage_devices_valid_link_code_enables_authorize_action() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
-        composeRule.openSettingsPage("settingsProfileRow")
-        composeRule.waitForTag("myProfileManageDevicesButton")
-        composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
-            .performClick()
+        composeRule.openSettingsPage("settingsDevicesRow")
 
         composeRule.waitForTag("deviceRosterAddInput")
         composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true)
@@ -157,10 +153,7 @@ class PikaLikeUiTest {
     fun manage_devices_plain_device_key_keeps_authorize_action_disabled() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
-        composeRule.openSettingsPage("settingsProfileRow")
-        composeRule.waitForTag("myProfileManageDevicesButton")
-        composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
-            .performClick()
+        composeRule.openSettingsPage("settingsDevicesRow")
 
         composeRule.waitForTag("deviceRosterAddInput")
         composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true)
@@ -173,10 +166,7 @@ class PikaLikeUiTest {
     fun scan_device_approval_qr_authorizes_device() {
         composeRule.ensureChatList()
         composeRule.onNodeWithTag("chatListProfileButton", useUnmergedTree = true).performClick()
-        composeRule.openSettingsPage("settingsProfileRow")
-        composeRule.waitForTag("myProfileManageDevicesButton")
-        composeRule.onNodeWithTag("myProfileManageDevicesButton", useUnmergedTree = true)
-            .performClick()
+        composeRule.openSettingsPage("settingsDevicesRow")
 
         composeRule.waitForTag("deviceRosterOwnerNpub")
         val ownerNpub =
@@ -374,7 +364,6 @@ class PikaLikeUiTest {
     fun link_device_shows_scannable_code() {
         composeRule.resetToWelcome()
         composeRule.onNodeWithTag("welcomeAddDeviceAction", useUnmergedTree = true)
-            .performScrollTo()
             .performClick()
         composeRule.waitForTag("addDeviceScreen")
         composeRule.waitForTag("linkDeviceQrCode")
@@ -388,7 +377,6 @@ class PikaLikeUiTest {
     fun restore_account_opens_chat_list() {
         composeRule.resetToWelcome()
         composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true)
-            .performScrollTo()
             .performClick()
 
         composeRule.waitForTag("restoreAccountScreen")
@@ -405,7 +393,6 @@ class PikaLikeUiTest {
     fun restore_invalid_secret_key_shows_invalid_key() {
         composeRule.resetToWelcome()
         composeRule.onNodeWithTag("welcomeRestoreAction", useUnmergedTree = true)
-            .performScrollTo()
             .performClick()
 
         composeRule.waitForTag("restoreAccountScreen")
