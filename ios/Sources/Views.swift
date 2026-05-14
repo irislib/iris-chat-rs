@@ -6759,10 +6759,6 @@ private struct SettingsMenuRow: View {
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
                     .frame(width: 32, height: 32)
-                    .background(
-                        Circle()
-                            .fill(selected ? palette.accent.opacity(0.16) : palette.toolbar)
-                    )
                 Text(page.title)
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
