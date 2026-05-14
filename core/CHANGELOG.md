@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.20
+
+- Improve iOS chat list ergonomics with UIKit swipe actions, calmer navigation chrome, and a search close button that dismisses the keyboard.
+- Align Android chat search, settings, setup, and group management screens with simpler Signal-style flows.
+- Keep session restore and loading states visually steadier across native shells.
+
 ## 0.1.19
 
 - Add Homebrew tap packaging for the `iris` CLI and wire tap updates into the htree release publish path.
