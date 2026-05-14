@@ -3074,6 +3074,7 @@ private struct ChatListRowContainer: View {
             isMuted: chat.isMuted,
             isPinned: chat.isPinned,
             preview: preview,
+            draftPreview: chat.isTyping || trimmedDraft.isEmpty ? nil : trimmedDraft,
             subtitle: nil,
             timeLabel: timeLabel,
             unreadCount: chat.unreadCount,
@@ -3319,6 +3320,7 @@ private struct ChatListTableView: UIViewRepresentable {
                     isMuted: chat.isMuted,
                     isPinned: chat.isPinned,
                     preview: preview,
+                    draftPreview: chat.isTyping ? nil : trimmedDraftPreview(for: chat),
                     subtitle: nil,
                     timeLabel: timeLabel,
                     unreadCount: chat.unreadCount,
@@ -3387,10 +3389,15 @@ private struct ChatListTableView: UIViewRepresentable {
         }
 
         private func chatListPreview(for chat: ChatThreadSnapshot) -> String {
-            let trimmedDraft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedDraft = trimmedDraftPreview(for: chat) ?? ""
             if chat.isTyping { return "Typing" }
             if !trimmedDraft.isEmpty { return "Draft: \(trimmedDraft)" }
             return chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"
+        }
+
+        private func trimmedDraftPreview(for chat: ChatThreadSnapshot) -> String? {
+            let trimmedDraft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmedDraft.isEmpty ? nil : trimmedDraft
         }
     }
 }
@@ -3402,6 +3409,7 @@ private struct ChatListTableRowContent: View {
     let isMuted: Bool
     let isPinned: Bool
     let preview: String
+    let draftPreview: String?
     let subtitle: String?
     let timeLabel: String?
     let unreadCount: UInt64
@@ -3416,6 +3424,7 @@ private struct ChatListTableRowContent: View {
         isMuted: Bool = false,
         isPinned: Bool = false,
         preview: String,
+        draftPreview: String? = nil,
         subtitle: String?,
         timeLabel: String?,
         unreadCount: UInt64,
@@ -3429,6 +3438,7 @@ private struct ChatListTableRowContent: View {
         self.isMuted = isMuted
         self.isPinned = isPinned
         self.preview = preview
+        self.draftPreview = draftPreview
         self.subtitle = subtitle
         self.timeLabel = timeLabel
         self.unreadCount = unreadCount
@@ -3469,12 +3479,6 @@ private struct ChatListTableRowContent: View {
                                 .accessibilityLabel("muted")
                         }
 
-                        if isPinned {
-                            Image(systemName: "pin.fill")
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundStyle(palette.muted)
-                                .accessibilityLabel("pinned")
-                        }
                     }
                     .layoutPriority(1)
 
@@ -3492,7 +3496,7 @@ private struct ChatListTableRowContent: View {
                     if let previewLeading {
                         previewLeading
                     }
-                    Text(preview)
+                    previewText
                         .font(.system(.subheadline, design: .rounded))
                         .foregroundStyle(palette.muted)
                         .lineLimit(previewLeading == nil ? 2 : 1)
@@ -3518,6 +3522,13 @@ private struct ChatListTableRowContent: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+
+    private var previewText: Text {
+        if let draftPreview {
+            return Text("Draft: ").italic() + Text(draftPreview)
+        }
+        return Text(preview)
     }
 }
 

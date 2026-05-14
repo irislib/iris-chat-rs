@@ -1003,6 +1003,7 @@ struct IrisChatRow: View {
     let isMuted: Bool
     let isPinned: Bool
     let preview: String
+    let draftPreview: String?
     let subtitle: String?
     let timeLabel: String?
     let unreadCount: UInt64
@@ -1018,6 +1019,7 @@ struct IrisChatRow: View {
         isMuted: Bool = false,
         isPinned: Bool = false,
         preview: String,
+        draftPreview: String? = nil,
         subtitle: String?,
         timeLabel: String?,
         unreadCount: UInt64,
@@ -1032,6 +1034,7 @@ struct IrisChatRow: View {
         self.isMuted = isMuted
         self.isPinned = isPinned
         self.preview = preview
+        self.draftPreview = draftPreview
         self.subtitle = subtitle
         self.timeLabel = timeLabel
         self.unreadCount = unreadCount
@@ -1080,12 +1083,6 @@ struct IrisChatRow: View {
                                     .accessibilityLabel("muted")
                             }
 
-                            if isPinned {
-                                Image(systemName: "pin.fill")
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(palette.muted)
-                                    .accessibilityLabel("pinned")
-                            }
                         }
                         .layoutPriority(1)
 
@@ -1103,7 +1100,7 @@ struct IrisChatRow: View {
                         if let previewLeading {
                             previewLeading
                         }
-                        Text(preview)
+                        previewText
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(palette.muted)
                             // When an inline avatar group sits to the left,
@@ -1135,6 +1132,13 @@ struct IrisChatRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
+    }
+
+    private var previewText: Text {
+        if let draftPreview {
+            return Text("Draft: ").italic() + Text(draftPreview)
+        }
+        return Text(preview)
     }
 }
 
