@@ -1306,6 +1306,26 @@ fn protocol_fetch_rate_limit_tolerates_future_start_time() {
 }
 
 #[test]
+fn protocol_fetch_rate_limit_tolerates_stale_start_time() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("protocol-fetch-stale-rate-limit", &owner, &device);
+
+    core.protocol_subscription_runtime
+        .protocol_fetch_last_started_at = Some(Instant::now() - Duration::from_secs(60));
+    core.debug_log.clear();
+
+    core.fetch_recent_protocol_state();
+    assert!(
+        core.debug_log
+            .iter()
+            .all(|entry| entry.category != "protocol.catch_up.skip"
+                || !entry.detail.contains("rate limited")),
+        "stale protocol fetch timestamp should not trigger rate-limit subtraction"
+    );
+}
+
+#[test]
 fn liveness_retries_protocol_backfill_for_tracked_peer_with_roster_but_no_session() {
     let owner = Keys::generate();
     let device = Keys::generate();

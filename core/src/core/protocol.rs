@@ -20,7 +20,7 @@ impl AppCore {
             .protocol_fetch_last_started_at?;
         let min_interval = Duration::from_secs(PROTOCOL_FETCH_MIN_INTERVAL_SECS);
         let elapsed = Instant::now().saturating_duration_since(last_started);
-        (elapsed < min_interval).then_some(min_interval - elapsed)
+        (elapsed < min_interval).then(|| min_interval - elapsed)
     }
 
     pub(super) fn send_protocol_engine_unsigned_event(
