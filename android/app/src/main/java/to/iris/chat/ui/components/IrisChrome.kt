@@ -86,6 +86,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -568,7 +571,10 @@ fun IrisToggleRow(
         title = title,
         subtitle = subtitle,
         onClick = { onCheckedChange(!checked) },
-        modifier = modifier,
+        modifier =
+            modifier.semantics {
+                toggleableState = if (checked) ToggleableState.On else ToggleableState.Off
+            },
         trailing = {
             Switch(
                 checked = checked,
