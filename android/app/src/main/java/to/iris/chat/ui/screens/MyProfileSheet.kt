@@ -28,7 +28,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -64,9 +63,12 @@ import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisInlineAction
+import to.iris.chat.ui.components.IrisListSection
+import to.iris.chat.ui.components.IrisMenuRow
 import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
+import to.iris.chat.ui.components.IrisToggleRow
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
@@ -924,16 +926,13 @@ private fun SettingsProfileMenuRow(
     imageData: ByteArray?,
     onClick: () -> Unit,
 ) {
-    IrisSectionCard {
-        Row(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onClick)
-                    .testTag(SettingsPage.Profile.tag),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+    IrisListSection {
+        IrisMenuRow(
+            title = displayName.ifBlank { "Profile" },
+            subtitle = "My profile",
+            onClick = onClick,
+            modifier = Modifier.testTag(SettingsPage.Profile.tag),
+            leading = {
             IrisAvatar(
                 label = displayName.ifBlank { "Profile" },
                 size = 54.dp,
@@ -941,36 +940,15 @@ private fun SettingsProfileMenuRow(
                 imageUrl = imageUrl,
                 imageData = imageData,
             )
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = displayName.ifBlank { "Profile" },
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = "My profile",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = IrisTheme.palette.muted,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            Icon(
-                imageVector = IrisIcons.ChevronRight,
-                contentDescription = null,
-                tint = IrisTheme.palette.muted,
-            )
-        }
+            },
+        )
     }
 }
 
 @Composable
 private fun SettingsMenuSection(content: @Composable () -> Unit) {
-    IrisSectionCard {
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            content()
-        }
+    IrisListSection {
+        content()
     }
 }
 
@@ -979,43 +957,12 @@ private fun SettingsMenuRow(
     page: SettingsPage,
     onClick: () -> Unit,
 ) {
-    Row(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .testTag(page.tag)
-                .padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier =
-                Modifier
-                    .size(34.dp)
-                    .background(IrisTheme.palette.toolbar, CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                imageVector = settingsPageIcon(page),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(19.dp),
-            )
-        }
-        Text(
-            text = page.title,
-            style = MaterialTheme.typography.bodyLarge,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Icon(
-            imageVector = IrisIcons.ChevronRight,
-            contentDescription = null,
-            tint = IrisTheme.palette.muted,
-        )
-    }
+    IrisMenuRow(
+        title = page.title,
+        onClick = onClick,
+        icon = settingsPageIcon(page),
+        modifier = Modifier.testTag(page.tag),
+    )
 }
 
 @Composable
@@ -1025,21 +972,12 @@ private fun SettingsToggleRow(
     onCheckedChange: (Boolean) -> Unit,
     tag: String,
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            modifier = Modifier.testTag(tag),
-        )
-    }
+    IrisToggleRow(
+        title = title,
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        modifier = Modifier.testTag(tag),
+    )
 }
 
 private fun settingsPageIcon(page: SettingsPage): ImageVector =

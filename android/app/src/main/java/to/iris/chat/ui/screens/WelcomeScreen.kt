@@ -222,7 +222,13 @@ fun CreateAccountScreen(
     OnboardingColumn {
         BackToWelcomeButton(appManager = appManager)
 
-        IrisSectionCard(modifier = Modifier.testTag("createAccountScreen")) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .testTag("createAccountScreen"),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
             Text(
                 text = "Create profile",
                 style = MaterialTheme.typography.headlineSmall,
@@ -278,7 +284,13 @@ fun RestoreAccountScreen(
     OnboardingColumn {
         BackToWelcomeButton(appManager = appManager)
 
-        IrisSectionCard(modifier = Modifier.testTag("restoreAccountScreen")) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .testTag("restoreAccountScreen"),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
             Text(
                 text = "Restore profile",
                 style = MaterialTheme.typography.headlineSmall,
@@ -375,7 +387,13 @@ fun AddDeviceScreen(
             BackToWelcomeButton(appManager = appManager)
         }
 
-        IrisSectionCard(modifier = Modifier.testTag("addDeviceScreen")) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .testTag("addDeviceScreen"),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
             Text(
                 text = if (awaitingApproval) "Finish linking" else "Link this device",
                 style = MaterialTheme.typography.headlineSmall,
@@ -444,15 +462,13 @@ fun AddDeviceScreen(
         }
 
         if (awaitingApproval) {
-            IrisSectionCard {
-                IrisSecondaryButton(
-                    text = "Sign out",
-                    onClick = { showLogoutConfirmation = true },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("awaitingApprovalLogoutButton"),
-                )
-            }
+            IrisSecondaryButton(
+                text = "Sign out",
+                onClick = { showLogoutConfirmation = true },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("awaitingApprovalLogoutButton"),
+            )
         } else {
             OnboardingMessageCard(message = appState.toast)
         }
@@ -501,8 +517,8 @@ private fun OnboardingColumn(
             Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 24.dp, vertical = 40.dp),
+        verticalArrangement = Arrangement.spacedBy(24.dp),
         content = content,
     )
 }
