@@ -206,6 +206,7 @@ struct IrisPalette {
     let bubbleMine: Color
     let bubbleTheirs: Color
     let accent: Color
+    let action: Color
     let accentAlt: Color
     let textPrimary: Color
     let muted: Color
@@ -222,6 +223,7 @@ struct IrisPalette {
         bubbleMine: Color(hex: 0x702ACE),
         bubbleTheirs: Color(hex: 0xE9E9E9),
         accent: Color(hex: 0x702ACE),
+        action: Color(hex: 0x2267F5),
         accentAlt: Color(hex: 0xDB8216),
         textPrimary: Color(hex: 0x0F1419),
         muted: Color(hex: 0x536471),
@@ -239,6 +241,7 @@ struct IrisPalette {
         bubbleMine: Color(hex: 0x702ACE),
         bubbleTheirs: Color(hex: 0x2C2C2E),
         accent: Color(hex: 0x702ACE),
+        action: Color(hex: 0x2D70FA),
         accentAlt: Color(hex: 0xDB8216),
         textPrimary: .white,
         muted: Color(hex: 0xD1D5DB),
@@ -961,9 +964,11 @@ struct IrisModalCloseButton: View {
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: iconSize, weight: .semibold))
+            Image(systemName: "xmark")
+                .font(.system(size: iconSize, weight: .bold))
                 .foregroundStyle(foregroundColor)
+                .frame(width: buttonSize, height: buttonSize)
+                .background(Circle().fill(backgroundColor))
                 .frame(width: hitSize, height: hitSize)
                 .contentShape(Circle())
         }
@@ -971,13 +976,88 @@ struct IrisModalCloseButton: View {
         .accessibilityLabel(accessibilityLabel)
     }
 
+    private var buttonSize: CGFloat {
+        min(max(iconSize + 18, 32), hitSize)
+    }
+
     private var foregroundColor: Color {
         switch tone {
         case .standard:
-            return palette.muted
+            return palette.action
         case .light:
             return Color.white.opacity(0.9)
         }
+    }
+
+    private var backgroundColor: Color {
+        switch tone {
+        case .standard:
+            return palette.panelAlt.opacity(0.95)
+        case .light:
+            return Color.black.opacity(0.48)
+        }
+    }
+}
+
+struct IrisModalBackButton: View {
+    @Environment(\.irisPalette) private var palette
+    let accessibilityLabel: String
+    let action: () -> Void
+
+    init(accessibilityLabel: String = "Back", action: @escaping () -> Void) {
+        self.accessibilityLabel = accessibilityLabel
+        self.action = action
+    }
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "chevron.left")
+                .font(.system(size: 17, weight: .bold))
+                .foregroundStyle(palette.action)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(palette.panelAlt.opacity(0.95)))
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+private struct IrisModalSurfaceModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.irisPalette) private var palette
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+#if os(iOS)
+        if #available(iOS 16.4, *) {
+            content
+                .background(palette.background)
+                .tint(palette.action)
+                .toolbarBackground(palette.background, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbarColorScheme(colorScheme, for: .navigationBar)
+                .presentationBackground(palette.background)
+        } else {
+            content
+                .background(palette.background)
+                .tint(palette.action)
+                .toolbarBackground(palette.background, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+                .toolbarColorScheme(colorScheme, for: .navigationBar)
+        }
+#else
+        content
+            .background(palette.background)
+            .tint(palette.action)
+#endif
+    }
+}
+
+extension View {
+    func irisModalSurface() -> some View {
+        modifier(IrisModalSurfaceModifier())
     }
 }
 
@@ -1232,6 +1312,21 @@ struct IrisDayChip: View {
             // regular-material blur — both via IrisGlassSurface so
             // the same modifier path applies as the composer and FAB.
             .irisGlassSurface(in: Capsule(style: .continuous), isInteractive: false)
+    }
+}
+
+struct IrisInlineDaySeparator: View {
+    @Environment(\.irisPalette) private var palette
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(.footnote, weight: .medium))
+            .foregroundStyle(palette.muted.opacity(0.78))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 3)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(text)
     }
 }
 

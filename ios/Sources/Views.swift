@@ -231,6 +231,7 @@ struct RootView: View {
             InChatSearchSheet(manager: manager, target: target) {
                 inChatSearch = nil
             }
+            .irisModalSurface()
 #if os(iOS)
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
@@ -247,6 +248,7 @@ struct RootView: View {
                 focusedSection: $settingsFocus,
                 modalClose: { showingSettingsSheet = false }
             )
+            .irisModalSurface()
             .presentationDetents([.large])
             .presentationDragIndicator(.visible)
         }
@@ -263,6 +265,7 @@ struct RootView: View {
                 service: manager.nearbyIris,
                 onClose: { showingNearbyIris = false }
             )
+            .irisModalSurface()
 #if os(macOS)
                 .frame(minWidth: 420, minHeight: 520)
 #endif
@@ -282,6 +285,7 @@ struct RootView: View {
         ) { share in
 #if os(iOS)
             ShareTargetSheet(manager: manager, share: share)
+                .irisModalSurface()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
 #elseif os(macOS)
@@ -3063,8 +3067,8 @@ private struct InChatSearchSheet: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Button("Done", action: onClose)
-                    .font(.system(.body, weight: .semibold))
+                IrisModalCloseButton(action: onClose)
+                    .accessibilityIdentifier("inChatSearchCloseButton")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
@@ -4021,6 +4025,7 @@ private struct NearbyIrisScreen: View {
             Spacer(minLength: 0)
         }
         .background(palette.background)
+        .irisModalSurface()
     }
 
     private var header: some View {
@@ -4210,6 +4215,7 @@ struct NewChatScreen: View {
                 handleNewChatInput(code)
                 showingScanner = false
             }
+            .irisModalSurface()
             .irisDismissOnMacOutsideClick { showingScanner = false }
         }
         #if os(macOS)
@@ -4217,6 +4223,7 @@ struct NewChatScreen: View {
         #else
         .sheet(isPresented: $showingInviteQr) {
             inviteQrSheet
+                .irisModalSurface()
         }
         #endif
         .irisOnChange(of: peerInput) { _ in
@@ -4554,6 +4561,7 @@ struct JoinInviteScreen: View {
             QrScannerSheet { code in
                 submitInviteInput(code)
             }
+            .irisModalSurface()
             .irisDismissOnMacOutsideClick { showingScanner = false }
         }
     }
@@ -4645,6 +4653,7 @@ struct NewGroupScreen: View {
                 addMember(code)
                 showingScanner = false
             }
+            .irisModalSurface()
             .irisDismissOnMacOutsideClick { showingScanner = false }
         }
         .fileImporter(
@@ -5123,6 +5132,7 @@ struct GroupDetailsScreen: View {
                 memberInput = normalizePeerInput(input: code)
                 showingScanner = false
             }
+            .irisModalSurface()
             .irisDismissOnMacOutsideClick { showingScanner = false }
         }
         .fileImporter(
@@ -5305,6 +5315,7 @@ struct DeviceRosterScreen: View {
                 deviceInput = code
                 showingScanner = false
             }
+            .irisModalSurface()
             .irisDismissOnMacOutsideClick { showingScanner = false }
         }
     }
@@ -5470,6 +5481,7 @@ struct SettingsScreen: View {
             // device key, server URLs, and build metadata. Buttons and
             // Links still receive taps; inert Text can be selected.
             .textSelection(.enabled)
+            .irisModalSurface()
     }
 
     @ViewBuilder
@@ -5500,6 +5512,7 @@ struct SettingsScreen: View {
                     account: account,
                     closeSettings: modalClose
                 )
+                .irisModalSurface()
 #if os(iOS)
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
@@ -5600,16 +5613,10 @@ struct SettingsScreen: View {
     private var settingsModalHeader: some View {
         HStack(spacing: 0) {
             if selectedPage != nil {
-                Button {
+                IrisModalBackButton {
                     selectedPage = nil
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(palette.accent)
-                        .frame(width: 72, height: 44, alignment: .leading)
-                        .contentShape(Rectangle())
                 }
-                .buttonStyle(.irisPlain)
+                .frame(width: 72, height: 44, alignment: .leading)
                 .accessibilityIdentifier("settingsSubpageBackButton")
             } else {
                 Color.clear
@@ -5627,15 +5634,9 @@ struct SettingsScreen: View {
             Spacer(minLength: 8)
 
             if let modalClose {
-                Button(action: modalClose) {
-                    Text("Done")
-                        .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(palette.accent)
-                        .frame(width: 72, height: 44, alignment: .trailing)
-                        .contentShape(Rectangle())
-                        .accessibilityIdentifier("settingsDoneButton")
-                }
-                .buttonStyle(.irisPlain)
+                IrisModalCloseButton(action: modalClose)
+                    .frame(width: 72, height: 44, alignment: .trailing)
+                    .accessibilityIdentifier("settingsDoneButton")
             } else {
                 Color.clear
                     .frame(width: 72, height: 44)
@@ -5681,13 +5682,9 @@ struct SettingsScreen: View {
     private func settingsPageScroll(_ page: SettingsPage, showsBackButton: Bool) -> some View {
         IrisScrollScreen {
             if showsBackButton {
-                Button {
+                IrisModalBackButton {
                     selectedPage = nil
-                } label: {
-                    Label("Settings", systemImage: "chevron.left")
-                        .font(.system(.body, design: .rounded, weight: .semibold))
                 }
-                .buttonStyle(.irisPlain)
                 .accessibilityIdentifier("settingsSubpageBackButton")
             }
 
@@ -5999,6 +5996,12 @@ private struct SupportBundleShareSheet: View {
 
     var body: some View {
         IrisScrollScreen {
+            HStack {
+                Spacer()
+                IrisModalCloseButton(action: { dismiss() })
+                    .accessibilityIdentifier("supportBundleCloseButton")
+            }
+
             IrisSectionCard {
                 CardHeader(title: "Debug dump")
 
@@ -6007,13 +6010,9 @@ private struct SupportBundleShareSheet: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
-
-                Button("Done") {
-                    dismiss()
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
             }
         }
+        .irisModalSurface()
         .presentationDetents([.medium])
     }
 }
@@ -6057,6 +6056,7 @@ private struct ProfileQrModal: View {
             }
         }
         .accessibilityIdentifier("profileQrModal")
+        .irisModalSurface()
     }
 
     private var header: some View {
@@ -6078,17 +6078,9 @@ private struct ProfileQrModal: View {
 
             Spacer(minLength: 8)
 
-            Button {
-                dismiss()
-            } label: {
-                Text("Done")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(palette.accent)
-                    .frame(width: 72, height: 44, alignment: .trailing)
-                    .contentShape(Rectangle())
-                    .accessibilityIdentifier("profileQrDoneButton")
-            }
-            .buttonStyle(.irisPlain)
+            IrisModalCloseButton(action: { dismiss() })
+                .frame(width: 72, height: 44, alignment: .trailing)
+                .accessibilityIdentifier("profileQrDoneButton")
         }
         .padding(.horizontal, 10)
         .padding(.top, 6)
@@ -6184,11 +6176,6 @@ private struct ProfileQrCodePane: View {
                     .font(.system(.title3, design: .rounded, weight: .bold))
                     .foregroundStyle(Color(red: 0.04, green: 0.11, blue: 0.22))
                     .lineLimit(1)
-
-                Text(shortUserId(account.npub))
-                    .font(.system(.caption, design: .monospaced, weight: .semibold))
-                    .foregroundStyle(Color(red: 0.18, green: 0.29, blue: 0.43).opacity(0.72))
-                    .lineLimit(1)
             }
         }
         .padding(.horizontal, 32)
@@ -6200,11 +6187,6 @@ private struct ProfileQrCodePane: View {
         )
     }
 
-    private func shortUserId(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count > 22 else { return trimmed }
-        return "\(trimmed.prefix(11))...\(trimmed.suffix(8))"
-    }
 }
 
 private struct ProfileQrScanPane: View {
@@ -6298,9 +6280,6 @@ private struct SettingsProfileMenuRow: View {
                             .lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(palette.muted)
                 }
                 .contentShape(Rectangle())
             }

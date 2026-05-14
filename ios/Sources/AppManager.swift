@@ -1002,9 +1002,12 @@ final class AppManager: ObservableObject {
     private struct PendingTestSeed {
         let peer: String
         let count: Int
+        let daySplitIndex: Int?
     }
     private var pendingTestSeed: PendingTestSeed?
     private var seedTestMessagesDispatched = false
+    private var uiTestSeedCount: Int?
+    private var uiTestSeedDaySplitIndex: Int?
     private lazy var reconciler = UpdateBridge(owner: self)
     init(
         rust: RustAppClient? = nil,
@@ -1033,7 +1036,10 @@ final class AppManager: ObservableObject {
            !peer.isEmpty,
            let count = environment["IRIS_UI_TEST_SEED_COUNT"].flatMap(Int.init),
            count > 0 {
-            self.pendingTestSeed = PendingTestSeed(peer: peer, count: count)
+            let daySplitIndex = environment["IRIS_UI_TEST_SEED_DAY_SPLIT_INDEX"].flatMap(Int.init)
+            self.uiTestSeedCount = count
+            self.uiTestSeedDaySplitIndex = daySplitIndex
+            self.pendingTestSeed = PendingTestSeed(peer: peer, count: count, daySplitIndex: daySplitIndex)
         }
         try? fileManager.createDirectory(at: resolvedDataDir, withIntermediateDirectories: true)
         AppPaths.prepareDataDirForBackgroundNotificationReads(resolvedDataDir, fileManager: fileManager)
@@ -2459,10 +2465,13 @@ final class AppManager: ObservableObject {
                 return
             }
             let oldState = state
-            let reconciledState = stateByPreservingVisibleChatPage(
+            var reconciledState = stateByPreservingVisibleChatPage(
                 from: oldState,
                 into: stateByReconcilingPendingNavigation(nextState)
             )
+#if os(iOS)
+            reconciledState = stateByApplyingUiTestSeedDaySplit(reconciledState)
+#endif
             lastRevApplied = nextState.rev
             postDesktopNotifications(from: oldState, to: reconciledState)
             state = reconciledState
@@ -2520,6 +2529,54 @@ final class AppManager: ObservableObject {
         dispatchToRust(.updateScreenStack(stack: []))
         pendingTestSeed = nil
     }
+
+#if os(iOS)
+    private func stateByApplyingUiTestSeedDaySplit(_ source: AppState) -> AppState {
+        guard isUiTestRun,
+              let splitIndex = uiTestSeedDaySplitIndex,
+              splitIndex > 0,
+              var currentChat = source.currentChat else {
+            return source
+        }
+
+        let calendar = Calendar.current
+        let todayStart = calendar.startOfDay(for: Date())
+        let yesterdayStart = calendar.date(byAdding: .day, value: -1, to: todayStart)
+            ?? todayStart.addingTimeInterval(-86_400)
+        var changed = false
+
+        for index in currentChat.messages.indices {
+            guard let ordinal = uiTestSeedOrdinal(from: currentChat.messages[index].body) else {
+                continue
+            }
+            let dayStart = ordinal <= splitIndex ? yesterdayStart : todayStart
+            let timestamp = dayStart.addingTimeInterval(TimeInterval(ordinal))
+            currentChat.messages[index].createdAtSecs = UInt64(max(0, timestamp.timeIntervalSince1970))
+            changed = true
+        }
+
+        guard changed else { return source }
+        currentChat.messages.sort(by: chatMessagePrecedes)
+        var next = source
+        next.currentChat = currentChat
+        return next
+    }
+
+    private func uiTestSeedOrdinal(from body: String) -> Int? {
+        if body.hasPrefix("FIRST_SCROLL_SENTINEL") {
+            return 1
+        }
+        if body.hasPrefix("LAST_SCROLL_SENTINEL") {
+            return uiTestSeedCount
+        }
+        guard body.hasPrefix("seed-msg-") else {
+            return nil
+        }
+        let suffix = body.dropFirst("seed-msg-".count)
+        let digits = suffix.prefix { $0.isNumber }
+        return Int(digits)
+    }
+#endif
 
     private func restorePersistedSession() {
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.

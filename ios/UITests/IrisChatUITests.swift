@@ -349,6 +349,67 @@ final class IrisChatUITests: XCTestCase {
         )
     }
 
+    func testDaySeparatorHandoffKeepsYesterdayUntilTodayHeaderReachesTop() throws {
+#if os(macOS)
+        throw XCTSkip("Timeline sticky date header behavior is iOS-specific")
+#else
+        let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 48, seedDaySplitIndex: 24)
+
+        XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 15))
+        element(app, "welcomeCreateAction").tap()
+        XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15))
+        let nameField = element(app, "signupNameField")
+        XCTAssertTrue(nameField.waitForExistence(timeout: 15))
+        typeText("ios tester", into: nameField, app: app)
+        element(app, "generateKeyButton").tap()
+        guard waitForAnyElement(
+            app,
+            identifiers: ["chatListNewChatButton", "desktopNewChatRow", "chatMessageInput"],
+            timeout: 75
+        ) != nil else {
+            XCTFail("seed helper never reached the chat list or opened seeded chat")
+            return
+        }
+
+        if !element(app, "chatMessageInput").exists {
+            let chatRowPreview = seededChatRowPreview(app)
+            XCTAssertTrue(chatRowPreview.waitForExistence(timeout: 45), "seeded split-day chat never appeared")
+            chatRowPreview.tap()
+        }
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+
+        let timeline = app.scrollViews["chatTimeline"].firstMatch
+        XCTAssertTrue(timeline.waitForExistence(timeout: 10))
+
+        var sawBoundary = false
+        for _ in 0..<18 {
+            let floating = element(app, "chatFloatingDaySeparator")
+            let todayInline = inlineDaySeparator(app, label: "Today")
+            if floating.exists,
+               todayInline.exists,
+               todayInline.frame.minY > floating.frame.maxY + 4 {
+                sawBoundary = true
+                XCTAssertEqual(
+                    floating.label,
+                    "Yesterday",
+                    "floating header handed off while the Today inline header was still below it"
+                )
+                break
+            }
+            dragVertically(timeline, x: 0.75, fromY: 0.52, toY: 0.88)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+
+        if !sawBoundary {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.lifetime = .keepAlways
+            attachment.name = "day-separator-handoff-boundary-not-found"
+            add(attachment)
+            XCTFail("did not find the split-day boundary with Today visible below the floating header")
+        }
+#endif
+    }
+
     func testJumpToBottomDoesNotPinTimelineAfterUserScrollsAgain() throws {
 #if os(macOS)
         throw XCTSkip("Scroll gesture lock regression is iOS-specific")
@@ -679,7 +740,8 @@ final class IrisChatUITests: XCTestCase {
         qrValue: String? = nil,
         profilePicturePath: String? = nil,
         seedPeer: String? = nil,
-        seedCount: Int? = nil
+        seedCount: Int? = nil,
+        seedDaySplitIndex: Int? = nil
     ) -> XCUIApplication {
         launchApp(
             runId: runId,
@@ -687,7 +749,8 @@ final class IrisChatUITests: XCTestCase {
             qrValue: qrValue,
             profilePicturePath: profilePicturePath,
             seedPeer: seedPeer,
-            seedCount: seedCount
+            seedCount: seedCount,
+            seedDaySplitIndex: seedDaySplitIndex
         )
     }
 
@@ -697,7 +760,8 @@ final class IrisChatUITests: XCTestCase {
         qrValue: String? = nil,
         profilePicturePath: String? = nil,
         seedPeer: String? = nil,
-        seedCount: Int? = nil
+        seedCount: Int? = nil,
+        seedDaySplitIndex: Int? = nil
     ) -> XCUIApplication {
         let app = XCUIApplication()
         if reset {
@@ -715,6 +779,9 @@ final class IrisChatUITests: XCTestCase {
         if let seedPeer, let seedCount {
             app.launchEnvironment["IRIS_UI_TEST_SEED_PEER"] = seedPeer
             app.launchEnvironment["IRIS_UI_TEST_SEED_COUNT"] = String(seedCount)
+        }
+        if let seedDaySplitIndex {
+            app.launchEnvironment["IRIS_UI_TEST_SEED_DAY_SPLIT_INDEX"] = String(seedDaySplitIndex)
         }
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
@@ -815,6 +882,15 @@ final class IrisChatUITests: XCTestCase {
         app.descendants(matching: .any).matching(
             NSPredicate(
                 format: "label CONTAINS 'FIRST_SCROLL_SENTINEL' OR label CONTAINS 'seed-msg-' OR label CONTAINS 'LAST_SCROLL_SENTINEL'"
+            )
+        ).firstMatch
+    }
+
+    private func inlineDaySeparator(_ app: XCUIApplication, label: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(
+                format: "identifier BEGINSWITH 'chatInlineDaySeparator-' AND label == %@",
+                label
             )
         ).firstMatch
     }

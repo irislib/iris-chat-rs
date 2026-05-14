@@ -463,8 +463,11 @@ struct ChatScreen: View {
                                         IrisDayChip(text: separator.text)
                                         Spacer()
                                     }
-                                    .padding(.top, separator.offsetY)
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel(separator.text)
+                                    .accessibilityIdentifier("chatFloatingDaySeparator")
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                    .offset(y: separator.offsetY)
                                     .allowsHitTesting(false)
                                     .zIndex(3)
                                 }
@@ -554,6 +557,7 @@ struct ChatScreen: View {
             MessageInfoSheet(message: context.message, chat: context.chat, manager: manager) {
                 messageInfoSelection = nil
             }
+            .irisModalSurface()
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .irisDismissOnMacOutsideClick {
@@ -565,6 +569,7 @@ struct ChatScreen: View {
             MessageReactorsSheet(reactors: context.reactors, chat: context.chat, manager: manager) {
                 reactorsSelection = nil
             }
+            .irisModalSurface()
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
             .irisDismissOnMacOutsideClick {
@@ -1447,25 +1452,26 @@ private struct ChatMessageRow: View, Equatable {
             if showDayChip {
                 HStack {
                     Spacer()
-                    IrisDayChip(text: dayText)
+                    IrisInlineDaySeparator(text: dayText)
+                        .background(
+                            GeometryReader { geometry in
+                                Color.clear.preference(
+                                    key: ChatTimelineDaySeparatorFramePreferenceKey.self,
+                                    value: [
+                                        message.id: ChatTimelineDaySeparatorFrame(
+                                            messageId: message.id,
+                                            text: dayText,
+                                            frame: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
+                                        )
+                                    ]
+                                )
+                            }
+                        )
+                        .accessibilityIdentifier("chatInlineDaySeparator-\(message.id)")
                     Spacer()
                 }
                 .padding(.top, SignalConversationLayout.daySeparatorTopPadding)
                 .padding(.bottom, SignalConversationLayout.daySeparatorBottomPadding)
-                .background(
-                    GeometryReader { geometry in
-                        Color.clear.preference(
-                            key: ChatTimelineDaySeparatorFramePreferenceKey.self,
-                            value: [
-                                message.id: ChatTimelineDaySeparatorFrame(
-                                    messageId: message.id,
-                                    text: dayText,
-                                    frame: geometry.frame(in: .named(ChatTimelineCoordinateSpace.name))
-                                )
-                            ]
-                        )
-                    }
-                )
                 .opacity(hidesInlineDayChip ? 0 : 1)
                 .accessibilityHidden(hidesInlineDayChip)
             }
@@ -1611,6 +1617,7 @@ private struct ChatMessageRow: View, Equatable {
                                     onDelete()
                                 }
                             )
+                            .irisModalSurface()
                             .presentationDetents([.medium])
                             .presentationDragIndicator(.visible)
                         }
@@ -1622,6 +1629,7 @@ private struct ChatMessageRow: View, Equatable {
                                 showReactionPicker = false
                                 onReact(emoji)
                             }
+                            .irisModalSurface()
                             .presentationDetents([.medium, .large])
                             .presentationDragIndicator(.visible)
                             .irisDismissOnMacOutsideClick { showReactionPicker = false }
@@ -1833,6 +1841,7 @@ private struct MessageInfoSheet: View {
             #endif
         }
         .accessibilityIdentifier("messageInfoSheet")
+        .irisModalSurface()
     }
 
     private var header: some View {
@@ -2814,18 +2823,20 @@ private struct MessageReactorsSheet: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done", action: onClose)
+                    IrisModalCloseButton(action: onClose)
+                        .accessibilityIdentifier("messageReactorsCloseButton")
                 }
             }
 #elseif os(macOS)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done", action: onClose)
+                    IrisModalCloseButton(action: onClose)
                 }
             }
 #endif
         }
         .accessibilityIdentifier("messageReactorsSheet")
+        .irisModalSurface()
     }
 
     private func participantInfo(_ pubkeyHex: String) -> ParticipantInfo {

@@ -644,7 +644,22 @@ final class IrisChatTests: XCTestCase {
         XCTAssertFalse(irisShowsGroupSenderName(previous: nil, message: outgoing, chatKind: .group))
     }
 
-    func testFloatingDaySeparatorUsesSignalHandoffThreshold() throws {
+    func testFloatingDaySeparatorKeepsPreviousUntilNextVisibleHeaderReachesStickyTop() throws {
+        let previous = daySeparatorFrame(messageId: "yesterday", text: "Yesterday", y: -34)
+        let next = daySeparatorFrame(messageId: "today", text: "Today", y: 23)
+
+        let separator = try XCTUnwrap(irisFloatingDaySeparator(
+            frames: [previous, next],
+            viewportMinY: 0,
+            stickyTopY: 12
+        ))
+
+        XCTAssertEqual(separator.messageId, "yesterday")
+        XCTAssertEqual(separator.text, "Yesterday")
+        XCTAssertEqual(separator.offsetY, CGFloat(-4), accuracy: 0.001)
+    }
+
+    func testFloatingDaySeparatorSwitchesWhenNextVisibleHeaderPassesStickyTop() throws {
         let previous = daySeparatorFrame(messageId: "yesterday", text: "Yesterday", y: -34)
         let next = daySeparatorFrame(messageId: "today", text: "Today", y: 11)
 
