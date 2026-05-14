@@ -645,6 +645,9 @@ impl AppCore {
 
     fn protocol_invite_response_pubkeys(&self) -> Vec<PublicKey> {
         let mut pubkeys = self.private_chat_invite_response_pubkeys();
+        if let Some(logged_in) = self.logged_in.as_ref() {
+            pubkeys.push(logged_in.device_keys.public_key());
+        }
         if let Some(local_invite_pubkey) = self.logged_in.as_ref().and_then(|logged_in| {
             logged_in
                 .local_invite

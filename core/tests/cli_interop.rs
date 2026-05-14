@@ -490,6 +490,55 @@ fn iris_listen_receives_from_another_iris_client() {
 }
 
 #[test]
+fn iris_listen_receives_first_contact_sent_to_user_id() {
+    let relay = TestRelay::start();
+    let bob = TempDir::new().unwrap();
+    let alice = TempDir::new().unwrap();
+
+    run_iris(bob.path(), &["relay", "set", relay.url()]);
+    let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
+    run_iris(bob.path(), &["relay", "set", relay.url()]);
+    let bob_user_id = bob_account["data"]["user_id"].as_str().unwrap();
+
+    let mut child = start_iris(bob.path(), &["listen", "--interval-ms", "100"]);
+    let stdout = child.stdout.take().expect("stdout");
+    let stderr = spawn_stderr_reader(child.stderr.take().expect("stderr"));
+    let receiver = spawn_json_reader(stdout);
+    wait_for_listener_ready(&mut child, &receiver, &stderr);
+
+    run_iris(alice.path(), &["relay", "set", relay.url()]);
+    let alice_account = run_iris(alice.path(), &["account", "create", "--name", "Alice"]);
+    let alice_user_id = alice_account["data"]["user_id"].as_str().unwrap();
+    run_iris(alice.path(), &["relay", "set", relay.url()]);
+
+    let body = "first contact by user id";
+    let sent = run_iris(alice.path(), &["send", bob_user_id, body]);
+    assert_eq!(sent["data"]["chat_id"], bob_user_id);
+    assert_eq!(sent["data"]["is_outgoing"], true);
+
+    let message = match read_stream_message(&relay, &receiver, body) {
+        Some(message) => message,
+        None => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let bob_sync = run_iris(bob.path(), &["sync", "--wait-ms", "5000"]);
+            let bob_read = run_iris(bob.path(), &["read", alice_user_id]);
+            let bob_debug = debug_snapshot(bob.path());
+            let relay_events = relay_event_summary(&relay);
+            panic!(
+                "bob did not receive first-contact send; sent={}; sync={bob_sync}; read={bob_read}; debug={bob_debug}; relay_events={relay_events}",
+                sent["data"]
+            );
+        }
+    };
+    assert_eq!(message["data"]["chat_id"], alice_user_id);
+    assert_eq!(message["data"]["is_outgoing"], false);
+
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+#[test]
 fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session() {
     let relay = TestRelay::start();
     let alice_old = TempDir::new().unwrap();
