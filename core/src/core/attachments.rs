@@ -28,8 +28,9 @@ pub(super) fn extract_message_attachments(text: &str) -> (String, Vec<MessageAtt
 }
 
 pub(super) fn message_preview(message: &ChatMessageSnapshot) -> String {
-    if !message.body.is_empty() {
-        return message.body.clone();
+    let body = chat_message_body_preview(&message.body);
+    if !body.is_empty() {
+        return body;
     }
     match message.attachments.as_slice() {
         [] => String::new(),
@@ -43,6 +44,29 @@ pub(super) fn message_preview(message: &ChatMessageSnapshot) -> String {
         }
     }
 }
+
+pub(super) fn chat_message_body_preview(body: &str) -> String {
+    strip_reply_quote(body).trim().to_string()
+}
+
+fn strip_reply_quote(body: &str) -> &str {
+    let Some(remaining) = body.strip_prefix(REPLY_MESSAGE_PREFIX) else {
+        return body;
+    };
+    let Some(separator) = remaining.find("\n\n") else {
+        return body;
+    };
+    let header = &remaining[..separator];
+    let Some(split_at) = header.find(':') else {
+        return body;
+    };
+    if split_at == 0 {
+        return body;
+    }
+    &remaining[separator + 2..]
+}
+
+const REPLY_MESSAGE_PREFIX: &str = "\u{21A9} ";
 
 fn attachment_preview_label(attachment: &MessageAttachmentSnapshot) -> &'static str {
     if attachment.is_image {
@@ -246,6 +270,29 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::*;
 
+    fn message_with_body_and_attachments(
+        body: &str,
+        attachments: Vec<MessageAttachmentSnapshot>,
+    ) -> ChatMessageSnapshot {
+        ChatMessageSnapshot {
+            id: "message-1".to_string(),
+            chat_id: "chat-1".to_string(),
+            kind: ChatMessageKind::User,
+            author: "alice".to_string(),
+            body: body.to_string(),
+            attachments,
+            reactions: Vec::new(),
+            reactors: Vec::new(),
+            is_outgoing: false,
+            created_at_secs: 1,
+            expires_at_secs: None,
+            delivery: DeliveryState::Received,
+            recipient_deliveries: Vec::new(),
+            delivery_trace: Default::default(),
+            source_event_id: None,
+        }
+    }
+
     #[test]
     fn extracts_plain_nhash_attachment_and_strips_visible_body() {
         let (body, attachments) = extract_message_attachments("here\nnhash1abc123/photo%201.png\n");
@@ -302,6 +349,48 @@ mod tests {
                 ],
             ),
             "album\nnhash1abc123/one.png\nnhash1def456/two%20final.png"
+        );
+    }
+
+    #[test]
+    fn message_preview_omits_reply_quote_header() {
+        let message = message_with_body_and_attachments(
+            "\u{21A9} Bob: earlier message\n\nthis is the actual reply",
+            Vec::new(),
+        );
+
+        assert_eq!(message_preview(&message), "this is the actual reply");
+    }
+
+    #[test]
+    fn message_preview_falls_back_to_attachment_for_empty_reply_body() {
+        let attachment = MessageAttachmentSnapshot {
+            nhash: "nhash1abc123".to_string(),
+            filename: "photo.jpg".to_string(),
+            filename_encoded: "photo.jpg".to_string(),
+            htree_url: "htree://nhash1abc123/photo.jpg".to_string(),
+            is_image: true,
+            is_video: false,
+            is_audio: false,
+        };
+        let message = message_with_body_and_attachments(
+            "\u{21A9} Bob: earlier message\n\n",
+            vec![attachment],
+        );
+
+        assert_eq!(message_preview(&message), "Photo");
+    }
+
+    #[test]
+    fn message_preview_keeps_malformed_reply_like_text() {
+        let message = message_with_body_and_attachments(
+            "\u{21A9} looks like a reply without separator",
+            Vec::new(),
+        );
+
+        assert_eq!(
+            message_preview(&message),
+            "\u{21A9} looks like a reply without separator"
         );
     }
 }

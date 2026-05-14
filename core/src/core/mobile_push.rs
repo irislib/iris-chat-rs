@@ -432,10 +432,11 @@ fn lookup_mobile_push_preview(
     // it's empty (e.g. an attachment-only message) fall back to the
     // chat-message placeholder so the user sees something rather than
     // a blank notification.
-    let body_text = if body.trim().is_empty() {
+    let body_preview = chat_message_body_preview(&body);
+    let body_text = if body_preview.is_empty() {
         decrypted_mobile_push_body(MOBILE_PUSH_CHAT_MESSAGE_KIND, "")
     } else {
-        body.clone()
+        body_preview
     };
 
     let mut payload = serde_json::Map::new();
@@ -725,6 +726,8 @@ pub(crate) fn resolve_mobile_push_notification(
         } else {
             format!("Reacted {emoji}")
         }
+    } else if inner_kind == Some(MOBILE_PUSH_CHAT_MESSAGE_KIND) {
+        decrypted_mobile_push_body(MOBILE_PUSH_CHAT_MESSAGE_KIND, &body)
     } else {
         body
     };
@@ -1159,22 +1162,23 @@ fn invite_acceptance_fallback_resolution(
 }
 
 fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {
-    let content = content.trim();
     match kind {
         MOBILE_PUSH_CHAT_MESSAGE_KIND => {
-            if content.is_empty() {
+            let preview = chat_message_body_preview(content);
+            if preview.is_empty() {
                 "New message".to_string()
             } else {
-                content.to_string()
+                preview
             }
         }
-        MOBILE_PUSH_REACTION_KIND => reaction_push_body(content),
+        MOBILE_PUSH_REACTION_KIND => reaction_push_body(content.trim()),
         kind if kind == TYPING_KIND as u64 => "is typing".to_string(),
         kind if kind == RECEIPT_KIND as u64 => "Seen".to_string(),
         kind if kind == CHAT_SETTINGS_KIND as u64 => "Updated chat".to_string(),
         kind if kind == APP_KEYS_EVENT_KIND as u64 => "Updated devices".to_string(),
         MOBILE_PUSH_INVITE_RESPONSE_KIND => "Someone joined your chat".to_string(),
         _ => {
+            let content = content.trim();
             if content.is_empty() {
                 "New activity".to_string()
             } else {
@@ -1243,6 +1247,47 @@ mod tests {
         assert_eq!(
             payload.get("chat_id").and_then(|value| value.as_str()),
             Some("direct-chat-id")
+        );
+    }
+
+    #[test]
+    fn sqlite_preview_resolution_omits_replied_message_quote() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let conn = open_database(tmp.path()).expect("open database");
+        let conn = conn.lock().expect("lock database");
+        conn.execute(
+            "INSERT INTO threads(chat_id, unread_count, updated_at_secs) VALUES (?1, 1, 99)",
+            ["direct-chat-id"],
+        )
+        .expect("insert thread");
+        conn.execute(
+            "INSERT INTO messages(
+                chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery, source_event_id
+             ) VALUES (?1, ?2, 'user', ?3, ?4, 0, 99, 'received', ?5)",
+            params![
+                "direct-chat-id",
+                "message-1",
+                "Alice",
+                "\u{21A9} Bob: the older post\n\nonly show the new reply",
+                "outer-event-id"
+            ],
+        )
+        .expect("insert message");
+
+        let resolution = lookup_mobile_push_preview(tmp.path().to_str().unwrap(), "outer-event-id")
+            .expect("resolved preview");
+
+        assert_eq!(resolution.body, "only show the new reply");
+    }
+
+    #[test]
+    fn decrypted_chat_push_body_omits_replied_message_quote() {
+        assert_eq!(
+            decrypted_mobile_push_body(
+                MOBILE_PUSH_CHAT_MESSAGE_KIND,
+                "\u{21A9} Bob: the older post\n\nonly show the new reply",
+            ),
+            "only show the new reply"
         );
     }
 }
