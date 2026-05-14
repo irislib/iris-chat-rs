@@ -546,13 +546,7 @@ struct ChatScreen: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .modifier(EscDismissesReply(replyTarget: $replyTarget))
-        .overlay {
-            if let imageViewerItem {
-                IrisImageViewer(item: imageViewerItem) {
-                    self.imageViewerItem = nil
-                }
-            }
-        }
+        .modifier(ChatImageViewerPresenter(item: $imageViewerItem))
         .sheet(item: $messageInfoSelection) { selection in
             let context = messageInfoContext(for: selection)
             MessageInfoSheet(message: context.message, chat: context.chat, manager: manager) {
@@ -3657,53 +3651,62 @@ private struct ImageViewerItem: Identifiable, Equatable {
     }
 }
 
+private struct ChatImageViewerPresenter: ViewModifier {
+    @Binding var item: ImageViewerItem?
+
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        content
+            .fullScreenCover(item: $item) { viewerItem in
+                IrisImageViewer(item: viewerItem) {
+                    item = nil
+                }
+            }
+        #else
+        content
+            .overlay {
+                if let item {
+                    IrisImageViewer(item: item) {
+                        self.item = nil
+                    }
+                }
+            }
+        #endif
+    }
+}
+
 private struct IrisImageViewer: View {
+    #if os(iOS)
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+    #endif
     let item: ImageViewerItem
     let onClose: () -> Void
     @State private var sharedFileURL: URL?
 
     var body: some View {
-        ZStack(alignment: .top) {
-            Color.black.opacity(0.92)
-                .ignoresSafeArea()
-                .onTapGesture(perform: onClose)
-            if item.isAnimated {
-                IrisAnimatedImageDataView(data: item.data)
-                    .padding(22)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .allowsHitTesting(false)
-            } else if let image = item.image {
-                Image(platformImage: image)
-                    .resizable()
-                    .scaledToFit()
-                    .padding(22)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ProgressView()
-                    .tint(.white)
-            }
+        GeometryReader { geometry in
+            ZStack {
+                Color.black
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: onClose)
 
-            HStack {
-                if let sharedFileURL {
-                    ShareLink(item: sharedFileURL) {
-                        Image(systemName: "square.and.arrow.up")
-                            .font(.system(size: 24, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.9))
-                            .padding(18)
+                imageContent
+                    .padding(.horizontal, 18)
+                    .padding(.top, geometry.safeAreaInsets.top + 68)
+                    .padding(.bottom, geometry.safeAreaInsets.bottom + (usesCompactTopActions ? 40 : 94))
+
+                VStack(spacing: 0) {
+                    topChrome(topInset: geometry.safeAreaInsets.top)
+                    Spacer(minLength: 0)
+                    if !usesCompactTopActions {
+                        bottomChrome(bottomInset: geometry.safeAreaInsets.bottom)
                     }
-                    .buttonStyle(.irisPlain)
-                    .accessibilityLabel("Share image")
                 }
-                Spacer()
-                IrisModalCloseButton(
-                    accessibilityLabel: "Close image",
-                    tone: .light,
-                    iconSize: 30,
-                    hitSize: 66,
-                    action: onClose
-                )
+                .ignoresSafeArea()
             }
         }
+        .background(Color.black.ignoresSafeArea())
+        .environment(\.colorScheme, .dark)
         .irisOnExitCommand(onClose)
         .irisOnEscapeKey(onClose)
         .zIndex(10)
@@ -3711,10 +3714,65 @@ private struct IrisImageViewer: View {
             sharedFileURL = writeTempImage(data: item.data, filename: item.filename)
         }
     }
+
+    @ViewBuilder
+    private var imageContent: some View {
+        if item.isAnimated {
+            IrisAnimatedImageDataView(data: item.data)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        } else if let image = item.image {
+            Image(platformImage: image)
+                .resizable()
+                .scaledToFit()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ProgressView()
+                .tint(.white)
+        }
+    }
+
+    private var usesCompactTopActions: Bool {
+        #if os(iOS)
+        verticalSizeClass == .compact
+        #else
+        false
+        #endif
+    }
+
+    private func topChrome(topInset: CGFloat) -> some View {
+        HStack(spacing: 10) {
+            if usesCompactTopActions {
+                IrisImageViewerShareButton(sharedFileURL: sharedFileURL)
+            }
+            Spacer(minLength: 0)
+            IrisModalCloseButton(
+                accessibilityLabel: "Close image",
+                accessibilityIdentifier: "imageViewerCloseButton",
+                tone: .light,
+                iconSize: 18,
+                hitSize: 56,
+                action: onClose
+            )
+        }
+        .padding(.top, topInset + 4)
+        .padding(.horizontal, 12)
+    }
+
+    private func bottomChrome(bottomInset: CGFloat) -> some View {
+        HStack(spacing: 0) {
+            IrisImageViewerShareButton(sharedFileURL: sharedFileURL)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 10)
+        .padding(.bottom, bottomInset + 14)
+        .background(.regularMaterial)
+    }
 }
 
 private func writeTempImage(data: Data, filename: String) -> URL? {
-    let safeName = filename.isEmpty ? "image" : filename
+    let safeName = safeImageShareFilename(data: data, filename: filename)
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathComponent(safeName)
@@ -3725,6 +3783,88 @@ private func writeTempImage(data: Data, filename: String) -> URL? {
     } catch {
         return nil
     }
+}
+
+private struct IrisImageViewerShareButton: View {
+    let sharedFileURL: URL?
+
+    var body: some View {
+        Group {
+            if let sharedFileURL {
+                ShareLink(item: sharedFileURL) {
+                    IrisImageViewerIconButtonLabel(systemName: "square.and.arrow.up")
+                }
+            } else {
+                Button(action: {}) {
+                    IrisImageViewerIconButtonLabel(systemName: "square.and.arrow.up", isEnabled: false)
+                }
+                .disabled(true)
+            }
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityLabel("Share image")
+        .accessibilityIdentifier("imageViewerShareButton")
+    }
+}
+
+private struct IrisImageViewerIconButtonLabel: View {
+    let systemName: String
+    var isEnabled = true
+
+    var body: some View {
+        Image(systemName: systemName)
+            .font(.system(size: 23, weight: .semibold))
+            .foregroundStyle(Color.white.opacity(isEnabled ? 0.92 : 0.38))
+            .frame(width: 46, height: 46)
+            .background(Circle().fill(Color.black.opacity(0.48)))
+            .contentShape(Circle())
+    }
+}
+
+private func safeImageShareFilename(data: Data, filename: String) -> String {
+    let trimmed = filename.trimmingCharacters(in: .whitespacesAndNewlines)
+    var safeName = trimmed.isEmpty ? "image" : (trimmed as NSString).lastPathComponent
+    if safeName.isEmpty || safeName == "." || safeName == "/" {
+        safeName = "image"
+    }
+
+    let invalidScalars = CharacterSet(charactersIn: "/\\:")
+    safeName = safeName.unicodeScalars
+        .map { invalidScalars.contains($0) ? "-" : String($0) }
+        .joined()
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    if safeName.isEmpty {
+        safeName = "image"
+    }
+
+    let currentExtension = (safeName as NSString).pathExtension
+    if currentExtension.isEmpty {
+        safeName += ".\(imageShareFileExtension(data: data, filename: filename))"
+    }
+    return safeName
+}
+
+private func imageShareFileExtension(data: Data, filename: String) -> String {
+    let originalExtension = (filename as NSString).pathExtension.lowercased()
+    if chatImageExtensions.contains(originalExtension) {
+        return originalExtension
+    }
+    let bytes = [UInt8](data.prefix(12))
+    if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) {
+        return "png"
+    }
+    if bytes.starts(with: [0xFF, 0xD8, 0xFF]) {
+        return "jpg"
+    }
+    if bytes.starts(with: Array("GIF87a".utf8)) || bytes.starts(with: Array("GIF89a".utf8)) {
+        return "gif"
+    }
+    if bytes.count >= 12,
+       bytes[0...3] == Array("RIFF".utf8)[0...3],
+       bytes[8...11] == Array("WEBP".utf8)[0...3] {
+        return "webp"
+    }
+    return "jpg"
 }
 
 private func isAnimatedImage(data: Data, filename: String) -> Bool {
