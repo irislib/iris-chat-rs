@@ -2643,6 +2643,7 @@ private struct IrisChatListSearchBar: UIViewRepresentable {
         searchBar.autocorrectionType = .no
         searchBar.returnKeyType = .search
         searchBar.enablesReturnKeyAutomatically = false
+        searchBar.backgroundImage = UIImage()
         searchBar.searchTextField.accessibilityIdentifier = "chatListSearchField"
         searchBar.searchTextField.clearButtonMode = .never
         context.coordinator.attach(to: searchBar)
