@@ -2638,16 +2638,13 @@ private struct IrisChatListSearchBar: UIViewRepresentable {
     func makeUIView(context: Context) -> UISearchBar {
         let searchBar = UISearchBar(frame: .zero)
         searchBar.delegate = context.coordinator
-        searchBar.searchBarStyle = .minimal
         searchBar.placeholder = "Search chats, groups, messages"
         searchBar.autocapitalizationType = .none
         searchBar.autocorrectionType = .no
         searchBar.returnKeyType = .search
         searchBar.enablesReturnKeyAutomatically = false
-        searchBar.backgroundImage = UIImage()
         searchBar.searchTextField.accessibilityIdentifier = "chatListSearchField"
         searchBar.searchTextField.clearButtonMode = .never
-        searchBar.searchTextField.backgroundColor = .secondarySystemFill
         context.coordinator.attach(to: searchBar)
         return searchBar
     }
