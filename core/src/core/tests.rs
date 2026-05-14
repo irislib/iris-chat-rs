@@ -6080,6 +6080,75 @@ fn private_invite_first_message_installs_creator_session() {
     );
 }
 
+// Regression: when iOS scans a chat-invite QR from chat.iris.to and accepts it,
+// the iris-chat TypeScript runtime publishes the invite-response + a typing
+// bootstrap immediately. Without that bootstrap, the inviter never learns the
+// invitee's session pubkey, the invitee never installs a session for the
+// inviter's ephemeral key, and the live relay REQ excludes that key — so
+// the inviter's replies never reach the device. The user hit this end-to-end:
+// chat.iris.to saw iOS's messages, but iOS never saw chat.iris.to's replies.
+#[test]
+fn accepting_invite_alone_installs_session_and_publishes_response() {
+    let alice_owner = Keys::generate();
+    let alice_device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+
+    let mut alice = logged_in_test_core(
+        "accept-invite-bootstrap-alice",
+        &alice_owner,
+        &alice_device,
+    );
+    alice.pending_relay_publishes.clear();
+    alice.handle_action(AppAction::CreatePublicInvite);
+    let invite_url = alice
+        .state
+        .public_invite
+        .as_ref()
+        .expect("alice invite")
+        .url
+        .clone();
+
+    let mut bob = logged_in_test_core("accept-invite-bootstrap-bob", &bob_owner, &bob_device);
+    bob.pending_relay_publishes.clear();
+    bob.handle_action(AppAction::AcceptInvite {
+        invite_input: invite_url,
+    });
+    assert_eq!(bob.state.toast, None);
+
+    // After accept alone (no SendMessage yet), Bob must already have a session
+    // installed for Alice — otherwise his subscription plan will exclude her
+    // ephemeral key and her first reply will be invisible.
+    assert!(
+        bob.protocol_engine
+            .as_ref()
+            .is_some_and(|engine| !engine.known_message_author_pubkeys().is_empty()),
+        "accepting an invite must install a session so the inviter's replies are subscribed to"
+    );
+
+    // And Bob must have published the invite-response so Alice can install
+    // a session and start sending.
+    assert!(
+        !pending_events_with_kind(&bob, INVITE_RESPONSE_KIND).is_empty(),
+        "accepting an invite must publish an invite-response so the inviter can establish the session"
+    );
+
+    // Round-trip: Alice processes the response and now has Bob in her message
+    // authors, so Alice can send back.
+    let response = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
+        .into_iter()
+        .next()
+        .expect("invite response event");
+    alice.handle_relay_event(response);
+    assert!(
+        alice
+            .protocol_engine
+            .as_ref()
+            .is_some_and(|engine| engine.active_session_count_for_owner(bob_owner.public_key()) > 0),
+        "Alice must install Bob's session from the invite-response"
+    );
+}
+
 #[test]
 fn queued_runtime_publish_completion_uses_inner_message_id() {
     let owner = Keys::generate();

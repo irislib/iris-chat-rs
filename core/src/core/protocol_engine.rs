@@ -1037,26 +1037,26 @@ impl ProtocolEngine {
                 )],
             ),
         );
-        let mut effects = Vec::new();
-        if invite.purpose.as_deref() == Some("link") {
-            let now = unix_now();
-            let expires_at = now.get().saturating_add(60);
-            let typing = pairwise_codec::typing_event(
-                self.owner_pubkey,
-                pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis())
-                    .with_expiration(expires_at),
-            )?;
-            let result =
-                self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;
-            effects.extend(result.effects);
-        } else {
-            self.persist()?;
-        }
+        // Bootstrap the session immediately by sending an expiring typing
+        // rumor. This matches the TypeScript iris-chat (`SessionManager.acceptInvite`
+        // unconditionally publishes the invite-response and runs
+        // `sendInviteBootstrap`). Without it, the inviter never learns our
+        // session ephemeral pubkey, so the inviter's relay REQ excludes us
+        // and their replies never reach this device.
+        let now = unix_now();
+        let expires_at = now.get().saturating_add(60);
+        let typing = pairwise_codec::typing_event(
+            self.owner_pubkey,
+            pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis())
+                .with_expiration(expires_at),
+        )?;
+        let bootstrap =
+            self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;
         Ok(ProtocolAcceptInviteResult {
             owner_pubkey: invite_owner,
             inviter_device_pubkey: public_device(invite.inviter_device_pubkey)?,
             device_id: public_device(invite.inviter_device_pubkey)?.to_hex(),
-            effects,
+            effects: bootstrap.effects,
         })
     }
 
