@@ -70,6 +70,7 @@ import androidx.compose.ui.layout.boundsInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -154,6 +155,7 @@ fun ChatScreen(
 
     val context = LocalContext.current
     val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
     val chat = currentChat?.takeIf { it.chatId == chatId }
     var draft by remember(chatId) { mutableStateOf("") }
     var lastPersistedDraft by remember(chatId) { mutableStateOf<String?>(null) }
@@ -513,7 +515,8 @@ fun ChatScreen(
                     .padding(padding)
                     .background(MaterialTheme.colorScheme.background)
                     .clearFocusOnTapOutside(composerBounds) {
-                        focusManager.clearFocus()
+                        focusManager.clearFocus(force = true)
+                        keyboardController?.hide()
                     },
         ) {
             Column(modifier = Modifier.fillMaxSize()) {

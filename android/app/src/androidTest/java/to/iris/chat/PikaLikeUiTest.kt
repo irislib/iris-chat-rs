@@ -5,6 +5,7 @@ import android.os.Build
 import android.view.KeyEvent as AndroidKeyEvent
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.ui.input.key.KeyEvent
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsFocused
@@ -231,13 +232,17 @@ class PikaLikeUiTest {
             .performTextInput(VALID_PEER_NPUB)
 
         composeRule.waitForTag("chatMessageInput")
+        composeRule.onNodeWithTag("chatAttachButton", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onAllNodesWithTag("chatSendButton", useUnmergedTree = true).assertCountEquals(0)
         composeRule.onNodeWithTag("chatMessageInput", useUnmergedTree = true)
             .performTextInput("hello from test")
+        composeRule.onNodeWithTag("chatInlineAttachButton", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).assertIsEnabled()
         composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForText("hello from test")
-        composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).assertIsNotEnabled()
+        composeRule.waitUntil(10_000) { !composeRule.hasTag("chatSendButton") }
+        composeRule.onNodeWithTag("chatAttachButton", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
@@ -326,7 +331,8 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).assertIsEnabled()
         composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).performClick()
         composeRule.waitForText(message)
-        composeRule.onNodeWithTag("chatSendButton", useUnmergedTree = true).assertIsNotEnabled()
+        composeRule.waitUntil(10_000) { !composeRule.hasTag("chatSendButton") }
+        composeRule.onNodeWithTag("chatAttachButton", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test

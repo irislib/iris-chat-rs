@@ -18,7 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -44,7 +43,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import to.iris.chat.rust.ChatMessageSnapshot
@@ -208,9 +207,13 @@ internal fun ComposerBar(
 ) {
     val haptics = rememberIrisHapticFeedback()
     val isBusy = isSending || isUploading
-    val hasSendContent = draft.isNotBlank() || selectedAttachments.isNotEmpty()
+    val hasText = draft.isNotBlank()
+    val hasAttachment = selectedAttachments.isNotEmpty()
+    val hasSendContent = hasText || hasAttachment
     val canSend = hasSendContent && !isBusy
-    val sendButtonFilled = canSend || isSending
+    val trailingIsSend = hasSendContent || isSending
+    val showTrailingProgress = isSending || (isUploading && hasSendContent)
+    val showInlineAttach = hasText && !hasAttachment && !isUploading
     val density = LocalDensity.current
     val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
     val showDesktopComposerTools = windowWidth >= 600.dp
@@ -309,7 +312,10 @@ internal fun ComposerBar(
                     shadowElevation = 0.dp,
                 ) {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 44.dp),
                         verticalAlignment = Alignment.Bottom,
                     ) {
                         if (showDesktopComposerTools) {
@@ -349,21 +355,29 @@ internal fun ComposerBar(
                                 (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                                     .weight(1f)
                                     .heightIn(min = 44.dp, max = 132.dp)
-                                    .padding(start = if (showDesktopComposerTools) 0.dp else 16.dp, end = 8.dp)
-                                    .padding(vertical = 10.dp)
+                                    .padding(
+                                        start = if (showDesktopComposerTools) 0.dp else 16.dp,
+                                        end = if (showInlineAttach) 0.dp else 12.dp,
+                                    )
                                     .testTag("chatMessageInput"),
                             textStyle =
                                 MaterialTheme.typography.bodyLarge.copy(
                                     color = MaterialTheme.colorScheme.onSurface,
                                 ),
                             cursorBrush = SolidColor(IrisTheme.palette.accent),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                            keyboardActions = KeyboardActions(onSend = { submitDraft() }),
+                            keyboardOptions =
+                                KeyboardOptions(
+                                    capitalization = KeyboardCapitalization.Sentences,
+                                ),
                             minLines = 1,
                             maxLines = 5,
                             decorationBox = { innerTextField ->
                                 Box(
-                                    modifier = Modifier.fillMaxWidth(),
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 44.dp)
+                                            .padding(vertical = 8.dp),
                                     contentAlignment = Alignment.CenterStart,
                                 ) {
                                     if (draft.isEmpty()) {
@@ -378,29 +392,23 @@ internal fun ComposerBar(
                             },
                         )
 
-                        Box(
-                            modifier =
-                                Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .clickable(
-                                        enabled = !isBusy,
-                                        interactionSource = attachInteractionSource,
-                                        indication = null,
-                                    ) {
-                                        haptics.press()
-                                        onAttach()
-                                    }
-                                    .testTag("chatAttachButton"),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (isUploading) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(20.dp),
-                                    strokeWidth = 2.dp,
-                                    color = IrisTheme.palette.muted,
-                                )
-                            } else {
+                        if (showInlineAttach) {
+                            Box(
+                                modifier =
+                                    Modifier
+                                        .size(44.dp)
+                                        .clip(CircleShape)
+                                        .clickable(
+                                            enabled = !isBusy,
+                                            interactionSource = attachInteractionSource,
+                                            indication = null,
+                                        ) {
+                                            haptics.press()
+                                            onAttach()
+                                        }
+                                        .testTag("chatInlineAttachButton"),
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 Icon(
                                     imageVector = Icons.Rounded.Add,
                                     contentDescription = "Add",
@@ -422,24 +430,23 @@ internal fun ComposerBar(
                         Modifier
                             .size(40.dp)
                             .clip(CircleShape)
-                            .background(
-                                if (sendButtonFilled) {
-                                    IrisTheme.palette.accent
-                                } else {
-                                    IrisTheme.palette.panelAlt
-                                },
-                            )
+                            .background(IrisTheme.palette.accent)
                             .clickable(
-                                enabled = canSend,
+                                enabled = if (trailingIsSend) canSend else !isBusy,
                                 interactionSource = sendInteractionSource,
                                 indication = null,
                             ) {
-                                submitDraft()
+                                if (trailingIsSend) {
+                                    submitDraft()
+                                } else {
+                                    haptics.press()
+                                    onAttach()
+                                }
                             }
-                            .testTag("chatSendButton"),
+                            .testTag(if (trailingIsSend) "chatSendButton" else "chatAttachButton"),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (isSending) {
+                    if (showTrailingProgress) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
                             strokeWidth = 2.dp,
@@ -447,15 +454,10 @@ internal fun ComposerBar(
                         )
                     } else {
                         Icon(
-                            imageVector = IrisIcons.Send,
-                            contentDescription = "Send",
-                            tint =
-                                if (sendButtonFilled) {
-                                    MaterialTheme.colorScheme.onPrimary
-                                } else {
-                                    IrisTheme.palette.muted.copy(alpha = 0.54f)
-                                },
-                            modifier = Modifier.size(22.dp),
+                            imageVector = if (trailingIsSend) IrisIcons.Send else Icons.Rounded.Add,
+                            contentDescription = if (trailingIsSend) "Send" else "Add",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(if (trailingIsSend) 22.dp else 24.dp),
                         )
                     }
                 }
