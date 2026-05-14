@@ -567,6 +567,8 @@ impl AppCore {
             self.preferences.mobile_push_server_url =
                 persisted.preferences.mobile_push_server_url.clone();
             self.preferences.debug_logging_enabled = persisted.preferences.debug_logging_enabled;
+            self.preferences.accept_unknown_direct_messages =
+                persisted.preferences.accept_unknown_direct_messages;
             self.preferences.muted_chat_ids = persisted.preferences.muted_chat_ids.clone();
             self.preferences.muted_chat_ids.sort();
             self.preferences.muted_chat_ids.dedup();

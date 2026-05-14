@@ -4467,6 +4467,12 @@ fn nearby_lan_defaults_to_disabled() {
 }
 
 #[test]
+fn unknown_direct_messages_default_to_allowed() {
+    assert!(PersistedPreferences::default().accept_unknown_direct_messages);
+    assert!(AppState::empty().preferences.accept_unknown_direct_messages);
+}
+
+#[test]
 fn app_keys_device_projection_is_deterministic() {
     let owner = Keys::generate().public_key();
     let device_a = Keys::generate().public_key();
@@ -6146,6 +6152,54 @@ fn web_runtime_message_duplicates_dedupe_by_inner_rumor_id() {
         .collect::<Vec<_>>();
     assert_eq!(matching.len(), 1);
     assert_eq!(matching[0].id, inner_id);
+}
+
+#[test]
+fn runtime_message_from_unknown_sender_can_be_blocked() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("runtime-block-unknown-direct", &owner, &device);
+    core.preferences.accept_unknown_direct_messages = false;
+    let (content, _inner_id) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "unknown direct",
+        1_777_159_493,
+        Vec::new(),
+    );
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("d".repeat(64)));
+
+    assert!(!core.threads.contains_key(&sender.public_key().to_hex()));
+}
+
+#[test]
+fn runtime_message_from_known_sender_is_kept_when_unknowns_are_blocked() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("runtime-block-unknown-known-direct", &owner, &device);
+    core.preferences.accept_unknown_direct_messages = false;
+    core.handle_action(AppAction::CreateChat {
+        peer_input: sender.public_key().to_hex(),
+    });
+    let (content, inner_id) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "known direct",
+        1_777_159_493,
+        Vec::new(),
+    );
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("e".repeat(64)));
+
+    let chat_id = sender.public_key().to_hex();
+    let thread = core.threads.get(&chat_id).expect("known thread");
+    assert!(thread
+        .messages
+        .iter()
+        .any(|message| message.id == inner_id && message.body == "known direct"));
 }
 
 #[test]

@@ -113,6 +113,9 @@ pub enum AppAction {
     SetDebugLoggingEnabled {
         enabled: bool,
     },
+    SetAcceptUnknownDirectMessages {
+        enabled: bool,
+    },
     AddNostrRelay {
         relay_url: String,
     },

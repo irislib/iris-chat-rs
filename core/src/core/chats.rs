@@ -1323,6 +1323,11 @@ impl AppCore {
                     conversation_owner,
                 )
             });
+            if !self
+                .should_accept_direct_runtime_message(effective_sender_owner, chat_id.as_deref())
+            {
+                return;
+            }
             self.apply_runtime_text_message(
                 effective_sender_owner,
                 chat_id,
@@ -1363,6 +1368,12 @@ impl AppCore {
             runtime_rumor.tags.iter(),
         );
         let is_outgoing = effective_sender_owner == local_owner;
+        if !is_outgoing
+            && !is_group_chat_id(&chat_id)
+            && !self.should_accept_direct_runtime_message(effective_sender_owner, Some(&chat_id))
+        {
+            return;
+        }
         let inner_event_id = runtime_rumor.id.clone();
 
         match kind {
@@ -1453,6 +1464,35 @@ impl AppCore {
             }
         }
         sender_owner
+    }
+
+    fn should_accept_direct_runtime_message(
+        &mut self,
+        sender_owner: PublicKey,
+        chat_id: Option<&str>,
+    ) -> bool {
+        let Some(local_owner) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return false;
+        };
+        if sender_owner == local_owner || self.preferences.accept_unknown_direct_messages {
+            return true;
+        }
+        let sender_hex = sender_owner.to_hex();
+        let known = chat_id
+            .and_then(|chat_id| self.threads.get(chat_id))
+            .is_some()
+            || self.threads.contains_key(&sender_hex);
+        if !known {
+            self.push_debug_log(
+                "runtime_rumor.unknown_sender.skip",
+                format!("sender_owner={sender_hex}"),
+            );
+        }
+        known
     }
 
     fn direct_owner_for_known_device_pubkey(&self, device_pubkey: PublicKey) -> Option<PublicKey> {

@@ -5,7 +5,7 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use iris_chat_core::{
     AppAction, AppReconciler, AppState, AppUpdate, ChatKind, ChatMessageSnapshot,
     ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState, DesktopNearbyObserver,
@@ -49,6 +49,7 @@ Message Servers:
 Maintenance:
   state      Show local state
   sync       Sync now
+  privacy    Privacy tools
   update     Update iris
   help       Print help";
 
@@ -88,6 +89,8 @@ enum Commands {
     InvitesAndDevices(InviteDeviceTopCommands),
     #[command(flatten)]
     MessageServers(MessageServerTopCommands),
+    #[command(subcommand)]
+    Privacy(PrivacyCommands),
     #[command(flatten)]
     Maintenance(MaintenanceTopCommands),
 }
@@ -318,6 +321,17 @@ enum RelayCommands {
     Remove { url: String },
     Set { urls: Vec<String> },
     Reset,
+}
+
+#[derive(Subcommand)]
+enum PrivacyCommands {
+    UnknownUsers { mode: UnknownUsersMode },
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum UnknownUsersMode {
+    Allow,
+    Block,
 }
 
 /// Resolve, download, and install iris updates by shelling out to the
@@ -718,6 +732,7 @@ fn handle_command(cli: &CliApp, data_dir: &Path, command: Commands) -> Result<Va
         Commands::MessageServers(MessageServerTopCommands::Relay(command)) => {
             handle_relay_command(cli, command)
         }
+        Commands::Privacy(command) => handle_privacy_command(cli, command),
         Commands::Maintenance(command) => handle_maintenance_command(cli, command),
     }
 }
@@ -1039,6 +1054,22 @@ fn handle_relay_command(cli: &CliApp, command: RelayCommands) -> Result<Value> {
                 Duration::from_secs(3),
             )?;
             Ok(json!({ "message_servers": cli.app.state().preferences.nostr_relay_urls }))
+        }
+    }
+}
+
+fn handle_privacy_command(cli: &CliApp, command: PrivacyCommands) -> Result<Value> {
+    match command {
+        PrivacyCommands::UnknownUsers { mode } => {
+            let accept = matches!(mode, UnknownUsersMode::Allow);
+            cli.dispatch_and_wait(
+                AppAction::SetAcceptUnknownDirectMessages { enabled: accept },
+                Duration::from_secs(2),
+            )?;
+            Ok(json!({
+                "unknown_users": if accept { "allow" } else { "block" },
+                "accept_unknown_direct_messages": cli.app.state().preferences.accept_unknown_direct_messages,
+            }))
         }
     }
 }
@@ -1595,6 +1626,7 @@ fn command_name(command: &Commands) -> &'static str {
             InviteDeviceTopCommands::Link(_) => "link",
         },
         Commands::MessageServers(_) => "relay",
+        Commands::Privacy(_) => "privacy",
         Commands::Maintenance(command) => match command {
             MaintenanceTopCommands::State => "state",
             MaintenanceTopCommands::Sync { .. } => "sync",
@@ -1622,6 +1654,7 @@ fn state_json(state: &AppState) -> Value {
         "groups": group_list_json(state),
         "current_chat": state.current_chat.as_ref().map(|chat| chat_json(chat, usize::MAX)),
         "message_servers": state.preferences.nostr_relay_urls,
+        "accept_unknown_direct_messages": state.preferences.accept_unknown_direct_messages,
         "toast": state.toast,
     })
 }

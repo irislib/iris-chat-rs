@@ -58,6 +58,7 @@ pub struct PreferencesSnapshot {
     pub muted_chat_ids: Vec<String>,
     pub pinned_chat_ids: Vec<String>,
     pub debug_logging_enabled: bool,
+    pub accept_unknown_direct_messages: bool,
     /// User-configurable notification server URL. Empty string means
     /// "use the platform default" (notifications.iris.to in release,
     /// notifications-sandbox.iris.to in debug). When non-empty, the
@@ -84,6 +85,7 @@ impl Default for PreferencesSnapshot {
             muted_chat_ids: Vec::new(),
             pinned_chat_ids: Vec::new(),
             debug_logging_enabled: false,
+            accept_unknown_direct_messages: true,
             mobile_push_server_url: String::new(),
         }
     }

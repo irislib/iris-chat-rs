@@ -262,6 +262,16 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn set_accept_unknown_direct_messages(&mut self, enabled: bool) {
+        if self.preferences.accept_unknown_direct_messages == enabled {
+            return;
+        }
+        self.preferences.accept_unknown_direct_messages = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn add_nostr_relay(&mut self, relay_url: &str) {
         let normalized = match normalize_nostr_relay_url(relay_url) {
             Ok(url) => url,

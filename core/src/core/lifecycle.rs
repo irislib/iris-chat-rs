@@ -381,6 +381,9 @@ impl AppCore {
             AppAction::SetDebugLoggingEnabled { enabled } => {
                 self.set_debug_logging_enabled(enabled)
             }
+            AppAction::SetAcceptUnknownDirectMessages { enabled } => {
+                self.set_accept_unknown_direct_messages(enabled)
+            }
             AppAction::AddNostrRelay { relay_url } => self.add_nostr_relay(&relay_url),
             AppAction::UpdateNostrRelay {
                 old_relay_url,

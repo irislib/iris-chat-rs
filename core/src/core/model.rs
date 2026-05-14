@@ -367,6 +367,8 @@ pub(super) struct PersistedPreferences {
     pub(super) pinned_chat_ids: Vec<String>,
     #[serde(default)]
     pub(super) debug_logging_enabled: bool,
+    #[serde(default = "default_true")]
+    pub(super) accept_unknown_direct_messages: bool,
 }
 
 impl Default for PersistedPreferences {
@@ -390,6 +392,7 @@ impl Default for PersistedPreferences {
             muted_chat_ids: defaults.muted_chat_ids,
             pinned_chat_ids: defaults.pinned_chat_ids,
             debug_logging_enabled: defaults.debug_logging_enabled,
+            accept_unknown_direct_messages: defaults.accept_unknown_direct_messages,
         }
     }
 }
