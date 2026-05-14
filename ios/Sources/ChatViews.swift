@@ -176,7 +176,7 @@ struct ChatScreen: View {
                                         .contentShape(Rectangle())
                                         .simultaneousGesture(
                                             TapGesture().onEnded {
-                                                isComposerFocused = false
+                                                dismissComposerFocus()
                                             }
                                         )
                                         .background(
@@ -252,6 +252,11 @@ struct ChatScreen: View {
                                     }
                                     .irisInteractiveKeyboardDismiss()
                                     .simultaneousGesture(timelineDragGesture)
+                                    .simultaneousGesture(
+                                        TapGesture().onEnded {
+                                            dismissComposerFocus()
+                                        }
+                                    )
                                     .opacity(timelineReadyForDisplay ? 1 : 0)
                                     .allowsHitTesting(timelineReadyForDisplay)
                                 }
@@ -636,7 +641,7 @@ struct ChatScreen: View {
         pendingScrollSettle?.cancel()
         pendingScrollSettle = nil
         timelineScrollSettleGeneration += 1
-        isComposerFocused = false
+        dismissComposerFocus()
         resumeTimelineAutoFollow()
         timelineCoordinator.stopScrolling()
         // Match Signal's behavior: the button is a one-shot request to
@@ -705,6 +710,13 @@ struct ChatScreen: View {
                 snapshot: message
             )
         }
+    }
+
+    private func dismissComposerFocus() {
+        isComposerFocused = false
+#if os(iOS)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+#endif
     }
 
     private func timelineAutoFollowIsSuppressed(now: Date = Date()) -> Bool {
@@ -1004,6 +1016,10 @@ private enum SignalConversationLayout {
     static let daySeparatorMinimumHeight: CGFloat = 22
     static let stickyDateHeaderTopSpacing: CGFloat = 12
     static let stickyDateHeaderMinimumSpacing: CGFloat = 5
+    static let reactionPillHeight: CGFloat = 24
+    static let reactionPillOverlap: CGFloat = 7
+    static let reactionPillHorizontalInset: CGFloat = 6
+    static let reactionPillProtrusion: CGFloat = reactionPillHeight - reactionPillOverlap
 }
 
 func irisGroupSenderNameColorHex(for senderKey: String, isDarkMode: Bool) -> UInt32 {
@@ -1526,10 +1542,6 @@ private struct ChatMessageRow: View, Equatable {
                                 )
                             }
                         )
-                        // The actual pan is owned by the timeline scroll view.
-                        // This modifier only renders the offset/reveal state,
-                        // keeping vertical flicks on bubbles in the scroll path.
-                        .applyMessageBubbleSwipe(offset: swipeOffset)
                         // Two macOS-only fixes: cap bubble width (without
                         // this it stretches the full ~830pt pane), and
                         // render the hover dock as an overlay (without
@@ -1545,22 +1557,29 @@ private struct ChatMessageRow: View, Equatable {
                             }
                         }
 #endif
+                        .padding(.bottom, reactions.isEmpty ? 0 : SignalConversationLayout.reactionPillProtrusion)
+                        .overlay(alignment: message.isOutgoing ? .bottomLeading : .bottomTrailing) {
+                            if !reactions.isEmpty {
+                                ReactionRow(
+                                    reactions: reactions,
+                                    onTap: onShowReactors
+                                )
+                                .fixedSize()
+                                .offset(
+                                    x: message.isOutgoing
+                                        ? SignalConversationLayout.reactionPillHorizontalInset
+                                        : -SignalConversationLayout.reactionPillHorizontalInset
+                                )
+                            }
+                        }
+                        // The actual pan is owned by the timeline scroll view.
+                        // This modifier only renders the offset/reveal state,
+                        // keeping vertical flicks on bubbles in the scroll path.
+                        .applyMessageBubbleSwipe(offset: swipeOffset)
+
                         if !message.isOutgoing {
                             Spacer(minLength: SignalConversationLayout.messageDirectionSpacing)
                         }
-                    }
-
-                    if !reactions.isEmpty {
-                        // Tuck the reaction pills up under the bubble's
-                        // bottom edge so they read as attached to the
-                        // message rather than a separate row below it.
-                        ReactionRow(
-                            reactions: reactions,
-                            isOutgoing: message.isOutgoing,
-                            onTap: onShowReactors
-                        )
-                        .padding(.top, -14)
-                        .padding(message.isOutgoing ? .trailing : .leading, 6)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: message.isOutgoing ? .trailing : .leading)
@@ -2459,7 +2478,7 @@ private struct ChatMessageActionsSheet: View {
                         .foregroundStyle(palette.muted)
                 }
                 if !message.reactions.isEmpty {
-                    ReactionRow(reactions: message.reactions, isOutgoing: false)
+                    ReactionRow(reactions: message.reactions)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -2733,40 +2752,42 @@ private struct MessageReactorsSheet: View {
 private struct ReactionRow: View {
     @Environment(\.irisPalette) private var palette
     let reactions: [MessageReactionSnapshot]
-    let isOutgoing: Bool
     var onTap: (() -> Void)? = nil
 
     @ViewBuilder
     var body: some View {
-        let pills = HStack(spacing: 5) {
+        let pills = HStack(spacing: 0) {
             ForEach(reactions, id: \.emoji) { reaction in
-                Text("\(reaction.emoji) \(reaction.count)")
-                    .font(.system(.caption, design: .rounded, weight: reaction.reactedByMe ? .bold : .semibold))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule(style: .continuous)
-                            .fill(palette.panelAlt)
-                    )
-                    // Chat-background-coloured ring carves a visible gap
-                    // around the pill so it reads as a floating chip
-                    // when tucked under the bubble's lower edge — same
-                    // trick Signal uses.
-                    .overlay(
-                        Capsule(style: .continuous)
-                            .strokeBorder(palette.background, lineWidth: 2)
-                    )
+                HStack(spacing: 2) {
+                    Text(reaction.emoji)
+                        .font(.system(size: 14, weight: .bold))
+                    if reaction.count > 1 {
+                        Text("\(reaction.count)")
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                            .foregroundStyle(palette.muted)
+                    }
+                }
+                .padding(.horizontal, 7)
+                .frame(height: SignalConversationLayout.reactionPillHeight)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(reaction.reactedByMe ? palette.panel : palette.panelAlt)
+                )
+                .overlay(
+                    Capsule(style: .continuous)
+                        .strokeBorder(palette.background, lineWidth: 1)
+                )
             }
         }
-        .frame(maxWidth: .infinity, alignment: isOutgoing ? .trailing : .leading)
-        .accessibilityIdentifier("chatReactionRow")
 
         if let onTap {
             Button(action: onTap) { pills }
                 .buttonStyle(.irisPlain)
                 .accessibilityHint("Tap to see who reacted")
+                .accessibilityIdentifier("chatReactionRow")
         } else {
             pills
+                .accessibilityIdentifier("chatReactionRow")
         }
     }
 }

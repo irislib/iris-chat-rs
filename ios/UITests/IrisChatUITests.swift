@@ -134,8 +134,48 @@ final class IrisChatUITests: XCTestCase {
             )
         }
 
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        element(app, "chatTimeline")
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+            .tap()
+        XCTAssertFalse(app.keyboards.firstMatch.waitForExistence(timeout: 2))
+
         element(app, "chatSendButton").tap()
         XCTAssertTrue(app.staticTexts["hello"].firstMatch.waitForExistence(timeout: 15))
+#endif
+    }
+
+    func testQuickReactionPillStaysTappableAfterReacting() throws {
+#if os(macOS)
+        throw XCTSkip("Message reaction sheet is iOS-only")
+#else
+        let app = launchCleanApp()
+
+        createAccount(app)
+        openChatWithPeer(app)
+
+        let message = "reaction \(UUID().uuidString)"
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+        typeText(message, into: element(app, "chatMessageInput"), app: app)
+        element(app, "chatSendButton").tap()
+        dismissNotificationPromptIfPresent(app: app)
+
+        let messageText = app.staticTexts[message].firstMatch
+        XCTAssertTrue(messageText.waitForExistence(timeout: 15))
+        messageText.press(forDuration: 0.6)
+
+        XCTAssertTrue(element(app, "messageActionsSheet").waitForExistence(timeout: 5))
+        app.buttons["❤️"].firstMatch.tap()
+
+        let reactionRow = element(app, "chatReactionRow")
+        XCTAssertTrue(reactionRow.waitForExistence(timeout: 10))
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.lifetime = .keepAlways
+        attachment.name = "reaction-pill-position"
+        add(attachment)
+
+        reactionRow.tap()
+        XCTAssertTrue(element(app, "messageReactorsSheet").waitForExistence(timeout: 5))
 #endif
     }
 
