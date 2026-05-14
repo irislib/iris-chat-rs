@@ -2023,6 +2023,26 @@ private struct IdentifiedString: Identifiable, Hashable {
     var id: String { value }
 }
 
+private struct IrisProfilePictureViewerItem: Identifiable, Equatable {
+    let label: String
+    let pictureUrl: String
+    let accessibilityIdentifier: String
+
+    var id: String { "\(accessibilityIdentifier)|\(pictureUrl)" }
+
+    init?(
+        label: String,
+        pictureUrl: String?,
+        accessibilityIdentifier: String
+    ) {
+        let trimmed = pictureUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard irisCanOpenProfilePicture(trimmed) else { return nil }
+        self.label = label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Profile" : label
+        self.pictureUrl = trimmed
+        self.accessibilityIdentifier = accessibilityIdentifier
+    }
+}
+
 private struct DirectChatInfoScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
@@ -2031,6 +2051,7 @@ private struct DirectChatInfoScreen: View {
     @State private var advancedExpanded = false
     @State private var profileDebug: PeerProfileDebugSnapshot?
     @State private var loadedProfileDebugFor: String?
+    @State private var profilePictureViewerItem: IrisProfilePictureViewerItem?
 
     private var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
@@ -2041,14 +2062,7 @@ private struct DirectChatInfoScreen: View {
             VStack(alignment: .leading, spacing: 20) {
                 if let chat {
                     HStack(spacing: 14) {
-                        IrisAvatar(
-                            label: chat.displayName,
-                            size: 72,
-                            emphasize: true,
-                            pictureUrl: chat.pictureUrl,
-                            preferences: manager.state.preferences,
-                            manager: manager
-                        )
+                        directChatAvatar(chat)
                         VStack(alignment: .leading, spacing: 4) {
                             Text(chat.displayName)
                                 .font(.system(.title3, design: .rounded, weight: .bold))
@@ -2141,6 +2155,43 @@ private struct DirectChatInfoScreen: View {
             .textSelection(.enabled)
         }
         .background(palette.background)
+        .irisProfilePictureViewer(
+            item: $profilePictureViewerItem,
+            preferences: manager.state.preferences,
+            manager: manager
+        )
+    }
+
+    @ViewBuilder
+    private func directChatAvatar(_ chat: CurrentChatSnapshot) -> some View {
+        if let item = IrisProfilePictureViewerItem(
+            label: chat.displayName,
+            pictureUrl: chat.pictureUrl,
+            accessibilityIdentifier: "directChatProfilePictureViewer"
+        ) {
+            Button {
+                profilePictureViewerItem = item
+            } label: {
+                directChatAvatarImage(chat)
+            }
+            .buttonStyle(.irisPlain)
+            .accessibilityLabel("Open profile picture")
+            .accessibilityIdentifier("directChatProfilePictureButton")
+        } else {
+            directChatAvatarImage(chat)
+        }
+    }
+
+    private func directChatAvatarImage(_ chat: CurrentChatSnapshot) -> some View {
+        IrisAvatar(
+            label: chat.displayName,
+            size: 72,
+            emphasize: true,
+            pictureUrl: chat.pictureUrl,
+            preferences: manager.state.preferences,
+            manager: manager,
+            loadedImageIdentifier: "directChatProfileAvatarImage"
+        )
     }
 
     private func loadProfileDebugIfNeeded() {
@@ -5036,6 +5087,7 @@ struct GroupDetailsScreen: View {
     @State private var memberInput = ""
     @State private var showingScanner = false
     @State private var showingGroupPicturePicker = false
+    @State private var groupPictureViewerItem: IrisProfilePictureViewerItem?
 
     private var normalizedMemberInput: String {
         normalizePeerInput(input: memberInput)
@@ -5055,14 +5107,7 @@ struct GroupDetailsScreen: View {
                     )
 
                     HStack(spacing: 14) {
-                        IrisAvatar(
-                            label: details.name,
-                            size: 56,
-                            emphasize: true,
-                            pictureUrl: details.pictureUrl,
-                            preferences: manager.state.preferences,
-                            manager: manager
-                        )
+                        groupAvatar(details)
                         if details.canManage {
                             Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Change photo") {
                                 showingGroupPicturePicker = true
@@ -5281,6 +5326,11 @@ struct GroupDetailsScreen: View {
                 }
             }
         }
+        .irisProfilePictureViewer(
+            item: $groupPictureViewerItem,
+            preferences: manager.state.preferences,
+            manager: manager
+        )
         .sheet(isPresented: $showingScanner) {
             QrScannerSheet { code in
                 memberInput = normalizePeerInput(input: code)
@@ -5298,6 +5348,38 @@ struct GroupDetailsScreen: View {
                 manager.updateGroupPicture(groupId: groupId, fileURL: url)
             }
         }
+    }
+
+    @ViewBuilder
+    private func groupAvatar(_ details: GroupDetailsSnapshot) -> some View {
+        if let item = IrisProfilePictureViewerItem(
+            label: details.name,
+            pictureUrl: details.pictureUrl,
+            accessibilityIdentifier: "groupDetailsProfilePictureViewer"
+        ) {
+            Button {
+                groupPictureViewerItem = item
+            } label: {
+                groupAvatarImage(details)
+            }
+            .buttonStyle(.irisPlain)
+            .accessibilityLabel("Open group photo")
+            .accessibilityIdentifier("groupDetailsProfilePictureButton")
+        } else {
+            groupAvatarImage(details)
+        }
+    }
+
+    private func groupAvatarImage(_ details: GroupDetailsSnapshot) -> some View {
+        IrisAvatar(
+            label: details.name,
+            size: 56,
+            emphasize: true,
+            pictureUrl: details.pictureUrl,
+            preferences: manager.state.preferences,
+            manager: manager,
+            loadedImageIdentifier: "groupDetailsAvatarImage"
+        )
     }
 
     private func knownUsersForAdding(details: GroupDetailsSnapshot) -> [ChatThreadSnapshot] {
@@ -5611,7 +5693,7 @@ struct SettingsScreen: View {
     @State private var showingDeleteAllConfirmation = false
     @State private var showingProfileQr = false
     @State private var profileName = ""
-    @State private var profilePictureViewerURL: URL?
+    @State private var profilePictureViewerItem: IrisProfilePictureViewerItem?
     @State private var newRelayURL = ""
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
@@ -5650,13 +5732,11 @@ struct SettingsScreen: View {
                 mobileSettingsLayout
             }
         }
-        .overlay {
-            if let profilePictureViewerURL {
-                IrisProfilePictureViewer(url: profilePictureViewerURL) {
-                    self.profilePictureViewerURL = nil
-                }
-            }
-        }
+        .irisProfilePictureViewer(
+            item: $profilePictureViewerItem,
+            preferences: manager.state.preferences,
+            manager: manager
+        )
         .sheet(item: $supportBundleShareItem) { item in
             SupportBundleShareSheet(item: item)
         }
@@ -5862,7 +5942,7 @@ struct SettingsScreen: View {
                     manager: manager,
                     account: account,
                     profileName: $profileName,
-                    openProfilePicture: { profilePictureViewerURL = $0 },
+                    openProfilePicture: { profilePictureViewerItem = $0 },
                     showQrCode: { showingProfileQr = true },
                     manageDevices: {
                         manager.dispatch(.pushScreen(screen: .deviceRoster))
@@ -6959,7 +7039,7 @@ private struct ProfileEditorCard: View {
     @ObservedObject var manager: AppManager
     let account: AccountSnapshot
     @Binding var profileName: String
-    let openProfilePicture: (URL) -> Void
+    let openProfilePicture: (IrisProfilePictureViewerItem) -> Void
     let showQrCode: () -> Void
     let manageDevices: () -> Void
     @State private var showingProfilePicturePicker = false
@@ -7105,12 +7185,13 @@ private struct ProfileEditorCard: View {
     @ViewBuilder
     private var profileAvatar: some View {
         let label = account.displayName.isEmpty ? "Profile" : account.displayName
-        let trimmedURL = account.pictureUrl?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let isViewable = trimmedURL.hasPrefix("http://") || trimmedURL.hasPrefix("https://")
-        let displayURL = proxiedImageURL(trimmedURL, preferences: manager.state.preferences, width: 1024, height: 1024)
-        if isViewable, let url = URL(string: displayURL ?? trimmedURL) {
+        if let item = IrisProfilePictureViewerItem(
+            label: label,
+            pictureUrl: account.pictureUrl,
+            accessibilityIdentifier: "myProfilePictureViewer"
+        ) {
             Button {
-                openProfilePicture(url)
+                openProfilePicture(item)
             } label: {
                 IrisAvatar(
                     label: label,
@@ -7147,48 +7228,80 @@ private struct ProfileEditorCard: View {
     }
 }
 
+private extension View {
+    @ViewBuilder
+    func irisProfilePictureViewer(
+        item: Binding<IrisProfilePictureViewerItem?>,
+        preferences: PreferencesSnapshot,
+        manager: AppManager
+    ) -> some View {
+#if os(iOS)
+        fullScreenCover(item: item) { viewerItem in
+            IrisProfilePictureViewer(
+                item: viewerItem,
+                preferences: preferences,
+                manager: manager
+            ) {
+                item.wrappedValue = nil
+            }
+        }
+#else
+        overlay {
+            if let viewerItem = item.wrappedValue {
+                IrisProfilePictureViewer(
+                    item: viewerItem,
+                    preferences: preferences,
+                    manager: manager
+                ) {
+                    item.wrappedValue = nil
+                }
+            }
+        }
+#endif
+    }
+}
+
 private struct IrisProfilePictureViewer: View {
-    let url: URL
+    let item: IrisProfilePictureViewerItem
+    let preferences: PreferencesSnapshot
+    let manager: AppManager
     let onClose: () -> Void
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            Color.black.opacity(0.92)
-                .ignoresSafeArea()
-                .onTapGesture(perform: onClose)
+        GeometryReader { geometry in
+            let diameter = max(120, min(geometry.size.width, geometry.size.height) - 48)
+            ZStack(alignment: .topTrailing) {
+                Color.black
+                    .ignoresSafeArea()
+                    .onTapGesture(perform: onClose)
 
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .scaledToFit()
-                        .padding(22)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                case .failure:
-                    Image(systemName: "photo.badge.exclamationmark")
-                        .font(.system(size: 56, weight: .regular))
-                        .foregroundStyle(.white.opacity(0.7))
-                case .empty:
-                    ProgressView()
-                        .tint(.white)
-                @unknown default:
-                    ProgressView()
-                        .tint(.white)
-                }
+                IrisAvatar(
+                    label: item.label,
+                    size: diameter,
+                    emphasize: false,
+                    pictureUrl: item.pictureUrl,
+                    preferences: preferences,
+                    manager: manager,
+                    loadedImageIdentifier: "\(item.accessibilityIdentifier)Image"
+                )
+                .overlay(
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.12), lineWidth: 1)
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                IrisModalCloseButton(
+                    accessibilityLabel: "Close profile picture",
+                    tone: .light,
+                    iconSize: 30,
+                    hitSize: 66,
+                    action: onClose
+                )
             }
-
-            IrisModalCloseButton(
-                accessibilityLabel: "Close profile picture",
-                tone: .light,
-                iconSize: 30,
-                hitSize: 66,
-                action: onClose
-            )
         }
         .irisOnExitCommand(onClose)
         .irisOnEscapeKey(onClose)
-        .accessibilityIdentifier("myProfilePictureViewer")
+        .accessibilityIdentifier(item.accessibilityIdentifier)
         .zIndex(20)
     }
 }

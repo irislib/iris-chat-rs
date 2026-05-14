@@ -660,6 +660,15 @@ func irisHtreeNhash(from rawURL: String?) -> String? {
     return remainder.split(separator: "/", maxSplits: 1).first.map(String.init)
 }
 
+func irisCanOpenProfilePicture(_ rawURL: String?) -> Bool {
+    guard let rawURL else { return false }
+    let trimmed = rawURL.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return false }
+    return irisHtreeNhash(from: trimmed) != nil
+        || trimmed.hasPrefix("http://")
+        || trimmed.hasPrefix("https://")
+}
+
 func irisHttpAvatarURL(
     _ rawURL: String?,
     preferences: PreferencesSnapshot,
