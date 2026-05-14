@@ -3192,14 +3192,16 @@ private struct ChatListTableView: UIViewRepresentable {
             guard case let .chat(chat) = items[indexPath.row] else { return nil }
             let configuration = UISwipeActionsConfiguration(actions: [
                 contextualAction(
-                    title: chat.unreadCount > 0 ? "Read" : "Unread",
-                    color: .systemPurple
+                    accessibilityTitle: chat.unreadCount > 0 ? "Read" : "Unread",
+                    systemImage: chat.unreadCount > 0 ? "envelope.open.fill" : "envelope.badge.fill",
+                    color: .signalUltramarine
                 ) { [weak self] in
                     self?.manager?.dispatch(.setChatUnread(chatId: chat.chatId, unread: chat.unreadCount == 0))
                 },
                 contextualAction(
-                    title: chat.isPinned ? "Unpin" : "Pin",
-                    color: .systemOrange
+                    accessibilityTitle: chat.isPinned ? "Unpin" : "Pin",
+                    systemImage: chat.isPinned ? "pin.slash.fill" : "pin.fill",
+                    color: .signalPinOrange
                 ) { [weak self] in
                     self?.manager?.dispatch(.setChatPinned(chatId: chat.chatId, pinned: !chat.isPinned))
                 },
@@ -3216,8 +3218,9 @@ private struct ChatListTableView: UIViewRepresentable {
             let configuration = UISwipeActionsConfiguration(actions: [
                 deleteAction(chat: chat, presentingFrom: tableView),
                 contextualAction(
-                    title: chat.isMuted ? "Unmute" : "Mute",
-                    color: .systemOrange
+                    accessibilityTitle: chat.isMuted ? "Unmute" : "Mute",
+                    systemImage: chat.isMuted ? "bell.fill" : "bell.slash.fill",
+                    color: .signalIndigo
                 ) { [weak self] in
                     self?.manager?.dispatch(.setChatMuted(chatId: chat.chatId, muted: !chat.isMuted))
                 },
@@ -3310,21 +3313,24 @@ private struct ChatListTableView: UIViewRepresentable {
         }
 
         private func contextualAction(
-            title: String,
+            accessibilityTitle: String,
+            systemImage: String,
             style: UIContextualAction.Style = .normal,
             color: UIColor,
             handler: @escaping () -> Void
         ) -> UIContextualAction {
-            let action = UIContextualAction(style: style, title: title) { _, _, completion in
+            let action = UIContextualAction(style: style, title: "") { _, _, completion in
                 handler()
                 completion(true)
             }
             action.backgroundColor = color
+            action.image = UIImage(systemName: systemImage)
+            action.accessibilityLabel = accessibilityTitle
             return action
         }
 
         private func deleteAction(chat: ChatThreadSnapshot, presentingFrom tableView: UITableView) -> UIContextualAction {
-            let action = UIContextualAction(style: .destructive, title: "Delete") { [weak self, weak tableView] _, _, completion in
+            let action = UIContextualAction(style: .destructive, title: "") { [weak self, weak tableView] _, _, completion in
                 guard let self, let tableView else {
                     completion(false)
                     return
@@ -3343,7 +3349,9 @@ private struct ChatListTableView: UIViewRepresentable {
                 }
                 presenter.present(alert, animated: true)
             }
-            action.backgroundColor = .systemRed
+            action.backgroundColor = .signalRed
+            action.image = UIImage(systemName: "trash.fill")
+            action.accessibilityLabel = "Delete"
             return action
         }
 
@@ -3479,6 +3487,51 @@ private struct ChatListTableRowContent: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+    }
+}
+
+private extension UIColor {
+    static var signalUltramarine: UIColor {
+        UIColor { traits in
+            if traits.accessibilityContrast == .high {
+                return traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 0x5D / 255, green: 0x92 / 255, blue: 0xFF / 255, alpha: 1)
+                    : UIColor(red: 0x0A / 255, green: 0x43 / 255, blue: 0xB9 / 255, alpha: 1)
+            }
+            return traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0x2D / 255, green: 0x70 / 255, blue: 0xFA / 255, alpha: 1)
+                : UIColor(red: 0x22 / 255, green: 0x67 / 255, blue: 0xF5 / 255, alpha: 1)
+        }
+    }
+
+    static var signalIndigo: UIColor {
+        UIColor { traits in
+            if traits.accessibilityContrast == .high {
+                return traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 0x7D / 255, green: 0x7A / 255, blue: 0xFF / 255, alpha: 1)
+                    : UIColor(red: 0x36 / 255, green: 0x34 / 255, blue: 0xA3 / 255, alpha: 1)
+            }
+            return traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0x5E / 255, green: 0x5C / 255, blue: 0xE6 / 255, alpha: 1)
+                : UIColor(red: 0x58 / 255, green: 0x56 / 255, blue: 0xD6 / 255, alpha: 1)
+        }
+    }
+
+    static var signalRed: UIColor {
+        UIColor { traits in
+            if traits.accessibilityContrast == .high {
+                return traits.userInterfaceStyle == .dark
+                    ? UIColor(red: 0xFF / 255, green: 0x69 / 255, blue: 0x61 / 255, alpha: 1)
+                    : UIColor(red: 0xD7 / 255, green: 0x00 / 255, blue: 0x15 / 255, alpha: 1)
+            }
+            return traits.userInterfaceStyle == .dark
+                ? UIColor(red: 0xFF / 255, green: 0x45 / 255, blue: 0x3A / 255, alpha: 1)
+                : UIColor(red: 0xFF / 255, green: 0x3B / 255, blue: 0x30 / 255, alpha: 1)
+        }
+    }
+
+    static var signalPinOrange: UIColor {
+        UIColor(red: 0xFF / 255, green: 0x99 / 255, blue: 0x0A / 255, alpha: 1)
     }
 }
 #endif
