@@ -51,7 +51,10 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -781,6 +784,17 @@ private fun ChatListSearchField(
     onQueryChange: (String) -> Unit,
     onClear: () -> Unit,
 ) {
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    var focused by remember { mutableStateOf(false) }
+    val closeSearch: () -> Unit = {
+        if (query.isNotEmpty()) {
+            onClear()
+        }
+        focusManager.clearFocus()
+        keyboardController?.hide()
+    }
+
     TextField(
         value = query,
         onValueChange = onQueryChange,
@@ -788,6 +802,7 @@ private fun ChatListSearchField(
             Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 8.dp)
+                .onFocusChanged { focused = it.isFocused }
                 .testTag("chatListSearchField"),
         placeholder = { Text("Search chats, groups, messages") },
         leadingIcon = {
@@ -798,11 +813,14 @@ private fun ChatListSearchField(
             )
         },
         trailingIcon = {
-            if (query.isNotEmpty()) {
-                IconButton(onClick = onClear) {
+            if (focused || query.isNotEmpty()) {
+                IconButton(
+                    onClick = closeSearch,
+                    modifier = Modifier.testTag("chatListCloseSearchButton"),
+                ) {
                     Icon(
                         imageVector = Icons.Filled.Clear,
-                        contentDescription = "Clear search",
+                        contentDescription = "Close search",
                         tint = IrisTheme.palette.muted,
                     )
                 }
