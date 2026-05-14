@@ -56,6 +56,7 @@ import androidx.compose.material.icons.rounded.MoreHoriz
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.Notifications
 import androidx.compose.material.icons.rounded.NotificationsOff
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.PersonRemove
 import androidx.compose.material.icons.rounded.PushPin
 import androidx.compose.material.icons.rounded.QrCodeScanner
@@ -1021,6 +1022,8 @@ object IrisIcons {
     val MarkRead = Icons.Rounded.MarkEmailRead
     val MarkUnread = Icons.Rounded.MarkEmailUnread
     val Pin = Icons.Rounded.PushPin
+    val Check = Icons.Rounded.Check
+    val Person = Icons.Rounded.Person
     val Devices = Icons.Rounded.Devices
     val Edit = Icons.Rounded.Edit
     val File = Icons.AutoMirrored.Rounded.InsertDriveFile

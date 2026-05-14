@@ -1,6 +1,7 @@
 package to.iris.chat.ui.screens
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.widget.Toast
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -33,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -47,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -264,124 +268,31 @@ fun MyProfileSheet(
                 } else {
                     when (selectedPage) {
                         SettingsPage.Profile -> {
-                            SettingsFormSection {
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                ) {
-                                    IrisAvatar(
-                                        label = displayName.ifBlank { "Profile" },
-                                        size = 54.dp,
-                                        emphasize = true,
-                                        imageUrl = proxiedAvatarUrl,
-                                        imageData = avatarBytes,
-                                        modifier =
-                                            Modifier
-                                                .then(
-                                                    if (isHttpPictureUrl || (isHashtreePictureUrl && avatarBytes != null)) {
-                                                        Modifier
-                                                            .clickable(
-                                                                interactionSource = profilePictureInteractionSource,
-                                                                indication = ripple(bounded = false, radius = 30.dp),
-                                                            ) {
-                                                                haptics.press()
-                                                                showProfilePicture = true
-                                                            }
-                                                            .testTag("myProfilePictureButton")
-                                                    } else {
-                                                        Modifier
-                                                    },
-                                                ),
+                            ProfileSettingsPage(
+                                displayName = displayName,
+                                profileName = profileName,
+                                onProfileNameChange = { profileName = it },
+                                canManageDevices = canManageDevices,
+                                imageUrl = proxiedAvatarUrl,
+                                imageData = avatarBytes,
+                                canOpenPicture = isHttpPictureUrl || (isHashtreePictureUrl && avatarBytes != null),
+                                profilePictureInteractionSource = profilePictureInteractionSource,
+                                onOpenPicture = {
+                                    haptics.press()
+                                    showProfilePicture = true
+                                },
+                                onChangePicture = { profilePicturePicker.launch(arrayOf("image/*")) },
+                                onSaveProfile = {
+                                    appManager.updateProfileMetadata(
+                                        name = profileName,
+                                        pictureUrl = pictureUrl,
                                     )
-                                    Column {
-                                        Text(
-                                            text = displayName.ifBlank { "Profile" },
-                                            style = MaterialTheme.typography.headlineSmall,
-                                        )
-                                        Text(
-                                            text = "My profile",
-                                            style = MaterialTheme.typography.titleMedium,
-                                            color = IrisTheme.palette.muted,
-                                        )
-                                    }
-                                }
-                                TextField(
-                                    value = profileName,
-                                    onValueChange = { profileName = it },
-                                    label = { Text("Display name") },
-                                    singleLine = true,
-                                    enabled = canManageDevices,
-                                    modifier = Modifier.fillMaxWidth().testTag("myProfileDisplayNameInput"),
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = irisTextFieldColors(),
-                                )
-                                if (canManageDevices) {
-                                    IrisSecondaryButton(
-                                        text = "Change picture",
-                                        onClick = { profilePicturePicker.launch(arrayOf("image/*")) },
-                                        enabled = true,
-                                        modifier = Modifier.testTag("myProfilePictureUploadButton"),
-                                        icon = {
-                                            Icon(
-                                                imageVector = IrisIcons.Image,
-                                                contentDescription = null,
-                                            )
-                                        },
-                                    )
-                                }
-                                IrisSecondaryButton(
-                                    text = "Save profile",
-                                    onClick = {
-                                        appManager.updateProfileMetadata(
-                                            name = profileName,
-                                            pictureUrl = pictureUrl,
-                                        )
-                                    },
-                                    enabled = canManageDevices &&
-                                        profileName.trim().isNotEmpty() &&
-                                        profileName.trim() != displayName.trim(),
-                                    modifier = Modifier.testTag("myProfileSaveProfileButton"),
-                                )
-                                if (canManageDevices) {
-                                    IrisSecondaryButton(
-                                        text = "Manage devices",
-                                        onClick = onManageDevices,
-                                        modifier = Modifier.testTag("myProfileManageDevicesButton"),
-                                        icon = {
-                                            Icon(
-                                                imageVector = IrisIcons.Devices,
-                                                contentDescription = null,
-                                            )
-                                        },
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    if (qrBitmap != null) {
-                                        IrisQrCodeImage(
-                                            bitmap = qrBitmap,
-                                            contentDescription = "My user ID code",
-                                            size = 260.dp,
-                                            tag = "myProfileQrCode",
-                                        )
-                                    }
-                                }
-                                IrisInlineAction(
-                                    text = "Copy user ID",
-                                    onClick = { clipboard.setText("User ID", npub) },
-                                ) {
-                                    Icon(imageVector = IrisIcons.Copy, contentDescription = null)
-                                }
-                                IrisInlineAction(
-                                    text = "Copy this device code",
-                                    onClick = { clipboard.setText("Link code", deviceNpub) },
-                                ) {
-                                    Icon(imageVector = IrisIcons.Copy, contentDescription = null)
-                                }
-                            }
+                                },
+                                onManageDevices = onManageDevices,
+                                qrBitmap = qrBitmap,
+                                onCopyUserId = { clipboard.setText("User ID", npub) },
+                                onCopyDeviceCode = { clipboard.setText("Link code", deviceNpub) },
+                            )
                         }
 
                         SettingsPage.Messaging -> {
@@ -923,6 +834,293 @@ private fun settingsTextButtonColors() =
     )
 
 @Composable
+private fun ProfileSettingsPage(
+    displayName: String,
+    profileName: String,
+    onProfileNameChange: (String) -> Unit,
+    canManageDevices: Boolean,
+    imageUrl: String?,
+    imageData: ByteArray?,
+    canOpenPicture: Boolean,
+    profilePictureInteractionSource: MutableInteractionSource,
+    onOpenPicture: () -> Unit,
+    onChangePicture: () -> Unit,
+    onSaveProfile: () -> Unit,
+    onManageDevices: () -> Unit,
+    qrBitmap: Bitmap?,
+    onCopyUserId: () -> Unit,
+    onCopyDeviceCode: () -> Unit,
+) {
+    val canSaveProfile =
+        canManageDevices &&
+            profileName.trim().isNotEmpty() &&
+            profileName.trim() != displayName.trim()
+
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        ProfileHero(
+            displayName = displayName,
+            imageUrl = imageUrl,
+            imageData = imageData,
+            canManageDevices = canManageDevices,
+            canOpenPicture = canOpenPicture,
+            profilePictureInteractionSource = profilePictureInteractionSource,
+            onOpenPicture = onOpenPicture,
+            onChangePicture = onChangePicture,
+        )
+
+        IrisListSection {
+            ProfileNameRow(
+                value = profileName,
+                onValueChange = onProfileNameChange,
+                enabled = canManageDevices,
+            )
+            if (canSaveProfile) {
+                ProfileActionRow(
+                    title = "Save profile",
+                    icon = IrisIcons.Check,
+                    onClick = onSaveProfile,
+                    modifier = Modifier.testTag("myProfileSaveProfileButton"),
+                )
+            }
+            if (canManageDevices) {
+                ProfileActionRow(
+                    title = "Manage devices",
+                    icon = IrisIcons.Devices,
+                    onClick = onManageDevices,
+                    modifier = Modifier.testTag("myProfileManageDevicesButton"),
+                )
+            }
+        }
+
+        ProfileQrSection(qrBitmap = qrBitmap)
+
+        IrisListSection {
+            ProfileActionRow(
+                title = "Copy user ID",
+                icon = IrisIcons.Copy,
+                onClick = onCopyUserId,
+            )
+            ProfileActionRow(
+                title = "Copy this device code",
+                icon = IrisIcons.Copy,
+                onClick = onCopyDeviceCode,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileHero(
+    displayName: String,
+    imageUrl: String?,
+    imageData: ByteArray?,
+    canManageDevices: Boolean,
+    canOpenPicture: Boolean,
+    profilePictureInteractionSource: MutableInteractionSource,
+    onOpenPicture: () -> Unit,
+    onChangePicture: () -> Unit,
+) {
+    Column(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 8.dp, bottom = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        IrisAvatar(
+            label = displayName.ifBlank { "Profile" },
+            size = 80.dp,
+            emphasize = true,
+            imageUrl = imageUrl,
+            imageData = imageData,
+            modifier =
+                Modifier
+                    .then(
+                        if (canOpenPicture) {
+                            Modifier
+                                .clickable(
+                                    interactionSource = profilePictureInteractionSource,
+                                    indication = ripple(bounded = false, radius = 42.dp),
+                                    onClick = onOpenPicture,
+                                )
+                                .testTag("myProfilePictureButton")
+                        } else {
+                            Modifier
+                        },
+                    ),
+        )
+        if (canManageDevices) {
+            ProfilePhotoButton(onClick = onChangePicture)
+        }
+    }
+}
+
+@Composable
+private fun ProfilePhotoButton(onClick: () -> Unit) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
+    Surface(
+        modifier =
+            Modifier
+                .heightIn(min = 36.dp)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                ) {
+                    haptics.press()
+                    onClick()
+                }
+                .testTag("myProfilePictureUploadButton"),
+        color = IrisTheme.palette.panelAlt,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        shape = RoundedCornerShape(100.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Box(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = "Edit photo",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ProfileNameRow(
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = IrisIcons.Person,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.size(24.dp),
+        )
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            enabled = enabled,
+            singleLine = true,
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+            textStyle =
+                MaterialTheme.typography.bodyLarge.copy(
+                    color =
+                        if (enabled) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            IrisTheme.palette.muted
+                        },
+                ),
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .testTag("myProfileDisplayNameInput"),
+            decorationBox = { innerTextField ->
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    if (value.isBlank()) {
+                        Text(
+                            text = "Display name",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = IrisTheme.palette.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
+        )
+    }
+}
+
+@Composable
+private fun ProfileActionRow(
+    title: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember(title) { MutableInteractionSource() }
+    val rowColor = MaterialTheme.colorScheme.onSurface
+    Row(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                ) {
+                    haptics.press()
+                    onClick()
+                }
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = rowColor,
+            modifier = Modifier.size(24.dp),
+        )
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyLarge,
+            color = rowColor,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun ProfileQrSection(qrBitmap: Bitmap?) {
+    if (qrBitmap == null) {
+        return
+    }
+
+    Box(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        IrisQrCodeImage(
+            bitmap = qrBitmap,
+            contentDescription = "My user ID code",
+            size = 260.dp,
+            tag = "myProfileQrCode",
+        )
+    }
+}
+
+@Composable
 private fun SettingsProfileMenuRow(
     displayName: String,
     imageUrl: String?,
@@ -977,12 +1175,23 @@ private fun SettingsProfileMenuRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(
-                imageVector = IrisIcons.ChevronRight,
-                contentDescription = null,
-                tint = IrisTheme.palette.muted,
-                modifier = Modifier.size(24.dp),
-            )
+            Surface(
+                modifier = Modifier.size(36.dp),
+                color = IrisTheme.palette.panelAlt,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                shape = CircleShape,
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = IrisIcons.ScanQr,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(20.dp),
+                    )
+                }
+            }
         }
     }
 }
