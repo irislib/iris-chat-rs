@@ -370,6 +370,7 @@ private func fallbackAppState(toast: String?) -> AppState {
             mutedChatIds: [],
             pinnedChatIds: [],
             debugLoggingEnabled: false,
+            acceptUnknownDirectMessages: true,
             mobilePushServerUrl: ""
         ),
         toast: toast

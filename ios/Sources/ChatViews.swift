@@ -187,6 +187,13 @@ struct ChatScreen: View {
                                                 )
                                             }
                                         )
+                                        // Vertical ScrollView children do not
+                                        // automatically fill the viewport
+                                        // width on macOS. If the timeline stack
+                                        // keeps its ideal width, outgoing
+                                        // bubbles align to a narrow centered
+                                        // column instead of the chat pane edge.
+                                        .frame(width: viewport.size.width)
                                         .frame(minHeight: viewport.size.height, alignment: .bottom)
 
                                         // Trailing bottom anchor sits OUTSIDE

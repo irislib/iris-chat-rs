@@ -251,7 +251,7 @@ struct IosStateSideEffectGate {
 }
 #endif
 
-private struct ClientDebugLogEntry {
+private struct ClientDebugLogEntry: Sendable {
     let timestampSecs: UInt64
     let category: String
     let detail: String
@@ -512,11 +512,39 @@ private final class SuspendPreparationRunner: @unchecked Sendable {
     }
 }
 
+private final class RustDispatchRunner: @unchecked Sendable {
+    private let rust: RustAppClient
+
+    init(rust: RustAppClient) {
+        self.rust = rust
+    }
+
+    func dispatch(action: AppAction) throws {
+        try rust.dispatch(action: action)
+    }
+}
+
+private final class SupportBundleExportRunner: @unchecked Sendable {
+    private let rust: RustAppClient
+
+    init(rust: RustAppClient) {
+        self.rust = rust
+    }
+
+    func export() -> String {
+        rust.exportSupportBundleJson()
+    }
+}
+
 private final class ChatPageLoadRunner: @unchecked Sendable {
     private let rust: RustAppClient
 
     init(rust: RustAppClient) {
         self.rust = rust
+    }
+
+    func latest(chatId: String, limit: UInt32) -> CurrentChatSnapshot? {
+        rust.chatSnapshot(chatId: chatId, limit: limit)
     }
 
     func before(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot? {
@@ -883,7 +911,13 @@ final class AppManager: ObservableObject {
     private static let chatPageSize: UInt32 = 80
     private static let chatAroundBeforeLimit: UInt32 = 40
     private static let chatAroundAfterLimit: UInt32 = 40
+    private static let chatSnapshotCacheLimit = 12
     private static let chatPageQueue = DispatchQueue(label: "to.iris.chat.chat-pages", qos: .userInitiated)
+    private static let optimisticNavigationDispatchQueue = DispatchQueue(
+        label: "to.iris.chat.optimistic-navigation-dispatch",
+        qos: .userInitiated
+    )
+    private static let supportBundleQueue = DispatchQueue(label: "to.iris.chat.support-bundle", qos: .utility)
     private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
     private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
@@ -904,6 +938,9 @@ final class AppManager: ObservableObject {
     private var olderChatPageLoads = Set<String>()
     private var exhaustedOlderChatPages = Set<String>()
     private var aroundChatPageLoads = Set<String>()
+    private var initialChatPageLoads = Set<String>()
+    private var chatSnapshotCache: [String: CurrentChatSnapshot] = [:]
+    private var chatSnapshotCacheOrder: [String] = []
 
     // Keeps user-driven navigation stable while queued Rust snapshots catch up.
     private struct PendingNavigationOverride {
@@ -1241,14 +1278,11 @@ final class AppManager: ObservableObject {
             category: "navigation.optimistic",
             detail: "\(actionLogName(action)) stack=\(stack)"
         )
-        let dispatched = dispatchToRust(
+        loadInitialChatPageForActiveChat(in: stack)
+        dispatchOptimisticNavigationToRust(
             action,
-            showsToastOnFailure: showsToastOnFailure,
-            preservesPendingNavigation: true
+            showsToastOnFailure: showsToastOnFailure
         )
-        if !dispatched {
-            pendingNavigationOverride = nil
-        }
     }
 
     /// Open a chat and queue a scroll-to-message hop on first paint.
@@ -1279,6 +1313,44 @@ final class AppManager: ObservableObject {
     /// connection without going through the action queue.
     func search(_ query: String, scopeChatId: String? = nil, limit: UInt32 = 50) -> SearchResultSnapshot {
         rust.search(query: query, scopeChatId: scopeChatId, limit: limit)
+    }
+
+    private func loadInitialChatPageForActiveChat(in stack: [Screen]) {
+        guard case .chat(let chatId) = stack.last else { return }
+        loadInitialChatPage(chatId: chatId)
+    }
+
+    private func loadInitialChatPage(chatId: String) {
+        let trimmedChat = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedChat.isEmpty, !initialChatPageLoads.contains(trimmedChat) else {
+            return
+        }
+        initialChatPageLoads.insert(trimmedChat)
+        let runner = ChatPageLoadRunner(rust: rust)
+        let pageSize = Self.chatPageSize
+        Self.chatPageQueue.async { [weak self] in
+            let page = runner.latest(chatId: trimmedChat, limit: pageSize)
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.initialChatPageLoads.remove(trimmedChat)
+                guard let page else { return }
+                self.rememberChatSnapshot(page)
+                if page.messages.count < Int(pageSize) {
+                    self.exhaustedOlderChatPages.insert(trimmedChat)
+                } else {
+                    self.exhaustedOlderChatPages.remove(trimmedChat)
+                }
+                guard self.activeChatID(in: self.state) == page.chatId else {
+                    return
+                }
+                var nextState = self.state
+                nextState.currentChat = self.mergedChatSnapshot(
+                    existing: self.state.currentChat,
+                    page: page
+                )
+                self.state = nextState
+            }
+        }
     }
 
     @discardableResult
@@ -1641,7 +1713,7 @@ final class AppManager: ObservableObject {
               !chatID.isEmpty else {
             return
         }
-        dispatchToRust(.openChat(chatId: chatID))
+        dispatch(.openChat(chatId: chatID))
     }
 
     private func resolvePushNotification(userInfo: [AnyHashable: Any]) -> MobilePushNotificationResolution? {
@@ -2236,7 +2308,25 @@ final class AppManager: ObservableObject {
     }
 
     func supportBundleJson() -> String {
-        supportBundleJsonWithClientLog(rust.exportSupportBundleJson())
+        Self.supportBundleJsonWithClientLog(
+            rustJson: rust.exportSupportBundleJson(),
+            clientDebugLog: clientDebugLog
+        )
+    }
+
+    func supportBundleJsonAsync() async -> String {
+        let runner = SupportBundleExportRunner(rust: rust)
+        let clientLog = clientDebugLog
+        return await withCheckedContinuation { continuation in
+            Self.supportBundleQueue.async {
+                let rustJson = runner.export()
+                let mergedJson = Self.supportBundleJsonWithClientLog(
+                    rustJson: rustJson,
+                    clientDebugLog: clientLog
+                )
+                continuation.resume(returning: mergedJson)
+            }
+        }
     }
 
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
@@ -2348,6 +2438,7 @@ final class AppManager: ObservableObject {
             lastRevApplied = nextState.rev
             postDesktopNotifications(from: oldState, to: reconciledState)
             state = reconciledState
+            rememberCurrentChatIfPresent()
             irisSetDebugLoggingEnabled(reconciledState.preferences.debugLoggingEnabled)
 #if os(iOS) || os(macOS)
             syncNearbyBluetoothPreference(from: oldState, to: reconciledState)
@@ -2462,6 +2553,7 @@ final class AppManager: ObservableObject {
         var nextState = state
         nextState.currentChat = mergedChatSnapshot(existing: state.currentChat, page: page)
         state = nextState
+        rememberChatSnapshot(nextState.currentChat)
     }
 
     private func mergedChatSnapshot(existing: CurrentChatSnapshot?, page: CurrentChatSnapshot) -> CurrentChatSnapshot {
@@ -2516,10 +2608,9 @@ final class AppManager: ObservableObject {
         switch activeScreen {
         case .chat(let chatId):
             if nextState.currentChat?.chatId != chatId {
-                nextState.currentChat = rust.chatSnapshot(
-                    chatId: chatId,
-                    limit: Self.chatPageSize
-                )
+                nextState.currentChat = cachedChatSnapshot(chatId: chatId)
+            } else {
+                rememberChatSnapshot(nextState.currentChat)
             }
             nextState.groupDetails = nil
         case .groupDetails(let groupId):
@@ -2531,6 +2622,31 @@ final class AppManager: ObservableObject {
             nextState.groupDetails = nil
         }
         return nextState
+    }
+
+    private func cachedChatSnapshot(chatId: String) -> CurrentChatSnapshot? {
+        guard let snapshot = chatSnapshotCache[chatId] else { return nil }
+        touchCachedChatSnapshot(chatId)
+        return snapshot
+    }
+
+    private func rememberCurrentChatIfPresent() {
+        rememberChatSnapshot(state.currentChat)
+    }
+
+    private func rememberChatSnapshot(_ snapshot: CurrentChatSnapshot?) {
+        guard let snapshot else { return }
+        chatSnapshotCache[snapshot.chatId] = snapshot
+        touchCachedChatSnapshot(snapshot.chatId)
+        while chatSnapshotCacheOrder.count > Self.chatSnapshotCacheLimit {
+            let evicted = chatSnapshotCacheOrder.removeFirst()
+            chatSnapshotCache.removeValue(forKey: evicted)
+        }
+    }
+
+    private func touchCachedChatSnapshot(_ chatId: String) {
+        chatSnapshotCacheOrder.removeAll { $0 == chatId }
+        chatSnapshotCacheOrder.append(chatId)
     }
 
 #if os(iOS) || os(macOS)
@@ -2573,11 +2689,36 @@ final class AppManager: ObservableObject {
             try rust.dispatch(action: action)
             return true
         } catch {
-            logDispatchFailure(action: action, error: error)
-            if showsToastOnFailure {
-                showToast(Self.dispatchFailureToast)
-            }
+            handleDispatchFailure(action: action, error: error, showsToast: showsToastOnFailure)
             return false
+        }
+    }
+
+    private func dispatchOptimisticNavigationToRust(
+        _ action: AppAction,
+        showsToastOnFailure: Bool
+    ) {
+        let runner = RustDispatchRunner(rust: rust)
+        Self.optimisticNavigationDispatchQueue.async { [weak self] in
+            do {
+                try runner.dispatch(action: action)
+            } catch {
+                Task { @MainActor [weak self] in
+                    self?.pendingNavigationOverride = nil
+                    self?.handleDispatchFailure(
+                        action: action,
+                        error: error,
+                        showsToast: showsToastOnFailure
+                    )
+                }
+            }
+        }
+    }
+
+    private func handleDispatchFailure(action: AppAction, error: Error, showsToast: Bool) {
+        logDispatchFailure(action: action, error: error)
+        if showsToast {
+            showToast(Self.dispatchFailureToast)
         }
     }
 
@@ -2624,7 +2765,10 @@ final class AppManager: ObservableObject {
         }
     }
 
-    private func supportBundleJsonWithClientLog(_ rustJson: String) -> String {
+    nonisolated private static func supportBundleJsonWithClientLog(
+        rustJson: String,
+        clientDebugLog: [ClientDebugLogEntry]
+    ) -> String {
         guard !clientDebugLog.isEmpty,
               let data = rustJson.data(using: .utf8),
               var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {

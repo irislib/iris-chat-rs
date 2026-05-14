@@ -35,16 +35,32 @@ private final class MockDesktopNotificationPoster: DesktopNotificationPosting {
 
 private final class MockRustApp: RustAppClient {
     var currentState: AppState
-    var dispatchedActions: [AppAction] = []
     var supportBundleJson = "{\"ok\":true}"
     var peerDebug: PeerProfileDebugSnapshot?
     var dispatchError: Error?
     var onDispatch: ((AppAction) -> Void)?
     var pagesBefore: [String: CurrentChatSnapshot] = [:]
     var pagesAround: [String: CurrentChatSnapshot] = [:]
+    var chatSnapshotGate: DispatchSemaphore?
+    private var dispatchedActionsStorage: [AppAction] = []
+    private let dispatchedActionsLock = NSLock()
+    private var chatSnapshotCallCountStorage = 0
+    private let chatSnapshotCallCountLock = NSLock()
     private var prepareForSuspendCalls = 0
     private let prepareForSuspendLock = NSLock()
     private var reconciler: AppReconciler?
+
+    var dispatchedActions: [AppAction] {
+        dispatchedActionsLock.lock()
+        defer { dispatchedActionsLock.unlock() }
+        return dispatchedActionsStorage
+    }
+
+    var chatSnapshotCallCount: Int {
+        chatSnapshotCallCountLock.lock()
+        defer { chatSnapshotCallCountLock.unlock() }
+        return chatSnapshotCallCountStorage
+    }
 
     var prepareForSuspendCallCount: Int {
         prepareForSuspendLock.lock()
@@ -99,6 +115,7 @@ private final class MockRustApp: RustAppClient {
             mutedChatIds: [],
             pinnedChatIds: [],
             debugLoggingEnabled: false,
+            acceptUnknownDirectMessages: true,
             mobilePushServerUrl: ""
         ),
         toast: nil
@@ -114,7 +131,9 @@ private final class MockRustApp: RustAppClient {
         if let dispatchError {
             throw dispatchError
         }
-        dispatchedActions.append(action)
+        dispatchedActionsLock.lock()
+        dispatchedActionsStorage.append(action)
+        dispatchedActionsLock.unlock()
         onDispatch?(action)
     }
 
@@ -134,6 +153,13 @@ private final class MockRustApp: RustAppClient {
     }
 
     func chatSnapshot(chatId: String, limit: UInt32) -> CurrentChatSnapshot? {
+        chatSnapshotCallCountLock.lock()
+        chatSnapshotCallCountStorage += 1
+        chatSnapshotCallCountLock.unlock()
+        if let gate = chatSnapshotGate {
+            chatSnapshotGate = nil
+            gate.wait()
+        }
         let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, currentState.account != nil else { return nil }
         if currentState.currentChat?.chatId == trimmed {
@@ -295,6 +321,7 @@ private func makeAppState(
         mutedChatIds: [],
         pinnedChatIds: [],
         debugLoggingEnabled: false,
+        acceptUnknownDirectMessages: true,
         mobilePushServerUrl: ""
     ),
     toast: String? = nil
@@ -1425,6 +1452,10 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.navigateBack()
 
+        let dispatched = await waitUntil {
+            !rust.dispatchedActions.isEmpty
+        }
+        XCTAssertTrue(dispatched)
         guard let first = rust.dispatchedActions.first else {
             return XCTFail("expected navigation action")
         }
@@ -1536,9 +1567,17 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.dispatch(.openChat(chatId: chatId))
 
+        let dispatched = await waitUntil {
+            rust.dispatchedActions.first == .openChat(chatId: chatId)
+        }
+        XCTAssertTrue(dispatched)
         XCTAssertEqual(rust.dispatchedActions.first, .openChat(chatId: chatId))
         XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
         XCTAssertEqual(manager.activeScreen, .chat(chatId: chatId))
+        let initialPageLoaded = await waitUntil {
+            manager.state.currentChat?.chatId == chatId
+        }
+        XCTAssertTrue(initialPageLoaded)
         XCTAssertEqual(manager.state.currentChat?.chatId, chatId)
 
         rust.emit(
@@ -1554,6 +1593,45 @@ final class IrisChatTests: XCTestCase {
         XCTAssertEqual(manager.state.rev, 2)
         XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
         XCTAssertEqual(manager.activeScreen, .chat(chatId: chatId))
+    }
+
+    @MainActor
+    func testOpenChatRouteDoesNotWaitForInitialSnapshot() async {
+        let chatId = "chat-1"
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: Router(defaultScreen: .chatList, screenStack: [])
+            )
+        )
+        let snapshotGate = DispatchSemaphore(value: 0)
+        rust.chatSnapshotGate = snapshotGate
+        defer { snapshotGate.signal() }
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.dispatch(.openChat(chatId: chatId))
+
+        XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
+        XCTAssertEqual(manager.activeScreen, .chat(chatId: chatId))
+        let snapshotStarted = await waitUntil {
+            rust.chatSnapshotCallCount == 1
+        }
+        XCTAssertTrue(snapshotStarted)
+
+        snapshotGate.signal()
+        let snapshotLoaded = await waitUntil {
+            manager.state.currentChat?.chatId == chatId
+        }
+        XCTAssertTrue(snapshotLoaded)
     }
 
     @MainActor
@@ -1582,6 +1660,10 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.openChatAtMessage(chatId: chatId, messageId: "25")
 
+        let openDispatched = await waitUntil {
+            rust.dispatchedActions.contains(.openChat(chatId: chatId))
+        }
+        XCTAssertTrue(openDispatched)
         XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: chatId)))
         XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
         for _ in 0..<100 where manager.state.currentChat?.messages.contains(where: { $0.id == "25" }) != true {
@@ -1658,6 +1740,10 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.dispatch(.pushScreen(screen: .settings))
 
+        let dispatched = await waitUntil {
+            rust.dispatchedActions.first == .pushScreen(screen: .settings)
+        }
+        XCTAssertTrue(dispatched)
         XCTAssertEqual(rust.dispatchedActions.first, .pushScreen(screen: .settings))
         XCTAssertEqual(manager.state.router.screenStack, [.settings])
         XCTAssertEqual(manager.activeScreen, .settings)
@@ -1694,6 +1780,10 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.dispatch(.pushScreen(screen: .newChat))
 
+        let failed = await waitUntil {
+            manager.toasts.message == "Action failed. Copy support bundle in Settings."
+        }
+        XCTAssertTrue(failed)
         XCTAssertEqual(manager.toasts.message, "Action failed. Copy support bundle in Settings.")
         XCTAssertTrue(rust.dispatchedActions.isEmpty)
         let supportBundle = manager.supportBundleJson()

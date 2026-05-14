@@ -896,6 +896,8 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ navigationController: UINavigationController, context: Context) {
+        navigationController.interactivePopGestureRecognizer?.delegate = context.coordinator
+        navigationController.interactivePopGestureRecognizer?.isEnabled = true
         context.coordinator.update(
             navigationController: navigationController,
             routes: routes,
@@ -963,7 +965,25 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
         }
 
         func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-            (navigationController?.viewControllers.count ?? currentRoutes.count) > 1
+            guard gestureRecognizer === navigationController?.interactivePopGestureRecognizer else {
+                return true
+            }
+            guard navigationController?.transitionCoordinator == nil else {
+                return false
+            }
+            guard (navigationController?.viewControllers.count ?? currentRoutes.count) > 1 else {
+                return false
+            }
+            let velocity = (gestureRecognizer as? UIPanGestureRecognizer)?.velocity(in: navigationController?.view)
+            return (velocity?.x ?? 1) > 0
+        }
+
+        func gestureRecognizer(
+            _ gestureRecognizer: UIGestureRecognizer,
+            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+        ) -> Bool {
+            gestureRecognizer === navigationController?.interactivePopGestureRecognizer
+                || otherGestureRecognizer === navigationController?.interactivePopGestureRecognizer
         }
 
         private func refresh(
@@ -3021,7 +3041,7 @@ private struct SwipeableChatListRow<Row: View>: View {
             row
                 .background(palette.background)
                 .offset(x: currentOffset)
-                .highPriorityGesture(rowDragGesture)
+                .simultaneousGesture(rowDragGesture)
                 .accessibilityAction(named: chat.isMuted ? "Unmute" : "Mute") {
                     onToggleMute()
                 }
@@ -3128,7 +3148,13 @@ private struct SwipeableChatListRow<Row: View>: View {
                 let vertical = abs(value.translation.height)
 
                 if activeDragAxis == nil {
-                    activeDragAxis = horizontal > vertical ? .horizontal : .vertical
+                    if horizontal >= 10, horizontal > vertical * 1.35 {
+                        activeDragAxis = .horizontal
+                    } else if vertical >= 6, vertical > horizontal {
+                        activeDragAxis = .vertical
+                    } else {
+                        return
+                    }
                 }
 
                 guard activeDragAxis == .horizontal else { return }
@@ -4739,6 +4765,8 @@ struct SettingsScreen: View {
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
     @State private var selectedPage: SettingsPage?
+    @State private var supportBundleBusy = false
+    @State private var supportBundleShareItem: SupportBundleShareItem?
 
     var body: some View {
         settingsBody
@@ -4765,6 +4793,9 @@ struct SettingsScreen: View {
                     self.profilePictureViewerURL = nil
                 }
             }
+        }
+        .sheet(item: $supportBundleShareItem) { item in
+            SupportBundleShareSheet(item: item)
         }
         .onAppear(perform: applyFocusedSection)
         .irisOnChange(of: focusedSection) { _ in
@@ -5083,20 +5114,24 @@ struct SettingsScreen: View {
                     }
                 }
 
-                ShareLink(item: manager.supportBundleJson()) {
+                Button {
+                    shareSupportBundle()
+                } label: {
                     HStack(spacing: 8) {
                         Image(systemName: "square.and.arrow.up")
-                        Text("Share debug dump")
+                        Text(supportBundleBusy ? "Preparing…" : "Share debug dump")
                     }
                     .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(IrisPrimaryButtonStyle())
+                .disabled(supportBundleBusy)
                 .accessibilityIdentifier("myProfileShareSupportBundleButton")
 
                 Button("Copy debug dump") {
-                    manager.copyToClipboard(manager.supportBundleJson())
+                    copySupportBundle()
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
+                .disabled(supportBundleBusy)
                 .accessibilityIdentifier("myProfileCopySupportBundleButton")
             }
 
@@ -5136,6 +5171,71 @@ struct SettingsScreen: View {
         self.focusedSection = nil
     }
 
+    private func shareSupportBundle() {
+        guard !supportBundleBusy else { return }
+        supportBundleBusy = true
+        Task {
+            let json = await manager.supportBundleJsonAsync()
+            supportBundleBusy = false
+            guard let url = writeSupportBundleTempFile(json) else {
+                manager.copyToClipboard(json)
+                return
+            }
+            supportBundleShareItem = SupportBundleShareItem(url: url)
+        }
+    }
+
+    private func copySupportBundle() {
+        guard !supportBundleBusy else { return }
+        supportBundleBusy = true
+        Task {
+            let json = await manager.supportBundleJsonAsync()
+            supportBundleBusy = false
+            manager.copyToClipboard(json)
+        }
+    }
+
+    private func writeSupportBundleTempFile(_ json: String) -> URL? {
+        let filename = "iris-chat-debug-dump-\(Int(Date().timeIntervalSince1970)).json"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(filename)
+        do {
+            try Data(json.utf8).write(to: url, options: .atomic)
+            return url
+        } catch {
+            return nil
+        }
+    }
+
+}
+
+private struct SupportBundleShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+private struct SupportBundleShareSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let item: SupportBundleShareItem
+
+    var body: some View {
+        IrisScrollScreen {
+            IrisSectionCard {
+                CardHeader(title: "Debug dump")
+
+                ShareLink(item: item.url) {
+                    Label("Share debug dump", systemImage: "square.and.arrow.up")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(IrisPrimaryButtonStyle())
+
+                Button("Done") {
+                    dismiss()
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+            }
+        }
+        .presentationDetents([.medium])
+    }
 }
 
 private struct SettingsProfileMenuRow: View {
