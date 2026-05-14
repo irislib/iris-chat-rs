@@ -179,6 +179,9 @@ struct RootView: View {
     @State private var directChatInfoChatId: String?
     @State private var inChatSearch: InChatSearchTarget?
     @State private var settingsFocus: SettingsFocusSection?
+#if os(iOS)
+    @State private var showingSettingsSheet = false
+#endif
 #if os(iOS) || os(macOS)
     @State private var showingNearbyIris = false
 #endif
@@ -237,6 +240,22 @@ struct RootView: View {
             .irisDismissOnMacOutsideClick { inChatSearch = nil }
         }
         }
+#if os(iOS)
+        .sheet(isPresented: $showingSettingsSheet) {
+            SettingsScreen(
+                manager: manager,
+                focusedSection: $settingsFocus,
+                modalClose: { showingSettingsSheet = false }
+            )
+            .presentationDetents([.large])
+            .presentationDragIndicator(.visible)
+        }
+        .irisOnChange(of: manager.state.account?.publicKeyHex) { accountId in
+            if accountId == nil {
+                showingSettingsSheet = false
+            }
+        }
+#endif
 #if os(iOS) || os(macOS)
         .sheet(isPresented: $showingNearbyIris) {
             NearbyIrisScreen(
@@ -396,7 +415,7 @@ struct RootView: View {
         }
 
         return AnyView(
-            Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
+            Button(action: { openSettings() }) {
                 IrisAvatar(
                     label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
                     emphasize: true,
@@ -541,8 +560,7 @@ struct RootView: View {
                 appSceneIsActive: manager.appSceneIsActive,
                 foregroundedAt: manager.lastForegroundedAt,
                 onTap: {
-                    settingsFocus = .messageServers
-                    manager.dispatch(.pushScreen(screen: .settings))
+                    openSettings(focusedSection: .messageServers)
                 }
             )
         )
@@ -574,6 +592,17 @@ struct RootView: View {
         case .deviceRevoked:
             return "Device Removed"
         }
+    }
+
+    private func openSettings(focusedSection: SettingsFocusSection? = nil) {
+        if let focusedSection {
+            settingsFocus = focusedSection
+        }
+#if os(iOS)
+        showingSettingsSheet = true
+#else
+        manager.dispatch(.pushScreen(screen: .settings))
+#endif
     }
 
     private func openNearbyIris() {
@@ -881,6 +910,7 @@ private struct NavigationRoute: Equatable {
             return "deviceRevoked"
         }
     }
+
 }
 
 #if os(iOS)
@@ -946,7 +976,8 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
             routes: [NavigationRoute],
             makeContent: @escaping (NavigationRoute) -> AnyView
         ) {
-            if isInteractivePopActive(in: navigationController) {
+            if isInteractivePopActive(in: navigationController)
+                || isNavigationTransitionActive(in: navigationController) {
                 deferredUpdate = (routes, makeContent)
                 return
             }
@@ -1043,6 +1074,10 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
             default:
                 return false
             }
+        }
+
+        private func isNavigationTransitionActive(in navigationController: UINavigationController) -> Bool {
+            applyingProgrammaticNavigation || navigationController.transitionCoordinator != nil
         }
 
         private func applyDeferredUpdateIfNeeded(
@@ -5397,9 +5432,11 @@ struct SettingsScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     @Binding var focusedSection: SettingsFocusSection?
+    let modalClose: (() -> Void)?
     @State private var pendingSecretExport: SecretExportKind?
     @State private var showingLogoutConfirmation = false
     @State private var showingDeleteAllConfirmation = false
+    @State private var showingProfileQr = false
     @State private var profileName = ""
     @State private var profilePictureViewerURL: URL?
     @State private var newRelayURL = ""
@@ -5408,6 +5445,16 @@ struct SettingsScreen: View {
     @State private var selectedPage: SettingsPage?
     @State private var supportBundleBusy = false
     @State private var supportBundleShareItem: SupportBundleShareItem?
+
+    init(
+        manager: AppManager,
+        focusedSection: Binding<SettingsFocusSection?>,
+        modalClose: (() -> Void)? = nil
+    ) {
+        self.manager = manager
+        self._focusedSection = focusedSection
+        self.modalClose = modalClose
+    }
 
     var body: some View {
         settingsBody
@@ -5437,6 +5484,22 @@ struct SettingsScreen: View {
         }
         .sheet(item: $supportBundleShareItem) { item in
             SupportBundleShareSheet(item: item)
+        }
+        .sheet(isPresented: $showingProfileQr) {
+            if let account = manager.state.account {
+                ProfileQrModal(
+                    manager: manager,
+                    account: account,
+                    closeSettings: modalClose
+                )
+#if os(iOS)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+#elseif os(macOS)
+                .frame(minWidth: 420, minHeight: 560)
+#endif
+                .irisDismissOnMacOutsideClick { showingProfileQr = false }
+            }
         }
         .onAppear(perform: applyFocusedSection)
         .irisOnChange(of: focusedSection) { _ in
@@ -5501,7 +5564,9 @@ struct SettingsScreen: View {
 
     @ViewBuilder
     private var mobileSettingsLayout: some View {
-        if let selectedPage {
+        if modalClose != nil {
+            modalSettingsLayout
+        } else if let selectedPage {
             settingsPageScroll(selectedPage, showsBackButton: true)
         } else {
             IrisScrollScreen {
@@ -5510,13 +5575,78 @@ struct SettingsScreen: View {
         }
     }
 
+    private var modalSettingsLayout: some View {
+        VStack(spacing: 0) {
+            settingsModalHeader
+
+            if let selectedPage {
+                settingsPageScroll(selectedPage, showsBackButton: false)
+            } else {
+                IrisScrollScreen {
+                    settingsMenu
+                }
+            }
+        }
+    }
+
+    private var settingsModalHeader: some View {
+        HStack(spacing: 0) {
+            if selectedPage != nil {
+                Button {
+                    selectedPage = nil
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                        .frame(width: 72, height: 44, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityIdentifier("settingsSubpageBackButton")
+            } else {
+                Color.clear
+                    .frame(width: 72, height: 44)
+            }
+
+            Spacer(minLength: 8)
+
+            Text(selectedPage?.title ?? "Settings")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity)
+
+            Spacer(minLength: 8)
+
+            if let modalClose {
+                Button(action: modalClose) {
+                    Text("Done")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(palette.accent)
+                        .frame(width: 72, height: 44, alignment: .trailing)
+                        .contentShape(Rectangle())
+                        .accessibilityIdentifier("settingsDoneButton")
+                }
+                .buttonStyle(.irisPlain)
+            } else {
+                Color.clear
+                    .frame(width: 72, height: 44)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+        .accessibilityIdentifier("settingsModalHeader")
+    }
+
     private var settingsMenu: some View {
         VStack(alignment: .leading, spacing: 14) {
             if let account = manager.state.account {
                 SettingsProfileMenuRow(
                     account: account,
                     preferences: manager.state.preferences,
-                    manager: manager
+                    manager: manager,
+                    showQr: { showingProfileQr = true }
                 ) {
                     selectedPage = .profile
                 }
@@ -5567,6 +5697,7 @@ struct SettingsScreen: View {
                     account: account,
                     profileName: $profileName,
                     openProfilePicture: { profilePictureViewerURL = $0 },
+                    showQrCode: { showingProfileQr = true },
                     manageDevices: {
                         manager.dispatch(.pushScreen(screen: .deviceRoster))
                     }
@@ -5879,52 +6010,320 @@ private struct SupportBundleShareSheet: View {
     }
 }
 
+private enum ProfileQrTab: String, CaseIterable, Identifiable {
+    case code
+    case scan
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .code: return "Code"
+        case .scan: return "Scan"
+        }
+    }
+}
+
+private struct ProfileQrModal: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    let account: AccountSnapshot
+    let closeSettings: (() -> Void)?
+    @State private var selectedTab: ProfileQrTab = .code
+
+    var body: some View {
+        ZStack {
+            BackgroundFill()
+
+            VStack(spacing: 0) {
+                header
+
+                if selectedTab == .code {
+                    ProfileQrCodePane(manager: manager, account: account)
+                } else {
+                    ProfileQrScanPane { code in
+                        handleScannedCode(code)
+                    }
+                }
+            }
+        }
+        .accessibilityIdentifier("profileQrModal")
+    }
+
+    private var header: some View {
+        HStack(spacing: 0) {
+            Color.clear
+                .frame(width: 72, height: 44)
+
+            Spacer(minLength: 8)
+
+            Picker("", selection: $selectedTab) {
+                ForEach(ProfileQrTab.allCases) { tab in
+                    Text(tab.title)
+                        .tag(tab)
+                }
+            }
+            .pickerStyle(.segmented)
+            .frame(width: 218)
+            .accessibilityIdentifier("profileQrTabs")
+
+            Spacer(minLength: 8)
+
+            Button {
+                dismiss()
+            } label: {
+                Text("Done")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(palette.accent)
+                    .frame(width: 72, height: 44, alignment: .trailing)
+                    .contentShape(Rectangle())
+                    .accessibilityIdentifier("profileQrDoneButton")
+            }
+            .buttonStyle(.irisPlain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 4)
+    }
+
+    private func handleScannedCode(_ raw: String) {
+        guard let action = actionForScannedCode(raw) else {
+            return
+        }
+        manager.dispatch(action)
+        dismiss()
+        DispatchQueue.main.async {
+            closeSettings?()
+        }
+    }
+
+    private func actionForScannedCode(_ raw: String) -> AppAction? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        if let shortcut = classifyChatInput(input: trimmed) {
+            switch shortcut {
+            case let .directPeer(peerInput, _, _, _):
+                return .createChat(peerInput: peerInput)
+            case let .invite(inviteInput, _):
+                return .acceptInvite(inviteInput: inviteInput)
+            }
+        }
+
+        let normalized = normalizePeerInput(input: trimmed)
+        guard !normalized.isEmpty, isValidPeerInput(input: normalized) else {
+            return nil
+        }
+        return .createChat(peerInput: normalized)
+    }
+}
+
+private struct ProfileQrCodePane: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    let account: AccountSnapshot
+
+    private var displayName: String {
+        account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 22) {
+                qrCard
+                    .frame(maxWidth: 420)
+
+                HStack(spacing: 26) {
+                    ProfileQrActionButton(systemImage: "doc.on.doc.fill", title: "Copy") {
+                        manager.copyToClipboard(account.npub)
+                    }
+                    .accessibilityIdentifier("profileQrCopyButton")
+
+                    ShareLink(item: account.npub) {
+                        ProfileQrActionLabel(systemImage: "square.and.arrow.up", title: "Share")
+                    }
+                    .buttonStyle(.irisPlain)
+                    .accessibilityIdentifier("profileQrShareButton")
+                }
+
+                Text("Scan to start a chat with me.")
+                    .font(.system(.footnote, design: .rounded))
+                    .foregroundStyle(palette.muted)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
+            .padding(.top, 28)
+            .padding(.bottom, 34)
+        }
+        .scrollIndicators(.hidden)
+        .accessibilityIdentifier("profileQrCodeTab")
+    }
+
+    private var qrCard: some View {
+        VStack(spacing: 16) {
+            QrCodeImage(text: account.npub, size: 214)
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color.white)
+                )
+                .accessibilityIdentifier("myProfileQrCode")
+
+            VStack(spacing: 4) {
+                Text(displayName)
+                    .font(.system(.title3, design: .rounded, weight: .bold))
+                    .foregroundStyle(Color(red: 0.04, green: 0.11, blue: 0.22))
+                    .lineLimit(1)
+
+                Text(shortUserId(account.npub))
+                    .font(.system(.caption, design: .monospaced, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.18, green: 0.29, blue: 0.43).opacity(0.72))
+                    .lineLimit(1)
+            }
+        }
+        .padding(.horizontal, 32)
+        .padding(.vertical, 34)
+        .frame(maxWidth: .infinity)
+        .background(
+            RoundedRectangle(cornerRadius: 26, style: .continuous)
+                .fill(Color(red: 0.83, green: 0.91, blue: 1.0))
+        )
+    }
+
+    private func shortUserId(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 22 else { return trimmed }
+        return "\(trimmed.prefix(11))...\(trimmed.suffix(8))"
+    }
+}
+
+private struct ProfileQrScanPane: View {
+    @Environment(\.irisPalette) private var palette
+    let onCode: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            QrScannerSheet(onCode: onCode)
+                .frame(maxWidth: .infinity, minHeight: 420)
+                .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
+                .accessibilityIdentifier("profileQrScanner")
+
+            Text("Scan a chat QR code.")
+                .font(.system(.footnote, design: .rounded))
+                .foregroundStyle(palette.muted)
+        }
+        .padding(.horizontal, 18)
+        .padding(.top, 22)
+        .padding(.bottom, 28)
+        .accessibilityIdentifier("profileQrScanTab")
+    }
+}
+
+private struct ProfileQrActionButton: View {
+    let systemImage: String
+    let title: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            ProfileQrActionLabel(systemImage: systemImage, title: title)
+        }
+        .buttonStyle(.irisPlain)
+    }
+}
+
+private struct ProfileQrActionLabel: View {
+    @Environment(\.irisPalette) private var palette
+    let systemImage: String
+    let title: String
+
+    var body: some View {
+        VStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+                .frame(width: 50, height: 50)
+                .background(
+                    Circle()
+                        .fill(palette.panelAlt)
+                )
+
+            Text(title)
+                .font(.system(.footnote, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+        }
+        .contentShape(Rectangle())
+    }
+}
+
 private struct SettingsProfileMenuRow: View {
     @Environment(\.irisPalette) private var palette
     let account: AccountSnapshot
     let preferences: PreferencesSnapshot
     @ObservedObject var manager: AppManager
+    let showQr: () -> Void
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                IrisAvatar(
-                    label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
-                    size: 54,
-                    emphasize: true,
-                    pictureUrl: account.pictureUrl,
-                    preferences: preferences,
-                    manager: manager,
-                    loadedImageIdentifier: "myProfileAvatarImage"
-                )
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(account.displayName.isEmpty ? "Profile" : account.displayName)
-                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.textPrimary)
-                        .lineLimit(1)
-                    Text("My profile")
-                        .font(.system(.body, design: .rounded))
-                        .foregroundStyle(palette.muted)
-                        .lineLimit(1)
-                }
-                Spacer(minLength: 8)
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(palette.muted)
-            }
-            .padding(18)
-            .background(
-                RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
-                    .fill(palette.panelAlt)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
-                            .stroke(palette.border, lineWidth: 1)
+        HStack(spacing: 10) {
+            Button(action: action) {
+                HStack(spacing: 14) {
+                    IrisAvatar(
+                        label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                        size: 54,
+                        emphasize: true,
+                        pictureUrl: account.pictureUrl,
+                        preferences: preferences,
+                        manager: manager,
+                        loadedImageIdentifier: "myProfileAvatarImage"
                     )
-            )
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(account.displayName.isEmpty ? "Profile" : account.displayName)
+                            .font(.system(.headline, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.textPrimary)
+                            .lineLimit(1)
+                        Text("My profile")
+                            .font(.system(.body, design: .rounded))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                }
+                .contentShape(Rectangle())
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(.irisPlain)
+            .accessibilityIdentifier("settingsProfileRow")
+
+            Button(action: showQr) {
+                Image(systemName: "qrcode")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .frame(width: 42, height: 42)
+                    .background(
+                        Circle()
+                            .fill(palette.accent.opacity(0.12))
+                    )
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.irisPlain)
+            .accessibilityLabel("QR code")
+            .accessibilityIdentifier("settingsProfileQrButton")
         }
-        .buttonStyle(.irisPlain)
-        .accessibilityIdentifier("settingsProfileRow")
+        .padding(18)
+        .background(
+            RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
+                .fill(palette.panelAlt)
+                .overlay(
+                    RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
+                        .stroke(palette.border, lineWidth: 1)
+                )
+        )
     }
 }
 
@@ -6400,6 +6799,7 @@ private struct ProfileEditorCard: View {
     let account: AccountSnapshot
     @Binding var profileName: String
     let openProfilePicture: (URL) -> Void
+    let showQrCode: () -> Void
     let manageDevices: () -> Void
     @State private var showingProfilePicturePicker = false
     @State private var showingProfilePictureSourceMenu = false
@@ -6445,16 +6845,20 @@ private struct ProfileEditorCard: View {
             .accessibilityIdentifier("myProfileSaveProfileButton")
 
             Button {
+                showQrCode()
+            } label: {
+                Label("Show QR code", systemImage: "qrcode")
+            }
+            .buttonStyle(IrisSecondaryButtonStyle())
+            .accessibilityIdentifier("myProfileQrButton")
+
+            Button {
                 manageDevices()
             } label: {
                 Label("Manage devices", systemImage: "laptopcomputer.and.iphone")
             }
             .buttonStyle(IrisSecondaryButtonStyle())
             .accessibilityIdentifier("myProfileManageDevicesButton")
-
-            QrCodeImage(text: account.npub, size: 220)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .accessibilityIdentifier("myProfileQrCode")
 
             VStack(spacing: 10) {
                 IrisCopyButton(label: "Copy user ID", value: account.npub, compact: false)

@@ -18,7 +18,9 @@ final class IrisChatUITests: XCTestCase {
         element(app, "chatListProfileButton").tap()
 
         XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
-        openSettingsPage(app, "settingsProfileRow")
+        XCTAssertTrue(element(app, "settingsProfileQrButton").waitForExistence(timeout: 5))
+        element(app, "settingsProfileQrButton").tap()
+        XCTAssertTrue(element(app, "profileQrModal").waitForExistence(timeout: 5))
         XCTAssertTrue(element(app, "myProfileQrCode").waitForExistence(timeout: 5))
     }
 
@@ -105,6 +107,36 @@ final class IrisChatUITests: XCTestCase {
         app.buttons["Message Details"].tap()
         XCTAssertTrue(element(app, "messageInfoSheet").waitForExistence(timeout: 5))
         XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
+    }
+
+    func testComposerRestoresDraftWhenReopeningChat() throws {
+#if os(macOS)
+        throw XCTSkip("Covered by the shared draft persistence unit tests on macOS")
+#else
+        let app = launchCleanApp()
+        createAccount(app)
+        openChatWithPeer(app)
+
+        let draft = "draft \(UUID().uuidString)"
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 10))
+        typeText(draft, into: element(app, "chatMessageInput"), app: app)
+
+        returnToChatList(app)
+        let row = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'chatRow-'"))
+            .firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+
+        let input = element(app, "chatMessageInput")
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitUntil(timeout: 10) {
+                ((input.value as? String) ?? "").contains(draft)
+            },
+            "composer did not restore the draft"
+        )
+#endif
     }
 
     func testComposerPlusOpensAttachmentMenu() throws {
@@ -746,6 +778,13 @@ final class IrisChatUITests: XCTestCase {
     }
 
     private func returnToChatList(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let settingsDoneButton = element(app, "settingsDoneButton")
+        if settingsDoneButton.exists {
+            settingsDoneButton.tap()
+            XCTAssertTrue(waitForChatList(app, timeout: 10), file: file, line: line)
+            return
+        }
+
         let backButton = element(app, "navigationBackButton")
         if backButton.exists {
             backButton.tap()

@@ -47,6 +47,10 @@ struct ChatScreen: View {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
     }
 
+    private var persistedDraftToken: String {
+        "\(chatId)|\(persistedDraftForCurrentChat())"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             Group {
@@ -554,16 +558,10 @@ struct ChatScreen: View {
             flushDraftImmediately()
         }
         .task(id: chatId) {
-            // First arrival at this chat (or chatId rebind in a split
-            // shell): seed the composer from the persisted thread
-            // draft so unsent text survives navigation + relaunch.
-            // We only paste it once per chat appearance; subsequent
-            // user keystrokes own the buffer.
-            let initial = manager.state.currentChat?.draft ?? ""
-            if !initial.isEmpty {
-                draft = initial
-            }
-            lastPersistedDraft = initial
+            seedDraftFromPersistedState(replaceExisting: true)
+        }
+        .task(id: persistedDraftToken) {
+            seedDraftFromPersistedState(replaceExisting: false)
         }
         .irisOnChange(of: draft) { newValue in
             scheduleDraftFlush(text: newValue)
@@ -773,6 +771,25 @@ struct ChatScreen: View {
     /// SQLite-row update every ~500ms instead of one per keystroke.
     /// On disappear / send we flush eagerly so the latest text always
     /// hits disk before the view goes away.
+    private func persistedDraftForCurrentChat() -> String {
+        if let currentChat = manager.state.currentChat, currentChat.chatId == chatId {
+            return currentChat.draft
+        }
+        return manager.state.chatList.first { $0.chatId == chatId }?.draft ?? ""
+    }
+
+    private func seedDraftFromPersistedState(replaceExisting: Bool) {
+        let persisted = persistedDraftForCurrentChat()
+        if replaceExisting || draft.isEmpty {
+            lastPersistedDraft = persisted
+            draft = persisted
+            return
+        }
+        if draft == persisted {
+            lastPersistedDraft = persisted
+        }
+    }
+
     private func scheduleDraftFlush(text: String) {
         draftFlushWork?.cancel()
         if lastPersistedDraft == text {

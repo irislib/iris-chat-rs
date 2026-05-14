@@ -1582,8 +1582,16 @@ private struct IrisUIKitComposerTextView: UIViewRepresentable {
     func updateUIView(_ uiView: UITextView, context: Context) {
         Self.activeTextView = uiView
         context.coordinator.parent = self
-        if !isFocused && !uiView.isFirstResponder && uiView.text != text {
+        if uiView.markedTextRange == nil, uiView.text != text {
+            let selectedRange = uiView.selectedRange
             uiView.text = text
+            let textLength = (text as NSString).length
+            if selectedRange.location <= textLength {
+                uiView.selectedRange = NSRange(
+                    location: selectedRange.location,
+                    length: min(selectedRange.length, textLength - selectedRange.location)
+                )
+            }
         }
         let shouldScroll = measuredHeight(for: uiView, width: uiView.bounds.width) >= maxHeight(for: uiView)
         if uiView.isScrollEnabled != shouldScroll {
