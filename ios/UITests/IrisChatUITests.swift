@@ -924,9 +924,12 @@ final class IrisChatUITests: XCTestCase {
     }
 
     private func returnToChatList(_ app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
-        let settingsDoneButton = element(app, "settingsDoneButton")
-        if settingsDoneButton.exists {
-            settingsDoneButton.tap()
+        if let settingsCloseButton = waitForAnyElement(
+            app,
+            identifiers: ["settingsCloseButton", "settingsDoneButton"],
+            timeout: 1
+        ) {
+            settingsCloseButton.tap()
             XCTAssertTrue(waitForChatList(app, timeout: 10), file: file, line: line)
             return
         }

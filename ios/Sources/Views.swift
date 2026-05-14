@@ -423,6 +423,7 @@ struct RootView: View {
             Button(action: { openSettings() }) {
                 IrisAvatar(
                     label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                    size: 40,
                     emphasize: true,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
@@ -431,11 +432,6 @@ struct RootView: View {
                 )
             }
             .buttonStyle(.irisPlain)
-            // Chat-list rows pad to 16pt; the top bar pads to 8pt to
-            // align with the chat-screen composer. The extra 8pt here
-            // moves the chat-list header avatar to the same 16pt
-            // gutter as the row avatars below it.
-            .padding(.leading, 8)
             .accessibilityIdentifier("chatListProfileButton")
         )
     }
@@ -446,7 +442,6 @@ struct RootView: View {
                 NewChatCircleButton {
                     manager.dispatch(.pushScreen(screen: .newChat))
                 }
-                .padding(.trailing, 8)
             )
         }
 
@@ -3160,9 +3155,9 @@ private struct NewChatCircleButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "square.and.pencil")
-                .font(.system(size: 16, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
-                .frame(width: 36, height: 36)
+                .frame(width: 40, height: 40)
                 .irisGlassSurface(in: Circle())
         }
         .buttonStyle(.irisPlain)
@@ -5485,6 +5480,7 @@ struct SettingsScreen: View {
     private var settingsBody: some View {
         ZStack {
             BackgroundFill()
+            settingsScreenMarker
 
             if IrisLayout.usesDesktopChrome {
                 desktopSettingsLayout
@@ -5523,7 +5519,6 @@ struct SettingsScreen: View {
         .irisOnChange(of: focusedSection) { _ in
             applyFocusedSection()
         }
-        .accessibilityIdentifier("settingsScreen")
         .alert(item: $pendingSecretExport) { exportKind in
             let isDeviceExport = exportKind == .device
             return Alert(
@@ -5560,6 +5555,15 @@ struct SettingsScreen: View {
         } message: {
             Text("This removes your secret keys, messages, and cached files from this device.")
         }
+    }
+
+    private var settingsScreenMarker: some View {
+        Text("Settings")
+            .frame(width: 1, height: 1)
+            .opacity(0.001)
+            .allowsHitTesting(false)
+            .accessibilityIdentifier("settingsScreen")
+            .accessibilityLabel("Settings")
     }
 
     private var desktopSettingsLayout: some View {
@@ -5631,9 +5635,8 @@ struct SettingsScreen: View {
             Spacer(minLength: 8)
 
             if let modalClose {
-                IrisModalCloseButton(action: modalClose)
+                IrisModalCloseButton(accessibilityIdentifier: "settingsCloseButton", action: modalClose)
                     .frame(width: 72, height: 44, alignment: .trailing)
-                    .accessibilityIdentifier("settingsDoneButton")
             } else {
                 Color.clear
                     .frame(width: 72, height: 44)
@@ -5642,7 +5645,6 @@ struct SettingsScreen: View {
         .padding(.horizontal, 10)
         .padding(.top, 6)
         .padding(.bottom, 4)
-        .accessibilityIdentifier("settingsModalHeader")
     }
 
     private var settingsMenu: some View {
@@ -6247,6 +6249,7 @@ private struct ProfileQrActionLabel: View {
 
 private struct SettingsProfileMenuRow: View {
     @Environment(\.irisPalette) private var palette
+    @Environment(\.colorScheme) private var colorScheme
     let account: AccountSnapshot
     let preferences: PreferencesSnapshot
     @ObservedObject var manager: AppManager
@@ -6287,11 +6290,11 @@ private struct SettingsProfileMenuRow: View {
             Button(action: showQr) {
                 Image(systemName: "qrcode")
                     .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(palette.textPrimary)
-                    .frame(width: 42, height: 42)
+                    .foregroundStyle(qrIconColor)
+                    .frame(width: 36, height: 36)
                     .background(
                         Circle()
-                            .fill(palette.accent.opacity(0.12))
+                            .fill(qrButtonBackground)
                     )
                     .contentShape(Circle())
             }
@@ -6308,6 +6311,18 @@ private struct SettingsProfileMenuRow: View {
                         .stroke(palette.border, lineWidth: 1)
                 )
         )
+    }
+
+    private var qrButtonBackground: Color {
+        colorScheme == .dark
+            ? Color(.sRGB, red: 74.0 / 255.0, green: 74.0 / 255.0, blue: 74.0 / 255.0, opacity: 1)
+            : Color(.sRGB, red: 233.0 / 255.0, green: 233.0 / 255.0, blue: 233.0 / 255.0, opacity: 1)
+    }
+
+    private var qrIconColor: Color {
+        colorScheme == .dark
+            ? Color(.sRGB, red: 212.0 / 255.0, green: 212.0 / 255.0, blue: 212.0 / 255.0, opacity: 1)
+            : palette.textPrimary
     }
 }
 

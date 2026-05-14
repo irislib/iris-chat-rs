@@ -249,6 +249,42 @@ struct IrisPalette {
         onBubbleMine: .white,
         onBubbleTheirs: .white
     )
+
+    static let lightPresented = IrisPalette(
+        background: Color(hex: 0xEFEFF0),
+        panel: Color(hex: 0xFFFFFF),
+        panelAlt: Color(hex: 0xFFFFFF),
+        border: Color.black.opacity(0.08),
+        toolbar: Color(hex: 0xFFFFFF).opacity(0.96),
+        bubbleMine: Color(hex: 0x702ACE),
+        bubbleTheirs: Color(hex: 0xE9E9E9),
+        accent: Color(hex: 0x702ACE),
+        action: Color(hex: 0x2267F5),
+        accentAlt: Color(hex: 0xDB8216),
+        textPrimary: Color(hex: 0x0F1419),
+        muted: Color(hex: 0x536471),
+        onAccent: .white,
+        onBubbleMine: .white,
+        onBubbleTheirs: Color(hex: 0x0F1419)
+    )
+
+    static let darkPresented = IrisPalette(
+        background: Color(hex: 0x1C1C1E),
+        panel: Color(hex: 0x2C2C2E),
+        panelAlt: Color(hex: 0x2C2C2E),
+        border: Color.white.opacity(0.12),
+        toolbar: Color(hex: 0x1C1C1E).opacity(0.96),
+        bubbleMine: Color(hex: 0x702ACE),
+        bubbleTheirs: Color(hex: 0x2C2C2E),
+        accent: Color(hex: 0x702ACE),
+        action: Color(hex: 0x2D70FA),
+        accentAlt: Color(hex: 0xDB8216),
+        textPrimary: .white,
+        muted: Color(hex: 0xEBEBF5).opacity(0.7),
+        onAccent: .white,
+        onBubbleMine: .white,
+        onBubbleTheirs: .white
+    )
 }
 
 private struct IrisPaletteKey: EnvironmentKey {
@@ -943,6 +979,7 @@ struct IrisModalCloseButton: View {
 
     @Environment(\.irisPalette) private var palette
     let accessibilityLabel: String
+    let accessibilityIdentifier: String?
     let tone: Tone
     let iconSize: CGFloat
     let hitSize: CGFloat
@@ -950,20 +987,23 @@ struct IrisModalCloseButton: View {
 
     init(
         accessibilityLabel: String = "Close",
+        accessibilityIdentifier: String? = nil,
         tone: Tone = .standard,
         iconSize: CGFloat = 14,
         hitSize: CGFloat = 44,
         action: @escaping () -> Void
     ) {
         self.accessibilityLabel = accessibilityLabel
+        self.accessibilityIdentifier = accessibilityIdentifier
         self.tone = tone
         self.iconSize = iconSize
         self.hitSize = hitSize
         self.action = action
     }
 
+    @ViewBuilder
     var body: some View {
-        Button(action: action) {
+        let closeButton = Button(action: action) {
             Image(systemName: "xmark")
                 .font(.system(size: iconSize, weight: .bold))
                 .foregroundStyle(foregroundColor)
@@ -974,6 +1014,12 @@ struct IrisModalCloseButton: View {
         }
         .buttonStyle(.irisPlain)
         .accessibilityLabel(accessibilityLabel)
+
+        if let accessibilityIdentifier {
+            closeButton.accessibilityIdentifier(accessibilityIdentifier)
+        } else {
+            closeButton
+        }
     }
 
     private var buttonSize: CGFloat {
@@ -1054,31 +1100,34 @@ struct IrisUnreadBadge: View {
 
 private struct IrisModalSurfaceModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
-    @Environment(\.irisPalette) private var palette
 
     @ViewBuilder
     func body(content: Content) -> some View {
+        let modalPalette = colorScheme == .dark ? IrisPalette.darkPresented : IrisPalette.lightPresented
 #if os(iOS)
         if #available(iOS 16.4, *) {
             content
-                .background(palette.background)
-                .tint(palette.action)
-                .toolbarBackground(palette.background, for: .navigationBar)
+                .environment(\.irisPalette, modalPalette)
+                .background(modalPalette.background)
+                .tint(modalPalette.action)
+                .toolbarBackground(modalPalette.background, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
                 .toolbarColorScheme(colorScheme, for: .navigationBar)
-                .presentationBackground(palette.background)
+                .presentationBackground(modalPalette.background)
         } else {
             content
-                .background(palette.background)
-                .tint(palette.action)
-                .toolbarBackground(palette.background, for: .navigationBar)
+                .environment(\.irisPalette, modalPalette)
+                .background(modalPalette.background)
+                .tint(modalPalette.action)
+                .toolbarBackground(modalPalette.background, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
                 .toolbarColorScheme(colorScheme, for: .navigationBar)
         }
 #else
         content
-            .background(palette.background)
-            .tint(palette.action)
+            .environment(\.irisPalette, modalPalette)
+            .background(modalPalette.background)
+            .tint(modalPalette.action)
 #endif
     }
 }
