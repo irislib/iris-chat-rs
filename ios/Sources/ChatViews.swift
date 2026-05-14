@@ -3691,7 +3691,6 @@ private struct IrisImageViewer: View {
                     .onTapGesture(perform: onClose)
 
                 imageContent
-                    .padding(.horizontal, 18)
                     .padding(.top, geometry.safeAreaInsets.top + 68)
                     .padding(.bottom, geometry.safeAreaInsets.bottom + (usesCompactTopActions ? 40 : 94))
 
@@ -3767,7 +3766,18 @@ private struct IrisImageViewer: View {
         .padding(.horizontal, 20)
         .padding(.top, 10)
         .padding(.bottom, bottomInset + 14)
-        .background(.regularMaterial)
+        .background(alignment: .bottom) {
+            LinearGradient(
+                colors: [
+                    Color.black.opacity(0),
+                    Color.black.opacity(0.42),
+                    Color.black.opacity(0.68)
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .allowsHitTesting(false)
+        }
     }
 }
 
