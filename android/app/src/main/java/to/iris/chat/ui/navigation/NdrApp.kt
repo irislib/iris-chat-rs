@@ -12,6 +12,8 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,10 +40,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlin.math.abs
 import kotlin.math.max
 import kotlinx.coroutines.delay
 import to.iris.chat.account.AccountBootstrapState
@@ -167,8 +173,10 @@ fun NdrApp(
                 key = screenRouteKey(activeScreen),
             )
         }
+    val canNavigateBack =
+        bootstrapState != AccountBootstrapState.Loading && router.screenStack.isNotEmpty()
 
-    BackHandler(enabled = bootstrapState != AccountBootstrapState.Loading && router.screenStack.isNotEmpty()) {
+    BackHandler(enabled = canNavigateBack) {
         appManager.navigateBack()
     }
 
@@ -177,6 +185,7 @@ fun NdrApp(
             modifier =
                 Modifier
                     .fillMaxSize()
+                    .edgeSwipeBack(enabled = canNavigateBack) { appManager.navigateBack() }
                     .background(MaterialTheme.colorScheme.background),
         ) {
             when (bootstrapState) {
@@ -369,6 +378,61 @@ private data class RouteTransitionTarget(
     val depth: Int,
     val key: String,
 )
+
+@Composable
+private fun Modifier.edgeSwipeBack(
+    enabled: Boolean,
+    onBack: () -> Unit,
+): Modifier {
+    if (!enabled) {
+        return this
+    }
+    val density = LocalDensity.current
+    val edgeWidthPx = with(density) { 28.dp.toPx() }
+    val triggerPx = with(density) { 72.dp.toPx() }
+    val horizontalConsumePx = with(density) { 18.dp.toPx() }
+    val verticalCancelPx = with(density) { 28.dp.toPx() }
+
+    return pointerInput(onBack, edgeWidthPx, triggerPx, horizontalConsumePx, verticalCancelPx) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val fromLeftEdge = down.position.x <= edgeWidthPx
+            val fromRightEdge = down.position.x >= size.width - edgeWidthPx
+            if (!fromLeftEdge && !fromRightEdge) {
+                return@awaitEachGesture
+            }
+
+            val direction = if (fromLeftEdge) 1f else -1f
+            val pointerId = down.id
+            var totalX = 0f
+            var totalY = 0f
+
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                if (!change.pressed) {
+                    break
+                }
+
+                val delta = change.positionChange()
+                totalX += delta.x
+                totalY += delta.y
+                val directedX = totalX * direction
+                if (abs(totalY) > verticalCancelPx && abs(totalY) > abs(totalX)) {
+                    break
+                }
+                if (directedX > horizontalConsumePx) {
+                    change.consume()
+                }
+                if (directedX > triggerPx && directedX > abs(totalY) * 1.2f) {
+                    onBack()
+                    change.consume()
+                    break
+                }
+            }
+        }
+    }
+}
 
 @Composable
 private fun AnimatedRoute(
