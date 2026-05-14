@@ -909,6 +909,7 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
         private let onStackChanged: ([Screen]) -> Void
         private var currentRoutes: [NavigationRoute] = []
         private var applyingProgrammaticNavigation = false
+        private var deferredUpdate: (routes: [NavigationRoute], makeContent: (NavigationRoute) -> AnyView)?
         weak var navigationController: UINavigationController?
 
         init(onStackChanged: @escaping ([Screen]) -> Void) {
@@ -918,8 +919,13 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
         func update(
             navigationController: UINavigationController,
             routes: [NavigationRoute],
-            makeContent: (NavigationRoute) -> AnyView
+            makeContent: @escaping (NavigationRoute) -> AnyView
         ) {
+            if isInteractivePopActive(in: navigationController) {
+                deferredUpdate = (routes, makeContent)
+                return
+            }
+
             let existingControllers = routeControllers(in: navigationController)
             if existingControllers.map(\.route) == routes {
                 refresh(controllers: existingControllers, makeContent: makeContent)
@@ -955,12 +961,15 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
             if applyingProgrammaticNavigation {
                 applyingProgrammaticNavigation = false
                 currentRoutes = visibleRoutes
+                applyDeferredUpdateIfNeeded(navigationController: navigationController, visibleRoutes: visibleRoutes)
                 return
             }
             guard visibleRoutes != currentRoutes else {
+                applyDeferredUpdateIfNeeded(navigationController: navigationController, visibleRoutes: visibleRoutes)
                 return
             }
             currentRoutes = visibleRoutes
+            deferredUpdate = nil
             onStackChanged(visibleRoutes.dropFirst().map(\.screen))
         }
 
@@ -997,6 +1006,37 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
 
         private func routeControllers(in navigationController: UINavigationController) -> [RouteHostingController] {
             navigationController.viewControllers.compactMap { $0 as? RouteHostingController }
+        }
+
+        private func isInteractivePopActive(in navigationController: UINavigationController) -> Bool {
+            if navigationController.transitionCoordinator?.isInteractive == true {
+                return true
+            }
+            switch navigationController.interactivePopGestureRecognizer?.state {
+            case .began, .changed:
+                return true
+            default:
+                return false
+            }
+        }
+
+        private func applyDeferredUpdateIfNeeded(
+            navigationController: UINavigationController,
+            visibleRoutes: [NavigationRoute]
+        ) {
+            guard let deferredUpdate else { return }
+            self.deferredUpdate = nil
+            DispatchQueue.main.async { [weak self, weak navigationController] in
+                guard let self, let navigationController else { return }
+                guard self.routeControllers(in: navigationController).map(\.route) == visibleRoutes else {
+                    return
+                }
+                self.update(
+                    navigationController: navigationController,
+                    routes: deferredUpdate.routes,
+                    makeContent: deferredUpdate.makeContent
+                )
+            }
         }
 
         private func shouldAnimate(from oldRoutes: [NavigationRoute], to newRoutes: [NavigationRoute]) -> Bool {
