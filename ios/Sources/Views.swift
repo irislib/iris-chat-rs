@@ -2419,33 +2419,20 @@ struct ChatListScreen: View {
         let relativeNow = Date()
 
 #if os(iOS)
-        VStack(spacing: 0) {
-            ChatListSearchField(text: $searchText)
-
-            if searchActive {
-                ScrollView {
-                    if let results = cachedSearchResults {
-                        SearchResultsList(
-                            manager: manager,
-                            results: results,
-                            relativeNow: relativeNow,
-                            expandedSections: expandedSearchSections,
-                            messageLimit: searchMessageLimit,
-                            onViewMore: viewMoreSearchResults
-                        )
-                    }
-                }
-            } else {
-                ChatListTableView(
-                    manager: manager,
-                    chats: manager.state.chatList,
-                    preferences: manager.state.preferences,
-                    relativeNow: relativeNow,
-                    palette: palette,
-                    onOpenNearby: onOpenNearby
-                )
-            }
-        }
+        ChatListTableView(
+            searchText: $searchText,
+            manager: manager,
+            chats: manager.state.chatList,
+            preferences: manager.state.preferences,
+            relativeNow: relativeNow,
+            palette: palette,
+            isSearchActive: searchActive,
+            cachedSearchResults: cachedSearchResults,
+            expandedSearchSections: expandedSearchSections,
+            messageLimit: searchMessageLimit,
+            onOpenNearby: onOpenNearby,
+            onViewMoreSearchResults: viewMoreSearchResults
+        )
         .background(palette.background)
         .irisOnChange(of: searchText) { _ in
             resetSearchExpansionIfNeeded()
@@ -2557,7 +2544,7 @@ struct ChatListScreen: View {
     }
 }
 
-private enum ChatListSearchSection: Hashable {
+private enum ChatListSearchSection: String, Hashable {
     case contacts
     case groups
     case messages
@@ -2638,7 +2625,7 @@ private struct IrisChatListSearchBar: UIViewRepresentable {
     func makeUIView(context: Context) -> UISearchBar {
         let searchBar = UISearchBar(frame: .zero)
         searchBar.delegate = context.coordinator
-        searchBar.placeholder = "Search chats, groups, messages"
+        searchBar.placeholder = "Search"
         searchBar.autocapitalizationType = .none
         searchBar.autocorrectionType = .no
         searchBar.returnKeyType = .search
@@ -3180,19 +3167,25 @@ private struct ChatListRowContainer: View {
 
 #if os(iOS)
 private struct ChatListTableView: UIViewRepresentable {
+    @Binding var searchText: String
     let manager: AppManager
     let chats: [ChatThreadSnapshot]
     let preferences: PreferencesSnapshot
     let relativeNow: Date
     let palette: IrisPalette
+    let isSearchActive: Bool
+    let cachedSearchResults: SearchResultSnapshot?
+    let expandedSearchSections: Set<ChatListSearchSection>
+    let messageLimit: UInt32
     let onOpenNearby: () -> Void
+    let onViewMoreSearchResults: (ChatListSearchSection) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator()
     }
 
     func makeUIView(context: Context) -> UITableView {
-        let tableView = UITableView(frame: .zero, style: .plain)
+        let tableView = ChatListScrollTableView(frame: .zero, style: .grouped)
         tableView.dataSource = context.coordinator
         tableView.delegate = context.coordinator
         tableView.backgroundColor = .clear
@@ -3210,18 +3203,67 @@ private struct ChatListTableView: UIViewRepresentable {
     func updateUIView(_ tableView: UITableView, context: Context) {
         let sections = makeSections()
         let fingerprint = makeFingerprint()
+        updateSearchHeader(in: tableView, context: context)
         context.coordinator.manager = manager
         context.coordinator.preferences = preferences
         context.coordinator.relativeNow = relativeNow
         context.coordinator.palette = palette
+        context.coordinator.expandedSearchSections = expandedSearchSections
+        context.coordinator.messageLimit = messageLimit
         context.coordinator.onOpenNearby = onOpenNearby
+        context.coordinator.onViewMoreSearchResults = onViewMoreSearchResults
         context.coordinator.sections = sections
         guard context.coordinator.fingerprint != fingerprint else { return }
         context.coordinator.fingerprint = fingerprint
         tableView.reloadData()
     }
 
+    private func updateSearchHeader(in tableView: UITableView, context: Context) {
+        let rootView = AnyView(
+            ChatListSearchField(text: $searchText)
+                .environment(\.irisPalette, palette)
+        )
+        let controller: UIHostingController<AnyView>
+        if let existing = context.coordinator.searchHeaderController {
+            existing.rootView = rootView
+            controller = existing
+        } else {
+            let created = UIHostingController(rootView: rootView)
+            created.view.backgroundColor = .clear
+            context.coordinator.searchHeaderController = created
+            controller = created
+        }
+
+        let targetSize = CGSize(
+            width: max(tableView.bounds.width, 1),
+            height: UIView.layoutFittingCompressedSize.height
+        )
+        let fittingSize = controller.view.systemLayoutSizeFitting(
+            targetSize,
+            withHorizontalFittingPriority: .required,
+            verticalFittingPriority: .fittingSizeLevel
+        )
+        let headerHeight = ceil(fittingSize.height)
+        var frame = controller.view.frame
+        frame.size = CGSize(width: tableView.bounds.width, height: headerHeight)
+        controller.view.frame = frame
+
+        if tableView.tableHeaderView !== controller.view ||
+            abs((tableView.tableHeaderView?.frame.height ?? 0) - headerHeight) > 0.5 {
+            tableView.tableHeaderView = controller.view
+        }
+    }
+
     private func makeSections() -> [Section] {
+        if isSearchActive {
+            return [
+                Section(
+                    title: nil,
+                    items: cachedSearchResults.map { [.searchResults($0)] } ?? []
+                )
+            ]
+        }
+
         if chats.isEmpty {
             return [
                 Section(title: nil, items: [.nearby, .empty])
@@ -3243,7 +3285,20 @@ private struct ChatListTableView: UIViewRepresentable {
     }
 
     private func makeFingerprint() -> [String] {
-        var values = ["nearby:\(manager.nearbyIris.sidebarSubtitle):\(manager.nearbyIris.peers.count)"]
+        let expanded = expandedSearchSections.map(\.rawValue).sorted().joined(separator: ",")
+        var values = [
+            "search:\(isSearchActive):\(searchText):\(messageLimit):\(expanded)",
+            "nearby:\(manager.nearbyIris.sidebarSubtitle):\(manager.nearbyIris.peers.count)",
+        ]
+        if let cachedSearchResults {
+            values.append(
+                "results:\(cachedSearchResults.query):" +
+                    "\(cachedSearchResults.contacts.count):" +
+                    "\(cachedSearchResults.groups.count):" +
+                    "\(cachedSearchResults.messages.count):" +
+                    "\(cachedSearchResults.shortcut == nil)"
+            )
+        }
         values.append("hasPinned:\(chats.contains { $0.isPinned })")
         if chats.isEmpty {
             values.append("empty")
@@ -3270,6 +3325,7 @@ private struct ChatListTableView: UIViewRepresentable {
     enum Item {
         case nearby
         case empty
+        case searchResults(SearchResultSnapshot)
         case chat(ChatThreadSnapshot)
     }
 
@@ -3282,11 +3338,15 @@ private struct ChatListTableView: UIViewRepresentable {
         static let cellReuseIdentifier = "ChatListTableCell"
 
         weak var manager: AppManager?
+        var searchHeaderController: UIHostingController<AnyView>?
         var sections: [Section] = []
         var preferences: PreferencesSnapshot?
         var relativeNow = Date()
         var palette = IrisPalette.light
+        var expandedSearchSections: Set<ChatListSearchSection> = []
+        var messageLimit: UInt32 = 0
         var onOpenNearby: (() -> Void)?
+        var onViewMoreSearchResults: ((ChatListSearchSection) -> Void)?
         var fingerprint: [String] = []
 
         func numberOfSections(in tableView: UITableView) -> Int {
@@ -3310,6 +3370,8 @@ private struct ChatListTableView: UIViewRepresentable {
                 configureNearby(cell)
             case .empty:
                 configureEmpty(cell)
+            case let .searchResults(results):
+                configureSearchResults(cell, results: results)
             case let .chat(chat):
                 configureChat(cell, chat: chat)
             }
@@ -3322,7 +3384,7 @@ private struct ChatListTableView: UIViewRepresentable {
             switch item(at: indexPath) {
             case .nearby:
                 onOpenNearby?()
-            case .empty:
+            case .empty, .searchResults:
                 break
             case let .chat(chat):
                 manager?.dispatch(.openChat(chatId: chat.chatId))
@@ -3422,6 +3484,7 @@ private struct ChatListTableView: UIViewRepresentable {
             cell.accessibilityIdentifier = "nearbyChatRow"
             cell.accessibilityLabel = "Nearby, \(manager.nearbyIris.sidebarSubtitle)"
             cell.accessibilityTraits = [.button]
+            cell.selectionStyle = .default
             cell.contentConfiguration = UIHostingConfiguration {
                 ChatListTableRowContent(
                     title: "Nearby",
@@ -3444,6 +3507,7 @@ private struct ChatListTableView: UIViewRepresentable {
             cell.accessibilityIdentifier = "chatListEmpty"
             cell.accessibilityLabel = "No chats yet"
             cell.accessibilityTraits = [.staticText]
+            cell.selectionStyle = .none
             cell.contentConfiguration = UIHostingConfiguration {
                 Text("No chats yet")
                     .font(.system(.body, design: .rounded, weight: .semibold))
@@ -3456,6 +3520,28 @@ private struct ChatListTableView: UIViewRepresentable {
             .margins(.all, 0)
         }
 
+        private func configureSearchResults(_ cell: UITableViewCell, results: SearchResultSnapshot) {
+            guard let manager else { return }
+            cell.accessibilityIdentifier = "chatListSearchResults"
+            cell.accessibilityLabel = "Search results"
+            cell.accessibilityTraits = [.staticText]
+            cell.selectionStyle = .none
+            cell.contentConfiguration = UIHostingConfiguration {
+                SearchResultsList(
+                    manager: manager,
+                    results: results,
+                    relativeNow: relativeNow,
+                    expandedSections: expandedSearchSections,
+                    messageLimit: messageLimit,
+                    onViewMore: { [weak self] section in
+                        self?.onViewMoreSearchResults?(section)
+                    }
+                )
+                .environment(\.irisPalette, palette)
+            }
+            .margins(.all, 0)
+        }
+
         private func configureChat(_ cell: UITableViewCell, chat: ChatThreadSnapshot) {
             guard let manager else { return }
             let preview = chatListPreview(for: chat)
@@ -3463,6 +3549,7 @@ private struct ChatListTableView: UIViewRepresentable {
             cell.accessibilityIdentifier = "chatRow-\(String(chat.chatId.prefix(12)))"
             cell.accessibilityLabel = [chat.displayName, preview, timeLabel].compactMap { $0 }.joined(separator: ", ")
             cell.accessibilityTraits = [.button]
+            cell.selectionStyle = .default
             cell.contentConfiguration = UIHostingConfiguration {
                 ChatListTableRowContent(
                     title: chat.displayName,
@@ -3548,6 +3635,49 @@ private struct ChatListTableView: UIViewRepresentable {
             let trimmedDraft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmedDraft.isEmpty ? nil : trimmedDraft
         }
+    }
+}
+
+private final class ChatListScrollTableView: UITableView {
+    private let fillerFooterView = UIView()
+
+    override init(frame: CGRect, style: UITableView.Style) {
+        super.init(frame: frame, style: style)
+        tableFooterView = fillerFooterView
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        updateFooterHeight()
+    }
+
+    override func adjustedContentInsetDidChange() {
+        super.adjustedContentInsetDidChange()
+        updateFooterHeight()
+    }
+
+    private func updateFooterHeight() {
+        let headerHeight = tableHeaderView?.frame.height ?? 0
+        let visibleHeight = max(0, frame.inset(by: adjustedContentInset).height)
+        var availableHeight = max(0, visibleHeight - headerHeight)
+
+        for section in 0..<numberOfSections where availableHeight > 0 {
+            availableHeight = max(0, availableHeight - rect(forSection: section).height)
+        }
+
+        let displayScale = window?.windowScene?.screen.scale ?? UIScreen.main.scale
+        let footerHeight = availableHeight + 1 / displayScale
+        guard abs(fillerFooterView.frame.height - footerHeight) > 0.5 else { return }
+
+        var footerFrame = fillerFooterView.frame
+        footerFrame.size.height = footerHeight
+        fillerFooterView.frame = footerFrame
+        tableFooterView = fillerFooterView
     }
 }
 
