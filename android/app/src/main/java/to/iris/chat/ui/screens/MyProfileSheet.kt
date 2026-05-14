@@ -50,7 +50,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -1191,7 +1190,6 @@ private fun ProfileQrDialog(
                 ProfileQrBadge(
                     qrBitmap = qrBitmap,
                     label = displayName.ifBlank { "User ID" },
-                    onCopy = onCopy,
                 )
 
                 Row(
@@ -1268,10 +1266,7 @@ private fun ProfileQrTabButton(
 private fun ProfileQrBadge(
     qrBitmap: Bitmap,
     label: String,
-    onCopy: () -> Unit,
 ) {
-    val haptics = rememberIrisHapticFeedback()
-    val interactionSource = remember { MutableInteractionSource() }
     Surface(
         color = IrisTheme.palette.panelAlt,
         shape = RoundedCornerShape(24.dp),
@@ -1297,27 +1292,12 @@ private fun ProfileQrBadge(
                 modifier =
                     Modifier
                         .padding(top = 8.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable(
-                            interactionSource = interactionSource,
-                            indication = null,
-                        ) {
-                            haptics.press()
-                            onCopy()
-                        }
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                 horizontalArrangement = Arrangement.Center,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(
-                    imageVector = IrisIcons.Copy,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                    modifier = Modifier.size(18.dp),
-                )
                 Text(
                     text = label,
-                    modifier = Modifier.padding(start = 6.dp),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
