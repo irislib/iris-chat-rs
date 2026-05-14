@@ -285,7 +285,7 @@ struct RootView: View {
 #if os(iOS)
                 ShareTargetSheet(manager: manager, share: share)
                     .irisModalSurface()
-                    .presentationDetents([.medium, .large])
+                    .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
 #elseif os(macOS)
                 ShareTargetSheet(manager: manager, share: share)
@@ -618,6 +618,7 @@ private struct ShareTargetSheet: View {
     @ObservedObject var manager: AppManager
     let share: PendingShare
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.irisPalette) private var palette
     @State private var searchText = ""
     @State private var selectedChatIds = Set<String>()
@@ -634,56 +635,52 @@ private struct ShareTargetSheet: View {
         }
     }
 
+    private var selectedChats: [ChatThreadSnapshot] {
+        manager.state.chatList.filter { selectedChatIds.contains($0.chatId) }
+    }
+
+    private var selectedNamesText: String {
+        selectedChats.map(\.displayName).joined(separator: ", ")
+    }
+
     var body: some View {
         NavigationStack {
             Group {
                 if manager.state.chatList.isEmpty {
-                    VStack(spacing: 18) {
-                        Text("Start a chat first")
-                            .font(.headline)
-                        Button("New chat") {
-                            manager.clearPendingShare()
-                            manager.dispatch(.pushScreen(screen: .newChat))
-                            dismiss()
-                        }
-                        .buttonStyle(.borderedProminent)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    emptyState
                 } else {
-                    List {
-                        if filteredChats.isEmpty {
-                            Text("No matches")
-                                .foregroundStyle(.secondary)
-                        }
-                        ForEach(filteredChats, id: \.chatId) { chat in
-                            shareTargetRow(chat)
-                        }
-                    }
-                    .searchable(text: $searchText, prompt: "Search")
-                    .listStyle(.plain)
-                    .onAppear(perform: preselectSuggestedChat)
-                    .irisOnChange(of: share.id) { _ in
-                        selectedChatIds.removeAll()
-                        preselectSuggestedChat()
-                    }
+                    chatList
                 }
             }
             .navigationTitle("Choose recipients")
 #if os(iOS)
-            .safeAreaInset(edge: .bottom) {
+            .navigationBarTitleDisplayMode(.inline)
+            .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
+#elseif os(macOS)
+            .searchable(text: $searchText, prompt: "Search")
+#endif
+#if os(iOS)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 if !manager.state.chatList.isEmpty {
-                    sendBar
+                    approvalFooter
                 }
             }
 #endif
             .toolbar {
+#if os(iOS)
+                ToolbarItem(placement: .confirmationAction) {
+                    IrisModalCloseButton(accessibilityIdentifier: "shareTargetCloseButton") {
+                        manager.clearPendingShare()
+                        dismiss()
+                    }
+                }
+#elseif os(macOS)
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
                         manager.clearPendingShare()
                         dismiss()
                     }
                 }
-#if os(macOS)
                 if !manager.state.chatList.isEmpty {
                     ToolbarItem(placement: .confirmationAction) {
                         Button {
@@ -696,7 +693,57 @@ private struct ShareTargetSheet: View {
                 }
 #endif
             }
+            .background(palette.background)
+            .onAppear(perform: preselectSuggestedChat)
+            .irisOnChange(of: share.id) { _ in
+                selectedChatIds.removeAll()
+                preselectSuggestedChat()
+            }
         }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 18) {
+            Text("Start a chat first")
+                .font(.headline)
+                .foregroundStyle(palette.textPrimary)
+            Button("New chat") {
+                manager.clearPendingShare()
+                manager.dispatch(.pushScreen(screen: .newChat))
+                dismiss()
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(palette.background)
+    }
+
+    private var chatList: some View {
+        List {
+            if filteredChats.isEmpty {
+                Text("No matches")
+                    .font(.system(size: 17, weight: .regular))
+                    .foregroundStyle(palette.muted)
+                    .frame(maxWidth: .infinity, minHeight: 180, alignment: .center)
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(palette.background)
+                    .listRowSeparator(.hidden)
+            } else {
+                Section {
+                    ForEach(filteredChats, id: \.chatId) { chat in
+                        shareTargetRow(chat)
+                    }
+                } header: {
+                    Text(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recent chats" : "Chats")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .textCase(nil)
+                }
+            }
+        }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(palette.background)
     }
 
     private var sendButtonTitle: String {
@@ -704,16 +751,54 @@ private struct ShareTargetSheet: View {
     }
 
 #if os(iOS)
-    private var sendBar: some View {
-        Button(sendButtonTitle) {
-            sendSelectedAndDismiss()
+    private var approvalFooter: some View {
+        VStack(spacing: 0) {
+            Rectangle()
+                .fill(palette.border)
+                .frame(height: 0.5)
+
+            HStack(spacing: 12) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    Text(selectedNamesText.isEmpty ? " " : selectedNamesText)
+                        .font(.system(size: 15, weight: .regular))
+                        .foregroundStyle(selectedChatIds.isEmpty ? palette.muted : palette.textPrimary)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .padding(.horizontal, 2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityHidden(selectedChatIds.isEmpty)
+
+                Button {
+                    sendSelectedAndDismiss()
+                } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 21, weight: .bold))
+                        .foregroundStyle(selectedChatIds.isEmpty ? palette.textPrimary.opacity(0.42) : Color.white)
+                        .frame(width: 48, height: 48)
+                        .background(
+                            Circle()
+                                .fill(selectedChatIds.isEmpty ? palette.muted.opacity(0.24) : palette.action)
+                        )
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.irisPlain)
+                .disabled(selectedChatIds.isEmpty)
+                .accessibilityLabel(sendButtonTitle)
+                .accessibilityIdentifier("shareTargetSendButton")
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 9)
+            .padding(.bottom, 9)
         }
-        .buttonStyle(IrisPrimaryButtonStyle())
-        .disabled(selectedChatIds.isEmpty)
-        .padding(.horizontal, 16)
-        .padding(.top, 10)
-        .padding(.bottom, 8)
-        .background(.regularMaterial)
+        .background(shareFooterBackground)
+    }
+
+    private var shareFooterBackground: Color {
+        if colorScheme == .dark {
+            return Color(.sRGB, red: 27.0 / 255.0, green: 27.0 / 255.0, blue: 27.0 / 255.0, opacity: 1)
+        }
+        return Color(.sRGB, red: 246.0 / 255.0, green: 246.0 / 255.0, blue: 246.0 / 255.0, opacity: 1)
     }
 #endif
 
@@ -736,35 +821,40 @@ private struct ShareTargetSheet: View {
             }
         } label: {
             HStack(spacing: 12) {
-                Image(systemName: selected ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 23, weight: .semibold))
-                    .foregroundStyle(selected ? palette.textPrimary : palette.muted)
-                    .frame(width: 28, height: 28)
                 IrisAvatar(
                     label: chat.displayName,
-                    size: 38,
-                    emphasize: selected,
+                    size: 40,
+                    emphasize: false,
                     pictureUrl: chat.pictureUrl,
                     preferences: manager.state.preferences,
                     manager: manager
                 )
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(chat.displayName)
-                        .foregroundStyle(.primary)
+                        .font(.system(size: 17, weight: .regular))
+                        .foregroundStyle(palette.textPrimary)
+                        .lineLimit(1)
                     if let subtitle = chat.subtitle, !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundStyle(palette.muted)
                             .lineLimit(1)
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 Spacer()
+                ShareTargetSelectionBadge(isSelected: selected)
             }
+            .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
+        .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+        .listRowBackground(palette.panel)
+        .listRowSeparator(.hidden)
         .accessibilityLabel("\(chat.displayName), \(selected ? "selected" : "not selected")")
+        .accessibilityValue(selected ? "Selected" : "Not selected")
     }
 
     private func preselectSuggestedChat() {
@@ -776,6 +866,20 @@ private struct ShareTargetSheet: View {
             .map(\.chatId)
             .filter { suggested.contains($0) }
         selectedChatIds.formUnion(available)
+    }
+}
+
+private struct ShareTargetSelectionBadge: View {
+    @Environment(\.irisPalette) private var palette
+    let isSelected: Bool
+
+    var body: some View {
+        Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+            .font(.system(size: 24, weight: .semibold))
+            .symbolRenderingMode(.monochrome)
+            .foregroundStyle(isSelected ? palette.action : palette.muted.opacity(0.55))
+            .frame(width: 32, height: 40, alignment: .trailing)
+            .accessibilityHidden(true)
     }
 }
 #endif

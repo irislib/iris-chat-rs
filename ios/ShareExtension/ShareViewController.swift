@@ -29,22 +29,37 @@ private struct ShareSuggestionEntry: Codable {
 }
 
 final class ShareViewController: UIViewController {
+    private let titleBar = UIView()
     private let titleLabel = UILabel()
+    private let searchBar = UISearchBar(frame: .zero)
     private let statusLabel = UILabel()
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
     private let chatTable = UITableView(frame: .zero, style: .plain)
     private let sendButton = UIButton(type: .system)
     private let openAppButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
-    private let buttonStack = UIStackView()
-    private let secondaryButtonStack = UIStackView()
+    private let footerView = UIView()
+    private let footerHairline = UIView()
+    private let footerStack = UIStackView()
+    private let selectedNamesScrollView = UIScrollView()
+    private let selectedNamesLabel = UILabel()
 
     private var suggestions: [ShareSuggestionEntry] = []
+    private var searchText = ""
     private var selectedChatIds = Set<String>()
     private var stagedShareID: String?
     private var stagedPayload: StoredSharePayload?
     private var didStart = false
     private var isOpeningApp = false
+
+    private var filteredSuggestions: [ShareSuggestionEntry] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else { return suggestions }
+        return suggestions.filter { entry in
+            shareDisplayName(for: entry).lowercased().contains(query)
+                || (entry.subtitle?.lowercased().contains(query) ?? false)
+        }
+    }
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -61,14 +76,32 @@ final class ShareViewController: UIViewController {
     }
 
     private func configureView() {
-        view.backgroundColor = .systemBackground
+        view.backgroundColor = ShareColors.presentedBackground
 
-        titleLabel.text = "Send to…"
-        titleLabel.font = .preferredFont(forTextStyle: .headline)
+        titleBar.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.text = "Choose recipients"
+        titleLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        titleLabel.textColor = .label
         titleLabel.textAlignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        statusLabel.text = "Preparing…"
+        cancelButton.setImage(UIImage(systemName: "xmark"), for: .normal)
+        cancelButton.tintColor = .label
+        cancelButton.backgroundColor = ShareColors.cellBackground
+        cancelButton.layer.cornerRadius = 20
+        cancelButton.clipsToBounds = true
+        cancelButton.addTarget(self, action: #selector(cancelShare), for: .touchUpInside)
+        cancelButton.translatesAutoresizingMaskIntoConstraints = false
+        cancelButton.accessibilityLabel = "Close"
+
+        searchBar.placeholder = "Search"
+        searchBar.searchBarStyle = .minimal
+        searchBar.delegate = self
+        searchBar.isHidden = true
+        searchBar.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel.text = "Preparing..."
         statusLabel.font = .preferredFont(forTextStyle: .footnote)
         statusLabel.textColor = .secondaryLabel
         statusLabel.textAlignment = .center
@@ -81,71 +114,126 @@ final class ShareViewController: UIViewController {
         chatTable.dataSource = self
         chatTable.delegate = self
         chatTable.register(ShareChatCell.self, forCellReuseIdentifier: ShareChatCell.reuseId)
-        chatTable.rowHeight = 64
+        chatTable.register(ShareSectionHeaderView.self, forHeaderFooterViewReuseIdentifier: ShareSectionHeaderView.reuseId)
+        chatTable.rowHeight = 60
+        chatTable.backgroundColor = ShareColors.presentedBackground
         chatTable.tableFooterView = UIView()
-        chatTable.separatorInset = UIEdgeInsets(top: 0, left: 108, bottom: 0, right: 0)
+        chatTable.separatorStyle = .none
+        if #available(iOS 15.0, *) {
+            chatTable.sectionHeaderTopPadding = 0
+        }
         chatTable.isHidden = true
         chatTable.translatesAutoresizingMaskIntoConstraints = false
 
-        var sendConfig = UIButton.Configuration.filled()
-        sendConfig.title = "Send"
-        sendConfig.cornerStyle = .large
-        sendButton.configuration = sendConfig
-        sendButton.titleLabel?.font = .preferredFont(forTextStyle: .headline)
         sendButton.addTarget(self, action: #selector(sendSelectedChats), for: .touchUpInside)
-        sendButton.isHidden = true
         sendButton.isEnabled = false
         sendButton.translatesAutoresizingMaskIntoConstraints = false
+        sendButton.accessibilityLabel = "Send"
 
         openAppButton.setTitle("Open Iris Chat", for: .normal)
         openAppButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
         openAppButton.addTarget(self, action: #selector(openMainApp), for: .touchUpInside)
         openAppButton.isHidden = true
+        openAppButton.translatesAutoresizingMaskIntoConstraints = false
 
-        cancelButton.setTitle("Cancel", for: .normal)
-        cancelButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
-        cancelButton.addTarget(self, action: #selector(cancelShare), for: .touchUpInside)
+        footerView.backgroundColor = ShareColors.footerBackground
+        footerView.isHidden = true
+        footerView.translatesAutoresizingMaskIntoConstraints = false
 
-        buttonStack.axis = .vertical
-        buttonStack.alignment = .fill
-        buttonStack.spacing = 8
-        buttonStack.addArrangedSubview(sendButton)
-        buttonStack.addArrangedSubview(secondaryButtonStack)
-        buttonStack.translatesAutoresizingMaskIntoConstraints = false
+        footerHairline.backgroundColor = ShareColors.separator
+        footerHairline.translatesAutoresizingMaskIntoConstraints = false
 
-        secondaryButtonStack.axis = .horizontal
-        secondaryButtonStack.alignment = .fill
-        secondaryButtonStack.distribution = .fillEqually
-        secondaryButtonStack.spacing = 12
-        secondaryButtonStack.addArrangedSubview(cancelButton)
-        secondaryButtonStack.addArrangedSubview(openAppButton)
+        selectedNamesScrollView.showsHorizontalScrollIndicator = false
+        selectedNamesScrollView.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = UIStackView(arrangedSubviews: [titleLabel, activityIndicator, statusLabel])
-        header.axis = .vertical
-        header.alignment = .center
-        header.spacing = 8
-        header.translatesAutoresizingMaskIntoConstraints = false
+        selectedNamesLabel.font = .systemFont(ofSize: 15)
+        selectedNamesLabel.textColor = .secondaryLabel
+        selectedNamesLabel.lineBreakMode = .byClipping
+        selectedNamesLabel.numberOfLines = 1
+        selectedNamesLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        view.addSubview(header)
+        footerStack.axis = .horizontal
+        footerStack.alignment = .center
+        footerStack.spacing = 12
+        footerStack.translatesAutoresizingMaskIntoConstraints = false
+        footerStack.addArrangedSubview(selectedNamesScrollView)
+        footerStack.addArrangedSubview(sendButton)
+
+        selectedNamesScrollView.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        sendButton.setContentHuggingPriority(.required, for: .horizontal)
+
+        view.addSubview(titleBar)
+        titleBar.addSubview(titleLabel)
+        titleBar.addSubview(cancelButton)
+        view.addSubview(searchBar)
+        view.addSubview(activityIndicator)
+        view.addSubview(statusLabel)
+        view.addSubview(openAppButton)
         view.addSubview(chatTable)
-        view.addSubview(buttonStack)
+        view.addSubview(footerView)
+        footerView.addSubview(footerHairline)
+        footerView.addSubview(footerStack)
+        selectedNamesScrollView.addSubview(selectedNamesLabel)
 
         NSLayoutConstraint.activate([
-            header.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
-            header.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            header.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            titleBar.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 6),
+            titleBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 12),
+            titleBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -12),
+            titleBar.heightAnchor.constraint(equalToConstant: 44),
 
-            chatTable.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 12),
+            titleLabel.centerXAnchor.constraint(equalTo: titleBar.centerXAnchor),
+            titleLabel.centerYAnchor.constraint(equalTo: titleBar.centerYAnchor),
+            titleLabel.leadingAnchor.constraint(greaterThanOrEqualTo: titleBar.leadingAnchor, constant: 48),
+            titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: cancelButton.leadingAnchor, constant: -12),
+
+            cancelButton.trailingAnchor.constraint(equalTo: titleBar.trailingAnchor),
+            cancelButton.centerYAnchor.constraint(equalTo: titleBar.centerYAnchor),
+            cancelButton.widthAnchor.constraint(equalToConstant: 40),
+            cancelButton.heightAnchor.constraint(equalToConstant: 40),
+
+            searchBar.topAnchor.constraint(equalTo: titleBar.bottomAnchor, constant: 2),
+            searchBar.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 8),
+            searchBar.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -8),
+
+            activityIndicator.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 18),
+            activityIndicator.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+
+            statusLabel.topAnchor.constraint(equalTo: activityIndicator.bottomAnchor, constant: 10),
+            statusLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
+            statusLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
+
+            openAppButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 16),
+            openAppButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+
+            chatTable.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 8),
             chatTable.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             chatTable.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            chatTable.bottomAnchor.constraint(equalTo: buttonStack.topAnchor, constant: -8),
+            chatTable.bottomAnchor.constraint(equalTo: footerView.topAnchor),
 
-            buttonStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
-            buttonStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            buttonStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -12),
+            footerView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            footerView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            footerView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
 
-            sendButton.heightAnchor.constraint(equalToConstant: 44),
+            footerHairline.topAnchor.constraint(equalTo: footerView.topAnchor),
+            footerHairline.leadingAnchor.constraint(equalTo: footerView.leadingAnchor),
+            footerHairline.trailingAnchor.constraint(equalTo: footerView.trailingAnchor),
+            footerHairline.heightAnchor.constraint(equalToConstant: 0.5),
+
+            footerStack.topAnchor.constraint(equalTo: footerView.topAnchor, constant: 9),
+            footerStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            footerStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
+            footerStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -9),
+
+            selectedNamesScrollView.heightAnchor.constraint(equalToConstant: 44),
+            selectedNamesLabel.leadingAnchor.constraint(equalTo: selectedNamesScrollView.contentLayoutGuide.leadingAnchor, constant: 2),
+            selectedNamesLabel.trailingAnchor.constraint(equalTo: selectedNamesScrollView.contentLayoutGuide.trailingAnchor, constant: -2),
+            selectedNamesLabel.centerYAnchor.constraint(equalTo: selectedNamesScrollView.frameLayoutGuide.centerYAnchor),
+
+            sendButton.widthAnchor.constraint(equalToConstant: 48),
+            sendButton.heightAnchor.constraint(equalToConstant: 48),
         ])
+
+        updateActionButtons()
     }
 
     private func stageShare() async {
@@ -153,7 +241,9 @@ final class ShareViewController: UIViewController {
         guard let payload = await stageShareToDisk(suggestedChatId: intentChatId) else {
             await MainActor.run {
                 activityIndicator.stopAnimating()
+                activityIndicator.isHidden = true
                 titleLabel.text = "Nothing to share"
+                statusLabel.isHidden = false
                 statusLabel.text = nil
                 openAppButton.isHidden = true
             }
@@ -173,21 +263,29 @@ final class ShareViewController: UIViewController {
         let loaded = readSuggestions()
         await MainActor.run {
             activityIndicator.stopAnimating()
+            activityIndicator.isHidden = true
             suggestions = loaded
+            searchText = ""
+            searchBar.text = nil
             selectedChatIds.removeAll()
             if loaded.isEmpty {
-                titleLabel.text = "Send to…"
+                titleLabel.text = "Choose recipients"
+                statusLabel.isHidden = false
                 statusLabel.text = "Open Iris Chat to choose a chat."
                 chatTable.isHidden = true
-                sendButton.isHidden = true
+                searchBar.isHidden = true
+                footerView.isHidden = true
+                openAppButton.isHidden = false
             } else {
                 titleLabel.text = "Choose recipients"
                 statusLabel.text = nil
+                statusLabel.isHidden = true
+                searchBar.isHidden = false
                 chatTable.isHidden = false
-                sendButton.isHidden = false
+                footerView.isHidden = false
+                openAppButton.isHidden = true
                 chatTable.reloadData()
             }
-            openAppButton.isHidden = false
             updateActionButtons()
         }
     }
@@ -228,8 +326,10 @@ final class ShareViewController: UIViewController {
         updateStagedPayload(autoSend: autoSend)
         await MainActor.run {
             isOpeningApp = true
+            activityIndicator.isHidden = false
             activityIndicator.startAnimating()
-            statusLabel.text = "Sending…"
+            statusLabel.isHidden = false
+            statusLabel.text = "Sending..."
             updateActionButtons()
         }
         notifyMainAppAboutPendingShare()
@@ -245,8 +345,10 @@ final class ShareViewController: UIViewController {
         }
         await MainActor.run {
             isOpeningApp = true
+            activityIndicator.isHidden = false
             activityIndicator.startAnimating()
-            statusLabel.text = "Opening Iris Chat…"
+            statusLabel.isHidden = false
+            statusLabel.text = "Opening Iris Chat..."
             updateActionButtons()
         }
         let opened = await openURLFromExtension(url)
@@ -258,6 +360,8 @@ final class ShareViewController: UIViewController {
             await MainActor.run {
                 isOpeningApp = false
                 activityIndicator.stopAnimating()
+                activityIndicator.isHidden = true
+                statusLabel.isHidden = false
                 statusLabel.text = autoSend ? "Open Iris Chat to finish." : "Could not open Iris Chat."
                 updateActionButtons()
             }
@@ -276,10 +380,28 @@ final class ShareViewController: UIViewController {
 
     private func updateActionButtons() {
         let count = selectedChatIds.count
+        let enabled = !isOpeningApp && count > 0 && stagedPayload != nil
         var sendConfig = sendButton.configuration ?? UIButton.Configuration.filled()
-        sendConfig.title = count > 1 ? "Send (\(count))" : "Send"
+        sendConfig.title = nil
+        sendConfig.image = UIImage(systemName: "arrow.up")
+        sendConfig.imagePlacement = .leading
+        sendConfig.cornerStyle = .capsule
+        sendConfig.contentInsets = NSDirectionalEdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0)
+        sendConfig.baseForegroundColor = enabled ? .white : .secondaryLabel
+        sendConfig.baseBackgroundColor = enabled ? ShareColors.action : ShareColors.disabledControl
         sendButton.configuration = sendConfig
-        sendButton.isEnabled = !isOpeningApp && count > 0 && stagedPayload != nil
+        sendButton.isEnabled = enabled
+        sendButton.accessibilityLabel = count > 1 ? "Send \(count)" : "Send"
+
+        let names = suggestions
+            .filter { selectedChatIds.contains($0.chatId) }
+            .map { shareDisplayName(for: $0) }
+            .joined(separator: ", ")
+        selectedNamesLabel.text = names.isEmpty ? " " : names
+        selectedNamesLabel.textColor = names.isEmpty ? .secondaryLabel : .label
+        selectedNamesScrollView.isAccessibilityElement = !names.isEmpty
+        selectedNamesScrollView.accessibilityLabel = names
+
         openAppButton.isEnabled = !isOpeningApp && stagedPayload != nil
         cancelButton.isEnabled = !isOpeningApp
     }
@@ -573,7 +695,7 @@ final class ShareViewController: UIViewController {
 
 extension ShareViewController: UITableViewDataSource, UITableViewDelegate {
     func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        suggestions.count
+        filteredSuggestions.count
     }
 
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
@@ -581,21 +703,45 @@ extension ShareViewController: UITableViewDataSource, UITableViewDelegate {
             withIdentifier: ShareChatCell.reuseId,
             for: indexPath
         ) as? ShareChatCell ?? ShareChatCell(style: .default, reuseIdentifier: ShareChatCell.reuseId)
-        let entry = suggestions[indexPath.row]
+        let entry = filteredSuggestions[indexPath.row]
         cell.configure(with: entry, selected: selectedChatIds.contains(entry.chatId))
         return cell
     }
 
+    func tableView(_ tableView: UITableView, viewForHeaderInSection section: Int) -> UIView? {
+        guard !filteredSuggestions.isEmpty else { return nil }
+        let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: ShareSectionHeaderView.reuseId)
+            as? ShareSectionHeaderView ?? ShareSectionHeaderView(reuseIdentifier: ShareSectionHeaderView.reuseId)
+        let title = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recent chats" : "Chats"
+        header.configure(title: title)
+        return header
+    }
+
+    func tableView(_ tableView: UITableView, heightForHeaderInSection section: Int) -> CGFloat {
+        filteredSuggestions.isEmpty ? .leastNormalMagnitude : 34
+    }
+
     func tableView(_ tableView: UITableView, didSelectRowAt indexPath: IndexPath) {
         tableView.deselectRow(at: indexPath, animated: true)
-        toggleChatSelection(suggestions[indexPath.row], at: indexPath)
+        toggleChatSelection(filteredSuggestions[indexPath.row], at: indexPath)
+    }
+}
+
+extension ShareViewController: UISearchBarDelegate {
+    func searchBar(_ searchBar: UISearchBar, textDidChange searchText: String) {
+        self.searchText = searchText
+        chatTable.reloadData()
+    }
+
+    func searchBarSearchButtonClicked(_ searchBar: UISearchBar) {
+        searchBar.resignFirstResponder()
     }
 }
 
 private final class ShareChatCell: UITableViewCell {
     static let reuseId = "ShareChatCell"
 
-    private let checkboxView = UIImageView()
+    private let selectionView = UIImageView()
     private let avatarLabel = UILabel()
     private let nameLabel = UILabel()
     private let subtitleLabel = UILabel()
@@ -604,51 +750,54 @@ private final class ShareChatCell: UITableViewCell {
         super.init(style: style, reuseIdentifier: reuseIdentifier)
 
         selectionStyle = .none
+        backgroundColor = ShareColors.cellBackground
+        contentView.backgroundColor = ShareColors.cellBackground
 
-        checkboxView.contentMode = .scaleAspectFit
-        checkboxView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
+        selectionView.contentMode = .scaleAspectFit
+        selectionView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
             pointSize: 24,
             weight: .semibold
         )
-        checkboxView.translatesAutoresizingMaskIntoConstraints = false
+        selectionView.translatesAutoresizingMaskIntoConstraints = false
 
         avatarLabel.textAlignment = .center
         avatarLabel.textColor = .white
-        avatarLabel.font = .systemFont(ofSize: 18, weight: .semibold)
-        avatarLabel.layer.cornerRadius = 22
+        avatarLabel.font = .systemFont(ofSize: 17, weight: .semibold)
+        avatarLabel.layer.cornerRadius = 20
         avatarLabel.layer.masksToBounds = true
         avatarLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        nameLabel.font = .preferredFont(forTextStyle: .body)
+        nameLabel.font = .systemFont(ofSize: 17)
+        nameLabel.textColor = .label
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        subtitleLabel.font = .preferredFont(forTextStyle: .footnote)
+        subtitleLabel.font = .systemFont(ofSize: 13)
         subtitleLabel.textColor = .secondaryLabel
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        contentView.addSubview(checkboxView)
         contentView.addSubview(avatarLabel)
         contentView.addSubview(nameLabel)
         contentView.addSubview(subtitleLabel)
+        contentView.addSubview(selectionView)
 
         NSLayoutConstraint.activate([
-            checkboxView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            checkboxView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            checkboxView.widthAnchor.constraint(equalToConstant: 28),
-            checkboxView.heightAnchor.constraint(equalToConstant: 28),
-
-            avatarLabel.leadingAnchor.constraint(equalTo: checkboxView.trailingAnchor, constant: 12),
+            avatarLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
             avatarLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            avatarLabel.widthAnchor.constraint(equalToConstant: 44),
-            avatarLabel.heightAnchor.constraint(equalToConstant: 44),
+            avatarLabel.widthAnchor.constraint(equalToConstant: 40),
+            avatarLabel.heightAnchor.constraint(equalToConstant: 40),
 
             nameLabel.leadingAnchor.constraint(equalTo: avatarLabel.trailingAnchor, constant: 12),
-            nameLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 10),
+            nameLabel.trailingAnchor.constraint(equalTo: selectionView.leadingAnchor, constant: -12),
+            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 9),
 
             subtitleLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
             subtitleLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
             subtitleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+
+            selectionView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            selectionView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
+            selectionView.widthAnchor.constraint(equalToConstant: 32),
+            selectionView.heightAnchor.constraint(equalToConstant: 40),
         ])
     }
 
@@ -657,8 +806,7 @@ private final class ShareChatCell: UITableViewCell {
     }
 
     func configure(with entry: ShareSuggestionEntry, selected: Bool) {
-        let trimmed = entry.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        let display = trimmed.isEmpty ? "Chat" : trimmed
+        let display = shareDisplayName(for: entry)
         nameLabel.text = display
         let trimmedSubtitle = entry.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         subtitleLabel.text = trimmedSubtitle.isEmpty ? nil : trimmedSubtitle
@@ -667,8 +815,8 @@ private final class ShareChatCell: UITableViewCell {
         let firstChar = display.unicodeScalars.first.map { String($0).uppercased() } ?? "?"
         avatarLabel.text = firstChar
         avatarLabel.backgroundColor = avatarColor(for: entry.chatId)
-        checkboxView.image = UIImage(systemName: selected ? "checkmark.square.fill" : "square")
-        checkboxView.tintColor = selected ? tintColor : .tertiaryLabel
+        selectionView.image = UIImage(systemName: selected ? "checkmark.circle.fill" : "circle")
+        selectionView.tintColor = selected ? ShareColors.action : .tertiaryLabel
         accessibilityLabel = "\(display), \(selected ? "selected" : "not selected")"
     }
 
@@ -680,6 +828,79 @@ private final class ShareChatCell: UITableViewCell {
         let hue = CGFloat(hash % 360) / 360
         return UIColor(hue: hue, saturation: 0.55, brightness: 0.78, alpha: 1.0)
     }
+}
+
+private final class ShareSectionHeaderView: UITableViewHeaderFooterView {
+    static let reuseId = "ShareSectionHeaderView"
+
+    private let titleLabel = UILabel()
+
+    override init(reuseIdentifier: String?) {
+        super.init(reuseIdentifier: reuseIdentifier)
+
+        contentView.backgroundColor = ShareColors.presentedBackground
+        titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
+        titleLabel.textColor = .secondaryLabel
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(titleLabel)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
+            titleLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
+            titleLabel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -7),
+        ])
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func configure(title: String) {
+        titleLabel.text = title
+    }
+}
+
+private enum ShareColors {
+    static let presentedBackground = UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 28.0 / 255.0, green: 28.0 / 255.0, blue: 30.0 / 255.0, alpha: 1)
+            : UIColor(red: 239.0 / 255.0, green: 239.0 / 255.0, blue: 240.0 / 255.0, alpha: 1)
+    }
+
+    static let cellBackground = UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 44.0 / 255.0, green: 44.0 / 255.0, blue: 46.0 / 255.0, alpha: 1)
+            : .white
+    }
+
+    static let footerBackground = UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 27.0 / 255.0, green: 27.0 / 255.0, blue: 27.0 / 255.0, alpha: 1)
+            : UIColor(red: 246.0 / 255.0, green: 246.0 / 255.0, blue: 246.0 / 255.0, alpha: 1)
+    }
+
+    static let action = UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(red: 45.0 / 255.0, green: 112.0 / 255.0, blue: 250.0 / 255.0, alpha: 1)
+            : UIColor(red: 34.0 / 255.0, green: 103.0 / 255.0, blue: 245.0 / 255.0, alpha: 1)
+    }
+
+    static let disabledControl = UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(white: 1, alpha: 0.18)
+            : UIColor(white: 0, alpha: 0.12)
+    }
+
+    static let separator = UIColor { trait in
+        trait.userInterfaceStyle == .dark
+            ? UIColor(white: 1, alpha: 0.12)
+            : UIColor(white: 0, alpha: 0.08)
+    }
+}
+
+private func shareDisplayName(for entry: ShareSuggestionEntry) -> String {
+    let trimmed = entry.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? "Chat" : trimmed
 }
 
 private func safeFilename(_ suggestedName: String?, fallbackExtension: String?) -> String {
