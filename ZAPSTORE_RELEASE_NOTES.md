@@ -1,3 +1,15 @@
+# Iris Chat 2026.5.14.3
+
+- Settings now has Devices as its own page, and profile QR codes only open when you tap for them.
+- Chat screens are closer to Signal, with better headers, message spacing, day labels, reactions, drafts, and composer behavior.
+- Profile photos, QR sharing, image previews, and share sheets now feel cleaner across mobile.
+- Blocking users, linked devices, and group chats are steadier, with more crash and error recovery fixes.
+
+# Iris Chat 2026.5.14.1
+
+- New chats now appear when a new sender messages you for the first time, without needing to search for that user first.
+- This device can now block new chats from unknown users.
+
 # Iris Chat 2026.5.13.6
 
 - iOS message bubbles no longer steal fast vertical flicks from the chat timeline.
