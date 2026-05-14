@@ -1006,6 +1006,56 @@ private enum SignalConversationLayout {
     static let stickyDateHeaderMinimumSpacing: CGFloat = 5
 }
 
+func irisGroupSenderNameColorHex(for senderKey: String, isDarkMode: Bool) -> UInt32 {
+    let values = isDarkMode
+        ? irisGroupSenderNameDarkColorHexes
+        : irisGroupSenderNameLightColorHexes
+    let normalized = senderKey
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+        .lowercased()
+    guard !normalized.isEmpty else {
+        return values[0]
+    }
+
+    var hash: UInt64 = 0xcbf29ce484222325
+    for byte in normalized.utf8 {
+        hash ^= UInt64(byte)
+        hash = hash &* 0x100000001b3
+    }
+    return values[Int(hash % UInt64(values.count))]
+}
+
+private func irisGroupSenderNameColor(for senderKey: String, isDarkMode: Bool) -> Color {
+    irisColor(hex: irisGroupSenderNameColorHex(for: senderKey, isDarkMode: isDarkMode))
+}
+
+private func irisColor(hex: UInt32) -> Color {
+    Color(
+        red: Double((hex >> 16) & 0xff) / 255.0,
+        green: Double((hex >> 8) & 0xff) / 255.0,
+        blue: Double(hex & 0xff) / 255.0
+    )
+}
+
+// Signal-iOS GroupNameColors, trimmed to avoid reusing the Iris brand
+// purple for sender labels. We still keep Signal's high-contrast spread
+// across blues, greens, teals, reds, oranges, yellows, and slate.
+private let irisGroupSenderNameLightColorHexes: [UInt32] = [
+    0x006DA3, 0x067906, 0xC13215, 0x5B6976, 0x2E51FF,
+    0x007575, 0x9C5711, 0x3D7406, 0xD00B0B, 0x007A3D,
+    0x866118, 0x067953, 0x4B7000, 0xB34209, 0x06792D,
+    0x6B6B24, 0xD00B2C, 0x2D7906, 0x32763E, 0x2662D9,
+    0x76681E, 0x067462, 0x5E6E0C, 0x077288, 0x2D761E,
+]
+
+private let irisGroupSenderNameDarkColorHexes: [UInt32] = [
+    0x00A7FA, 0x0AB80A, 0xFF6F52, 0x8BA1B6, 0x8599FF,
+    0x00B2B2, 0xD5920B, 0x5EB309, 0xFF7070, 0x00B85C,
+    0xD68F00, 0x00B87A, 0x74AD00, 0xF57A3D, 0x0AB844,
+    0xA4A437, 0xF77389, 0x42B309, 0x4BAF5C, 0x7DA1E8,
+    0xB89B0A, 0x09B397, 0x8FAA09, 0x00AED1, 0x43B42D,
+]
+
 private func irisStartsMessageCluster(
     previous: ChatMessageSnapshot?,
     message: ChatMessageSnapshot,
@@ -1229,6 +1279,7 @@ private struct ChatMessageRow: View, Equatable {
             && lhs.swipeOffset == rhs.swipeOffset
     }
 
+    @Environment(\.colorScheme) private var colorScheme
     @Environment(\.irisPalette) private var palette
     let message: ChatMessageSnapshot
     let chatKind: ChatKind
@@ -1339,7 +1390,10 @@ private struct ChatMessageRow: View, Equatable {
                             if chatKind == .group && !message.isOutgoing && isFirstInCluster {
                                 Text(message.author)
                                     .font(.system(.footnote, design: .rounded, weight: .semibold))
-                                    .foregroundStyle(palette.accent)
+                                    .foregroundStyle(irisGroupSenderNameColor(
+                                        for: message.author,
+                                        isDarkMode: colorScheme == .dark
+                                    ))
                                     .lineLimit(1)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }

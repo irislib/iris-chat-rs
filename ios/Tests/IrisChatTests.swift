@@ -542,6 +542,29 @@ private func writePendingShare(
 }
 
 final class IrisChatTests: XCTestCase {
+    func testGroupSenderNameColorsAvoidBrandPurpleAndSpreadDeterministically() {
+        let names = [
+            "Alice", "Bob", "Charlie", "Dina", "Eve", "Frank",
+            "Grace", "Heidi", "Ivan", "Judy", "Mallory", "Niaj",
+        ]
+
+        let lightColors = names.map {
+            irisGroupSenderNameColorHex(for: $0, isDarkMode: false)
+        }
+        let darkColors = names.map {
+            irisGroupSenderNameColorHex(for: $0, isDarkMode: true)
+        }
+
+        XCTAssertFalse(lightColors.contains(0x702ACE))
+        XCTAssertFalse(darkColors.contains(0x702ACE))
+        XCTAssertEqual(
+            irisGroupSenderNameColorHex(for: "Alice", isDarkMode: false),
+            irisGroupSenderNameColorHex(for: " alice ", isDarkMode: false)
+        )
+        XCTAssertGreaterThan(Set(lightColors).count, 4)
+        XCTAssertGreaterThan(Set(darkColors).count, 4)
+    }
+
     func testLaunchRecoveryDefaultsAreClearedWithoutAffectingAuthStartup() {
         let (defaults, suiteName) = makeIsolatedUserDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
