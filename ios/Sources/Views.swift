@@ -332,6 +332,7 @@ struct RootView: View {
                 subtitleSystemImage: chatHeaderSubtitleSystemImage(for: screen),
                 isChatHeader: usesCompactTopBar(screen),
                 centerTitle: usesCenteredTopBarTitle(screen),
+                floatsHeader: usesFloatingTopBar(screen),
                 canGoBack: route.depth > 0,
                 onBack: manager.navigateBack,
                 backBadgeCount: backUnreadCount(for: screen),
@@ -365,6 +366,12 @@ struct RootView: View {
     }
 
     private func usesCenteredTopBarTitle(_ screen: Screen) -> Bool {
+        if case .chatList = screen { return true }
+        return false
+    }
+
+    private func usesFloatingTopBar(_ screen: Screen) -> Bool {
+        if case .chat = screen { return true }
         if case .chatList = screen { return true }
         return false
     }
@@ -896,6 +903,7 @@ struct NavigationShell<Content: View>: View {
     let subtitleSystemImage: String?
     let isChatHeader: Bool
     let centerTitle: Bool
+    let floatsHeader: Bool
     let canGoBack: Bool
     let onBack: () -> Void
     let backBadgeCount: UInt64
@@ -912,6 +920,7 @@ struct NavigationShell<Content: View>: View {
         subtitleSystemImage: String? = nil,
         isChatHeader: Bool = false,
         centerTitle: Bool = false,
+        floatsHeader: Bool = false,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
         backBadgeCount: UInt64 = 0,
@@ -927,6 +936,7 @@ struct NavigationShell<Content: View>: View {
         self.subtitleSystemImage = subtitleSystemImage
         self.isChatHeader = isChatHeader
         self.centerTitle = centerTitle
+        self.floatsHeader = floatsHeader
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.backBadgeCount = backBadgeCount
@@ -940,43 +950,79 @@ struct NavigationShell<Content: View>: View {
 
     @Environment(\.irisPalette) private var palette
 
+    @ViewBuilder
     var body: some View {
-        content()
+        if floatsHeader {
+            floatingHeaderBody
+        } else {
+            insetHeaderBody
+        }
+    }
+
+    private var insetHeaderBody: some View {
+        screenContent
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            // Float the IrisTopBar (and the offline banner when active)
-            // over the screen content via .safeAreaInset, so the chat
-            // timeline scrolls *under* the header instead of being
-            // bumped down by a solid bar above it.
             .safeAreaInset(edge: .top, spacing: 0) {
-                VStack(spacing: 0) {
-                    IrisTopBar(
-                        title: title,
-                        subtitle: subtitle,
-                        subtitleSystemImage: subtitleSystemImage,
-                        isChatHeader: isChatHeader,
-                        centerTitle: centerTitle,
-                        canGoBack: canGoBack,
-                        onBack: onBack,
-                        backBadgeCount: backBadgeCount,
-                        leading: leading,
-                        trailing: trailing,
-                        titleAccessoryLeading: titleAccessoryLeading,
-                        onTitleTap: onTitleTap
-                    )
-                    offlineBanner
-                }
+                navigationHeader
                 // Signal-style no-divider header: the title cluster
                 // floats on a soft background fade that dissolves
                 // into the scrolling chat/list content.
-                // Drawn here (not inside IrisTopBar) because
-                // .safeAreaInset content can't extend its background
-                // up into the system status bar with the normal
-                // .ignoresSafeArea modifier.
                 .background(alignment: .top) {
                     IrisNavigationHeaderChrome(palette: palette)
                         .ignoresSafeArea(.all, edges: .top)
                 }
             }
+    }
+
+    private var floatingHeaderBody: some View {
+        GeometryReader { geometry in
+            let topSafeArea = geometry.safeAreaInsets.top
+            let contentTopInset = IrisNavigationHeaderMetrics.contentTopInset(
+                topSafeArea: topSafeArea,
+                isChatHeader: isChatHeader
+            )
+            let chromeHeight = IrisNavigationHeaderMetrics.chromeHeight(
+                topSafeArea: topSafeArea,
+                isChatHeader: isChatHeader
+            )
+
+            screenContent
+                .environment(\.irisNavigationHeaderTopInset, contentTopInset)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .overlay(alignment: .top) {
+                    navigationHeader
+                        .padding(.top, topSafeArea)
+                        .background(alignment: .top) {
+                            IrisNavigationHeaderChrome(palette: palette, height: chromeHeight)
+                                .ignoresSafeArea(.all, edges: .top)
+                        }
+                        .zIndex(20)
+                }
+        }
+    }
+
+    private var screenContent: some View {
+        content()
+    }
+
+    private var navigationHeader: some View {
+        VStack(spacing: 0) {
+            IrisTopBar(
+                title: title,
+                subtitle: subtitle,
+                subtitleSystemImage: subtitleSystemImage,
+                isChatHeader: isChatHeader,
+                centerTitle: centerTitle,
+                canGoBack: canGoBack,
+                onBack: onBack,
+                backBadgeCount: backBadgeCount,
+                leading: leading,
+                trailing: trailing,
+                titleAccessoryLeading: titleAccessoryLeading,
+                onTitleTap: onTitleTap
+            )
+            offlineBanner
+        }
     }
 }
 
@@ -2518,6 +2564,7 @@ struct AddDeviceScreen: View {
 
 struct ChatListScreen: View {
     @Environment(\.irisPalette) private var palette
+    @Environment(\.irisNavigationHeaderTopInset) private var navigationHeaderTopInset
     @ObservedObject var manager: AppManager
     let onOpenNearby: () -> Void
     @State private var searchText: String = ""
@@ -2564,6 +2611,7 @@ struct ChatListScreen: View {
             preferences: manager.state.preferences,
             relativeNow: relativeNow,
             palette: palette,
+            topContentInset: navigationHeaderTopInset,
             isSearchActive: searchActive,
             cachedSearchResults: cachedSearchResults,
             expandedSearchSections: expandedSearchSections,
@@ -3316,6 +3364,7 @@ private struct ChatListTableView: UIViewRepresentable {
     let preferences: PreferencesSnapshot
     let relativeNow: Date
     let palette: IrisPalette
+    let topContentInset: CGFloat
     let isSearchActive: Bool
     let cachedSearchResults: SearchResultSnapshot?
     let expandedSearchSections: Set<ChatListSearchSection>
@@ -3346,6 +3395,7 @@ private struct ChatListTableView: UIViewRepresentable {
     func updateUIView(_ tableView: UITableView, context: Context) {
         let sections = makeSections()
         let fingerprint = makeFingerprint()
+        updateContentInset(in: tableView)
         updateSearchHeader(in: tableView, context: context)
         context.coordinator.manager = manager
         context.coordinator.preferences = preferences
@@ -3359,6 +3409,26 @@ private struct ChatListTableView: UIViewRepresentable {
         guard context.coordinator.fingerprint != fingerprint else { return }
         context.coordinator.fingerprint = fingerprint
         tableView.reloadData()
+    }
+
+    private func updateContentInset(in tableView: UITableView) {
+        let previousTopInset = tableView.contentInset.top
+        guard abs(previousTopInset - topContentInset) > 0.5 else { return }
+
+        let wasPinnedToTop = tableView.contentOffset.y <= -previousTopInset + 1
+            || (previousTopInset == 0 && abs(tableView.contentOffset.y) <= 1)
+
+        var contentInset = tableView.contentInset
+        contentInset.top = topContentInset
+        tableView.contentInset = contentInset
+
+        var indicatorInsets = tableView.verticalScrollIndicatorInsets
+        indicatorInsets.top = topContentInset
+        tableView.verticalScrollIndicatorInsets = indicatorInsets
+
+        if wasPinnedToTop {
+            tableView.contentOffset.y = -topContentInset
+        }
     }
 
     private func updateSearchHeader(in tableView: UITableView, context: Context) {

@@ -9,6 +9,7 @@ import AppKit
 
 struct ChatScreen: View {
     @Environment(\.irisPalette) private var palette
+    @Environment(\.irisNavigationHeaderTopInset) private var navigationHeaderTopInset
     @ObservedObject var manager: AppManager
     let chatId: String
 
@@ -186,7 +187,7 @@ struct ChatScreen: View {
                                             .horizontal,
                                             IrisLayout.usesDesktopChrome ? 18 : SignalConversationLayout.contentGutter
                                         )
-                                        .padding(.top, SignalConversationLayout.contentTopMargin)
+                                        .padding(.top, SignalConversationLayout.contentTopMargin + navigationHeaderTopInset)
                                         .padding(.bottom, SignalConversationLayout.contentBottomMargin)
                                         .contentShape(Rectangle())
                                         .simultaneousGesture(
@@ -978,7 +979,8 @@ struct ChatScreen: View {
     }
 
     private func floatingDaySeparator() -> ChatFloatingDaySeparator? {
-        let topY = timelineViewportMinY + SignalConversationLayout.stickyDateHeaderTopSpacing
+        let stickyOffsetY = navigationHeaderTopInset + SignalConversationLayout.stickyDateHeaderTopSpacing
+        let topY = timelineViewportMinY + stickyOffsetY
         return irisFloatingDaySeparator(
             frames: Array(timelineDaySeparatorFrames.values),
             viewportMinY: timelineViewportMinY,
@@ -1328,7 +1330,8 @@ func irisFloatingDaySeparator(
 
     let current = sortedFrames[currentIndex]
     let currentHeight = max(current.frame.height, SignalConversationLayout.daySeparatorMinimumHeight)
-    var offsetY = SignalConversationLayout.stickyDateHeaderTopSpacing
+    let stickyOffsetY = stickyTopY - viewportMinY
+    var offsetY = stickyOffsetY
     if let next {
         let nextOffset = next.frame.minY - viewportMinY
         let maxOffsetY = nextOffset - currentHeight - SignalConversationLayout.stickyDateHeaderMinimumSpacing

@@ -506,21 +506,51 @@ struct IrisTopBar: View {
     }
 }
 
+enum IrisNavigationHeaderMetrics {
+    static let barHeight: CGFloat = 48
+    static let fadeTailHeight: CGFloat = 48
+
+    static func contentTopInset(topSafeArea: CGFloat, isChatHeader: Bool) -> CGFloat {
+        topSafeArea + barHeight + (isChatHeader ? 4 : 6)
+    }
+
+    static func chromeHeight(topSafeArea: CGFloat, isChatHeader: Bool) -> CGFloat {
+        contentTopInset(topSafeArea: topSafeArea, isChatHeader: isChatHeader) + fadeTailHeight
+    }
+}
+
+private struct IrisNavigationHeaderTopInsetKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+extension EnvironmentValues {
+    var irisNavigationHeaderTopInset: CGFloat {
+        get { self[IrisNavigationHeaderTopInsetKey.self] }
+        set { self[IrisNavigationHeaderTopInsetKey.self] = newValue }
+    }
+}
+
 struct IrisNavigationHeaderChrome: View {
     let palette: IrisPalette
+    let height: CGFloat
+
+    init(palette: IrisPalette, height: CGFloat = IrisNavigationHeaderMetrics.chromeHeight(topSafeArea: 0, isChatHeader: true)) {
+        self.palette = palette
+        self.height = height
+    }
 
     var body: some View {
         LinearGradient(
             colors: [
                 palette.background,
-                palette.background.opacity(0.92),
-                palette.background.opacity(0.64),
+                palette.background.opacity(0.96),
+                palette.background.opacity(0.72),
                 palette.background.opacity(0)
             ],
             startPoint: .top,
             endPoint: .bottom
         )
-        .frame(height: 104, alignment: .top)
+        .frame(height: height, alignment: .top)
         .allowsHitTesting(false)
     }
 }
