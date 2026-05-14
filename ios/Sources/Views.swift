@@ -96,6 +96,7 @@ enum SettingsFocusSection: Hashable {
 
 private enum SettingsPage: String, CaseIterable, Identifiable {
     case profile
+    case devices
     case messaging
     case notifications
     case media
@@ -112,6 +113,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .profile: return "Profile"
+        case .devices: return "Devices"
         case .messaging: return "Messaging"
         case .notifications: return "Notifications"
         case .media: return "Media"
@@ -128,6 +130,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .profile: return "person.crop.circle.fill"
+        case .devices: return "laptopcomputer.and.iphone"
         case .messaging: return "bubble.left.and.bubble.right.fill"
         case .notifications: return "bell.fill"
         case .media: return "photo.fill"
@@ -144,6 +147,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     var accessibilityID: String {
         switch self {
         case .profile: return "settingsProfileRow"
+        case .devices: return "settingsDevicesRow"
         case .messaging: return "settingsMessagingRow"
         case .notifications: return "settingsNotificationsRow"
         case .media: return "settingsMediaRow"
@@ -159,6 +163,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
 
     static var menuPages: [SettingsPage] {
         var pages: [SettingsPage] = [
+            .devices,
             .messaging,
             .notifications,
             .media,
@@ -5549,10 +5554,34 @@ struct GroupDetailsScreen: View {
 }
 
 struct DeviceRosterScreen: View {
-    @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     @State private var deviceInput = ""
     @State private var showingScanner = false
+
+    var body: some View {
+        IrisScrollScreen {
+            DeviceRosterContent(
+                manager: manager,
+                deviceInput: $deviceInput,
+                showingScanner: $showingScanner
+            )
+        }
+        .sheet(isPresented: $showingScanner) {
+            QrScannerSheet { code in
+                deviceInput = code
+                showingScanner = false
+            }
+            .irisModalSurface()
+            .irisDismissOnMacOutsideClick { showingScanner = false }
+        }
+    }
+}
+
+private struct DeviceRosterContent: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    @Binding var deviceInput: String
+    @Binding var showingScanner: Bool
 
     private var resolvedInput: ResolvedDeviceAuthorizationInput? {
         guard let roster = manager.state.deviceRoster else {
@@ -5586,104 +5615,94 @@ struct DeviceRosterScreen: View {
     }
 
     var body: some View {
-        IrisScrollScreen {
-            if let roster = manager.state.deviceRoster {
-                IrisSectionCard(accent: true) {
-                    CardHeader(
-                        title: "Linked devices",
-                        subtitle: "These devices can use your profile."
-                    )
+        if let roster = manager.state.deviceRoster {
+            IrisSectionCard(accent: true) {
+                CardHeader(
+                    title: "Linked devices",
+                    subtitle: "These devices can use your profile."
+                )
 
-                    Button("Copy user ID") {
-                        manager.copyToClipboard(roster.ownerNpub)
-                    }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .accessibilityIdentifier("deviceRosterOwnerNpub")
+                Button("Copy user ID") {
+                    manager.copyToClipboard(roster.ownerNpub)
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("deviceRosterOwnerNpub")
 
-                    Button("Copy this device code") {
-                        manager.copyToClipboard(roster.currentDeviceNpub)
-                    }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .accessibilityIdentifier("deviceRosterCurrentDeviceNpub")
+                Button("Copy this device code") {
+                    manager.copyToClipboard(roster.currentDeviceNpub)
+                }
+                .buttonStyle(IrisSecondaryButtonStyle())
+                .accessibilityIdentifier("deviceRosterCurrentDeviceNpub")
+            }
+
+            IrisSectionCard {
+                CardHeader(
+                    title: "Link another device",
+                    subtitle: deviceAccessSubtitle
+                )
+
+                TextField("Link code", text: $deviceInput)
+                    .irisIdentifierInputModifiers()
+                    .textFieldStyle(.plain)
+                    .irisInputField()
+                    .accessibilityIdentifier("deviceRosterAddInput")
+
+                if let error = resolvedInput?.errorMessage {
+                    Text(error)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(.red)
                 }
 
-                IrisSectionCard {
-                    CardHeader(
-                        title: "Link another device",
-                        subtitle: deviceAccessSubtitle
+                VStack(spacing: 10) {
+                    if irisSupportsQrScanning {
+                        Button("Scan code") { showingScanner = true }
+                            .buttonStyle(IrisSecondaryButtonStyle())
+                            .accessibilityIdentifier("deviceRosterScanButton")
+                    }
+                    Button(manager.state.busy.updatingRoster ? "Linking…" : "Link device") {
+                        let normalized = resolvedInput?.deviceInput ?? ""
+                        manager.addAuthorizedDevice(deviceInput: normalized)
+                        deviceInput = ""
+                    }
+                    .buttonStyle(IrisPrimaryButtonStyle())
+                    .disabled(
+                        roster.canManageDevices == false ||
+                        manager.state.busy.updatingRoster ||
+                        (resolvedInput?.deviceInput.isEmpty ?? true)
                     )
-
-                    TextField("Link code", text: $deviceInput)
-                        .irisIdentifierInputModifiers()
-                        .textFieldStyle(.plain)
-                        .irisInputField()
-                        .accessibilityIdentifier("deviceRosterAddInput")
-
-                    if let error = resolvedInput?.errorMessage {
-                        Text(error)
-                            .font(.system(.footnote, design: .rounded))
-                            .foregroundStyle(.red)
-                    }
-
-                    VStack(spacing: 10) {
-                        if irisSupportsQrScanning {
-                            Button("Scan code") { showingScanner = true }
-                                .buttonStyle(IrisSecondaryButtonStyle())
-                                .accessibilityIdentifier("deviceRosterScanButton")
-                        }
-                        Button(manager.state.busy.updatingRoster ? "Linking…" : "Link device") {
-                            let normalized = resolvedInput?.deviceInput ?? ""
-                            manager.addAuthorizedDevice(deviceInput: normalized)
-                            deviceInput = ""
-                        }
-                        .buttonStyle(IrisPrimaryButtonStyle())
-                        .disabled(
-                            roster.canManageDevices == false ||
-                            manager.state.busy.updatingRoster ||
-                            (resolvedInput?.deviceInput.isEmpty ?? true)
-                        )
-                        .accessibilityIdentifier("deviceRosterAddButton")
-                    }
+                    .accessibilityIdentifier("deviceRosterAddButton")
                 }
+            }
 
-                IrisSectionCard {
-                    CardHeader(
-                        title: "Devices",
-                        subtitle: "\(roster.devices.count) linked"
-                    )
+            IrisSectionCard {
+                CardHeader(
+                    title: "Devices",
+                    subtitle: "\(roster.devices.count) linked"
+                )
 
-                    if roster.devices.isEmpty {
-                        Text("No linked devices")
-                            .font(.system(.headline, design: .rounded, weight: .semibold))
-                            .foregroundStyle(palette.textPrimary)
-                            .accessibilityIdentifier("deviceRosterEmptyState")
-                        Text("Linked devices will appear here.")
-                            .font(.system(.body, design: .rounded))
-                            .foregroundStyle(palette.muted)
-                    } else {
-                        ForEach(Array(roster.devices.enumerated()), id: \.element.devicePubkeyHex) { index, device in
-                            DeviceRosterRow(manager: manager, device: device, canManageDevices: roster.canManageDevices)
-                            if index < roster.devices.count - 1 {
-                                Divider().overlay(palette.border)
-                            }
-                        }
-                    }
-                }
-            } else {
-                IrisSectionCard {
-                    Text("Devices unavailable.")
+                if roster.devices.isEmpty {
+                    Text("No linked devices")
                         .font(.system(.headline, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.textPrimary)
+                        .accessibilityIdentifier("deviceRosterEmptyState")
+                    Text("Linked devices will appear here.")
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                } else {
+                    ForEach(Array(roster.devices.enumerated()), id: \.element.devicePubkeyHex) { index, device in
+                        DeviceRosterRow(manager: manager, device: device, canManageDevices: roster.canManageDevices)
+                        if index < roster.devices.count - 1 {
+                            Divider().overlay(palette.border)
+                        }
+                    }
                 }
             }
-        }
-        .sheet(isPresented: $showingScanner) {
-            QrScannerSheet { code in
-                deviceInput = code
-                showingScanner = false
+        } else {
+            IrisSectionCard {
+                Text("Devices unavailable.")
+                    .font(.system(.headline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
             }
-            .irisModalSurface()
-            .irisDismissOnMacOutsideClick { showingScanner = false }
         }
     }
 }
@@ -5831,6 +5850,8 @@ struct SettingsScreen: View {
     @State private var selectedPage: SettingsPage?
     @State private var supportBundleBusy = false
     @State private var supportBundleShareItem: SupportBundleShareItem?
+    @State private var deviceRosterInput = ""
+    @State private var showingDeviceRosterScanner = false
 
     init(
         manager: AppManager,
@@ -5870,6 +5891,14 @@ struct SettingsScreen: View {
         )
         .sheet(item: $supportBundleShareItem) { item in
             SupportBundleShareSheet(item: item)
+        }
+        .sheet(isPresented: $showingDeviceRosterScanner) {
+            QrScannerSheet { code in
+                deviceRosterInput = code
+                showingDeviceRosterScanner = false
+            }
+            .irisModalSurface()
+            .irisDismissOnMacOutsideClick { showingDeviceRosterScanner = false }
         }
         .sheet(isPresented: $showingProfileQr) {
             if let account = manager.state.account {
@@ -6034,7 +6063,7 @@ struct SettingsScreen: View {
             }
 
             SettingsMenuSection {
-                ForEach(SettingsPage.menuPages.prefix(6)) { page in
+                ForEach(SettingsPage.menuPages.prefix(7)) { page in
                     SettingsMenuRow(page: page, selected: selectedPage == page) {
                         selectedPage = page
                     }
@@ -6042,7 +6071,7 @@ struct SettingsScreen: View {
             }
 
             SettingsMenuSection {
-                ForEach(Array(SettingsPage.menuPages.dropFirst(6))) { page in
+                ForEach(Array(SettingsPage.menuPages.dropFirst(7))) { page in
                     SettingsMenuRow(page: page, selected: selectedPage == page) {
                         selectedPage = page
                     }
@@ -6074,12 +6103,16 @@ struct SettingsScreen: View {
                     account: account,
                     profileName: $profileName,
                     openProfilePicture: { profilePictureViewerItem = $0 },
-                    showQrCode: { showingProfileQr = true },
-                    manageDevices: {
-                        manager.dispatch(.pushScreen(screen: .deviceRoster))
-                    }
+                    showQrCode: { showingProfileQr = true }
                 )
             }
+
+        case .devices:
+            DeviceRosterContent(
+                manager: manager,
+                deviceInput: $deviceRosterInput,
+                showingScanner: $showingDeviceRosterScanner
+            )
 
         case .messaging:
             IrisSectionCard {
@@ -7194,7 +7227,6 @@ private struct ProfileEditorCard: View {
     @Binding var profileName: String
     let openProfilePicture: (IrisProfilePictureViewerItem) -> Void
     let showQrCode: () -> Void
-    let manageDevices: () -> Void
     @State private var showingProfilePicturePicker = false
     @State private var showingProfilePictureSourceMenu = false
     #if canImport(PhotosUI)
@@ -7246,14 +7278,6 @@ private struct ProfileEditorCard: View {
             }
             .buttonStyle(IrisSecondaryButtonStyle())
             .accessibilityIdentifier("myProfileQrButton")
-
-            Button {
-                manageDevices()
-            } label: {
-                Label("Manage devices", systemImage: "laptopcomputer.and.iphone")
-            }
-            .buttonStyle(IrisSecondaryButtonStyle())
-            .accessibilityIdentifier("myProfileManageDevicesButton")
 
             VStack(spacing: 10) {
                 IrisCopyButton(label: "Copy user ID", value: account.npub, compact: false)
