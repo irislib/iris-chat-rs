@@ -6364,6 +6364,8 @@ private struct ProfileQrCodePane: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     let account: AccountSnapshot
+    @State private var copiedUserID = false
+    @State private var copyResetTask: Task<Void, Never>?
 
     private var displayName: String {
         account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName
@@ -6376,8 +6378,11 @@ private struct ProfileQrCodePane: View {
                     .frame(maxWidth: 420)
 
                 HStack(spacing: 26) {
-                    ProfileQrActionButton(systemImage: "doc.on.doc.fill", title: "Copy") {
-                        manager.copyToClipboard(account.npub)
+                    ProfileQrActionButton(
+                        systemImage: copiedUserID ? "checkmark" : "doc.on.doc.fill",
+                        title: copiedUserID ? "Copied" : "Copy"
+                    ) {
+                        copyUserID()
                     }
                     .accessibilityIdentifier("profileQrCopyButton")
 
@@ -6400,6 +6405,10 @@ private struct ProfileQrCodePane: View {
         }
         .scrollIndicators(.hidden)
         .accessibilityIdentifier("profileQrCodeTab")
+        .onDisappear {
+            copyResetTask?.cancel()
+            copyResetTask = nil
+        }
     }
 
     private var qrCard: some View {
@@ -6426,6 +6435,23 @@ private struct ProfileQrCodePane: View {
             RoundedRectangle(cornerRadius: 26, style: .continuous)
                 .fill(Color(red: 0.83, green: 0.91, blue: 1.0))
         )
+    }
+
+    private func copyUserID() {
+        manager.copyToClipboard(account.npub)
+        copyResetTask?.cancel()
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
+            copiedUserID = true
+        }
+        copyResetTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    copiedUserID = false
+                }
+            }
+        }
     }
 
 }

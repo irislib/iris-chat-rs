@@ -508,7 +508,7 @@ struct IrisTopBar: View {
 
 enum IrisNavigationHeaderMetrics {
     static let barHeight: CGFloat = 48
-    static let fadeTailHeight: CGFloat = 48
+    static let fadeTailHeight: CGFloat = 28
 
     static func contentTopInset(topSafeArea: CGFloat, isChatHeader: Bool) -> CGFloat {
         topSafeArea + barHeight + (isChatHeader ? 4 : 6)
@@ -542,9 +542,9 @@ struct IrisNavigationHeaderChrome: View {
     var body: some View {
         LinearGradient(
             colors: [
-                palette.background,
-                palette.background.opacity(0.96),
-                palette.background.opacity(0.72),
+                palette.background.opacity(0.74),
+                palette.background.opacity(0.60),
+                palette.background.opacity(0.28),
                 palette.background.opacity(0)
             ],
             startPoint: .top,
