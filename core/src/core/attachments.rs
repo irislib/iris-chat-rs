@@ -100,7 +100,9 @@ fn find_file_links(text: &str) -> Vec<FileLinkMatch> {
 
         let mut nhash_end = nhash_start;
         while nhash_end < bytes.len() {
-            let byte = bytes[nhash_end];
+            let Some(&byte) = bytes.get(nhash_end) else {
+                break;
+            };
             if byte == b'/' {
                 break;
             }
@@ -110,14 +112,17 @@ fn find_file_links(text: &str) -> Vec<FileLinkMatch> {
             nhash_end += 1;
         }
 
-        if nhash_end >= bytes.len() || bytes[nhash_end] != b'/' {
+        if bytes.get(nhash_end) != Some(&b'/') {
             i = nhash_start + "nhash1".len();
             continue;
         }
 
         let file_start = nhash_end + 1;
         let mut file_end = file_start;
-        while file_end < bytes.len() && !bytes[file_end].is_ascii_whitespace() {
+        while bytes
+            .get(file_end)
+            .is_some_and(|byte| !byte.is_ascii_whitespace())
+        {
             file_end += 1;
         }
         if file_end == file_start {
@@ -193,14 +198,22 @@ fn percent_decode(value: &str) -> String {
     let mut i = 0usize;
 
     while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let (Some(high), Some(low)) = (hex_value(bytes[i + 1]), hex_value(bytes[i + 2])) {
+        let Some(&byte) = bytes.get(i) else {
+            break;
+        };
+        if byte == b'%' {
+            if let (Some(&first), Some(&second)) = (bytes.get(i + 1), bytes.get(i + 2)) {
+                let (Some(high), Some(low)) = (hex_value(first), hex_value(second)) else {
+                    out.push(byte);
+                    i += 1;
+                    continue;
+                };
                 out.push((high << 4) | low);
                 i += 3;
                 continue;
             }
         }
-        out.push(bytes[i]);
+        out.push(byte);
         i += 1;
     }
 

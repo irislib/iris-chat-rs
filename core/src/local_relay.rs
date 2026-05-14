@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::mpsc as std_mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::Duration as StdDuration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::net::TcpListener;
@@ -17,6 +17,10 @@ struct RelayState {
     events_by_id: BTreeMap<String, Value>,
     subscriptions: HashMap<usize, HashMap<String, Vec<Value>>>,
     clients: HashMap<usize, mpsc::UnboundedSender<Message>>,
+}
+
+fn lock_relay_state(state: &Arc<Mutex<RelayState>>) -> MutexGuard<'_, RelayState> {
+    state.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 enum RelayControl {
@@ -33,7 +37,18 @@ pub struct TestRelay {
 
 impl TestRelay {
     pub fn start() -> Self {
-        Self::start_with_bind("127.0.0.1:0").expect("start relay")
+        match Self::start_with_bind("127.0.0.1:0") {
+            Ok(relay) => relay,
+            Err(error) => {
+                eprintln!("failed to start local relay: {error}");
+                let (control_tx, _) = mpsc::unbounded_channel();
+                Self {
+                    control_tx,
+                    join: None,
+                    url: String::new(),
+                }
+            }
+        }
     }
 
     pub fn start_with_bind(bind_addr: &str) -> Result<Self> {
@@ -42,22 +57,38 @@ impl TestRelay {
         let bind_addr = bind_addr.to_string();
 
         let join = thread::spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
+            let runtime = match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .build()
-                .expect("relay runtime");
+            {
+                Ok(runtime) => runtime,
+                Err(error) => {
+                    let _ = ready_tx.send(Err(anyhow!("relay runtime: {error}")));
+                    return;
+                }
+            };
 
             runtime.block_on(async move {
-                let listener = TcpListener::bind(&bind_addr)
+                let listener = match TcpListener::bind(&bind_addr)
                     .await
                     .with_context(|| format!("bind relay listener {bind_addr}"))
-                    .expect("bind relay listener");
-                let local_addr = listener.local_addr().expect("relay local addr");
+                {
+                    Ok(listener) => listener,
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(error));
+                        return;
+                    }
+                };
+                let local_addr = match listener.local_addr() {
+                    Ok(addr) => addr,
+                    Err(error) => {
+                        let _ = ready_tx.send(Err(anyhow!("relay local addr: {error}")));
+                        return;
+                    }
+                };
                 let state = Arc::new(Mutex::new(RelayState::default()));
                 let next_client_id = Arc::new(std::sync::atomic::AtomicUsize::new(1));
-                ready_tx
-                    .send(format!("ws://{local_addr}"))
-                    .expect("signal relay ready");
+                let _ = ready_tx.send(Ok(format!("ws://{local_addr}")));
 
                 loop {
                     tokio::select! {
@@ -65,9 +96,7 @@ impl TestRelay {
                             match control {
                                 RelayControl::ReplayStored => replay_stored_events(&state),
                                 RelayControl::Snapshot(reply_tx) => {
-                                    let events = state
-                                        .lock()
-                                        .expect("relay state lock")
+                                    let events = lock_relay_state(&state)
                                         .events_by_id
                                         .values()
                                         .cloned()
@@ -78,7 +107,9 @@ impl TestRelay {
                             }
                         }
                         accept_result = listener.accept() => {
-                            let (stream, _) = accept_result.expect("accept relay client");
+                            let Ok((stream, _)) = accept_result else {
+                                break;
+                            };
                             let websocket = match accept_async(stream).await {
                                 Ok(websocket) => websocket,
                                 Err(error) => {
@@ -99,7 +130,7 @@ impl TestRelay {
 
         let url = ready_rx
             .recv_timeout(StdDuration::from_secs(5))
-            .context("relay ready")?;
+            .context("relay ready")??;
 
         Ok(Self {
             control_tx,
@@ -180,7 +211,7 @@ async fn handle_connection(
     let (client_tx, mut client_rx) = mpsc::unbounded_channel::<Message>();
 
     {
-        let mut relay = state.lock().expect("relay state lock");
+        let mut relay = lock_relay_state(&state);
         relay.clients.insert(client_id, client_tx);
     }
 
@@ -200,7 +231,7 @@ async fn handle_connection(
             Message::Text(text) => handle_client_message(client_id, &text, &state),
             Message::Ping(payload) => {
                 let sender = {
-                    let relay = state.lock().expect("relay state lock");
+                    let relay = lock_relay_state(&state);
                     relay.clients.get(&client_id).cloned()
                 };
                 if let Some(sender) = sender {
@@ -213,7 +244,7 @@ async fn handle_connection(
     }
 
     {
-        let mut relay = state.lock().expect("relay state lock");
+        let mut relay = lock_relay_state(&state);
         relay.clients.remove(&client_id);
         relay.subscriptions.remove(&client_id);
     }
@@ -234,7 +265,7 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
 
     match kind {
         "REQ" if parts.len() >= 2 => {
-            let Some(subscription_id) = parts[1].as_str() else {
+            let Some(subscription_id) = parts.get(1).and_then(Value::as_str) else {
                 return;
             };
             let filters: Vec<Value> = parts
@@ -244,7 +275,7 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
                 .cloned()
                 .collect();
             let (sender, events) = {
-                let mut relay = state.lock().expect("relay state lock");
+                let mut relay = lock_relay_state(state);
                 relay
                     .subscriptions
                     .entry(client_id)
@@ -268,21 +299,23 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
             }
         }
         "CLOSE" if parts.len() >= 2 => {
-            let Some(subscription_id) = parts[1].as_str() else {
+            let Some(subscription_id) = parts.get(1).and_then(Value::as_str) else {
                 return;
             };
-            let mut relay = state.lock().expect("relay state lock");
+            let mut relay = lock_relay_state(state);
             if let Some(subscriptions) = relay.subscriptions.get_mut(&client_id) {
                 subscriptions.remove(subscription_id);
             }
         }
-        "EVENT" if parts.len() >= 2 && parts[1].is_object() => {
-            let event = parts[1].clone();
+        "EVENT" if parts.get(1).is_some_and(Value::is_object) => {
+            let Some(event) = parts.get(1).cloned() else {
+                return;
+            };
             let Some(event_id) = event.get("id").and_then(Value::as_str) else {
                 return;
             };
             let (sender, deliveries) = {
-                let mut relay = state.lock().expect("relay state lock");
+                let mut relay = lock_relay_state(state);
                 relay
                     .events_by_id
                     .insert(event_id.to_string(), event.clone());
@@ -304,7 +337,7 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
 
 fn replay_stored_events(state: &Arc<Mutex<RelayState>>) {
     let deliveries = {
-        let relay = state.lock().expect("relay state lock");
+        let relay = lock_relay_state(state);
         relay
             .events_by_id
             .values()

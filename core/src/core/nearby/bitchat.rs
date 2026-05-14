@@ -127,7 +127,7 @@ impl BitchatPacket {
         match self.version {
             VERSION_1 => data.extend_from_slice(&(self.payload.len() as u16).to_be_bytes()),
             VERSION_2 => data.extend_from_slice(&(self.payload.len() as u32).to_be_bytes()),
-            _ => unreachable!(),
+            other => return Err(BitchatCodecError::UnsupportedVersion(other)),
         }
         data.extend_from_slice(&self.sender_id);
         if let Some(recipient_id) = self.recipient_id {
@@ -224,15 +224,22 @@ impl AnnouncementPacket {
             if data.len().saturating_sub(offset) < 2 {
                 return Err(BitchatCodecError::InvalidTlv);
             }
-            let tlv_type = data[offset];
-            offset += 1;
-            let length = data[offset] as usize;
-            offset += 1;
-            if data.len().saturating_sub(offset) < length {
+            let Some(&tlv_type) = data.get(offset) else {
                 return Err(BitchatCodecError::InvalidTlv);
-            }
-            let value = &data[offset..offset + length];
-            offset += length;
+            };
+            offset += 1;
+            let Some(&length) = data.get(offset) else {
+                return Err(BitchatCodecError::InvalidTlv);
+            };
+            let length = length as usize;
+            offset += 1;
+            let Some(end) = offset.checked_add(length) else {
+                return Err(BitchatCodecError::InvalidTlv);
+            };
+            let Some(value) = data.get(offset..end) else {
+                return Err(BitchatCodecError::InvalidTlv);
+            };
+            offset = end;
 
             match tlv_type {
                 0x01 => {
@@ -278,20 +285,29 @@ fn decode_core(data: &[u8]) -> Result<BitchatPacket, BitchatCodecError> {
         return Err(BitchatCodecError::FrameTooShort);
     }
 
-    let version = data[0];
+    let Some(&version) = data.first() else {
+        return Err(BitchatCodecError::FrameTooShort);
+    };
     let fixed_header_size = header_size(version)?;
     if data.len() < fixed_header_size + PEER_ID_SIZE {
         return Err(BitchatCodecError::FrameTooShort);
     }
 
-    let packet_type = data[1];
-    let ttl = data[2];
+    let Some(&packet_type) = data.get(1) else {
+        return Err(BitchatCodecError::FrameTooShort);
+    };
+    let Some(&ttl) = data.get(2) else {
+        return Err(BitchatCodecError::FrameTooShort);
+    };
     let timestamp_ms = u64::from_be_bytes(
-        data[3..11]
+        data.get(3..11)
+            .ok_or(BitchatCodecError::FrameTooShort)?
             .try_into()
             .map_err(|_| BitchatCodecError::FrameTooShort)?,
     );
-    let flags = data[11];
+    let Some(&flags) = data.get(11) else {
+        return Err(BitchatCodecError::FrameTooShort);
+    };
     let has_recipient = (flags & FLAG_HAS_RECIPIENT) != 0;
     let has_signature = (flags & FLAG_HAS_SIGNATURE) != 0;
     let is_compressed = (flags & FLAG_IS_COMPRESSED) != 0;
@@ -300,18 +316,22 @@ fn decode_core(data: &[u8]) -> Result<BitchatPacket, BitchatCodecError> {
 
     let (payload_len, mut offset) = match version {
         VERSION_1 => {
-            let bytes: [u8; 2] = data[12..14]
+            let bytes: [u8; 2] = data
+                .get(12..14)
+                .ok_or(BitchatCodecError::FrameTooShort)?
                 .try_into()
                 .map_err(|_| BitchatCodecError::FrameTooShort)?;
             (u16::from_be_bytes(bytes) as usize, HEADER_SIZE_V1)
         }
         VERSION_2 => {
-            let bytes: [u8; 4] = data[12..16]
+            let bytes: [u8; 4] = data
+                .get(12..16)
+                .ok_or(BitchatCodecError::FrameTooShort)?
                 .try_into()
                 .map_err(|_| BitchatCodecError::FrameTooShort)?;
             (u32::from_be_bytes(bytes) as usize, HEADER_SIZE_V2)
         }
-        _ => unreachable!(),
+        other => return Err(BitchatCodecError::UnsupportedVersion(other)),
     };
     if payload_len > MAX_PAYLOAD_BYTES {
         return Err(BitchatCodecError::InvalidLength);
@@ -328,7 +348,10 @@ fn decode_core(data: &[u8]) -> Result<BitchatPacket, BitchatCodecError> {
         if data.len().saturating_sub(offset) < 1 {
             return Err(BitchatCodecError::FrameTooShort);
         }
-        let route_count = data[offset] as usize;
+        let Some(&route_count) = data.get(offset) else {
+            return Err(BitchatCodecError::FrameTooShort);
+        };
+        let route_count = route_count as usize;
         offset += 1;
         let mut hops = Vec::with_capacity(route_count);
         for _ in 0..route_count {
@@ -345,7 +368,10 @@ fn decode_core(data: &[u8]) -> Result<BitchatPacket, BitchatCodecError> {
     if data.len().saturating_sub(offset) < payload_len {
         return Err(BitchatCodecError::FrameTooShort);
     }
-    let payload = data[offset..offset + payload_len].to_vec();
+    let Some(payload_slice) = data.get(offset..offset + payload_len) else {
+        return Err(BitchatCodecError::FrameTooShort);
+    };
+    let payload = payload_slice.to_vec();
     offset += payload_len;
 
     let signature = if has_signature {
@@ -353,7 +379,10 @@ fn decode_core(data: &[u8]) -> Result<BitchatPacket, BitchatCodecError> {
             return Err(BitchatCodecError::FrameTooShort);
         }
         let mut signature = [0u8; SIGNATURE_SIZE];
-        signature.copy_from_slice(&data[offset..offset + SIGNATURE_SIZE]);
+        let Some(signature_slice) = data.get(offset..offset + SIGNATURE_SIZE) else {
+            return Err(BitchatCodecError::FrameTooShort);
+        };
+        signature.copy_from_slice(signature_slice);
         Some(signature)
     } else {
         None
@@ -386,7 +415,10 @@ fn read_peer_id(data: &[u8], offset: &mut usize) -> Result<[u8; PEER_ID_SIZE], B
         return Err(BitchatCodecError::FrameTooShort);
     }
     let mut peer_id = [0u8; PEER_ID_SIZE];
-    peer_id.copy_from_slice(&data[*offset..*offset + PEER_ID_SIZE]);
+    let Some(peer_id_slice) = data.get(*offset..*offset + PEER_ID_SIZE) else {
+        return Err(BitchatCodecError::FrameTooShort);
+    };
+    peer_id.copy_from_slice(peer_id_slice);
     *offset += PEER_ID_SIZE;
     Ok(peer_id)
 }
@@ -431,8 +463,13 @@ fn unpad(data: &[u8]) -> Vec<u8> {
         return data.to_vec();
     }
     let padding_start = data.len() - padding_len;
-    if data[padding_start..].iter().all(|byte| *byte == last) {
-        data[..padding_start].to_vec()
+    let Some(padding) = data.get(padding_start..) else {
+        return data.to_vec();
+    };
+    if padding.iter().all(|byte| *byte == last) {
+        data.get(..padding_start)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| data.to_vec())
     } else {
         data.to_vec()
     }

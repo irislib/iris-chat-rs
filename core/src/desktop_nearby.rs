@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, Shutdown, SocketAddr, SocketAddrV4, TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -60,6 +60,12 @@ struct DesktopNearbyInner {
 struct DesktopNearbyConnection {
     writer: Arc<Mutex<TcpStream>>,
     peer_id: Option<String>,
+}
+
+fn lock_desktop_nearby_inner(
+    inner: &Arc<Mutex<DesktopNearbyInner>>,
+) -> MutexGuard<'_, DesktopNearbyInner> {
+    inner.lock().unwrap_or_else(|poison| poison.into_inner())
 }
 
 #[derive(Clone)]
@@ -157,7 +163,7 @@ impl DesktopNearbyService {
 
         let stop_flag = Arc::new(AtomicBool::new(false));
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             if inner.visible {
                 drop(inner);
                 self.announce_to_connected_peers();
@@ -181,7 +187,7 @@ impl DesktopNearbyService {
 
         let mdns_self = self.clone_handles();
         let mdns_stop = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             inner.stop_flag.clone()
         };
         thread::spawn(move || mdns_self.mdns_loop(udp, local_addr, port, mdns_stop));
@@ -192,7 +198,7 @@ impl DesktopNearbyService {
 
     pub fn stop(&self) {
         let writers = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             inner.stop_flag.store(true, Ordering::SeqCst);
             inner.visible = false;
             inner.status = "Off".to_string();
@@ -216,7 +222,7 @@ impl DesktopNearbyService {
     }
 
     pub fn snapshot(&self) -> DesktopNearbySnapshot {
-        let inner = self.inner.lock().unwrap();
+        let inner = lock_desktop_nearby_inner(&self.inner);
         snapshot_locked(&inner)
     }
 
@@ -229,7 +235,7 @@ impl DesktopNearbyService {
             event_json,
         };
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             inner.own_outbound.insert(event_id.clone(), record.clone());
             inner.forwarded.remove(&event_id);
             if kind == 0 {
@@ -261,7 +267,7 @@ impl DesktopNearbyService {
 
     fn set_status(&self, status: &str) {
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             inner.status = status.to_string();
         }
         self.notify();
@@ -279,7 +285,7 @@ impl DesktopNearbyService {
 
     fn send_hello(&self, excluding_peer_id: Option<&str>) {
         let (nonce, name, visible) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             (
                 inner.local_nonce.clone(),
                 inner.local_name.clone(),
@@ -297,7 +303,7 @@ impl DesktopNearbyService {
 
     fn send_inventory(&self, excluding_peer_id: Option<&str>) {
         let records = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             mailbag_events(&inner)
         };
         if records.is_empty() {
@@ -335,7 +341,7 @@ impl DesktopNearbyService {
 
     fn send_presence(&self, remote_nonce: &str) {
         let (peer_id, local_nonce, profile_event_id) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             (
                 inner.peer_id.clone(),
                 inner.local_nonce.clone(),
@@ -365,7 +371,7 @@ impl DesktopNearbyService {
         let key = format!("{response_key}|{remote_nonce}");
         let now = Instant::now();
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             if !force
                 && inner
                     .presence_sent_at
@@ -385,7 +391,7 @@ impl DesktopNearbyService {
     fn send_inventory_after_hello_if_needed(&self, response_key: &str, force: bool) {
         let now = Instant::now();
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             if !force
                 && inner
                     .peer_inventory_sent_at
@@ -406,7 +412,7 @@ impl DesktopNearbyService {
 
     fn send_envelope(&self, envelope: &NearbyEnvelope, excluding_peer_id: Option<&str>) {
         let visible = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             inner.visible
         };
         if !visible {
@@ -423,7 +429,7 @@ impl DesktopNearbyService {
 
     fn send_frame(&self, frame: &[u8], excluding_peer_id: Option<&str>) {
         let writers = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             inner
                 .connections
                 .iter()
@@ -448,7 +454,7 @@ impl DesktopNearbyService {
             }
         }
         if !failed.is_empty() {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             for id in failed {
                 inner.connections.remove(&id);
             }
@@ -508,7 +514,7 @@ impl DesktopNearbyRuntime {
             }
             if now.duration_since(last_announce) >= MDNS_ANNOUNCE_INTERVAL {
                 let packet = {
-                    let inner = self.inner.lock().unwrap();
+                    let inner = lock_desktop_nearby_inner(&self.inner);
                     mdns_response_packet(&inner.peer_id, local_addr, port)
                 };
                 let _ = socket.send_to(&packet, mdns_addr());
@@ -523,10 +529,13 @@ impl DesktopNearbyRuntime {
                     if count == 0 {
                         continue;
                     }
-                    if let Some(packet) = MdnsPacket::parse(&buffer[..count]) {
+                    let Some(packet_bytes) = buffer.get(..count) else {
+                        continue;
+                    };
+                    if let Some(packet) = MdnsPacket::parse(packet_bytes) {
                         if packet.queries_service() {
                             let response = {
-                                let inner = self.inner.lock().unwrap();
+                                let inner = lock_desktop_nearby_inner(&self.inner);
                                 mdns_response_packet(&inner.peer_id, local_addr, port)
                             };
                             let _ = socket.send_to(&response, mdns_addr());
@@ -545,12 +554,12 @@ impl DesktopNearbyRuntime {
 
     fn handle_mdns_packet(&self, packet: MdnsPacket, _source: SocketAddr) {
         let own_peer_id = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             inner.peer_id.clone()
         };
         let mut targets = Vec::new();
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             for instance_name in packet.ptr_instances {
                 if instance_name.contains(&own_peer_id) {
                     continue;
@@ -598,7 +607,7 @@ impl DesktopNearbyRuntime {
             ) {
                 Ok(stream) => self.add_connection(stream, remote_peer_id, Some(key)),
                 Err(_) => {
-                    let mut inner = self.inner.lock().unwrap();
+                    let mut inner = lock_desktop_nearby_inner(&self.inner);
                     inner.endpoint_keys.remove(&key);
                 }
             }
@@ -618,7 +627,7 @@ impl DesktopNearbyRuntime {
         };
         let connection_id = random_id();
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             if !inner.visible {
                 return;
             }
@@ -663,7 +672,7 @@ impl DesktopNearbyRuntime {
 
     fn close_connection(&self, connection_id: &str) {
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             inner.connections.remove(connection_id);
             inner.connection_nonces.remove(connection_id);
             inner.status = if !inner.visible {
@@ -682,7 +691,7 @@ impl DesktopNearbyRuntime {
             return;
         };
         let (own_peer_id, remote_peer_id) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             (
                 inner.peer_id.clone(),
                 inner
@@ -721,7 +730,7 @@ impl DesktopNearbyRuntime {
         name: Option<&str>,
     ) {
         let (was_new, nonce_changed) = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             if let Some(nonce) = remote_nonce.as_ref() {
                 inner
                     .connection_nonces
@@ -764,7 +773,7 @@ impl DesktopNearbyRuntime {
 
     fn handle_inventory(&self, id: &str, size: u64) {
         let wanted = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             id.len() == 64
                 && (1..=MAX_FRAME_BODY_BYTES as u64).contains(&size)
                 && !inner.own_outbound.contains_key(id)
@@ -777,7 +786,7 @@ impl DesktopNearbyRuntime {
 
     fn handle_want(&self, id: &str) {
         let record = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             inner
                 .own_outbound
                 .get(id)
@@ -808,7 +817,7 @@ impl DesktopNearbyRuntime {
             return;
         }
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             if let Some(existing) = inner
                 .own_outbound
                 .get(&record.id)
@@ -823,7 +832,7 @@ impl DesktopNearbyRuntime {
             return;
         }
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             remember_profile(&mut inner, event_json, remote_peer_id);
             inner.forwarded.insert(record.id.clone(), record);
             prune_mailbags(&mut inner);
@@ -845,7 +854,7 @@ impl DesktopNearbyRuntime {
             return false;
         };
         let (local_nonce, nonce_candidates) = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             let nonce_candidates = if let Some(remote_nonce) =
                 remote_peer_id.and_then(|peer_id| inner.peer_nonces.get(peer_id))
             {
@@ -900,7 +909,7 @@ impl DesktopNearbyRuntime {
             return false;
         };
         {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             if let Some(connection) = inner.connections.get_mut(connection_id) {
                 connection.peer_id = Some(peer_id.clone());
             }
@@ -914,7 +923,7 @@ impl DesktopNearbyRuntime {
     }
 
     fn touch_peer(&self, peer_id: &str) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = lock_desktop_nearby_inner(&self.inner);
         if let Some(peer) = inner.peers.get_mut(peer_id) {
             peer.last_seen = Instant::now();
         }
@@ -922,7 +931,7 @@ impl DesktopNearbyRuntime {
 
     fn run_maintenance(&self) {
         let stale = {
-            let mut inner = self.inner.lock().unwrap();
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
             if !inner.visible {
                 return;
             }
@@ -953,7 +962,7 @@ impl DesktopNearbyRuntime {
 
     fn notify(&self) {
         let snapshot = {
-            let inner = self.inner.lock().unwrap();
+            let inner = lock_desktop_nearby_inner(&self.inner);
             snapshot_locked(&inner)
         };
         self.observer.desktop_nearby_changed(snapshot);
@@ -1451,15 +1460,13 @@ impl MdnsPacket {
                 }
                 1 => {
                     if rdlen == 4 {
-                        packet.a_records.push((
-                            name,
-                            Ipv4Addr::new(
-                                bytes[offset],
-                                bytes[offset + 1],
-                                bytes[offset + 2],
-                                bytes[offset + 3],
-                            ),
-                        ));
+                        let Some(addr_bytes) = bytes.get(offset..offset + 4) else {
+                            continue;
+                        };
+                        let Ok(addr_bytes) = <[u8; 4]>::try_from(addr_bytes) else {
+                            continue;
+                        };
+                        packet.a_records.push((name, Ipv4Addr::from(addr_bytes)));
                     }
                 }
                 _ => {}
@@ -1634,8 +1641,14 @@ fn fallback_profile_name_for_identity(identity: &str) -> String {
     let hash = trimmed.bytes().fold(0_u32, |hash, byte| {
         hash.wrapping_mul(31).wrapping_add(byte as u32)
     });
-    let adjective = ADJECTIVES[(hash as usize) % ADJECTIVES.len()];
-    let noun = NOUNS[((hash as usize) / ADJECTIVES.len()) % NOUNS.len()];
+    let adjective = ADJECTIVES
+        .get((hash as usize) % ADJECTIVES.len())
+        .copied()
+        .unwrap_or("Quiet");
+    let noun = NOUNS
+        .get(((hash as usize) / ADJECTIVES.len()) % NOUNS.len())
+        .copied()
+        .unwrap_or("Listener");
     format!("{adjective} {noun}")
 }
 

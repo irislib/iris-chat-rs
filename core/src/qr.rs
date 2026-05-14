@@ -53,7 +53,9 @@ pub fn encode_device_approval_qr(owner_input: String, device_input: String) -> S
         return String::new();
     }
 
-    let mut url = Url::parse("ndrdemo://device-link").expect("valid device approval base url");
+    let Ok(mut url) = Url::parse("ndrdemo://device-link") else {
+        return String::new();
+    };
     url.query_pairs_mut()
         .append_pair("owner", owner)
         .append_pair("device", device);

@@ -310,7 +310,9 @@ impl AppCore {
         }
 
         let mut next = self.preferences.nostr_relay_urls.clone();
-        next[index] = new_normalized;
+        if let Some(relay) = next.get_mut(index) {
+            *relay = new_normalized;
+        }
         self.apply_nostr_relay_urls(next);
     }
 

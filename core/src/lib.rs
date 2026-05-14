@@ -28,6 +28,8 @@ use crate::core::AppCore;
 
 uniffi::setup_scaffolding!();
 
+pub(crate) const CORE_RESTART_TOAST: &str = "Iris needs restart. Copy support bundle in Settings.";
+
 #[uniffi::export(callback_interface)]
 pub trait AppReconciler: Send + Sync + 'static {
     fn reconcile(&self, update: AppUpdate);
@@ -111,12 +113,12 @@ pub struct FfiApp {
     update_rx: Receiver<AppUpdate>,
     listening: AtomicBool,
     shared_state: Arc<RwLock<AppState>>,
-    /// Shared SQLite handle used by `search`. None when `try_new`
-    /// failed (we surface a toast to the user instead of bringing up
-    /// a working core).
-    shared_db: Option<crate::core::SharedConnection>,
+    /// Shared SQLite handle used by direct read FFI calls. The core
+    /// supervisor swaps this when it recreates `AppCore` after a panic.
+    shared_db: Arc<RwLock<Option<crate::core::SharedConnection>>>,
     perf: FfiPerfCounters,
     queue_metrics: Arc<CoreQueueMetrics>,
+    recovery: Arc<CoreRecoveryState>,
 }
 
 #[derive(Default, Debug)]
@@ -154,6 +156,74 @@ impl CoreQueueMetrics {
     }
 }
 
+#[derive(Default, Debug)]
+struct CoreRecoveryState {
+    restore_action: RwLock<Option<AppAction>>,
+    restart_count: AtomicU64,
+    last_panic: RwLock<Option<String>>,
+}
+
+impl CoreRecoveryState {
+    fn remember_action(&self, action: &AppAction) {
+        match action {
+            AppAction::RestoreSession { .. } | AppAction::RestoreAccountBundle { .. } => {
+                self.set_restore_action(Some(action.clone()));
+            }
+            AppAction::Logout => self.set_restore_action(None),
+            _ => {}
+        }
+    }
+
+    fn remember_update(&self, update: &AppUpdate) {
+        if let AppUpdate::PersistAccountBundle {
+            owner_nsec,
+            owner_pubkey_hex,
+            device_nsec,
+            ..
+        } = update
+        {
+            self.set_restore_action(Some(AppAction::RestoreAccountBundle {
+                owner_nsec: owner_nsec.clone(),
+                owner_pubkey_hex: owner_pubkey_hex.clone(),
+                device_nsec: device_nsec.clone(),
+            }));
+        }
+    }
+
+    fn restore_action(&self) -> Option<AppAction> {
+        match self.restore_action.read() {
+            Ok(action) => action.clone(),
+            Err(poison) => poison.into_inner().clone(),
+        }
+    }
+
+    fn mark_panic(&self, detail: String) -> u64 {
+        match self.last_panic.write() {
+            Ok(mut slot) => *slot = Some(detail),
+            Err(poison) => *poison.into_inner() = Some(detail),
+        }
+        self.restart_count.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    fn restart_count(&self) -> u64 {
+        self.restart_count.load(Ordering::Relaxed)
+    }
+
+    fn last_panic(&self) -> Option<String> {
+        match self.last_panic.read() {
+            Ok(slot) => slot.clone(),
+            Err(poison) => poison.into_inner().clone(),
+        }
+    }
+
+    fn set_restore_action(&self, action: Option<AppAction>) {
+        match self.restore_action.write() {
+            Ok(mut slot) => *slot = action,
+            Err(poison) => *poison.into_inner() = action,
+        }
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct FfiDesktopNearby {
     service: Arc<desktop_nearby::DesktopNearbyService>,
@@ -186,6 +256,7 @@ impl FfiApp {
         self.perf.dispatch.fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.dispatch", (), || {
             crate::perflog!("ffi.dispatch action={:?}", std::mem::discriminant(&action));
+            self.recovery.remember_action(&action);
             let _ = self.foreground_tx.send(CoreMsg::Action(action));
         })
     }
@@ -269,7 +340,8 @@ impl FfiApp {
                 } else {
                     filter_threads_for_search(&state_snapshot.chat_list, trimmed)
                 };
-                let messages = match self.shared_db.as_ref() {
+                let shared_db = self.shared_db_snapshot();
+                let messages = match shared_db.as_ref() {
                     Some(shared) => match shared.lock() {
                         Ok(conn) => crate::core::search_messages_fts(
                             &conn,
@@ -323,7 +395,7 @@ impl FfiApp {
             };
             crate::core::chat_snapshot_from_state_and_db(
                 &state_snapshot,
-                self.shared_db.as_ref(),
+                self.shared_db_snapshot().as_ref(),
                 &chat_id,
                 limit.max(1) as usize,
             )
@@ -343,7 +415,7 @@ impl FfiApp {
             };
             crate::core::chat_snapshot_before_from_state_and_db(
                 &state_snapshot,
-                self.shared_db.as_ref(),
+                self.shared_db_snapshot().as_ref(),
                 &chat_id,
                 &before_message_id,
                 limit.max(1) as usize,
@@ -365,7 +437,7 @@ impl FfiApp {
             };
             crate::core::chat_snapshot_around_message_from_state_and_db(
                 &state_snapshot,
-                self.shared_db.as_ref(),
+                self.shared_db_snapshot().as_ref(),
                 &chat_id,
                 &message_id,
                 before_limit as usize,
@@ -592,6 +664,9 @@ impl FfiApp {
                 "last_batch_size": self.queue_metrics.last_batch_size.load(Ordering::Relaxed),
                 "last_batch_foreground_count": self.queue_metrics.last_batch_foreground_count.load(Ordering::Relaxed),
                 "last_batch_background_count": self.queue_metrics.last_batch_background_count.load(Ordering::Relaxed),
+                "core_restarts": self.recovery.restart_count(),
+                "last_core_panic": self.recovery.last_panic(),
+                "has_cached_restore_action": self.recovery.restore_action().is_some(),
             }),
         );
         serde_json::Value::Object(object).to_string()
@@ -607,6 +682,7 @@ impl FfiApp {
         }
 
         let update_rx = self.update_rx.clone();
+        let recovery = self.recovery.clone();
         let spawn_result = thread::Builder::new()
             .name("iris-updates".to_string())
             .spawn(move || {
@@ -624,13 +700,15 @@ impl FfiApp {
                 while let Ok(first) = update_rx.recv() {
                     let mut latest_full_state: Option<AppUpdate> = None;
                     let mut sidecar: Vec<AppUpdate> = Vec::new();
-                    let process =
-                        |update: AppUpdate,
-                         latest: &mut Option<AppUpdate>,
-                         side: &mut Vec<AppUpdate>| match update {
+                    let process = |update: AppUpdate,
+                                   latest: &mut Option<AppUpdate>,
+                                   side: &mut Vec<AppUpdate>| {
+                        recovery.remember_update(&update);
+                        match update {
                             full @ AppUpdate::FullState(_) => *latest = Some(full),
                             other => side.push(other),
-                        };
+                        }
+                    };
                     process(first, &mut latest_full_state, &mut sidecar);
                     while let Ok(next) = update_rx.try_recv() {
                         process(next, &mut latest_full_state, &mut sidecar);
@@ -659,6 +737,15 @@ impl FfiApp {
         if let Err(error) = spawn_result {
             crate::perflog!("updates.spawn.failed error={error}");
             self.listening.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+impl FfiApp {
+    fn shared_db_snapshot(&self) -> Option<crate::core::SharedConnection> {
+        match self.shared_db.read() {
+            Ok(slot) => slot.clone(),
+            Err(poison) => poison.into_inner().clone(),
         }
     }
 }
@@ -696,79 +783,42 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
     let (background_tx, background_rx) = flume::unbounded();
     let shared_state = Arc::new(RwLock::new(AppState::empty()));
     let queue_metrics = Arc::new(CoreQueueMetrics::default());
+    let recovery = Arc::new(CoreRecoveryState::default());
+    let shared_db = Arc::new(RwLock::new(None));
 
-    let core_tx_for_thread = background_tx.clone();
-    let shared_for_thread = shared_state.clone();
     let update_tx_for_error = update_tx.clone();
-    let mut shared_db = None;
-    match AppCore::try_new(update_tx, core_tx_for_thread, data_dir, shared_for_thread) {
-        Ok(mut core) => {
-            shared_db = Some(core.shared_db());
-            let queue_metrics_for_thread = queue_metrics.clone();
-            let foreground_rx_for_thread = foreground_rx.clone();
-            let background_rx_for_thread = background_rx.clone();
-            let spawn_result =
-                thread::Builder::new()
-                    .name("iris-core".to_string())
-                    .spawn(move || {
-                        // User actions and synchronous shell requests must not sit behind
-                        // relay/nearby backlog. The core keeps internal work on a
-                        // background queue and drains it in bounded chunks between
-                        // foreground batches.
-                        while let Ok(batch) =
-                            recv_core_batch(&foreground_rx_for_thread, &background_rx_for_thread)
-                        {
-                            let batch_size = batch.len();
-                            let foreground_count = batch
-                                .iter()
-                                .filter(|msg| is_foreground_core_msg(msg))
-                                .count() as u64;
-                            let background_count = batch_size as u64 - foreground_count;
-                            queue_metrics_for_thread.mark_batch_start(
-                                batch_size as u64,
-                                foreground_count,
-                                background_count,
-                            );
-                            let t0 = crate::perflog::now_ms();
-                            crate::perflog!("core.batch.start size={batch_size}");
-                            match catch_core_batch(|| {
-                                handle_core_batch_responsive(&mut core, batch)
-                            }) {
-                                Ok(true) => {}
-                                Ok(false) => break,
-                                Err(error) => {
-                                    core.mark_core_panic(error);
-                                    break;
-                                }
-                            }
-                            crate::perflog!(
-                                "core.batch.end size={batch_size} elapsed_ms={}",
-                                crate::perflog::now_ms().saturating_sub(t0)
-                            );
-                            queue_metrics_for_thread
-                                .mark_batch_finished(foreground_count, background_count);
-                        }
-                    });
+    match AppCore::try_new(
+        update_tx.clone(),
+        background_tx.clone(),
+        data_dir.clone(),
+        shared_state.clone(),
+    ) {
+        Ok(core) => {
+            set_shared_db(&shared_db, Some(core.shared_db()));
+            let spawn_result = spawn_core_supervisor(
+                core,
+                CoreSupervisor {
+                    data_dir,
+                    update_tx: update_tx.clone(),
+                    core_sender: background_tx.clone(),
+                    foreground_rx: foreground_rx.clone(),
+                    background_rx: background_rx.clone(),
+                    shared_state: shared_state.clone(),
+                    shared_db: shared_db.clone(),
+                    queue_metrics: queue_metrics.clone(),
+                    recovery: recovery.clone(),
+                },
+            );
             if let Err(error) = spawn_result {
-                let mut state = AppState::empty();
-                state.toast = Some(format!("Iris could not start: {error}"));
-                state.rev = 1;
-                match shared_state.write() {
-                    Ok(mut slot) => *slot = state.clone(),
-                    Err(poison) => *poison.into_inner() = state.clone(),
-                }
-                let _ = update_tx_for_error.send(AppUpdate::FullState(state));
+                publish_core_failure_state(
+                    &shared_state,
+                    &update_tx_for_error,
+                    format!("Iris could not start: {error}"),
+                );
             }
         }
         Err(error) => {
-            let mut state = AppState::empty();
-            state.toast = Some(error.to_string());
-            state.rev = 1;
-            match shared_state.write() {
-                Ok(mut slot) => *slot = state.clone(),
-                Err(poison) => *poison.into_inner() = state.clone(),
-            }
-            let _ = update_tx_for_error.send(AppUpdate::FullState(state));
+            publish_core_failure_state(&shared_state, &update_tx_for_error, error.to_string());
         }
     }
 
@@ -783,6 +833,7 @@ fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
         shared_db,
         perf: FfiPerfCounters::default(),
         queue_metrics,
+        recovery,
     })
 }
 
@@ -802,10 +853,166 @@ fn ffi_app_failure(message: String) -> Arc<FfiApp> {
         update_rx,
         listening: AtomicBool::new(false),
         shared_state,
-        shared_db: None,
+        shared_db: Arc::new(RwLock::new(None)),
         perf: FfiPerfCounters::default(),
         queue_metrics: Arc::new(CoreQueueMetrics::default()),
+        recovery: Arc::new(CoreRecoveryState::default()),
     })
+}
+
+struct CoreSupervisor {
+    data_dir: String,
+    update_tx: Sender<AppUpdate>,
+    core_sender: Sender<CoreMsg>,
+    foreground_rx: Receiver<CoreMsg>,
+    background_rx: Receiver<CoreMsg>,
+    shared_state: Arc<RwLock<AppState>>,
+    shared_db: Arc<RwLock<Option<crate::core::SharedConnection>>>,
+    queue_metrics: Arc<CoreQueueMetrics>,
+    recovery: Arc<CoreRecoveryState>,
+}
+
+fn spawn_core_supervisor(
+    core: AppCore,
+    supervisor: CoreSupervisor,
+) -> std::io::Result<thread::JoinHandle<()>> {
+    thread::Builder::new()
+        .name("iris-core".to_string())
+        .spawn(move || {
+            let mut core_slot = Some(core);
+            // User actions and synchronous shell requests must not sit behind
+            // relay/nearby backlog. The core keeps internal work on a
+            // background queue and drains it in bounded chunks between
+            // foreground batches.
+            while let Ok(batch) =
+                recv_core_batch(&supervisor.foreground_rx, &supervisor.background_rx)
+            {
+                let batch_size = batch.len();
+                let foreground_count = batch
+                    .iter()
+                    .filter(|msg| is_foreground_core_msg(msg))
+                    .count() as u64;
+                let background_count = batch_size as u64 - foreground_count;
+                supervisor.queue_metrics.mark_batch_start(
+                    batch_size as u64,
+                    foreground_count,
+                    background_count,
+                );
+                let t0 = crate::perflog::now_ms();
+                crate::perflog!("core.batch.start size={batch_size}");
+                let result = match core_slot.as_mut() {
+                    Some(core) => catch_core_batch(|| handle_core_batch_responsive(core, batch)),
+                    None => break,
+                };
+                let elapsed_ms = crate::perflog::now_ms().saturating_sub(t0);
+                supervisor
+                    .queue_metrics
+                    .mark_batch_finished(foreground_count, background_count);
+                match result {
+                    Ok(true) => {
+                        crate::perflog!(
+                            "core.batch.end size={batch_size} elapsed_ms={elapsed_ms}"
+                        );
+                    }
+                    Ok(false) => {
+                        crate::perflog!(
+                            "core.batch.end size={batch_size} elapsed_ms={elapsed_ms} result=shutdown"
+                        );
+                        break;
+                    }
+                    Err(error) => {
+                        if let Some(mut failed_core) = core_slot.take() {
+                            failed_core.record_core_panic(error.clone());
+                        }
+                        crate::perflog!(
+                            "core.batch.end size={batch_size} elapsed_ms={elapsed_ms} result=panic"
+                        );
+                        match recover_core_after_panic(&supervisor, error) {
+                            Some(core) => core_slot = Some(core),
+                            None => break,
+                        }
+                    }
+                }
+            }
+        })
+}
+
+fn recover_core_after_panic(supervisor: &CoreSupervisor, detail: String) -> Option<AppCore> {
+    let restart_count = supervisor.recovery.mark_panic(detail);
+    crate::perflog!("core.supervisor.restart count={restart_count}");
+    set_shared_db(&supervisor.shared_db, None);
+
+    let mut core = match AppCore::try_new(
+        supervisor.update_tx.clone(),
+        supervisor.core_sender.clone(),
+        supervisor.data_dir.clone(),
+        supervisor.shared_state.clone(),
+    ) {
+        Ok(core) => core,
+        Err(error) => {
+            crate::perflog!("core.supervisor.restart.failed count={restart_count} error={error}");
+            publish_core_failure_state(
+                &supervisor.shared_state,
+                &supervisor.update_tx,
+                CORE_RESTART_TOAST.to_string(),
+            );
+            return None;
+        }
+    };
+
+    set_shared_db(&supervisor.shared_db, Some(core.shared_db()));
+    if let Some(action) = supervisor.recovery.restore_action() {
+        crate::perflog!(
+            "core.supervisor.restore action={:?}",
+            std::mem::discriminant(&action)
+        );
+        match catch_core_batch(|| core.handle_message(CoreMsg::Action(action))) {
+            Ok(true) => {}
+            Ok(false) => {
+                publish_core_failure_state(
+                    &supervisor.shared_state,
+                    &supervisor.update_tx,
+                    CORE_RESTART_TOAST.to_string(),
+                );
+                return None;
+            }
+            Err(error) => {
+                core.mark_core_panic(format!("core recovery restore panic: {error}"));
+                return None;
+            }
+        }
+    }
+
+    crate::perflog!("core.supervisor.recovered count={restart_count}");
+    Some(core)
+}
+
+fn set_shared_db(
+    shared_db: &Arc<RwLock<Option<crate::core::SharedConnection>>>,
+    value: Option<crate::core::SharedConnection>,
+) {
+    match shared_db.write() {
+        Ok(mut slot) => *slot = value,
+        Err(poison) => *poison.into_inner() = value,
+    }
+}
+
+fn publish_core_failure_state(
+    shared_state: &Arc<RwLock<AppState>>,
+    update_tx: &Sender<AppUpdate>,
+    message: String,
+) {
+    let mut state = match shared_state.read() {
+        Ok(slot) => slot.clone(),
+        Err(poison) => poison.into_inner().clone(),
+    };
+    state.toast = Some(message);
+    state.rev = state.rev.saturating_add(1).max(1);
+    match shared_state.write() {
+        Ok(mut slot) => *slot = state.clone(),
+        Err(poison) => *poison.into_inner() = state.clone(),
+    }
+    let _ = update_tx.send(AppUpdate::FullState(state));
 }
 
 const CORE_FOREGROUND_BATCH_LIMIT: usize = 64;
@@ -1508,5 +1715,71 @@ mod ffi_hardening_tests {
     fn core_batch_guard_preserves_success_result() {
         assert_eq!(catch_core_batch(|| true), Ok(true));
         assert_eq!(catch_core_batch(|| false), Ok(false));
+    }
+
+    #[test]
+    fn recovery_state_tracks_restore_action_and_logout() {
+        let recovery = CoreRecoveryState::default();
+        recovery.remember_action(&AppAction::RestoreSession {
+            owner_nsec: "secret".to_string(),
+        });
+
+        match recovery.restore_action() {
+            Some(AppAction::RestoreSession { owner_nsec }) => assert_eq!(owner_nsec, "secret"),
+            other => panic!("unexpected restore action: {other:?}"),
+        }
+
+        recovery.remember_action(&AppAction::Logout);
+        assert!(recovery.restore_action().is_none());
+    }
+
+    #[test]
+    fn recovery_state_tracks_persisted_account_bundle() {
+        let recovery = CoreRecoveryState::default();
+        recovery.remember_update(&AppUpdate::PersistAccountBundle {
+            rev: 7,
+            owner_nsec: None,
+            owner_pubkey_hex: "owner".to_string(),
+            device_nsec: "device-secret".to_string(),
+        });
+
+        match recovery.restore_action() {
+            Some(AppAction::RestoreAccountBundle {
+                owner_nsec,
+                owner_pubkey_hex,
+                device_nsec,
+            }) => {
+                assert_eq!(owner_nsec, None);
+                assert_eq!(owner_pubkey_hex, "owner");
+                assert_eq!(device_nsec, "device-secret");
+            }
+            other => panic!("unexpected restore action: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn core_supervisor_recovers_after_batch_panic() {
+        let temp_dir = tempfile::TempDir::new().expect("temp dir");
+        let app = new_ffi_app_inner(temp_dir.path().to_string_lossy().to_string());
+
+        app.foreground_tx
+            .send(CoreMsg::PanicForTest)
+            .expect("send test panic");
+
+        for _ in 0..40 {
+            if app.recovery.restart_count() > 0 {
+                break;
+            }
+            thread::sleep(Duration::from_millis(25));
+        }
+        assert_eq!(app.recovery.restart_count(), 1);
+
+        let (reply_tx, reply_rx) = flume::bounded(1);
+        app.foreground_tx
+            .send(CoreMsg::CorePerfCounters(reply_tx))
+            .expect("send post-recovery request");
+        assert!(reply_rx.recv_timeout(Duration::from_secs(2)).is_ok());
+
+        app.shutdown();
     }
 }

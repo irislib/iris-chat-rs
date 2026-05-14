@@ -517,8 +517,8 @@ impl AppCore {
                     .map(ProtocolEngine::known_group_sender_event_pubkeys)
                     .unwrap_or_default()
             });
-        if direct_authors.len() == 1 {
-            self.fetch_recent_messages_for_author(direct_authors[0], now, CATCH_UP_LOOKBACK_SECS);
+        if let [author] = direct_authors.as_slice() {
+            self.fetch_recent_messages_for_author(*author, now, CATCH_UP_LOOKBACK_SECS);
         } else {
             self.fetch_recent_messages_for_authors(direct_authors, now, CATCH_UP_LOOKBACK_SECS);
         }
@@ -1024,7 +1024,12 @@ impl AppCore {
             self.relay_transport_runtime
                 .retry_backoff_attempt
                 .min((RELAY_TRANSPORT_RETRY_BACKOFF_SECS.len() - 1) as u32) as usize;
-        let delay = Duration::from_secs(RELAY_TRANSPORT_RETRY_BACKOFF_SECS[attempt_index]);
+        let delay = Duration::from_secs(
+            RELAY_TRANSPORT_RETRY_BACKOFF_SECS
+                .get(attempt_index)
+                .copied()
+                .unwrap_or(1),
+        );
         self.relay_transport_runtime.retry_backoff_attempt = self
             .relay_transport_runtime
             .retry_backoff_attempt

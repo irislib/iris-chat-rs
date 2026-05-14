@@ -149,8 +149,8 @@ fn apply_reaction_from(
     {
         if emoji.is_empty() {
             message.reactors.remove(index);
-        } else {
-            message.reactors[index].emoji = emoji;
+        } else if let Some(reactor) = message.reactors.get_mut(index) {
+            reactor.emoji = emoji;
         }
     } else if !emoji.is_empty() {
         message.reactors.push(MessageReactor {

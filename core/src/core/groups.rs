@@ -316,8 +316,10 @@ impl AppCore {
             }
             GroupIncomingEvent::Message(message) => {
                 let chat_id = group_chat_id(&message.group_id);
-                let sender_owner = PublicKey::from_slice(&message.sender_owner.to_bytes())
-                    .expect("owner pubkey bytes must be valid");
+                let Ok(sender_owner) = PublicKey::from_slice(&message.sender_owner.to_bytes())
+                else {
+                    return;
+                };
                 let body = String::from_utf8_lossy(&message.body).to_string();
                 if let Some(runtime_rumor) = parse_runtime_rumor(&body) {
                     self.apply_group_runtime_rumor(&chat_id, sender_owner, runtime_rumor);

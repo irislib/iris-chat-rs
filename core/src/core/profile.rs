@@ -183,7 +183,13 @@ pub(super) fn fallback_profile_name_for_identity(identity: &str) -> String {
     let hash = trimmed.bytes().fold(0_u32, |hash, byte| {
         hash.wrapping_mul(31).wrapping_add(byte as u32)
     });
-    let adjective = ADJECTIVES[(hash as usize) % ADJECTIVES.len()];
-    let noun = NOUNS[((hash as usize) / ADJECTIVES.len()) % NOUNS.len()];
+    let adjective = ADJECTIVES
+        .get((hash as usize) % ADJECTIVES.len())
+        .copied()
+        .unwrap_or("Quiet");
+    let noun = NOUNS
+        .get(((hash as usize) / ADJECTIVES.len()) % NOUNS.len())
+        .copied()
+        .unwrap_or("Listener");
     format!("{adjective} {noun}")
 }

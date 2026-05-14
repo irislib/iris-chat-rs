@@ -1014,13 +1014,15 @@ impl ProtocolEngine {
         invite: &Invite,
         owner_pubkey_hint: Option<PublicKey>,
     ) -> anyhow::Result<ProtocolAcceptInviteResult> {
-        let invite_owner = owner_pubkey_hint
-            .or_else(|| {
-                invite
-                    .inviter_owner_pubkey
-                    .and_then(|owner| public_owner(owner).ok())
-            })
-            .unwrap_or_else(|| public_device(invite.inviter_device_pubkey).unwrap());
+        let invite_owner = if let Some(owner) = owner_pubkey_hint.or_else(|| {
+            invite
+                .inviter_owner_pubkey
+                .and_then(|owner| public_owner(owner).ok())
+        }) {
+            owner
+        } else {
+            public_device(invite.inviter_device_pubkey)?
+        };
         let mut invite = invite.clone();
         invite.inviter_owner_pubkey = Some(ndr_owner(invite_owner));
         self.session_manager

@@ -10,7 +10,7 @@ use hashtree_core::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLockReadGuard, RwLockWriteGuard};
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -22,6 +22,18 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 fn shared_chunk_cache() -> &'static std::sync::RwLock<HashMap<String, Vec<u8>>> {
     static CACHE: OnceLock<std::sync::RwLock<HashMap<String, Vec<u8>>>> = OnceLock::new();
     CACHE.get_or_init(|| std::sync::RwLock::new(HashMap::new()))
+}
+
+fn shared_chunk_cache_read() -> RwLockReadGuard<'static, HashMap<String, Vec<u8>>> {
+    shared_chunk_cache()
+        .read()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
+
+fn shared_chunk_cache_write() -> RwLockWriteGuard<'static, HashMap<String, Vec<u8>>> {
+    shared_chunk_cache()
+        .write()
+        .unwrap_or_else(|poison| poison.into_inner())
 }
 
 impl AppCore {
@@ -83,7 +95,11 @@ impl AppCore {
             }
         };
 
-        let logged_in = self.logged_in.as_ref().expect("logged_in checked above");
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            self.state.toast = Some("Create or restore a profile first.".to_string());
+            self.emit_state();
+            return;
+        };
         let upload_keys = logged_in
             .owner_keys
             .as_ref()
@@ -404,7 +420,7 @@ impl Store for UploadingBlossomStore {
         // file still exists on this device and can be rendered immediately;
         // a real sync layer will publish it to peers later.
         {
-            let mut cache = shared_chunk_cache().write().unwrap();
+            let mut cache = shared_chunk_cache_write();
             cache.insert(hash_hex.clone(), data.clone());
         }
 
@@ -441,7 +457,7 @@ impl Store for UploadingBlossomStore {
     async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
         let key = to_hex(hash);
         {
-            let cache = shared_chunk_cache().read().unwrap();
+            let cache = shared_chunk_cache_read();
             if let Some(data) = cache.get(&key) {
                 return Ok(Some(data.clone()));
             }
@@ -455,7 +471,7 @@ impl Store for UploadingBlossomStore {
                         "download hash mismatch for {key}"
                     )));
                 }
-                let mut cache = shared_chunk_cache().write().unwrap();
+                let mut cache = shared_chunk_cache_write();
                 cache.insert(key, data.clone());
                 Ok(Some(data))
             }
@@ -466,7 +482,7 @@ impl Store for UploadingBlossomStore {
     async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
         let key = to_hex(hash);
         {
-            let cache = shared_chunk_cache().read().unwrap();
+            let cache = shared_chunk_cache_read();
             if cache.contains_key(&key) {
                 return Ok(true);
             }
@@ -484,7 +500,7 @@ impl Store for UploadingBlossomStore {
     async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
         let key = to_hex(hash);
         let mut removed = {
-            let mut cache = shared_chunk_cache().write().unwrap();
+            let mut cache = shared_chunk_cache_write();
             cache.remove(&key).is_some()
         };
         let mut uploaded = self.uploaded.write().await;

@@ -104,8 +104,9 @@ fn decode_hex(value: &str) -> Option<Vec<u8>> {
     }
     let mut bytes = Vec::with_capacity(normalized.len() / 2);
     for pair in normalized.as_bytes().chunks_exact(2) {
-        let high = hex_value(pair[0])?;
-        let low = hex_value(pair[1])?;
+        let [first, second] = <[u8; 2]>::try_from(pair).ok()?;
+        let high = hex_value(first)?;
+        let low = hex_value(second)?;
         bytes.push((high << 4) | low);
     }
     Some(bytes)

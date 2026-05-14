@@ -34,7 +34,12 @@ impl AppCore {
         });
         let profile_event_id = profile_event_id.trim();
         if profile_event_id.len() == 64 {
-            content["profile_event_id"] = serde_json::Value::String(profile_event_id.to_string());
+            if let Some(object) = content.as_object_mut() {
+                object.insert(
+                    "profile_event_id".to_string(),
+                    serde_json::Value::String(profile_event_id.to_string()),
+                );
+            }
         }
 
         let Ok(event) = EventBuilder::new(

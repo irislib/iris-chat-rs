@@ -3,7 +3,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
 use nostr::Tag;
 use rusqlite::OptionalExtension;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 const MOBILE_PUSH_REACTION_KIND: u64 = 7;
@@ -555,6 +555,10 @@ struct NotificationPreviewStorage {
     deleted: Mutex<HashSet<String>>,
 }
 
+fn lock_preview_storage<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|poison| poison.into_inner())
+}
+
 impl NotificationPreviewStorage {
     fn new(base: Arc<dyn StorageAdapter>) -> Self {
         Self {
@@ -567,32 +571,32 @@ impl NotificationPreviewStorage {
 
 impl StorageAdapter for NotificationPreviewStorage {
     fn get(&self, key: &str) -> nostr_double_ratchet::Result<Option<String>> {
-        if let Some(value) = self.overlay.lock().unwrap().get(key).cloned() {
+        if let Some(value) = lock_preview_storage(&self.overlay).get(key).cloned() {
             return Ok(Some(value));
         }
-        if self.deleted.lock().unwrap().contains(key) {
+        if lock_preview_storage(&self.deleted).contains(key) {
             return Ok(None);
         }
         self.base.get(key)
     }
 
     fn put(&self, key: &str, value: String) -> nostr_double_ratchet::Result<()> {
-        self.overlay.lock().unwrap().insert(key.to_string(), value);
-        self.deleted.lock().unwrap().remove(key);
+        lock_preview_storage(&self.overlay).insert(key.to_string(), value);
+        lock_preview_storage(&self.deleted).remove(key);
         Ok(())
     }
 
     fn del(&self, key: &str) -> nostr_double_ratchet::Result<()> {
-        self.overlay.lock().unwrap().remove(key);
-        self.deleted.lock().unwrap().insert(key.to_string());
+        lock_preview_storage(&self.overlay).remove(key);
+        lock_preview_storage(&self.deleted).insert(key.to_string());
         Ok(())
     }
 
     fn list(&self, prefix: &str) -> nostr_double_ratchet::Result<Vec<String>> {
         let mut keys: HashSet<String> = self.base.list(prefix)?.into_iter().collect();
-        let deleted = self.deleted.lock().unwrap();
+        let deleted = lock_preview_storage(&self.deleted);
         keys.retain(|key| !deleted.contains(key));
-        for key in self.overlay.lock().unwrap().keys() {
+        for key in lock_preview_storage(&self.overlay).keys() {
             if key.starts_with(prefix) && !deleted.contains(key) {
                 keys.insert(key.clone());
             }
@@ -936,7 +940,12 @@ fn mobile_push_subscription_body_json(
     });
     if platform == "ios" {
         if let Some(topic) = apns_topic.map(str::trim).filter(|value| !value.is_empty()) {
-            payload["apns_topic"] = serde_json::Value::String(topic.to_string());
+            if let Some(object) = payload.as_object_mut() {
+                object.insert(
+                    "apns_topic".to_string(),
+                    serde_json::Value::String(topic.to_string()),
+                );
+            }
         }
     }
     serde_json::to_string(&payload).ok()

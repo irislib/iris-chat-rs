@@ -616,10 +616,9 @@ impl SavePlan {
                     draft = excluded.draft",
             )?;
             for chat_id in self.threads_to_write.keys() {
-                let thread = snapshot
-                    .threads
-                    .get(chat_id)
-                    .expect("plan.threads_to_write only references snapshot threads");
+                let Some(thread) = snapshot.threads.get(chat_id) else {
+                    return Err(anyhow::anyhow!("persist plan missing thread {chat_id}"));
+                };
                 thread_stmt.execute(params![
                     chat_id,
                     thread.unread_count as i64,

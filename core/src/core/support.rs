@@ -312,11 +312,15 @@ impl AppCore {
         }
     }
 
-    pub(crate) fn mark_core_panic(&mut self, detail: String) {
+    pub(crate) fn record_core_panic(&mut self, detail: String) {
         crate::perflog!("core.batch.panic detail={detail}");
         self.push_debug_log("core.panic", detail);
-        self.state.toast = Some("Iris needs restart. Copy support bundle in Settings.".to_string());
         self.persist_debug_snapshot_best_effort();
+    }
+
+    pub(crate) fn mark_core_panic(&mut self, detail: String) {
+        self.record_core_panic(detail);
+        self.state.toast = Some(crate::CORE_RESTART_TOAST.to_string());
         self.emit_state();
     }
 }

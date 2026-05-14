@@ -153,6 +153,8 @@ impl AppCore {
             CoreMsg::CorePerfCounters(_) => "CorePerfCounters",
             CoreMsg::PrepareForSuspend(_) => "PrepareForSuspend",
             CoreMsg::Shutdown(_) => "Shutdown",
+            #[cfg(test)]
+            CoreMsg::PanicForTest => "PanicForTest",
         };
         match msg {
             CoreMsg::Action(action) => self.handle_action(action),
@@ -196,6 +198,10 @@ impl AppCore {
                 }
                 return false;
             }
+            #[cfg(test)]
+            CoreMsg::PanicForTest => {
+                panic!("test core panic");
+            }
         }
         crate::perflog!(
             "handle_message label={label} elapsed_ms={}",
@@ -215,7 +221,10 @@ impl AppCore {
             return true;
         }
         if messages.len() == 1 {
-            return self.handle_message(messages.into_iter().next().unwrap());
+            let Some(message) = messages.into_iter().next() else {
+                return true;
+            };
+            return self.handle_message(message);
         }
         self.enter_batch();
         let mut keep_running = true;

@@ -44,6 +44,8 @@ pub(crate) enum CoreMsg {
     /// loops, not just FFI surface traffic.
     CorePerfCounters(Sender<CorePerfCountersSnapshot>),
     Shutdown(Option<Sender<()>>),
+    #[cfg(test)]
+    PanicForTest,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

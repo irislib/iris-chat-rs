@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cargo clippy --manifest-path "${ROOT_DIR}/core/Cargo.toml" --lib -- \
+  -A warnings \
+  -D clippy::panic \
+  -D clippy::unwrap_used \
+  -D clippy::expect_used \
+  -D clippy::unimplemented \
+  -D clippy::todo \
+  -D clippy::indexing_slicing
