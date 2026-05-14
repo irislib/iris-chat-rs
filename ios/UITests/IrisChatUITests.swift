@@ -109,6 +109,36 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "messageInfoStatus").waitForExistence(timeout: 5))
     }
 
+    func testComposerKeepsSequentialTypingOrder() throws {
+#if os(macOS)
+        throw XCTSkip("UIKit composer input is iOS-only")
+#else
+        let app = launchCleanApp()
+
+        createAccount(app)
+        openChatWithPeer(app)
+
+        let input = element(app, "chatMessageInput")
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        input.tap()
+
+        var expected = ""
+        for character in "hello" {
+            expected.append(character)
+            input.typeText(String(character))
+            XCTAssertTrue(
+                waitUntil(timeout: 2) {
+                    (input.value as? String) == expected
+                },
+                "composer value after typing \(character) was \((input.value as? String) ?? "<nil>"), expected \(expected)"
+            )
+        }
+
+        element(app, "chatSendButton").tap()
+        XCTAssertTrue(app.staticTexts["hello"].firstMatch.waitForExistence(timeout: 15))
+#endif
+    }
+
     func testComposerRestoresDraftWhenReopeningChat() throws {
 #if os(macOS)
         throw XCTSkip("Covered by the shared draft persistence unit tests on macOS")

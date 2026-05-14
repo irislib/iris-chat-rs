@@ -3237,7 +3237,7 @@ private struct ChatListTableView: UIViewRepresentable {
         tableView.backgroundColor = .clear
         tableView.separatorStyle = .none
         tableView.rowHeight = UITableView.automaticDimension
-        tableView.estimatedRowHeight = 72
+        tableView.estimatedRowHeight = 80
         tableView.contentInsetAdjustmentBehavior = .never
         tableView.keyboardDismissMode = .interactive
         tableView.sectionHeaderTopPadding = 0
@@ -3780,13 +3780,13 @@ private struct ChatListTableRowContent: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .center, spacing: IrisChatListRowMetrics.avatarTextSpacing) {
             if let leading {
                 leading
             } else {
                 IrisAvatar(
                     label: title,
-                    size: 48,
+                    size: IrisChatListRowMetrics.avatarSize,
                     emphasize: unreadCount > 0,
                     pictureUrl: pictureUrl,
                     preferences: preferences,
@@ -3794,17 +3794,17 @@ private struct ChatListTableRowContent: View {
                 )
             }
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 5) {
+            VStack(alignment: .leading, spacing: IrisChatListRowMetrics.textStackSpacing) {
+                HStack(alignment: .firstTextBaseline, spacing: IrisChatListRowMetrics.textRowSpacing) {
+                    HStack(alignment: .firstTextBaseline, spacing: IrisChatListRowMetrics.titleAccessorySpacing) {
                         Text(title)
-                            .font(.system(.headline, design: .rounded))
+                            .font(.headline)
                             .foregroundStyle(palette.textPrimary)
                             .lineLimit(1)
 
                         if isMuted {
                             Image(systemName: "bell.slash.fill")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.system(size: IrisChatListRowMetrics.muteIconSize, weight: .semibold))
                                 .foregroundStyle(palette.muted)
                                 .accessibilityLabel("muted")
                         }
@@ -3816,42 +3816,36 @@ private struct ChatListTableRowContent: View {
 
                     if let timeLabel, !timeLabel.isEmpty {
                         Text(timeLabel)
-                            .font(.system(.subheadline, design: .rounded))
+                            .font(.subheadline)
                             .foregroundStyle(palette.muted)
                             .lineLimit(1)
                     }
                 }
 
-                HStack(alignment: .center, spacing: 6) {
+                HStack(alignment: .center, spacing: IrisChatListRowMetrics.textRowSpacing) {
                     if let previewLeading {
                         previewLeading
                     }
                     previewText
-                        .font(.system(.subheadline, design: .rounded))
+                        .font(.subheadline)
                         .foregroundStyle(palette.muted)
-                        .lineLimit(previewLeading == nil ? 2 : 1)
+                        .lineLimit(previewLeading == nil ? 2 : 1, reservesSpace: previewLeading == nil)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .layoutPriority(1)
+
+                    unreadBadge
                 }
 
                 if let subtitle, !subtitle.isEmpty {
                     Text(subtitle)
-                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .font(.caption.weight(.medium))
                         .foregroundStyle(palette.muted)
                         .lineLimit(1)
                 }
             }
-
-            Text(unreadCount > 99 ? "99+" : "\(max(unreadCount, 1))")
-                .font(.system(.footnote, design: .rounded, weight: .semibold))
-                .foregroundStyle(unreadCount > 0 ? palette.onAccent : Color.clear)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .frame(minWidth: 22)
-                .background(Capsule(style: .continuous).fill(unreadCount > 0 ? palette.accent : Color.clear))
-                .padding(.top, 2)
-                .accessibilityHidden(unreadCount == 0)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
+        .padding(.horizontal, IrisChatListRowMetrics.horizontalPadding)
+        .padding(.vertical, IrisChatListRowMetrics.verticalPadding)
     }
 
     private var previewText: Text {
@@ -3859,6 +3853,20 @@ private struct ChatListTableRowContent: View {
             return Text("Draft: ").italic() + Text(draftPreview)
         }
         return Text(preview)
+    }
+
+    @ViewBuilder
+    private var unreadBadge: some View {
+        if unreadCount > 0 {
+            Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(palette.onAccent)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .frame(minWidth: 22)
+                .background(Capsule(style: .continuous).fill(palette.accent))
+                .accessibilityLabel("\(unreadCount) unread")
+        }
     }
 }
 
@@ -3956,7 +3964,7 @@ private struct NearbyWirelessAvatar: View {
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
         }
-        .frame(width: 48, height: 48)
+        .frame(width: IrisChatListRowMetrics.avatarSize, height: IrisChatListRowMetrics.avatarSize)
     }
 }
 

@@ -1005,6 +1005,17 @@ struct IrisInfoPill: View {
     }
 }
 
+enum IrisChatListRowMetrics {
+    static let avatarSize: CGFloat = 56
+    static let horizontalPadding: CGFloat = 16
+    static let verticalPadding: CGFloat = 12
+    static let avatarTextSpacing: CGFloat = 12
+    static let textRowSpacing: CGFloat = 6
+    static let titleAccessorySpacing: CGFloat = 5
+    static let textStackSpacing: CGFloat = 1
+    static let muteIconSize: CGFloat = 16
+}
+
 struct IrisChatRow: View {
     @Environment(\.irisPalette) private var palette
 
@@ -1057,19 +1068,13 @@ struct IrisChatRow: View {
 
     var body: some View {
         Button(action: onTap) {
-            // Signal-style row: 48pt avatar, title in default headline
-            // weight (not extra-bold), preview at .subheadline body
-            // weight, time label at the same .subheadline so it sits
-            // on the same baseline as the title and is comfortably
-            // readable. 12pt horizontal gap between avatar and the
-            // text column matches Signal-iOS's `ChatListCell` spec.
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .center, spacing: IrisChatListRowMetrics.avatarTextSpacing) {
                 if let leading {
                     leading
                 } else {
                     IrisAvatar(
                         label: title,
-                        size: 48,
+                        size: IrisChatListRowMetrics.avatarSize,
                         emphasize: unreadCount > 0,
                         pictureUrl: pictureUrl,
                         preferences: preferences,
@@ -1077,17 +1082,17 @@ struct IrisChatRow: View {
                     )
                 }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        HStack(alignment: .firstTextBaseline, spacing: 5) {
+                VStack(alignment: .leading, spacing: IrisChatListRowMetrics.textStackSpacing) {
+                    HStack(alignment: .firstTextBaseline, spacing: IrisChatListRowMetrics.textRowSpacing) {
+                        HStack(alignment: .firstTextBaseline, spacing: IrisChatListRowMetrics.titleAccessorySpacing) {
                             Text(title)
-                                .font(.system(.headline, design: .rounded))
+                                .font(.headline)
                                 .foregroundStyle(palette.textPrimary)
                                 .lineLimit(1)
 
                             if isMuted {
                                 Image(systemName: "bell.slash.fill")
-                                    .font(.system(size: 12, weight: .semibold))
+                                    .font(.system(size: IrisChatListRowMetrics.muteIconSize, weight: .semibold))
                                     .foregroundStyle(palette.muted)
                                     .accessibilityLabel("muted")
                             }
@@ -1099,48 +1104,53 @@ struct IrisChatRow: View {
 
                         if let timeLabel, !timeLabel.isEmpty {
                             Text(timeLabel)
-                                .font(.system(.subheadline, design: .rounded))
+                                .font(.subheadline)
                                 .foregroundStyle(palette.muted)
                                 .lineLimit(1)
                         }
                     }
 
-                    HStack(alignment: .center, spacing: 6) {
+                    HStack(alignment: .center, spacing: IrisChatListRowMetrics.textRowSpacing) {
                         if let previewLeading {
                             previewLeading
                         }
                         previewText
-                            .font(.system(.subheadline, design: .rounded))
+                            .font(.subheadline)
                             .foregroundStyle(palette.muted)
-                            // When an inline avatar group sits to the left,
-                            // clamp to a single line so the row's height
-                            // stays stable when peers come and go.
-                            .lineLimit(previewLeading == nil ? 2 : 1)
+                            .lineLimit(previewLeading == nil ? 2 : 1, reservesSpace: previewLeading == nil)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .layoutPriority(1)
+
+                        unreadBadge
                     }
 
                     if let subtitle, !subtitle.isEmpty {
                         Text(subtitle)
-                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .font(.caption.weight(.medium))
                             .foregroundStyle(palette.muted)
                             .lineLimit(1)
                     }
                 }
-
-                Text(unreadCount > 99 ? "99+" : "\(max(unreadCount, 1))")
-                    .font(.system(.footnote, design: .rounded, weight: .semibold))
-                    .foregroundStyle(unreadCount > 0 ? palette.onAccent : Color.clear)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .frame(minWidth: 22)
-                    .background(Capsule(style: .continuous).fill(unreadCount > 0 ? palette.accent : Color.clear))
-                    .padding(.top, 2)
-                    .accessibilityHidden(unreadCount == 0)
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, IrisChatListRowMetrics.horizontalPadding)
+            .padding(.vertical, IrisChatListRowMetrics.verticalPadding)
             .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
+    }
+
+    @ViewBuilder
+    private var unreadBadge: some View {
+        if unreadCount > 0 {
+            Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
+                .font(.footnote.weight(.semibold))
+                .foregroundStyle(palette.onAccent)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .frame(minWidth: 22)
+                .background(Capsule(style: .continuous).fill(palette.accent))
+                .accessibilityLabel("\(unreadCount) unread")
+        }
     }
 
     private var previewText: Text {
@@ -1586,11 +1596,13 @@ private struct IrisUIKitComposerTextView: UIViewRepresentable {
             let selectedRange = uiView.selectedRange
             uiView.text = text
             let textLength = (text as NSString).length
-            if selectedRange.location <= textLength {
+            if uiView.isFirstResponder, selectedRange.location <= textLength {
                 uiView.selectedRange = NSRange(
                     location: selectedRange.location,
                     length: min(selectedRange.length, textLength - selectedRange.location)
                 )
+            } else {
+                uiView.selectedRange = NSRange(location: textLength, length: 0)
             }
         }
         let shouldScroll = measuredHeight(for: uiView, width: uiView.bounds.width) >= maxHeight(for: uiView)
@@ -1639,11 +1651,8 @@ private struct IrisUIKitComposerTextView: UIViewRepresentable {
             shouldChangeTextIn range: NSRange,
             replacementText text: String
         ) -> Bool {
-            guard let current = textView.text as NSString? else { return true }
-            let updated = current.replacingCharacters(in: range, with: text)
-            if parent.text != updated {
-                parent.text = updated
-            }
+            // Let UIKit apply the edit before publishing it back to SwiftUI.
+            // Publishing here makes `updateUIView` race the in-flight selection.
             return true
         }
 
