@@ -106,7 +106,7 @@ git init -q --bare "$PUBLISH_REMOTE" >/dev/null
   --push-url "$PUBLISH_REMOTE" \
   --tap-repo homebrew-iris >/dev/null
 
-git clone -q "$PUBLISH_REMOTE" "$PUBLISH_WORK" >/dev/null
+git clone -q -b master "$PUBLISH_REMOTE" "$PUBLISH_WORK" >/dev/null
 test -f "$PUBLISH_WORK/Formula/iris.rb"
 test -f "$PUBLISH_WORK/Formula/htree.rb"
 grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-x86_64-unknown-linux-gnu.tar.gz")\"" \
