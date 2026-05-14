@@ -449,18 +449,25 @@ private func makeCurrentChat(
     )
 }
 
-private func makeMessage(chatId: String, id: String, body: String? = nil) -> ChatMessageSnapshot {
+private func makeMessage(
+    chatId: String,
+    id: String,
+    body: String? = nil,
+    author: String = "owner",
+    isOutgoing: Bool = true,
+    createdAtSecs: UInt64? = nil
+) -> ChatMessageSnapshot {
     ChatMessageSnapshot(
         id: id,
         chatId: chatId,
         kind: .user,
-        author: "owner",
+        author: author,
         body: body ?? "message \(id)",
         attachments: [],
         reactions: [],
         reactors: [],
-        isOutgoing: true,
-        createdAtSecs: UInt64(id) ?? 0,
+        isOutgoing: isOutgoing,
+        createdAtSecs: createdAtSecs ?? UInt64(id) ?? 0,
         expiresAtSecs: nil,
         delivery: .sent,
         recipientDeliveries: [],
@@ -563,6 +570,78 @@ final class IrisChatTests: XCTestCase {
         )
         XCTAssertGreaterThan(Set(lightColors).count, 4)
         XCTAssertGreaterThan(Set(darkColors).count, 4)
+    }
+
+    func testGroupSenderAvatarAndNameFollowAdjacentAuthorLikeSignal() {
+        let firstAlice = makeMessage(
+            chatId: "group:trip",
+            id: "100",
+            author: "Alice",
+            isOutgoing: false,
+            createdAtSecs: 100
+        )
+        let secondAlice = makeMessage(
+            chatId: "group:trip",
+            id: "500",
+            author: "Alice",
+            isOutgoing: false,
+            createdAtSecs: 500
+        )
+        let bob = makeMessage(
+            chatId: "group:trip",
+            id: "560",
+            author: "Bob",
+            isOutgoing: false,
+            createdAtSecs: 560
+        )
+
+        XCTAssertFalse(irisShowsGroupSenderAvatar(message: firstAlice, next: secondAlice, chatKind: .group))
+        XCTAssertTrue(irisShowsGroupSenderAvatar(message: secondAlice, next: bob, chatKind: .group))
+        XCTAssertTrue(irisShowsGroupSenderAvatar(message: bob, next: nil, chatKind: .group))
+
+        XCTAssertTrue(irisShowsGroupSenderName(previous: nil, message: firstAlice, chatKind: .group))
+        XCTAssertFalse(irisShowsGroupSenderName(previous: firstAlice, message: secondAlice, chatKind: .group))
+        XCTAssertTrue(irisShowsGroupSenderName(previous: secondAlice, message: bob, chatKind: .group))
+    }
+
+    func testGroupSenderAvatarAndNameResetAcrossDateBreak() {
+        let firstAlice = makeMessage(
+            chatId: "group:trip",
+            id: "100",
+            author: "Alice",
+            isOutgoing: false,
+            createdAtSecs: 100
+        )
+        let nextDayAlice = makeMessage(
+            chatId: "group:trip",
+            id: "90000",
+            author: "Alice",
+            isOutgoing: false,
+            createdAtSecs: 90_000
+        )
+
+        XCTAssertTrue(irisShowsGroupSenderAvatar(message: firstAlice, next: nextDayAlice, chatKind: .group))
+        XCTAssertTrue(irisShowsGroupSenderName(previous: firstAlice, message: nextDayAlice, chatKind: .group))
+    }
+
+    func testGroupSenderAvatarAndNameOnlyApplyToIncomingGroupMessages() {
+        let incoming = makeMessage(
+            chatId: "group:trip",
+            id: "100",
+            author: "Alice",
+            isOutgoing: false
+        )
+        let outgoing = makeMessage(
+            chatId: "group:trip",
+            id: "101",
+            author: "You",
+            isOutgoing: true
+        )
+
+        XCTAssertFalse(irisShowsGroupSenderAvatar(message: incoming, next: nil, chatKind: .direct))
+        XCTAssertFalse(irisShowsGroupSenderName(previous: nil, message: incoming, chatKind: .direct))
+        XCTAssertFalse(irisShowsGroupSenderAvatar(message: outgoing, next: nil, chatKind: .group))
+        XCTAssertFalse(irisShowsGroupSenderName(previous: nil, message: outgoing, chatKind: .group))
     }
 
     func testLaunchRecoveryDefaultsAreClearedWithoutAffectingAuthStartup() {

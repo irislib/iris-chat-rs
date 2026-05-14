@@ -106,6 +106,16 @@ struct ChatScreen: View {
                                                         chatKind: chat.kind
                                                     )
                                                 } ?? true
+                                                let showsGroupSenderName = irisShowsGroupSenderName(
+                                                    previous: previous,
+                                                    message: message,
+                                                    chatKind: chat.kind
+                                                )
+                                                let showsGroupSenderAvatar = irisShowsGroupSenderAvatar(
+                                                    message: message,
+                                                    next: next,
+                                                    chatKind: chat.kind
+                                                )
 
                                                 EquatableView(content: ChatMessageRow(
                                                     message: message,
@@ -113,6 +123,8 @@ struct ChatScreen: View {
                                                     showDayChip: showDayChip,
                                                     isFirstInCluster: isFirstInCluster,
                                                     isLastInCluster: isLastInCluster,
+                                                    showsGroupSenderName: showsGroupSenderName,
+                                                    showsGroupSenderAvatar: showsGroupSenderAvatar,
                                                     reactions: message.reactions,
                                                     swipeOffset: activeBubbleSwipe?.messageId == message.id ? activeBubbleSwipe?.offset ?? 0 : 0,
                                                     onReply: {
@@ -1105,6 +1117,42 @@ private func irisStartsMessageCluster(
     return true
 }
 
+private func irisIsIncomingGroupUserMessage(_ message: ChatMessageSnapshot, chatKind: ChatKind) -> Bool {
+    chatKind == .group && message.kind == .user && !message.isOutgoing
+}
+
+func irisShowsGroupSenderName(
+    previous: ChatMessageSnapshot?,
+    message: ChatMessageSnapshot,
+    chatKind: ChatKind
+) -> Bool {
+    guard irisIsIncomingGroupUserMessage(message, chatKind: chatKind) else {
+        return false
+    }
+    guard let previous,
+          irisIsIncomingGroupUserMessage(previous, chatKind: chatKind),
+          irisSameTimelineDay(previous.createdAtSecs, message.createdAtSecs) else {
+        return true
+    }
+    return previous.author != message.author
+}
+
+func irisShowsGroupSenderAvatar(
+    message: ChatMessageSnapshot,
+    next: ChatMessageSnapshot?,
+    chatKind: ChatKind
+) -> Bool {
+    guard irisIsIncomingGroupUserMessage(message, chatKind: chatKind) else {
+        return false
+    }
+    guard let next,
+          irisIsIncomingGroupUserMessage(next, chatKind: chatKind),
+          irisSameTimelineDay(message.createdAtSecs, next.createdAtSecs) else {
+        return true
+    }
+    return message.author != next.author
+}
+
 private enum ChatTimelineCoordinateSpace {
     static let name = "chatTimelineCoordinateSpace"
 }
@@ -1292,6 +1340,8 @@ private struct ChatMessageRow: View, Equatable {
             && lhs.showDayChip == rhs.showDayChip
             && lhs.isFirstInCluster == rhs.isFirstInCluster
             && lhs.isLastInCluster == rhs.isLastInCluster
+            && lhs.showsGroupSenderName == rhs.showsGroupSenderName
+            && lhs.showsGroupSenderAvatar == rhs.showsGroupSenderAvatar
             && lhs.swipeOffset == rhs.swipeOffset
     }
 
@@ -1302,6 +1352,8 @@ private struct ChatMessageRow: View, Equatable {
     let showDayChip: Bool
     let isFirstInCluster: Bool
     let isLastInCluster: Bool
+    let showsGroupSenderName: Bool
+    let showsGroupSenderAvatar: Bool
     let reactions: [MessageReactionSnapshot]
     let swipeOffset: CGFloat
     let onReply: () -> Void
@@ -1403,7 +1455,7 @@ private struct ChatMessageRow: View, Equatable {
                         }
 
                         VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
-                            if chatKind == .group && !message.isOutgoing && isFirstInCluster {
+                            if showsGroupSenderName {
                                 Text(message.author)
                                     .font(.system(.footnote, design: .rounded, weight: .semibold))
                                     .foregroundStyle(irisGroupSenderNameColor(
@@ -1600,7 +1652,7 @@ private struct ChatMessageRow: View, Equatable {
 
     @ViewBuilder
     private var groupSenderAvatar: some View {
-        if isLastInCluster {
+        if showsGroupSenderAvatar {
             IrisAvatar(
                 label: message.author,
                 size: SignalConversationLayout.groupMessageAvatarSize
