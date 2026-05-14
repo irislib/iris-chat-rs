@@ -6405,23 +6405,11 @@ private struct LoadingOverlay: View {
     var body: some View {
         ZStack {
             palette.background.opacity(0.4).ignoresSafeArea()
-            VStack(spacing: 14) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                Text("Loading")
-                    .font(.system(.headline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.textPrimary)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 22)
-            .background(
-                RoundedRectangle(cornerRadius: 24, style: .continuous)
-                    .fill(palette.panel)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 24, style: .continuous)
-                            .stroke(palette.border, lineWidth: 1)
-                    )
-            )
+            Image("IrisLogo")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 112, height: 112)
+                .accessibilityLabel("Iris")
         }
     }
 }
