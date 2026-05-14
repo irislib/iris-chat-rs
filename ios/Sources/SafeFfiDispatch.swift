@@ -88,6 +88,51 @@ extension FfiApp {
         }
     }
 
+    func chatSnapshotSafely(chatId: String, limit: UInt32) -> CurrentChatSnapshot? {
+        ffiOptionalCurrentChatSnapshot("ffiapp.chatSnapshot") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_chat_snapshot(
+                self.uniffiClonePointer(),
+                lowerString(chatId),
+                limit,
+                status
+            )
+        }
+    }
+
+    func chatSnapshotBeforeSafely(
+        chatId: String,
+        beforeMessageId: String,
+        limit: UInt32
+    ) -> CurrentChatSnapshot? {
+        ffiOptionalCurrentChatSnapshot("ffiapp.chatSnapshotBefore") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_chat_snapshot_before(
+                self.uniffiClonePointer(),
+                lowerString(chatId),
+                lowerString(beforeMessageId),
+                limit,
+                status
+            )
+        }
+    }
+
+    func chatSnapshotAroundMessageSafely(
+        chatId: String,
+        messageId: String,
+        beforeLimit: UInt32,
+        afterLimit: UInt32
+    ) -> CurrentChatSnapshot? {
+        ffiOptionalCurrentChatSnapshot("ffiapp.chatSnapshotAroundMessage") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_chat_snapshot_around_message(
+                self.uniffiClonePointer(),
+                lowerString(chatId),
+                lowerString(messageId),
+                beforeLimit,
+                afterLimit,
+                status
+            )
+        }
+    }
+
     func buildNearbyPresenceEventJsonSafely(
         peerID: String,
         myNonce: String,
@@ -110,6 +155,16 @@ extension FfiApp {
         ffiString("ffiapp.exportSupportBundleJson", fallback: "{}") { status in
             uniffi_iris_chat_core_fn_method_ffiapp_export_support_bundle_json(
                 self.uniffiClonePointer(),
+                status
+            )
+        }
+    }
+
+    func peerProfileDebugSafely(ownerInput: String) -> PeerProfileDebugSnapshot? {
+        ffiOptionalPeerProfileDebugSnapshot("ffiapp.peerProfileDebug") { status in
+            try uniffi_iris_chat_core_fn_method_ffiapp_peer_profile_debug(
+                self.uniffiClonePointer(),
+                lowerString(ownerInput),
                 status
             )
         }
@@ -210,6 +265,8 @@ extension FfiApp {
         }
     }
 }
+
+private typealias SafeFfiReader = (data: Data, offset: Data.Index)
 
 private func makeRustCallStatus() -> RustCallStatus {
     RustCallStatus(
@@ -313,6 +370,68 @@ private func ffiInt32(
     } catch {
         logSafeFfiFailure(label, error)
         return fallback
+    }
+}
+
+private func ffiOptionalCurrentChatSnapshot(
+    _ label: String,
+    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> RustBuffer
+) -> CurrentChatSnapshot? {
+    ffiOptional(label, liftOptionalCurrentChatSnapshot, body)
+}
+
+private func ffiOptionalPeerProfileDebugSnapshot(
+    _ label: String,
+    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> RustBuffer
+) -> PeerProfileDebugSnapshot? {
+    ffiOptional(label, liftOptionalPeerProfileDebugSnapshot, body)
+}
+
+private func ffiOptional<T>(
+    _ label: String,
+    _ lift: (RustBuffer) throws -> T?,
+    _ body: (UnsafeMutablePointer<RustCallStatus>) throws -> RustBuffer
+) -> T? {
+    do {
+        var status = makeRustCallStatus()
+        let buffer = try body(&status)
+        try checkRustCallStatus(status)
+        return try lift(buffer)
+    } catch {
+        logSafeFfiFailure(label, error)
+        return nil
+    }
+}
+
+private func liftOptionalCurrentChatSnapshot(_ buffer: RustBuffer) throws -> CurrentChatSnapshot? {
+    defer { freeRustBuffer(buffer) }
+    var reader = try safeFfiReader(from: buffer)
+    switch try readOptionalTag(from: &reader) {
+    case 0:
+        try ensureReaderConsumed(reader)
+        return nil
+    case 1:
+        let value = try FfiConverterTypeCurrentChatSnapshot.read(from: &reader)
+        try ensureReaderConsumed(reader)
+        return value
+    default:
+        throw SafeFfiDispatchError.callError("Invalid optional tag")
+    }
+}
+
+private func liftOptionalPeerProfileDebugSnapshot(_ buffer: RustBuffer) throws -> PeerProfileDebugSnapshot? {
+    defer { freeRustBuffer(buffer) }
+    var reader = try safeFfiReader(from: buffer)
+    switch try readOptionalTag(from: &reader) {
+    case 0:
+        try ensureReaderConsumed(reader)
+        return nil
+    case 1:
+        let value = try FfiConverterTypePeerProfileDebugSnapshot.read(from: &reader)
+        try ensureReaderConsumed(reader)
+        return value
+    default:
+        throw SafeFfiDispatchError.callError("Invalid optional tag")
     }
 }
 
@@ -463,6 +582,32 @@ private func liftData(_ buffer: RustBuffer) throws -> Data {
         throw SafeFfiDispatchError.callError("Short data buffer")
     }
     return Data(bytes[4..<end])
+}
+
+private func safeFfiReader(from buffer: RustBuffer) throws -> SafeFfiReader {
+    guard buffer.len <= UInt64(Int.max) else {
+        throw SafeFfiDispatchError.callError("Buffer too large")
+    }
+    guard let data = buffer.data, buffer.len > 0 else {
+        return (data: Data(), offset: 0)
+    }
+    let bytes = UnsafeBufferPointer<UInt8>(start: data, count: Int(buffer.len))
+    return (data: Data(buffer: bytes), offset: 0)
+}
+
+private func readOptionalTag(from reader: inout SafeFfiReader) throws -> Int8 {
+    guard reader.offset < reader.data.endIndex else {
+        throw SafeFfiDispatchError.callError("Short optional buffer")
+    }
+    let raw = reader.data[reader.offset]
+    reader.offset = reader.data.index(after: reader.offset)
+    return Int8(bitPattern: raw)
+}
+
+private func ensureReaderConsumed(_ reader: SafeFfiReader) throws {
+    if reader.offset != reader.data.endIndex {
+        throw SafeFfiDispatchError.callError("Incomplete data")
+    }
 }
 
 private func logSafeFfiFailure(_ label: String, _ error: Error) {

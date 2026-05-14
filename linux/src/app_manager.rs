@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -12,7 +13,9 @@ use iris_chat_core::{
 use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
 
 const ACTIVE_CHAT_SEEN_IDLE_LIMIT: Duration = Duration::from_secs(5 * 60);
+const DISPATCH_FAILURE_TOAST: &str = "Action failed. Copy support bundle in Settings.";
 const NAVIGATION_OVERRIDE_TTL: Duration = Duration::from_secs(10);
+const RESTART_REQUIRED_TOAST: &str = "Iris needs restart. Copy support bundle in Settings.";
 const ROUTE_CHAT_SNAPSHOT_LIMIT: u32 = 80;
 
 struct PendingNavigationOverride {
@@ -107,18 +110,23 @@ impl AppManager {
         let (tx, rx) = async_channel::unbounded();
         let update_tx_ui = tx.clone();
         let (nearby_tx, nearby_rx) = async_channel::unbounded();
-        ffi.listen_for_updates(Box::new(Reconciler {
-            tx,
-            secret_store: secret_store.clone(),
-        }));
+        let _ = catch_ffi("ffiapp.listen_for_updates", false, || {
+            ffi.listen_for_updates(Box::new(Reconciler {
+                tx,
+                secret_store: secret_store.clone(),
+            }));
+            true
+        });
         let nearby = FfiDesktopNearby::new(
             ffi.clone(),
             Box::new(NearbyObserver {
                 tx: nearby_tx.clone(),
             }),
         );
-        let nearby_snapshot = nearby.snapshot();
-        let initial_state = ffi.state();
+        let nearby_snapshot = catch_ffi("desktop_nearby.snapshot", empty_nearby_snapshot(), || {
+            nearby.snapshot()
+        });
+        let initial_state = catch_ffi("ffiapp.state", app_state_restart_required(), || ffi.state());
         if crate::platform::startup::is_supported() {
             let _ = crate::platform::startup::set_enabled(
                 initial_state.preferences.startup_at_login_enabled,
@@ -126,12 +134,15 @@ impl AppManager {
         }
 
         let persisted_bundle = secret_store.load();
-        let persisted_restore_in_flight = persisted_bundle.is_some();
+        let mut persisted_restore_in_flight = persisted_bundle.is_some();
         if let Some(bundle) = persisted_bundle {
-            ffi.dispatch(AppAction::RestoreAccountBundle {
-                owner_nsec: bundle.owner_nsec,
-                owner_pubkey_hex: bundle.owner_pubkey_hex,
-                device_nsec: bundle.device_nsec,
+            persisted_restore_in_flight = catch_ffi("ffiapp.restore_account_bundle", false, || {
+                ffi.dispatch(AppAction::RestoreAccountBundle {
+                    owner_nsec: bundle.owner_nsec,
+                    owner_pubkey_hex: bundle.owner_pubkey_hex,
+                    device_nsec: bundle.device_nsec,
+                });
+                true
             });
         }
 
@@ -188,8 +199,13 @@ impl AppManager {
 
     pub fn run_search(&self, limit: u32) -> SearchResultSnapshot {
         let snapshot = self.search_ui.borrow().clone();
-        self.ffi
-            .search(snapshot.query, snapshot.scope_chat_id, limit)
+        let query = snapshot.query;
+        let scope_chat_id = snapshot.scope_chat_id;
+        catch_ffi(
+            "ffiapp.search",
+            SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone()),
+            || self.ffi.search(query, scope_chat_id, limit),
+        )
     }
 
     /// Re-emit the current `AppState` on the UI update channel so the
@@ -413,7 +429,9 @@ impl AppManager {
             expires_at: Instant::now() + NAVIGATION_OVERRIDE_TTL,
         });
         self.apply_local_screen_stack(stack);
-        self.dispatch_to_rust(action, true);
+        if !self.dispatch_to_rust(action, true) {
+            *self.pending_navigation_override.borrow_mut() = None;
+        }
     }
 
     fn state_by_reconciling_pending_navigation(&self, next_state: AppState) -> AppState {
@@ -465,8 +483,9 @@ impl AppManager {
                     .as_ref()
                     .map_or(true, |chat| chat.chat_id != chat_id)
                 {
-                    base_state.current_chat =
-                        self.ffi.chat_snapshot(chat_id, ROUTE_CHAT_SNAPSHOT_LIMIT);
+                    base_state.current_chat = catch_ffi("ffiapp.chat_snapshot", None, || {
+                        self.ffi.chat_snapshot(chat_id, ROUTE_CHAT_SNAPSHOT_LIMIT)
+                    });
                 }
                 base_state.group_details = None;
             }
@@ -487,11 +506,18 @@ impl AppManager {
         base_state
     }
 
-    fn dispatch_to_rust(&self, action: AppAction, preserves_pending_navigation: bool) {
+    fn dispatch_to_rust(&self, action: AppAction, preserves_pending_navigation: bool) -> bool {
         if !preserves_pending_navigation && action_clears_pending_navigation(&action) {
             *self.pending_navigation_override.borrow_mut() = None;
         }
-        self.ffi.dispatch(action);
+        let dispatched = catch_ffi("ffiapp.dispatch", false, || {
+            self.ffi.dispatch(action);
+            true
+        });
+        if !dispatched {
+            self.show_toast(DISPATCH_FAILURE_TOAST);
+        }
+        dispatched
     }
 
     pub fn set_window_active(&self, active: bool) {
@@ -523,18 +549,18 @@ impl AppManager {
 
     pub fn set_nearby_lan_enabled(&self, enabled: bool) {
         if enabled {
-            self.nearby.start(local_device_name());
+            self.start_nearby_safely(true);
         } else {
-            self.nearby.stop();
+            self.stop_nearby_safely(true);
         }
         self.dispatch_to_rust(AppAction::SetNearbyLanEnabled { enabled }, false);
     }
 
     pub fn sync_nearby_preference(&self, state: &AppState) {
         if state.preferences.nearby_lan_enabled {
-            self.nearby.start(local_device_name());
+            self.start_nearby_safely(false);
         } else {
-            self.nearby.stop();
+            self.stop_nearby_safely(false);
         }
     }
 
@@ -545,12 +571,19 @@ impl AppManager {
         created_at_secs: u64,
         event_json: String,
     ) {
-        self.nearby
-            .publish(event_id, kind, created_at_secs, event_json);
+        let _ = catch_ffi("desktop_nearby.publish", false, || {
+            self.nearby
+                .publish(event_id, kind, created_at_secs, event_json);
+            true
+        });
     }
 
     pub fn export_support_bundle_json(&self) -> String {
-        self.ffi.export_support_bundle_json()
+        catch_ffi(
+            "ffiapp.export_support_bundle_json",
+            "{}".to_string(),
+            || self.ffi.export_support_bundle_json(),
+        )
     }
 
     #[allow(dead_code)]
@@ -559,6 +592,35 @@ impl AppManager {
         self.secret_store.clear();
         let _ = std::fs::remove_dir_all(&self.data_dir);
         let _ = std::fs::create_dir_all(&self.data_dir);
+    }
+
+    fn start_nearby_safely(&self, show_toast_on_failure: bool) -> bool {
+        let started = catch_ffi("desktop_nearby.start", false, || {
+            self.nearby.start(local_device_name());
+            true
+        });
+        if !started && show_toast_on_failure {
+            self.show_toast(DISPATCH_FAILURE_TOAST);
+        }
+        started
+    }
+
+    fn stop_nearby_safely(&self, show_toast_on_failure: bool) -> bool {
+        let stopped = catch_ffi("desktop_nearby.stop", false, || {
+            self.nearby.stop();
+            true
+        });
+        if !stopped && show_toast_on_failure {
+            self.show_toast(DISPATCH_FAILURE_TOAST);
+        }
+        stopped
+    }
+
+    fn show_toast(&self, text: &str) {
+        let mut state = self.local_state.borrow().clone();
+        state.toast = Some(text.to_string());
+        *self.local_state.borrow_mut() = state.clone();
+        let _ = self.update_tx_ui.send_blocking(AppUpdate::FullState(state));
     }
 }
 
@@ -601,6 +663,46 @@ fn local_device_name() -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "Iris".to_string())
+}
+
+fn app_state_restart_required() -> AppState {
+    let mut state = AppState::empty();
+    state.toast = Some(RESTART_REQUIRED_TOAST.to_string());
+    state
+}
+
+fn empty_nearby_snapshot() -> DesktopNearbySnapshot {
+    DesktopNearbySnapshot {
+        visible: false,
+        status: "Off".to_string(),
+        peers: Vec::new(),
+    }
+}
+
+fn catch_ffi<T, F>(label: &str, fallback: T, body: F) -> T
+where
+    F: FnOnce() -> T,
+{
+    match catch_unwind(AssertUnwindSafe(body)) {
+        Ok(value) => value,
+        Err(payload) => {
+            eprintln!(
+                "Iris Chat FFI call failed ({label}): {}",
+                panic_payload_message(payload.as_ref())
+            );
+            fallback
+        }
+    }
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<String>() {
+        message.clone()
+    } else if let Some(message) = payload.downcast_ref::<&str>() {
+        (*message).to_string()
+    } else {
+        "panic".to_string()
+    }
 }
 
 fn xdg_data_home() -> PathBuf {

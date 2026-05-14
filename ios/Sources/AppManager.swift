@@ -429,15 +429,15 @@ final class LiveRustAppClient: RustAppClient {
     }
 
     func chatSnapshot(chatId: String, limit: UInt32) -> CurrentChatSnapshot? {
-        ffi.chatSnapshot(chatId: chatId, limit: limit)
+        ffi.chatSnapshotSafely(chatId: chatId, limit: limit)
     }
 
     func chatSnapshotBefore(chatId: String, beforeMessageId: String, limit: UInt32) -> CurrentChatSnapshot? {
-        ffi.chatSnapshotBefore(chatId: chatId, beforeMessageId: beforeMessageId, limit: limit)
+        ffi.chatSnapshotBeforeSafely(chatId: chatId, beforeMessageId: beforeMessageId, limit: limit)
     }
 
     func chatSnapshotAroundMessage(chatId: String, messageId: String, beforeLimit: UInt32, afterLimit: UInt32) -> CurrentChatSnapshot? {
-        ffi.chatSnapshotAroundMessage(
+        ffi.chatSnapshotAroundMessageSafely(
             chatId: chatId,
             messageId: messageId,
             beforeLimit: beforeLimit,
@@ -488,7 +488,7 @@ final class LiveRustAppClient: RustAppClient {
     }
 
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot? {
-        ffi.peerProfileDebug(ownerInput: ownerInput)
+        ffi.peerProfileDebugSafely(ownerInput: ownerInput)
     }
 
     func prepareForSuspend() {

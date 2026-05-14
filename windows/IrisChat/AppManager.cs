@@ -18,6 +18,7 @@ namespace IrisChat;
 /// state, dispatch actions, persist secret side effects.
 public sealed class AppManager : INotifyPropertyChanged
 {
+    private const string CoreRestartToast = "Iris needs restart. Copy support bundle in Settings.";
     private const string DispatchFailureToast = "Action failed. Copy support bundle in Settings.";
     private const uint RouteChatSnapshotLimit = 80;
     private static readonly TimeSpan ActiveChatSeenIdleLimit = TimeSpan.FromMinutes(5);
@@ -34,7 +35,7 @@ public sealed class AppManager : INotifyPropertyChanged
     private readonly UpdateService _updateService = new();
     private readonly string _dataDir;
     private readonly string _nearbyFirstOpenPath;
-    private readonly FfiDesktopNearby _nearby;
+    private readonly FfiDesktopNearby? _nearby;
     private readonly Dispatcher _ui;
     private readonly object _toastLock = new();
     private string? _activeToast;
@@ -65,13 +66,13 @@ public sealed class AppManager : INotifyPropertyChanged
 
         var version = typeof(AppManager).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
         _ffi = new FfiApp(dataDir, "", version);
-        _state = _ffi.State();
+        _state = SafeState();
         _lastRevApplied = _state.rev;
         _nearbyFirstOpenPath = Path.Combine(dataDir, "nearby-first-open");
-        _nearby = new FfiDesktopNearby(_ffi, new NearbyObserver(this));
-        _nearbySnapshot = _nearby.Snapshot();
+        _nearby = CreateNearbySafely();
+        _nearbySnapshot = SafeNearbySnapshot();
 
-        _ffi.ListenForUpdates(new Reconciler(this));
+        ListenForUpdatesSafely();
         SyncStartupAtLoginPreference();
 
         TryRestorePersistedSession();
@@ -533,9 +534,9 @@ public sealed class AppManager : INotifyPropertyChanged
     public void SetNearbyLanEnabled(bool enabled)
     {
         if (enabled)
-            _nearby.Start(LocalDeviceName());
+            StartNearbySafely(showToastOnFailure: true);
         else
-            _nearby.Stop();
+            StopNearbySafely(showToastOnFailure: true);
 
         DispatchToRust(new AppAction.SetNearbyLanEnabled(enabled));
     }
@@ -649,7 +650,7 @@ public sealed class AppManager : INotifyPropertyChanged
 
     // ────────────────────── support / build metadata ─────────────────────────
 
-    public string SupportBundleJson() => _ffi.ExportSupportBundleJson();
+    public string SupportBundleJson() => SafeSupportBundleJson();
     public string BuildSummary() => Native.BuildSummary();
     public string AppVersion() => BuildSummary().Split(' ', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
     public string RelaySetIdText() => Native.RelaySetId();
@@ -722,12 +723,7 @@ public sealed class AppManager : INotifyPropertyChanged
                 break;
 
             case AppUpdate.NearbyPublishedEvent nearby:
-                _nearby.Publish(
-                    nearby.eventId,
-                    nearby.kind,
-                    nearby.createdAtSecs,
-                    nearby.eventJson
-                );
+                PublishNearbySafely(nearby);
                 break;
         }
     }
@@ -759,9 +755,9 @@ public sealed class AppManager : INotifyPropertyChanged
         var wasEnabled = old.preferences.nearbyLanEnabled;
         var isEnabled = next.preferences.nearbyLanEnabled;
         if (isEnabled && !NearbySnapshot.visible)
-            _nearby.Start(LocalDeviceName());
+            StartNearbySafely(showToastOnFailure: false);
         else if (!isEnabled && (wasEnabled || NearbySnapshot.visible))
-            _nearby.Stop();
+            StopNearbySafely(showToastOnFailure: false);
     }
 
     private Screen[]? StackByApplyingPushScreen(Screen screen)
@@ -867,7 +863,7 @@ public sealed class AppManager : INotifyPropertyChanged
             case Screen.Chat chat:
                 if (currentChat?.chatId != chat.chatId)
                 {
-                    currentChat = _ffi.ChatSnapshot(chat.chatId, RouteChatSnapshotLimit);
+                    currentChat = SafeChatSnapshot(chat.chatId, RouteChatSnapshotLimit);
                 }
                 groupDetails = null;
                 break;
@@ -909,6 +905,142 @@ public sealed class AppManager : INotifyPropertyChanged
             Trace.TraceError(message);
             Debug.WriteLine(message);
             ShowToast(DispatchFailureToast);
+        }
+    }
+
+    private AppState SafeState()
+    {
+        try
+        {
+            return _ffi.State();
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("ffiapp.state", error);
+            return FallbackState(CoreRestartToast);
+        }
+    }
+
+    private FfiDesktopNearby? CreateNearbySafely()
+    {
+        try
+        {
+            return new FfiDesktopNearby(_ffi, new NearbyObserver(this));
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("desktop_nearby.new", error);
+            return null;
+        }
+    }
+
+    private DesktopNearbySnapshot SafeNearbySnapshot()
+    {
+        if (_nearby is null) return EmptyNearbySnapshot();
+        try
+        {
+            return _nearby.Snapshot();
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("desktop_nearby.snapshot", error);
+            return EmptyNearbySnapshot();
+        }
+    }
+
+    private void ListenForUpdatesSafely()
+    {
+        try
+        {
+            _ffi.ListenForUpdates(new Reconciler(this));
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("ffiapp.listen_for_updates", error);
+            ShowToast(CoreRestartToast);
+        }
+    }
+
+    private CurrentChatSnapshot? SafeChatSnapshot(string chatId, uint limit)
+    {
+        try
+        {
+            return _ffi.ChatSnapshot(chatId, limit);
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("ffiapp.chat_snapshot", error);
+            ShowToast(DispatchFailureToast);
+            return null;
+        }
+    }
+
+    private string SafeSupportBundleJson()
+    {
+        try
+        {
+            return _ffi.ExportSupportBundleJson();
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("ffiapp.export_support_bundle_json", error);
+            return "{}";
+        }
+    }
+
+    private bool StartNearbySafely(bool showToastOnFailure)
+    {
+        if (_nearby is null)
+        {
+            if (showToastOnFailure) ShowToast(DispatchFailureToast);
+            return false;
+        }
+        try
+        {
+            _nearby.Start(LocalDeviceName());
+            return true;
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("desktop_nearby.start", error);
+            if (showToastOnFailure) ShowToast(DispatchFailureToast);
+            return false;
+        }
+    }
+
+    private bool StopNearbySafely(bool showToastOnFailure)
+    {
+        if (_nearby is null) return true;
+        try
+        {
+            _nearby.Stop();
+            return true;
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("desktop_nearby.stop", error);
+            if (showToastOnFailure) ShowToast(DispatchFailureToast);
+            return false;
+        }
+    }
+
+    private bool PublishNearbySafely(AppUpdate.NearbyPublishedEvent nearby)
+    {
+        if (_nearby is null) return false;
+        try
+        {
+            _nearby.Publish(
+                nearby.eventId,
+                nearby.kind,
+                nearby.createdAtSecs,
+                nearby.eventJson
+            );
+            return true;
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("desktop_nearby.publish", error);
+            return false;
         }
     }
 
@@ -1031,6 +1163,73 @@ public sealed class AppManager : INotifyPropertyChanged
         field = value;
         Notify(name);
         return true;
+    }
+
+    private static AppState FallbackState(string? toast) => new(
+        0,
+        new Router(new Screen.Welcome(), Array.Empty<Screen>()),
+        null,
+        null,
+        new BusyState(
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false
+        ),
+        Array.Empty<ChatThreadSnapshot>(),
+        null,
+        null,
+        null,
+        null,
+        null,
+        new MobilePushSyncSnapshot(
+            null,
+            Array.Empty<string>(),
+            Array.Empty<string>(),
+            Array.Empty<MobilePushSessionSnapshot>()
+        ),
+        new PreferencesSnapshot(
+            true,
+            true,
+            true,
+            true,
+            false,
+            false,
+            false,
+            new[]
+            {
+                "wss://relay.damus.io",
+                "wss://nos.lol",
+                "wss://relay.primal.net",
+                "wss://relay.snort.social",
+                "wss://temp.iris.to"
+            },
+            true,
+            "https://imgproxy.iris.to",
+            "f66233cb160ea07078ff28099bfa3e3e654bc10aa4a745e12176c433d79b8996",
+            "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
+            Array.Empty<string>(),
+            ""
+        ),
+        toast
+    );
+
+    private static DesktopNearbySnapshot EmptyNearbySnapshot() =>
+        new(false, "Off", Array.Empty<DesktopNearbyPeerSnapshot>());
+
+    private static void LogFfiFailure(string label, Exception error)
+    {
+        var message = $"Iris Chat FFI call failed ({label}): {error}";
+        Trace.TraceError(message);
+        Debug.WriteLine(message);
     }
 
     private sealed class Reconciler : AppReconciler

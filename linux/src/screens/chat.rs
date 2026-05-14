@@ -248,7 +248,11 @@ fn present_message_info(
         if !channels.is_empty() {
             info_multivalue_row(
                 &transport_section,
-                if message.is_outgoing { "Sent over" } else { "Received over" },
+                if message.is_outgoing {
+                    "Sent over"
+                } else {
+                    "Received over"
+                },
                 &channels,
                 false,
             );
@@ -267,7 +271,12 @@ fn present_message_info(
             );
         }
         if !queued_device_npubs.is_empty() {
-            info_multivalue_row(&transport_section, "Queued devices", &queued_device_npubs, true);
+            info_multivalue_row(
+                &transport_section,
+                "Queued devices",
+                &queued_device_npubs,
+                true,
+            );
         }
         if let Some(error) = trace
             .last_transport_error
@@ -988,7 +997,10 @@ fn build_reaction_emoji_popover(
     }
 
     for (name, emojis) in REACTION_EMOJI_CATEGORIES {
-        let choices = emojis.iter().map(|emoji| (*emoji).to_string()).collect::<Vec<_>>();
+        let choices = emojis
+            .iter()
+            .map(|emoji| (*emoji).to_string())
+            .collect::<Vec<_>>();
         append_reaction_emoji_section(
             &column,
             name,
@@ -1103,8 +1115,22 @@ const REACTION_EMOJI_CATEGORIES: &[(&str, &[&str])] = &[
     (
         "Hearts",
         &[
-            "❤️", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍", "🤎", "💖", "💗", "💓", "💕", "💔",
-            "❤️‍🔥", "❤️‍🩹",
+            "❤️",
+            "🧡",
+            "💛",
+            "💚",
+            "💙",
+            "💜",
+            "🖤",
+            "🤍",
+            "🤎",
+            "💖",
+            "💗",
+            "💓",
+            "💕",
+            "💔",
+            "❤️‍🔥",
+            "❤️‍🩹",
         ],
     ),
     (
@@ -1133,7 +1159,12 @@ fn reaction_picker_emojis() -> Vec<String> {
 }
 
 fn message_reaction_emojis(message: &ChatMessageSnapshot) -> Vec<String> {
-    unique_reaction_emojis(message.reactions.iter().map(|reaction| reaction.emoji.clone()))
+    unique_reaction_emojis(
+        message
+            .reactions
+            .iter()
+            .map(|reaction| reaction.emoji.clone()),
+    )
 }
 
 fn unique_reaction_emojis(emojis: impl IntoIterator<Item = String>) -> Vec<String> {
@@ -1272,7 +1303,11 @@ fn message_info_text(message: &ChatMessageSnapshot, chat: Option<&CurrentChatSna
     if !channels.is_empty() {
         lines.push(format!(
             "{} {}",
-            if message.is_outgoing { "Sent over" } else { "Received over" },
+            if message.is_outgoing {
+                "Sent over"
+            } else {
+                "Received over"
+            },
             channels.join(", "),
         ));
     }
@@ -1380,7 +1415,10 @@ fn synthesize_message_rumor_json(
         tags.push(serde_json::json!(["expiration", expires.to_string()]));
     }
     for attachment in &message.attachments {
-        tags.push(serde_json::json!(["imeta", format!("url {}", attachment.htree_url)]));
+        tags.push(serde_json::json!([
+            "imeta",
+            format!("url {}", attachment.htree_url)
+        ]));
     }
 
     let mut content = message.body.clone();
@@ -1431,7 +1469,11 @@ fn message_info_recipient_name(owner_pubkey_hex: &str, chat: &CurrentChatSnapsho
 
 fn short_npub(pubkey_input: &str) -> String {
     let npub = peer_input_to_npub(pubkey_input.to_string());
-    let value = if npub.is_empty() { pubkey_input } else { npub.as_str() };
+    let value = if npub.is_empty() {
+        pubkey_input
+    } else {
+        npub.as_str()
+    };
     short_message_identifier(value)
 }
 
