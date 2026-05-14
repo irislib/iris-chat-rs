@@ -1389,8 +1389,11 @@ fn protocol_fetch_rate_limit_tolerates_stale_start_time() {
     let device = Keys::generate();
     let mut core = logged_in_test_core("protocol-fetch-stale-rate-limit", &owner, &device);
 
+    let Some(stale_started_at) = Instant::now().checked_sub(Duration::from_secs(60)) else {
+        return;
+    };
     core.protocol_subscription_runtime
-        .protocol_fetch_last_started_at = Some(Instant::now() - Duration::from_secs(60));
+        .protocol_fetch_last_started_at = Some(stale_started_at);
     core.debug_log.clear();
 
     core.fetch_recent_protocol_state();
