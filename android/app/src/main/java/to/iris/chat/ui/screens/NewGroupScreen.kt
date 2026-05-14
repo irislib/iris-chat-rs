@@ -47,8 +47,8 @@ import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
+import to.iris.chat.ui.components.IrisListSection
 import to.iris.chat.ui.components.IrisPrimaryButton
-import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.rememberIrisClipboard
@@ -120,11 +120,10 @@ fun NewGroupScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (step == NewGroupStep.MEMBERS) {
-                IrisSectionCard(modifier = Modifier.testTag("newGroupMemberStep")) {
-                    Text(
-                        text = "Select members",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
+                Column(
+                    modifier = Modifier.testTag("newGroupMemberStep"),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     TextField(
                         value = memberInput,
                         onValueChange = { memberInput = it },
@@ -201,34 +200,37 @@ fun NewGroupScreen(
                 }
 
                 if (filteredKnownChats.isNotEmpty()) {
-                    IrisSectionCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             text = if (memberInput.isBlank()) "Known users" else "Search results",
                             style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 2.dp),
                         )
-                        filteredKnownChats.forEach { chat ->
-                            val selected = chat.chatId in selectedOwners
-                            val presentation = ownerPresentation(
-                                owner = chat.chatId,
-                                existingDirectChats = existingDirectChats,
-                                localOwnerHex = localOwner,
-                                localOwnerDisplayName = appState.account?.displayName.orEmpty(),
-                                localOwnerNpub = appState.account?.npub,
-                            )
-                            ExistingMemberRow(
-                                title = presentation.primary,
-                                subtitle = presentation.secondary,
-                                selected = selected,
-                                onClick = {
-                                    selectedOwners =
-                                        if (selected) {
-                                            selectedOwners - chat.chatId
-                                        } else {
-                                            selectedOwners + chat.chatId
-                                        }
-                                    memberInput = ""
-                                },
-                            )
+                        IrisListSection {
+                            filteredKnownChats.forEach { chat ->
+                                val selected = chat.chatId in selectedOwners
+                                val presentation = ownerPresentation(
+                                    owner = chat.chatId,
+                                    existingDirectChats = existingDirectChats,
+                                    localOwnerHex = localOwner,
+                                    localOwnerDisplayName = appState.account?.displayName.orEmpty(),
+                                    localOwnerNpub = appState.account?.npub,
+                                )
+                                ExistingMemberRow(
+                                    title = presentation.primary,
+                                    subtitle = presentation.secondary,
+                                    selected = selected,
+                                    onClick = {
+                                        selectedOwners =
+                                            if (selected) {
+                                                selectedOwners - chat.chatId
+                                            } else {
+                                                selectedOwners + chat.chatId
+                                            }
+                                        memberInput = ""
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -248,11 +250,10 @@ fun NewGroupScreen(
                     },
                 )
             } else {
-                IrisSectionCard(modifier = Modifier.testTag("newGroupDetailsStep")) {
-                    Text(
-                        text = "Group details",
-                        style = MaterialTheme.typography.titleMedium,
-                    )
+                Column(
+                    modifier = Modifier.testTag("newGroupDetailsStep"),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                         verticalAlignment = Alignment.CenterVertically,

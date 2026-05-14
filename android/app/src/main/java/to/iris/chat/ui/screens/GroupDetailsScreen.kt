@@ -41,6 +41,8 @@ import to.iris.chat.rust.isValidPeerInput
 import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisIcons
+import to.iris.chat.ui.components.IrisListSection
+import to.iris.chat.ui.components.IrisMenuRow
 import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
@@ -129,7 +131,9 @@ fun GroupDetailsScreen(
                     .testTag("groupDetailsScreen"),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            IrisSectionCard {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
                 val creatorPrimary = primaryDisplayName(details.createdByDisplayName, details.createdByNpub)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -189,108 +193,100 @@ fun GroupDetailsScreen(
 
             run {
                 val groupChatId = "group:$groupId"
-                IrisSectionCard {
-                    Row(
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    appManager.dispatch(
-                                        AppAction.SetChatMuted(groupChatId, !details.isMuted),
-                                    )
-                                }
-                                .padding(vertical = 10.dp)
-                                .testTag("groupDetailsMuteButton"),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Icon(
-                            imageVector =
-                                if (details.isMuted) {
-                                    IrisIcons.Notifications
-                                } else {
-                                    IrisIcons.NotificationsOff
-                                },
-                            contentDescription = null,
-                        )
-                        Text(
-                            text = if (details.isMuted) "Unmute chat" else "Mute chat",
-                            style = MaterialTheme.typography.labelLarge,
-                        )
-                    }
+                IrisListSection {
+                    IrisMenuRow(
+                        title = if (details.isMuted) "Unmute chat" else "Mute chat",
+                        icon =
+                            if (details.isMuted) {
+                                IrisIcons.Notifications
+                            } else {
+                                IrisIcons.NotificationsOff
+                            },
+                        onClick = {
+                            appManager.dispatch(
+                                AppAction.SetChatMuted(groupChatId, !details.isMuted),
+                            )
+                        },
+                        modifier = Modifier.testTag("groupDetailsMuteButton"),
+                    )
                 }
             }
 
-            IrisSectionCard {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "Members",
                     style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                 )
-                details.members.forEach { member ->
-                    val primary = primaryDisplayName(member.displayName, member.npub)
-                    val roles = member.roleLabels()
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.Top,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        IrisAvatar(
-                            label = primary,
-                            emphasize = member.isLocalOwner,
-                            size = 38.dp,
-                        )
-                        Column(
-                            modifier =
-                                Modifier
-                                    .weight(1f)
-                                    .padding(start = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                IrisListSection {
+                    details.members.forEach { member ->
+                        val primary = primaryDisplayName(member.displayName, member.npub)
+                        val roles = member.roleLabels()
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.SpaceBetween,
                         ) {
-                            Text(
-                                text = primary,
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.SemiBold,
+                            IrisAvatar(
+                                label = primary,
+                                emphasize = member.isLocalOwner,
+                                size = 38.dp,
                             )
-                            if (roles.isNotEmpty()) {
-                                Text(
-                                    text = roles.joinToString(" · "),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = IrisTheme.palette.muted,
-                                )
-                            }
-                        }
-                        if (details.canManage && !member.isLocalOwner) {
                             Column(
-                                horizontalAlignment = Alignment.End,
-                                verticalArrangement = Arrangement.spacedBy(6.dp),
+                                modifier =
+                                    Modifier
+                                        .weight(1f)
+                                        .padding(start = 12.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 Text(
-                                    text = if (member.isAdmin) "Dismiss admin" else "Make admin",
-                                    modifier =
-                                        Modifier
-                                            .testTag("groupDetailsToggleAdmin-${member.ownerPubkeyHex.take(12)}")
-                                            .clickable {
-                                                appManager.setGroupAdmin(
-                                                    groupId,
-                                                    member.ownerPubkeyHex,
-                                                    !member.isAdmin,
-                                                )
-                                            },
-                                    color = MaterialTheme.colorScheme.onBackground,
+                                    text = primary,
+                                    style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.SemiBold,
-                                    style = MaterialTheme.typography.labelLarge,
                                 )
-                                Text(
-                                    text = "Remove",
-                                    modifier =
-                                        Modifier
-                                            .testTag("groupDetailsRemoveMember-${member.ownerPubkeyHex.take(12)}")
-                                            .clickable {
-                                                appManager.removeGroupMember(groupId, member.ownerPubkeyHex)
-                                            },
-                                    color = MaterialTheme.colorScheme.error,
-                                    style = MaterialTheme.typography.labelLarge,
-                                )
+                                if (roles.isNotEmpty()) {
+                                    Text(
+                                        text = roles.joinToString(" · "),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = IrisTheme.palette.muted,
+                                    )
+                                }
+                            }
+                            if (details.canManage && !member.isLocalOwner) {
+                                Column(
+                                    horizontalAlignment = Alignment.End,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                                ) {
+                                    Text(
+                                        text = if (member.isAdmin) "Dismiss admin" else "Make admin",
+                                        modifier =
+                                            Modifier
+                                                .testTag("groupDetailsToggleAdmin-${member.ownerPubkeyHex.take(12)}")
+                                                .clickable {
+                                                    appManager.setGroupAdmin(
+                                                        groupId,
+                                                        member.ownerPubkeyHex,
+                                                        !member.isAdmin,
+                                                    )
+                                                },
+                                        color = MaterialTheme.colorScheme.onBackground,
+                                        fontWeight = FontWeight.SemiBold,
+                                        style = MaterialTheme.typography.labelLarge,
+                                    )
+                                    Text(
+                                        text = "Remove",
+                                        modifier =
+                                            Modifier
+                                                .testTag("groupDetailsRemoveMember-${member.ownerPubkeyHex.take(12)}")
+                                                .clickable {
+                                                    appManager.removeGroupMember(groupId, member.ownerPubkeyHex)
+                                                },
+                                        color = MaterialTheme.colorScheme.error,
+                                        style = MaterialTheme.typography.labelLarge,
+                                    )
+                                }
                             }
                         }
                     }
@@ -298,10 +294,11 @@ fun GroupDetailsScreen(
             }
 
             if (details.canManage) {
-                IrisSectionCard {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
                         text = "Rename group",
                         style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 2.dp),
                     )
                     TextField(
                         value = renameValue,
@@ -335,10 +332,11 @@ fun GroupDetailsScreen(
                     )
                 }
 
-                IrisSectionCard {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text(
                         text = "Add members",
                         style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(horizontal = 2.dp),
                     )
                     TextField(
                         value = memberInput,
@@ -409,91 +407,78 @@ fun GroupDetailsScreen(
                 }
 
                 if (knownUsers.isNotEmpty()) {
-                    IrisSectionCard {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
                             text = if (memberInput.isBlank()) "Known users" else "Search results",
                             style = MaterialTheme.typography.titleMedium,
+                            modifier = Modifier.padding(horizontal = 2.dp),
                         )
-                        knownUsers.forEach { chat ->
-                            val title =
-                                chat.displayName.trim().ifEmpty {
-                                    chat.subtitle.orEmpty().ifEmpty { chat.chatId }
-                                }
-                            val subtitle =
-                                chat.subtitle?.takeIf { it.isNotBlank() && it != title }
-                            Row(
-                                modifier =
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            appManager.addGroupMembers(groupId, listOf(chat.chatId))
-                                            memberInput = ""
-                                        }
-                                        .padding(vertical = 8.dp)
-                                        .testTag("groupDetailsKnownUser-${chat.chatId.take(12)}"),
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                IrisAvatar(label = title, size = 38.dp)
-                                Column(
-                                    modifier = Modifier.weight(1f),
-                                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                                ) {
-                                    Text(
-                                        text = title,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.SemiBold,
-                                    )
-                                    if (subtitle != null) {
-                                        Text(
-                                            text = subtitle,
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = IrisTheme.palette.muted,
-                                        )
+                        IrisListSection {
+                            knownUsers.forEach { chat ->
+                                val title =
+                                    chat.displayName.trim().ifEmpty {
+                                        chat.subtitle.orEmpty().ifEmpty { chat.chatId }
                                     }
+                                val subtitle =
+                                    chat.subtitle?.takeIf { it.isNotBlank() && it != title }
+                                Row(
+                                    modifier =
+                                        Modifier
+                                            .fillMaxWidth()
+                                            .clickable {
+                                                appManager.addGroupMembers(groupId, listOf(chat.chatId))
+                                                memberInput = ""
+                                            }
+                                            .padding(16.dp)
+                                            .testTag("groupDetailsKnownUser-${chat.chatId.take(12)}"),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    IrisAvatar(label = title, size = 38.dp)
+                                    Column(
+                                        modifier = Modifier.weight(1f),
+                                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                                    ) {
+                                        Text(
+                                            text = title,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                        )
+                                        if (subtitle != null) {
+                                            Text(
+                                                text = subtitle,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = IrisTheme.palette.muted,
+                                            )
+                                        }
+                                    }
+                                    Icon(
+                                        imageVector = IrisIcons.NewGroup,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
                                 }
-                                Icon(
-                                    imageVector = IrisIcons.NewGroup,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                )
                             }
                         }
                     }
                 }
             }
 
-            IrisSectionCard {
-                Text(
-                    text = "Delete chat",
-                    style = MaterialTheme.typography.titleMedium,
-                )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "Removes this group from your chat list and forgets local messages.",
                     style = MaterialTheme.typography.bodySmall,
                     color = IrisTheme.palette.muted,
+                    modifier = Modifier.padding(horizontal = 2.dp),
                 )
-                Row(
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                appManager.dispatch(AppAction.DeleteChat("group:$groupId"))
-                            }
-                            .padding(vertical = 10.dp)
-                            .testTag("groupDetailsDeleteChatButton"),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        imageVector = IrisIcons.DeleteForever,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                    Text(
-                        text = "Delete chat",
-                        color = MaterialTheme.colorScheme.error,
-                        style = MaterialTheme.typography.labelLarge,
+                IrisListSection {
+                    IrisMenuRow(
+                        title = "Delete chat",
+                        icon = IrisIcons.DeleteForever,
+                        onClick = {
+                            appManager.dispatch(AppAction.DeleteChat("group:$groupId"))
+                        },
+                        modifier = Modifier.testTag("groupDetailsDeleteChatButton"),
                     )
                 }
             }
