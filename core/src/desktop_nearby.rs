@@ -1324,6 +1324,13 @@ impl NearbyProfileEvent {
 }
 
 fn private_local_ipv4() -> Option<Ipv4Addr> {
+    if let Some(addr) = local_interface_private_ipv4s().into_iter().next() {
+        return Some(addr);
+    }
+    default_route_private_ipv4()
+}
+
+fn default_route_private_ipv4() -> Option<Ipv4Addr> {
     for target in ["8.8.8.8:80", "1.1.1.1:80"] {
         let socket = UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0)).ok()?;
         if socket.connect(target).is_ok() {
@@ -1338,6 +1345,49 @@ fn private_local_ipv4() -> Option<Ipv4Addr> {
     None
 }
 
+#[cfg(unix)]
+fn local_interface_private_ipv4s() -> Vec<Ipv4Addr> {
+    let mut addrs = Vec::new();
+    let mut ifaddrs: *mut libc::ifaddrs = std::ptr::null_mut();
+    unsafe {
+        if libc::getifaddrs(&mut ifaddrs) != 0 {
+            return addrs;
+        }
+        let mut cursor = ifaddrs;
+        while !cursor.is_null() {
+            let ifaddr = &*cursor;
+            let flags = ifaddr.ifa_flags as libc::c_int;
+            let usable = is_usable_lan_interface_flags(flags);
+            if usable && !ifaddr.ifa_addr.is_null() {
+                let sockaddr = &*ifaddr.ifa_addr;
+                if sockaddr.sa_family as libc::c_int == libc::AF_INET {
+                    let sockaddr_in = &*(ifaddr.ifa_addr as *const libc::sockaddr_in);
+                    let ip = Ipv4Addr::from(u32::from_be(sockaddr_in.sin_addr.s_addr));
+                    if is_private_ipv4(ip) && !addrs.contains(&ip) {
+                        addrs.push(ip);
+                    }
+                }
+            }
+            cursor = ifaddr.ifa_next;
+        }
+        libc::freeifaddrs(ifaddrs);
+    }
+    addrs
+}
+
+#[cfg(unix)]
+fn is_usable_lan_interface_flags(flags: libc::c_int) -> bool {
+    flags & libc::IFF_UP != 0
+        && flags & libc::IFF_LOOPBACK == 0
+        && flags & libc::IFF_POINTOPOINT == 0
+        && flags & libc::IFF_MULTICAST != 0
+}
+
+#[cfg(not(unix))]
+fn local_interface_private_ipv4s() -> Vec<Ipv4Addr> {
+    Vec::new()
+}
+
 fn mdns_socket(local_addr: Ipv4Addr) -> std::io::Result<UdpSocket> {
     let socket = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
     socket.set_reuse_address(true)?;
@@ -1346,10 +1396,11 @@ fn mdns_socket(local_addr: Ipv4Addr) -> std::io::Result<UdpSocket> {
         let _ = socket.set_reuse_port(true);
     }
     socket.bind(&SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, MDNS_PORT).into())?;
+    socket.set_multicast_if_v4(&local_addr)?;
+    socket.set_multicast_loop_v4(true)?;
+    socket.set_multicast_ttl_v4(255)?;
     let udp: UdpSocket = socket.into();
     udp.join_multicast_v4(&MDNS_GROUP, &local_addr)?;
-    udp.set_multicast_loop_v4(true)?;
-    udp.set_multicast_ttl_v4(255)?;
     udp.set_read_timeout(Some(Duration::from_millis(500)))?;
     Ok(udp)
 }
@@ -1793,6 +1844,18 @@ mod tests {
             !alice_snapshot.peers.is_empty() && !bob_snapshot.peers.is_empty(),
             "LAN nearby peers should discover each other; alice={alice_snapshot:?} bob={bob_snapshot:?}"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nearby_lan_interface_selection_ignores_loopback_and_point_to_point() {
+        let lan_flags = libc::IFF_UP | libc::IFF_MULTICAST;
+        let p2p_flags = lan_flags | libc::IFF_POINTOPOINT;
+        let loopback_flags = lan_flags | libc::IFF_LOOPBACK;
+
+        assert!(is_usable_lan_interface_flags(lan_flags));
+        assert!(!is_usable_lan_interface_flags(p2p_flags));
+        assert!(!is_usable_lan_interface_flags(loopback_flags));
     }
 
     #[test]

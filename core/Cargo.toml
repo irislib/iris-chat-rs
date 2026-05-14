@@ -39,6 +39,7 @@ hashtree-blossom = "=0.2.8"
 hashtree-config = "=0.2.8"
 hashtree-core = "=0.2.8"
 hmac = "0.12"
+libc = "0.2"
 nostr = { version = "0.44.2", default-features = false, features = ["std", "nip44"] }
 nostr35 = { package = "nostr", version = "0.35.0", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
