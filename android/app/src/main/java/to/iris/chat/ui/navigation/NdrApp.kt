@@ -10,28 +10,43 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Check
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
@@ -41,10 +56,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -53,15 +73,19 @@ import kotlin.math.max
 import kotlinx.coroutines.delay
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
+import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatThreadSnapshot
+import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.Screen
+import to.iris.chat.rust.proxiedImageUrl
+import to.iris.chat.ui.components.IrisAvatar
+import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisOfflineBannerState
-import to.iris.chat.ui.components.IrisTextButton
 import to.iris.chat.ui.components.LocalIrisOfflineBannerState
-import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
+import to.iris.chat.ui.theme.IrisTheme
 import to.iris.chat.ui.screens.ChatListScreen
 import to.iris.chat.ui.screens.ChatScreen
 import to.iris.chat.ui.screens.CreateAccountScreen
@@ -80,6 +104,7 @@ import to.iris.chat.ui.screens.SplashViewModel
 import to.iris.chat.ui.screens.AwaitingDeviceApprovalScreen
 import to.iris.chat.ui.screens.AddDeviceScreen
 import to.iris.chat.ui.screens.WelcomeScreen
+import to.iris.chat.ui.screens.rememberNhashImageData
 
 @Composable
 fun NdrApp(
@@ -364,7 +389,9 @@ fun NdrApp(
             if (pendingShare != null && bootstrapState is AccountBootstrapState.LoggedIn) {
                 val chatList by appManager.chatList.collectAsStateWithLifecycle()
                 ShareTargetDialog(
+                    appManager = appManager,
                     chats = chatList,
+                    preferences = preferences,
                     onSend = { chatIds -> appManager.sendPendingShareToChats(chatIds) },
                     onNewChat = {
                         appManager.clearPendingShare()
@@ -494,9 +521,12 @@ private fun screenRouteKey(screen: Screen): String =
         is Screen.GroupDetails -> "groupDetails:${screen.groupId}"
     }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ShareTargetDialog(
+    appManager: AppManager,
     chats: List<ChatThreadSnapshot>,
+    preferences: PreferencesSnapshot,
     onSend: (List<String>) -> Unit,
     onNewChat: () -> Unit,
     onDismiss: () -> Unit,
@@ -504,6 +534,7 @@ private fun ShareTargetDialog(
     var query by remember { mutableStateOf("") }
     var selectedChatIds by remember { mutableStateOf(emptySet<String>()) }
     val haptics = rememberIrisHapticFeedback()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val availableChatIds = remember(chats) { chats.mapTo(mutableSetOf()) { it.chatId } }
     val filteredChats =
         remember(chats, query) {
@@ -514,6 +545,8 @@ private fun ShareTargetDialog(
                 chats.filter { chat -> chat.matchesShareQuery(normalized) }
             }
         }
+    val hasSelection = selectedChatIds.isNotEmpty()
+    val selectedChats = chats.filter { chat -> chat.chatId in selectedChatIds }
 
     LaunchedEffect(availableChatIds) {
         val prunedSelection = selectedChatIds.intersect(availableChatIds)
@@ -522,129 +555,431 @@ private fun ShareTargetDialog(
         }
     }
 
-    if (chats.isEmpty()) {
-        AlertDialog(
-            onDismissRequest = onDismiss,
-            title = { Text("Start a chat first") },
-            confirmButton = {
-                IrisTextButton(onClick = onNewChat, confirm = true) {
-                    Text("New chat")
-                }
-            },
-            dismissButton = {
-                IrisTextButton(onClick = onDismiss) {
-                    Text("Cancel")
-                }
-            },
-        )
-        return
-    }
-
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        title = { Text("Choose recipients") },
-        text = {
-            Column {
-                TextField(
-                    value = query,
-                    onValueChange = { query = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("Search") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = irisTextFieldColors(),
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.background,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+        dragHandle = { ShareTargetSheetHandle() },
+    ) {
+        Column(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding(),
+        ) {
+            Text(
+                text = "Share",
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(top = 13.dp, bottom = 12.dp),
+                textAlign = TextAlign.Center,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+
+            if (chats.isEmpty()) {
+                Box(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .height(220.dp),
+                ) {
+                    ShareEmptyChatsContent(onNewChat = onNewChat)
+                }
+            } else {
+                ShareTargetSearchField(
+                    query = query,
+                    onQueryChange = { query = it },
+                    onClear = { query = "" },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp)
+                            .heightIn(min = 44.dp),
                 )
-                LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
+
+                LazyColumn(
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 220.dp, max = 380.dp)
+                            .padding(top = 12.dp),
+                    contentPadding = PaddingValues(bottom = 10.dp),
+                ) {
                     items(filteredChats, key = { it.chatId }) { chat ->
                         val selected = chat.chatId in selectedChatIds
-                        val interactionSource = remember(chat.chatId) { MutableInteractionSource() }
-                        Row(
-                            modifier =
-                                Modifier
-                                    .fillMaxWidth()
-                                    .clickable(
-                                        interactionSource = interactionSource,
-                                        indication = null,
-                                    ) {
-                                        haptics.press()
-                                        selectedChatIds =
-                                            if (selected) {
-                                                selectedChatIds - chat.chatId
-                                            } else {
-                                                selectedChatIds + chat.chatId
-                                            }
+                        ShareTargetRow(
+                            appManager = appManager,
+                            chat = chat,
+                            preferences = preferences,
+                            selected = selected,
+                            onClick = {
+                                haptics.press()
+                                selectedChatIds =
+                                    if (selected) {
+                                        selectedChatIds - chat.chatId
+                                    } else {
+                                        selectedChatIds + chat.chatId
                                     }
-                                    .padding(vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Checkbox(
-                                checked = selected,
-                                onCheckedChange = { checked ->
-                                    haptics.press()
-                                    selectedChatIds =
-                                        if (checked) {
-                                            selectedChatIds + chat.chatId
-                                        } else {
-                                            selectedChatIds - chat.chatId
-                                        }
-                                },
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = chat.displayName,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    style = MaterialTheme.typography.bodyLarge,
-                                )
-                                val subtitle = chat.subtitle
-                                if (subtitle?.isNotBlank() == true) {
-                                    Text(
-                                        text = subtitle,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        style = MaterialTheme.typography.bodySmall,
-                                    )
-                                }
-                            }
-                        }
+                            },
+                        )
                     }
                     if (filteredChats.isEmpty()) {
                         item {
                             Text(
                                 text = "No matches",
-                                modifier = Modifier.padding(vertical = 16.dp),
+                                modifier =
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 24.dp, vertical = 24.dp),
+                                textAlign = TextAlign.Center,
+                                color = IrisTheme.palette.muted,
                                 style = MaterialTheme.typography.bodyMedium,
                             )
                         }
                     }
                 }
-            }
-        },
-        confirmButton = {
-            IrisTextButton(
-                enabled = selectedChatIds.isNotEmpty(),
-                onClick = {
-                    onSend(chats.map { it.chatId }.filter { it in selectedChatIds })
-                },
-                confirm = true,
-            ) {
-                Text(
-                    text =
-                        if (selectedChatIds.size > 1) {
-                            "Send (${selectedChatIds.size})"
-                        } else {
-                            "Send"
+
+                if (hasSelection) {
+                    ShareTargetBottomBar(
+                        selectedChats = selectedChats,
+                        onSend = {
+                            haptics.confirm()
+                            onSend(chats.map { it.chatId }.filter { it in selectedChatIds })
                         },
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareTargetSheetHandle() {
+    Box(
+        modifier =
+            Modifier
+                .padding(top = 16.dp)
+                .width(48.dp)
+                .height(2.dp)
+                .clip(CircleShape)
+                .background(IrisTheme.palette.muted.copy(alpha = 0.55f)),
+    )
+}
+
+@Composable
+private fun ShareTargetSearchField(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    onClear: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val haptics = rememberIrisHapticFeedback()
+    val clearInteractionSource = remember { MutableInteractionSource() }
+    Surface(
+        modifier = modifier,
+        color = IrisTheme.palette.panelAlt,
+        shape = RoundedCornerShape(22.dp),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 44.dp)
+                    .padding(start = 16.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Search,
+                contentDescription = null,
+                tint = IrisTheme.palette.muted,
+                modifier = Modifier.size(24.dp),
+            )
+            Box(
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
+                if (query.isEmpty()) {
+                    Text(
+                        text = "Search",
+                        color = IrisTheme.palette.muted,
+                        style = MaterialTheme.typography.bodyLarge,
+                    )
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    singleLine = true,
+                    textStyle =
+                        MaterialTheme.typography.bodyLarge.copy(
+                            color = MaterialTheme.colorScheme.onSurface,
+                        ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
-        },
-        dismissButton = {
-            IrisTextButton(onClick = onDismiss) {
-                Text("Cancel")
+            if (query.isNotEmpty()) {
+                Box(
+                    modifier =
+                        Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = clearInteractionSource,
+                                indication = null,
+                            ) {
+                                haptics.press()
+                                onClear()
+                            },
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Clear search",
+                        tint = IrisTheme.palette.muted,
+                        modifier = Modifier.size(24.dp),
+                    )
+                }
             }
-        },
-    )
+        }
+    }
+}
+
+@Composable
+private fun ShareTargetRow(
+    appManager: AppManager,
+    chat: ChatThreadSnapshot,
+    preferences: PreferencesSnapshot,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
+    val avatarUrl =
+        chat.pictureUrl
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?.let { url ->
+                proxiedImageUrl(
+                    originalSrc = url,
+                    preferences = preferences,
+                    width = 80u,
+                    height = 80u,
+                    square = true,
+                )
+            }
+    val interactionSource = remember(chat.chatId) { MutableInteractionSource() }
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 64.dp)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                )
+                .padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IrisAvatar(
+            label = chat.displayName,
+            size = 40.dp,
+            imageUrl = avatarUrl,
+            imageData = avatarData,
+        )
+        Text(
+            text = chat.displayName,
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .padding(start = 16.dp, end = 16.dp),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        ShareTargetSelectionIndicator(selected = selected)
+    }
+}
+
+@Composable
+private fun ShareTargetSelectionIndicator(selected: Boolean) {
+    Surface(
+        modifier = Modifier.size(24.dp),
+        shape = CircleShape,
+        color = if (selected) IrisTheme.palette.accent else Color.Transparent,
+        border =
+            if (selected) {
+                null
+            } else {
+                BorderStroke(2.dp, IrisTheme.palette.border)
+            },
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        if (selected) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Rounded.Check,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(16.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareTargetBottomBar(
+    selectedChats: List<ChatThreadSnapshot>,
+    onSend: () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.background,
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(IrisTheme.palette.border),
+            )
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 56.dp)
+                        .padding(start = 16.dp, end = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(
+                    modifier =
+                        Modifier
+                            .weight(1f)
+                            .height(44.dp)
+                            .horizontalScroll(rememberScrollState()),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    selectedChats.forEachIndexed { index, chat ->
+                        Text(
+                            text = if (index == 0) chat.displayName else ", ${chat.displayName}",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                        )
+                    }
+                }
+                Box(
+                    modifier =
+                        Modifier
+                            .size(56.dp)
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = null,
+                                onClick = onSend,
+                            ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(IrisTheme.palette.accent),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = IrisIcons.Send,
+                            contentDescription = "Send",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShareEmptyChatsContent(onNewChat: () -> Unit) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
+    Column(
+        modifier =
+            Modifier
+                .fillMaxSize(),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text(
+            text = "Start a chat first",
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 64.dp)
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                    ) {
+                        haptics.confirm()
+                        onNewChat()
+                    }
+                    .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier =
+                    Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(IrisTheme.palette.panelAlt),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = IrisIcons.NewChat,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+            Text(
+                text = "New chat",
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .padding(start = 16.dp),
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            Icon(
+                imageVector = IrisIcons.ChevronRight,
+                contentDescription = null,
+                tint = IrisTheme.palette.muted,
+                modifier = Modifier.size(24.dp),
+            )
+        }
+    }
 }
 
 private fun ChatThreadSnapshot.matchesShareQuery(query: String): Boolean =
