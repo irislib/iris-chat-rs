@@ -2870,12 +2870,13 @@ final class AppManager: ObservableObject {
         rustJson: String,
         clientDebugLog: [ClientDebugLogEntry]
     ) -> String {
-        guard !clientDebugLog.isEmpty,
+        let mergedClientLog = clientDebugLog.map(\.jsonObject) + irisClientDebugLogObjects()
+        guard !mergedClientLog.isEmpty,
               let data = rustJson.data(using: .utf8),
               var object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return rustJson
         }
-        object["client_log"] = clientDebugLog.map(\.jsonObject)
+        object["client_log"] = mergedClientLog
         guard let mergedData = try? JSONSerialization.data(
             withJSONObject: object,
             options: [.prettyPrinted, .sortedKeys]

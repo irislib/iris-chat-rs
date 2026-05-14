@@ -5,6 +5,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
@@ -20,11 +22,14 @@ public sealed class AppManager : INotifyPropertyChanged
 {
     private const string CoreRestartToast = "Iris needs restart. Copy support bundle in Settings.";
     private const string DispatchFailureToast = "Action failed. Copy support bundle in Settings.";
+    private const int MaxClientDebugLogDetailChars = 1000;
+    private const int MaxClientDebugLogEntries = 50;
     private const uint RouteChatSnapshotLimit = 80;
     private static readonly TimeSpan ActiveChatSeenIdleLimit = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NavigationOverrideTtl = TimeSpan.FromSeconds(10);
 
     private sealed record PendingNavigationOverride(Screen[] Stack, DateTimeOffset ExpiresAt);
+    private sealed record ClientDebugLogEntry(long TimestampSecs, string Category, string Detail);
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
@@ -38,6 +43,8 @@ public sealed class AppManager : INotifyPropertyChanged
     private readonly FfiDesktopNearby? _nearby;
     private readonly Dispatcher _ui;
     private readonly object _toastLock = new();
+    private readonly object _clientDebugLogLock = new();
+    private readonly List<ClientDebugLogEntry> _clientDebugLog = new();
     private string? _activeToast;
     private Uri? _updateAssetUrl;
     private bool _startupUpdateCheckDone;
@@ -901,9 +908,7 @@ public sealed class AppManager : INotifyPropertyChanged
         }
         catch (Exception error)
         {
-            var message = $"Iris Chat FFI update callback failed ({update.GetType().Name}): {error}";
-            Trace.TraceError(message);
-            Debug.WriteLine(message);
+            LogFfiFailure("ffi.update_callback.failed", error, update.GetType().Name);
             ShowToast(DispatchFailureToast);
         }
     }
@@ -977,15 +982,17 @@ public sealed class AppManager : INotifyPropertyChanged
 
     private string SafeSupportBundleJson()
     {
+        string rustJson;
         try
         {
-            return _ffi.ExportSupportBundleJson();
+            rustJson = _ffi.ExportSupportBundleJson();
         }
         catch (Exception error)
         {
             LogFfiFailure("ffiapp.export_support_bundle_json", error);
-            return "{}";
+            rustJson = "{}";
         }
+        return SupportBundleJsonWithClientLog(rustJson);
     }
 
     private bool StartNearbySafely(bool showToastOnFailure)
@@ -1108,9 +1115,7 @@ public sealed class AppManager : INotifyPropertyChanged
         }
         catch (Exception error)
         {
-            var message = $"Iris Chat FFI dispatch failed ({ActionLogName(action)}): {error}";
-            Trace.TraceError(message);
-            Debug.WriteLine(message);
+            LogFfiFailure("ffi.dispatch.failed", error, ActionLogName(action));
             if (showToastOnFailure)
             {
                 ShowToast(DispatchFailureToast);
@@ -1225,11 +1230,77 @@ public sealed class AppManager : INotifyPropertyChanged
     private static DesktopNearbySnapshot EmptyNearbySnapshot() =>
         new(false, "Off", Array.Empty<DesktopNearbyPeerSnapshot>());
 
-    private static void LogFfiFailure(string label, Exception error)
+    private void LogFfiFailure(string category, Exception error, string detail = "")
     {
-        var message = $"Iris Chat FFI call failed ({label}): {error}";
+        var logDetail = string.IsNullOrWhiteSpace(detail)
+            ? ErrorSummary(error)
+            : $"{detail}: {ErrorSummary(error)}";
+        AppendClientDebugLog(category, logDetail);
+        var message = $"Iris Chat FFI call failed ({category}): {logDetail}\n{error}";
         Trace.TraceError(message);
         Debug.WriteLine(message);
+    }
+
+    private void AppendClientDebugLog(string category, string detail)
+    {
+        var truncated = detail.Length <= MaxClientDebugLogDetailChars
+            ? detail
+            : detail[..MaxClientDebugLogDetailChars];
+        lock (_clientDebugLogLock)
+        {
+            _clientDebugLog.Add(new ClientDebugLogEntry(
+                DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
+                category,
+                truncated
+            ));
+            if (_clientDebugLog.Count > MaxClientDebugLogEntries)
+            {
+                _clientDebugLog.RemoveRange(0, _clientDebugLog.Count - MaxClientDebugLogEntries);
+            }
+        }
+    }
+
+    private List<ClientDebugLogEntry> SnapshotClientDebugLog()
+    {
+        lock (_clientDebugLogLock)
+        {
+            return _clientDebugLog.ToList();
+        }
+    }
+
+    private string SupportBundleJsonWithClientLog(string rustJson)
+    {
+        var clientLog = SnapshotClientDebugLog();
+        if (clientLog.Count == 0) return rustJson;
+        try
+        {
+            var root = JsonNode.Parse(string.IsNullOrWhiteSpace(rustJson) ? "{}" : rustJson) as JsonObject
+                       ?? new JsonObject();
+            var array = new JsonArray();
+            foreach (var entry in clientLog)
+            {
+                array.Add(new JsonObject
+                {
+                    ["timestamp_secs"] = entry.TimestampSecs,
+                    ["category"] = entry.Category,
+                    ["detail"] = entry.Detail
+                });
+            }
+            root["client_log"] = array;
+            return root.ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch
+        {
+            return rustJson;
+        }
+    }
+
+    private static string ErrorSummary(Exception error)
+    {
+        var message = error.Message;
+        return string.IsNullOrWhiteSpace(message)
+            ? error.GetType().Name
+            : $"{error.GetType().Name}: {message}";
     }
 
     private sealed class Reconciler : AppReconciler

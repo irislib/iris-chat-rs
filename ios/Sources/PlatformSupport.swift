@@ -1,7 +1,26 @@
+import Foundation
 import SwiftUI
 import UserNotifications
 
 private var irisDebugLoggingEnabled = false
+private let irisClientDebugLogLock = NSLock()
+private var irisClientDebugLog: [IrisClientDebugLogEntry] = []
+private let irisMaxClientDebugLogEntries = 50
+private let irisMaxClientDebugLogDetailChars = 1_000
+
+private struct IrisClientDebugLogEntry {
+    let timestampSecs: UInt64
+    let category: String
+    let detail: String
+
+    var jsonObject: [String: Any] {
+        [
+            "timestamp_secs": timestampSecs,
+            "category": category,
+            "detail": detail
+        ]
+    }
+}
 
 func irisSetDebugLoggingEnabled(_ enabled: Bool) {
     irisDebugLoggingEnabled = enabled
@@ -12,6 +31,28 @@ func irisDebugLog(_ format: String, _ args: CVarArg...) {
     withVaList(args) { pointer in
         NSLogv(format, pointer)
     }
+}
+
+func irisAppendClientDebugLog(category: String, detail: String) {
+    irisClientDebugLogLock.lock()
+    defer { irisClientDebugLogLock.unlock() }
+    irisClientDebugLog.append(
+        IrisClientDebugLogEntry(
+            timestampSecs: UInt64(Date().timeIntervalSince1970),
+            category: category,
+            detail: String(detail.prefix(irisMaxClientDebugLogDetailChars))
+        )
+    )
+    let excessCount = irisClientDebugLog.count - irisMaxClientDebugLogEntries
+    if excessCount > 0 {
+        irisClientDebugLog.removeFirst(excessCount)
+    }
+}
+
+func irisClientDebugLogObjects() -> [[String: Any]] {
+    irisClientDebugLogLock.lock()
+    defer { irisClientDebugLogLock.unlock() }
+    return irisClientDebugLog.map(\.jsonObject)
 }
 
 #if os(iOS)

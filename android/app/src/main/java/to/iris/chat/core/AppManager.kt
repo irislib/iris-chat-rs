@@ -30,6 +30,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
 import org.json.JSONObject
 import to.iris.chat.BuildConfig
 import to.iris.chat.IrisDebugLog
@@ -306,6 +307,18 @@ private data class AndroidMobilePushSyncInput(
     val serverOverride: String,
 )
 
+private data class ClientDebugLogEntry(
+    val timestampSecs: Long,
+    val category: String,
+    val detail: String,
+) {
+    fun toJsonObject(): JSONObject =
+        JSONObject()
+            .put("timestamp_secs", timestampSecs)
+            .put("category", category)
+            .put("detail", detail)
+}
+
 class AppManager(
     context: Context,
     private val applicationScope: CoroutineScope,
@@ -340,6 +353,7 @@ class AppManager(
     private val olderChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
     private val exhaustedOlderChatPages = Collections.synchronizedSet(mutableSetOf<String>())
     private val aroundChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
+    private val clientDebugLog = Collections.synchronizedList(mutableListOf<ClientDebugLogEntry>())
 
     private val mutableState = MutableStateFlow(rust.state())
     private val mutableAppForegrounded = MutableStateFlow(false)
@@ -490,6 +504,11 @@ class AppManager(
      */
     fun search(query: String, scopeChatId: String? = null, limit: UInt = 50u): SearchResultSnapshot =
         runCatching { rust.search(query, scopeChatId, limit) }.getOrElse {
+            logFfiFailure(
+                category = "ffi.search.failed",
+                detail = "query_len=${query.length} scoped=${scopeChatId != null}",
+                error = it,
+            )
             SearchResultSnapshot(
                 query = query,
                 scopeChatId = scopeChatId,
@@ -567,6 +586,7 @@ class AppManager(
         runCatching {
             rust.prepareForSuspend()
         }.onFailure { error ->
+            logFfiFailure("ffi.prepare_suspend.failed", "", error)
             Log.w(TAG, "failed to prepare Rust core for suspend", error)
         }
     }
@@ -1121,12 +1141,24 @@ class AppManager(
 
     suspend fun exportSupportBundleJson(): String =
         withContext(ioDispatcher) {
-            rust.exportSupportBundleJson()
+            val rustJson =
+                runCatching { rust.exportSupportBundleJson() }.getOrElse { error ->
+                    logFfiFailure("ffi.support_bundle.failed", "", error)
+                    "{}"
+                }
+            supportBundleJsonWithClientLog(rustJson, snapshotClientDebugLog())
         }
 
     suspend fun peerProfileDebug(ownerInput: String): PeerProfileDebugSnapshot? =
         withContext(ioDispatcher) {
-            rust.peerProfileDebug(ownerInput)
+            runCatching { rust.peerProfileDebug(ownerInput) }.getOrElse { error ->
+                logFfiFailure(
+                    category = "ffi.peer_profile_debug.failed",
+                    detail = "input_len=${ownerInput.length}",
+                    error = error,
+                )
+                null
+            }
         }
 
     fun resetAppState() {
@@ -1217,7 +1249,9 @@ class AppManager(
         }.fold(
             onSuccess = { true },
             onFailure = { error ->
-                Log.e(TAG, "FFI dispatch failed (${actionLogName(action)})", error)
+                val actionName = actionLogName(action)
+                logFfiFailure("ffi.dispatch.failed", actionName, error)
+                Log.e(TAG, "FFI dispatch failed ($actionName)", error)
                 if (showsToastOnFailure) {
                     publishShellToast(DISPATCH_FAILURE_TOAST)
                 }
@@ -1321,7 +1355,14 @@ class AppManager(
                 if (currentChat?.chatId != activeScreen.chatId) {
                     currentChat = runCatching {
                         rust.chatSnapshot(activeScreen.chatId, CHAT_PAGE_SIZE)
-                    }.getOrNull()
+                    }.getOrElse { error ->
+                        logFfiFailure(
+                            category = "ffi.chat_snapshot.failed",
+                            detail = activeScreen.chatId,
+                            error = error,
+                        )
+                        null
+                    }
                 }
                 groupDetails = null
             }
@@ -1434,7 +1475,11 @@ class AppManager(
         val generation = rustGeneration
         val initial = client.state()
         lastRevApplied = initial.rev
-        client.listenForUpdates(UpdateBridge(generation))
+        runCatching {
+            client.listenForUpdates(UpdateBridge(generation))
+        }.onFailure { error ->
+            logFfiFailure("ffi.listen_updates.failed", "generation=$generation", error)
+        }
         return initial
     }
 
@@ -1688,6 +1733,63 @@ class AppManager(
         mutableBootstrapState.value = AccountBootstrapState.NeedsLogin
     }
 
+    private fun logFfiFailure(
+        category: String,
+        detail: String,
+        error: Throwable,
+    ) {
+        val errorDetail =
+            buildString {
+                if (detail.isNotBlank()) {
+                    append(detail)
+                    append(": ")
+                }
+                append(error::class.java.simpleName)
+                error.message?.takeIf { it.isNotBlank() }?.let { message ->
+                    append(": ")
+                    append(message)
+                }
+            }
+        appendClientDebugLog(category, errorDetail)
+        IrisDebugLog.d(TAG, "$category $detail", error)
+    }
+
+    private fun appendClientDebugLog(category: String, detail: String) {
+        val entry =
+            ClientDebugLogEntry(
+                timestampSecs = currentTimeSeconds(),
+                category = category,
+                detail = detail.take(MAX_CLIENT_DEBUG_LOG_DETAIL_CHARS),
+            )
+        synchronized(clientDebugLog) {
+            clientDebugLog.add(entry)
+            while (clientDebugLog.size > MAX_CLIENT_DEBUG_LOG_ENTRIES) {
+                clientDebugLog.removeAt(0)
+            }
+        }
+    }
+
+    private fun snapshotClientDebugLog(): List<ClientDebugLogEntry> =
+        synchronized(clientDebugLog) {
+            clientDebugLog.toList()
+        }
+
+    private fun supportBundleJsonWithClientLog(
+        rustJson: String,
+        clientLog: List<ClientDebugLogEntry>,
+    ): String {
+        if (clientLog.isEmpty()) {
+            return rustJson
+        }
+        return runCatching {
+            val root = JSONObject(rustJson.ifBlank { "{}" })
+            val array = JSONArray()
+            clientLog.forEach { array.put(it.toJsonObject()) }
+            root.put("client_log", array)
+            root.toString(2)
+        }.getOrDefault(rustJson)
+    }
+
     private fun ByteArray.toBase64(): String = Base64.encodeToString(this, Base64.NO_WRAP)
 
     private fun String.fromBase64(): ByteArray = Base64.decode(this, Base64.NO_WRAP)
@@ -1701,6 +1803,8 @@ class AppManager(
         const val CHAT_AROUND_BEFORE_LIMIT = 40u
         const val CHAT_AROUND_AFTER_LIMIT = 40u
         const val DOWNLOADED_ATTACHMENT_CACHE_LIMIT_BYTES = 128L * 1024L * 1024L
+        const val MAX_CLIENT_DEBUG_LOG_ENTRIES = 50
+        const val MAX_CLIENT_DEBUG_LOG_DETAIL_CHARS = 1_000
         val SECRET_CIPHERTEXT = stringPreferencesKey("secret_ciphertext")
         val SECRET_IV = stringPreferencesKey("secret_iv")
 
@@ -1746,7 +1850,9 @@ class AppManager(
                 if (isFatalJvmError(error)) {
                     throw error
                 }
-                Log.e(TAG, "FFI update callback failed (${updateLogName(update)})", error)
+                val updateName = updateLogName(update)
+                logFfiFailure("ffi.update_callback.failed", updateName, error)
+                Log.e(TAG, "FFI update callback failed ($updateName)", error)
                 publishShellToast(DISPATCH_FAILURE_TOAST)
             }
         }

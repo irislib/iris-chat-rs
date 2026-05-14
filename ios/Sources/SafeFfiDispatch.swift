@@ -611,6 +611,10 @@ private func ensureReaderConsumed(_ reader: SafeFfiReader) throws {
 }
 
 private func logSafeFfiFailure(_ label: String, _ error: Error) {
+    irisAppendClientDebugLog(
+        category: "ffi.call.failed",
+        detail: "\(label): \(error)"
+    )
     irisDebugLog("%@", "Iris Chat FFI call failed (\(label)): \(error)")
 }
 

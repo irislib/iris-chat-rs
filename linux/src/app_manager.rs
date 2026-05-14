@@ -9,11 +9,14 @@ use iris_chat_core::{
     AppAction, AppReconciler, AppState, AppUpdate, DesktopNearbyObserver, DesktopNearbySnapshot,
     FfiApp, FfiDesktopNearby, OutgoingAttachment, Router, Screen, SearchResultSnapshot,
 };
+use serde::Serialize;
 
 use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
 
 const ACTIVE_CHAT_SEEN_IDLE_LIMIT: Duration = Duration::from_secs(5 * 60);
 const DISPATCH_FAILURE_TOAST: &str = "Action failed. Copy support bundle in Settings.";
+const MAX_CLIENT_DEBUG_LOG_DETAIL_CHARS: usize = 1_000;
+const MAX_CLIENT_DEBUG_LOG_ENTRIES: usize = 50;
 const NAVIGATION_OVERRIDE_TTL: Duration = Duration::from_secs(10);
 const RESTART_REQUIRED_TOAST: &str = "Iris needs restart. Copy support bundle in Settings.";
 const ROUTE_CHAT_SNAPSHOT_LIMIT: u32 = 80;
@@ -21,6 +24,13 @@ const ROUTE_CHAT_SNAPSHOT_LIMIT: u32 = 80;
 struct PendingNavigationOverride {
     stack: Vec<Screen>,
     expires_at: Instant,
+}
+
+#[derive(Clone, Serialize)]
+struct ClientDebugLogEntry {
+    timestamp_secs: u64,
+    category: String,
+    detail: String,
 }
 
 /// Chat-list search box state. Lives on the UI thread; queries are
@@ -57,6 +67,7 @@ pub struct AppManager {
     staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
     last_focused_chat_id: RefCell<Option<String>>,
     search_ui: RefCell<SearchUiState>,
+    client_debug_log: RefCell<Vec<ClientDebugLogEntry>>,
     window_active: Cell<bool>,
     last_user_activity: RefCell<Instant>,
 }
@@ -164,6 +175,7 @@ impl AppManager {
             staged_attachments: RefCell::new(HashMap::new()),
             last_focused_chat_id: RefCell::new(None),
             search_ui: RefCell::new(SearchUiState::default()),
+            client_debug_log: RefCell::new(Vec::new()),
             window_active: Cell::new(false),
             last_user_activity: RefCell::new(Instant::now()),
         }
@@ -201,7 +213,7 @@ impl AppManager {
         let snapshot = self.search_ui.borrow().clone();
         let query = snapshot.query;
         let scope_chat_id = snapshot.scope_chat_id;
-        catch_ffi(
+        self.catch_ffi_logged(
             "ffiapp.search",
             SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone()),
             || self.ffi.search(query, scope_chat_id, limit),
@@ -483,9 +495,10 @@ impl AppManager {
                     .as_ref()
                     .map_or(true, |chat| chat.chat_id != chat_id)
                 {
-                    base_state.current_chat = catch_ffi("ffiapp.chat_snapshot", None, || {
-                        self.ffi.chat_snapshot(chat_id, ROUTE_CHAT_SNAPSHOT_LIMIT)
-                    });
+                    base_state.current_chat =
+                        self.catch_ffi_logged("ffiapp.chat_snapshot", None, || {
+                            self.ffi.chat_snapshot(chat_id, ROUTE_CHAT_SNAPSHOT_LIMIT)
+                        });
                 }
                 base_state.group_details = None;
             }
@@ -510,7 +523,7 @@ impl AppManager {
         if !preserves_pending_navigation && action_clears_pending_navigation(&action) {
             *self.pending_navigation_override.borrow_mut() = None;
         }
-        let dispatched = catch_ffi("ffiapp.dispatch", false, || {
+        let dispatched = self.catch_ffi_logged("ffiapp.dispatch", false, || {
             self.ffi.dispatch(action);
             true
         });
@@ -571,7 +584,7 @@ impl AppManager {
         created_at_secs: u64,
         event_json: String,
     ) {
-        let _ = catch_ffi("desktop_nearby.publish", false, || {
+        let _ = self.catch_ffi_logged("desktop_nearby.publish", false, || {
             self.nearby
                 .publish(event_id, kind, created_at_secs, event_json);
             true
@@ -579,11 +592,12 @@ impl AppManager {
     }
 
     pub fn export_support_bundle_json(&self) -> String {
-        catch_ffi(
+        let rust_json = self.catch_ffi_logged(
             "ffiapp.export_support_bundle_json",
             "{}".to_string(),
             || self.ffi.export_support_bundle_json(),
-        )
+        );
+        self.support_bundle_json_with_client_log(rust_json)
     }
 
     #[allow(dead_code)]
@@ -595,7 +609,7 @@ impl AppManager {
     }
 
     fn start_nearby_safely(&self, show_toast_on_failure: bool) -> bool {
-        let started = catch_ffi("desktop_nearby.start", false, || {
+        let started = self.catch_ffi_logged("desktop_nearby.start", false, || {
             self.nearby.start(local_device_name());
             true
         });
@@ -606,7 +620,7 @@ impl AppManager {
     }
 
     fn stop_nearby_safely(&self, show_toast_on_failure: bool) -> bool {
-        let stopped = catch_ffi("desktop_nearby.stop", false, || {
+        let stopped = self.catch_ffi_logged("desktop_nearby.stop", false, || {
             self.nearby.stop();
             true
         });
@@ -621,6 +635,50 @@ impl AppManager {
         state.toast = Some(text.to_string());
         *self.local_state.borrow_mut() = state.clone();
         let _ = self.update_tx_ui.send_blocking(AppUpdate::FullState(state));
+    }
+
+    fn catch_ffi_logged<T, F>(&self, label: &str, fallback: T, body: F) -> T
+    where
+        F: FnOnce() -> T,
+    {
+        match catch_unwind(AssertUnwindSafe(body)) {
+            Ok(value) => value,
+            Err(payload) => {
+                let detail = panic_payload_message(payload.as_ref());
+                self.log_client_failure(label, &detail);
+                fallback
+            }
+        }
+    }
+
+    fn log_client_failure(&self, category: &str, detail: &str) {
+        eprintln!("Iris Chat FFI call failed ({category}): {detail}");
+        let mut log = self.client_debug_log.borrow_mut();
+        log.push(ClientDebugLogEntry {
+            timestamp_secs: iris_chat_core::perflog::now_ms() / 1_000,
+            category: category.to_string(),
+            detail: truncate_debug_detail(detail),
+        });
+        let excess = log.len().saturating_sub(MAX_CLIENT_DEBUG_LOG_ENTRIES);
+        if excess > 0 {
+            log.drain(0..excess);
+        }
+    }
+
+    fn support_bundle_json_with_client_log(&self, rust_json: String) -> String {
+        let client_log = self.client_debug_log.borrow().clone();
+        if client_log.is_empty() {
+            return rust_json;
+        }
+        let mut value = serde_json::from_str::<serde_json::Value>(&rust_json)
+            .unwrap_or_else(|_| serde_json::json!({}));
+        let Some(object) = value.as_object_mut() else {
+            return rust_json;
+        };
+        if let Ok(log_value) = serde_json::to_value(client_log) {
+            object.insert("client_log".to_string(), log_value);
+        }
+        serde_json::to_string_pretty(&value).unwrap_or(rust_json)
     }
 }
 
@@ -703,6 +761,13 @@ fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> String {
     } else {
         "panic".to_string()
     }
+}
+
+fn truncate_debug_detail(detail: &str) -> String {
+    detail
+        .chars()
+        .take(MAX_CLIENT_DEBUG_LOG_DETAIL_CHARS)
+        .collect()
 }
 
 fn xdg_data_home() -> PathBuf {
