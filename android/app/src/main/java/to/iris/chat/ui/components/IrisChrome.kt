@@ -11,7 +11,6 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -24,9 +23,11 @@ import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -65,6 +66,7 @@ import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +76,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.produceState
@@ -83,6 +86,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -159,9 +163,13 @@ fun IrisTopBar(
                 modifier =
                     Modifier
                         .fillMaxWidth()
-                        .padding(start = 14.dp, end = 12.dp, top = 8.dp, bottom = 8.dp),
+                        .height(64.dp)
+                        .padding(
+                            start = if (onBack != null) 4.dp else 16.dp,
+                            end = 8.dp,
+                        ),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 when {
                     onBack != null -> {
@@ -185,11 +193,12 @@ fun IrisTopBar(
                                     haptics.press()
                                     onBack()
                                 },
-                                modifier = Modifier.size(40.dp),
+                                modifier = Modifier.size(48.dp),
                             ) {
                                 Icon(
                                     imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
                                     contentDescription = "Back",
+                                    modifier = Modifier.size(24.dp),
                                 )
                             }
                         }
@@ -197,14 +206,13 @@ fun IrisTopBar(
 
                     leading != null -> {
                         Row(
-                            modifier = Modifier.padding(start = 2.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
                             content = leading,
                         )
                     }
 
                     else -> {
-                        Spacer(modifier = Modifier.size(40.dp))
+                        Spacer(modifier = Modifier.size(48.dp))
                     }
                 }
 
@@ -238,12 +246,12 @@ fun IrisTopBar(
                     ) {
                         Text(
                             text = title,
-                            style = MaterialTheme.typography.titleLarge,
-                            // Signal-Android Material 3 spec uses
-                            // SemiBold for titleLarge in nav headers.
-                            // Bold reads too heavy next to the row
-                            // body text below.
-                            fontWeight = FontWeight.SemiBold,
+                            style =
+                                if (titleAccessoryLeading != null) {
+                                    MaterialTheme.typography.titleMedium
+                                } else {
+                                    MaterialTheme.typography.titleLarge
+                                },
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
                         )
@@ -274,7 +282,7 @@ fun IrisTopBar(
                 }
 
                 Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(0.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     content = actions,
                 )
@@ -385,8 +393,7 @@ fun IrisAvatar(
             modifier
                 .size(size)
                 .clip(CircleShape)
-                .background(if (emphasize) palette.accent else palette.panelAlt)
-                .border(1.dp, palette.border, CircleShape),
+                .background(if (emphasize) palette.accent else palette.panelAlt),
         contentAlignment = Alignment.Center,
     ) {
         dataBitmap.value?.let { bitmap ->
@@ -490,13 +497,35 @@ fun IrisListSection(
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = IrisTheme.palette.panel,
-        shape = CardShape,
+        shape = RectangleShape,
         tonalElevation = 0.dp,
         shadowElevation = 0.dp,
     ) {
         Column(content = content)
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun irisTextFieldColors(containerColor: Color = IrisTheme.palette.panelAlt) =
+    TextFieldDefaults.colors(
+        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+        disabledTextColor = IrisTheme.palette.muted,
+        focusedContainerColor = containerColor,
+        unfocusedContainerColor = containerColor,
+        disabledContainerColor = containerColor,
+        cursorColor = MaterialTheme.colorScheme.onSurface,
+        focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent,
+        disabledIndicatorColor = Color.Transparent,
+        focusedLabelColor = IrisTheme.palette.muted,
+        unfocusedLabelColor = IrisTheme.palette.muted,
+        disabledLabelColor = IrisTheme.palette.muted.copy(alpha = 0.54f),
+        focusedPlaceholderColor = IrisTheme.palette.muted,
+        unfocusedPlaceholderColor = IrisTheme.palette.muted,
+        disabledPlaceholderColor = IrisTheme.palette.muted.copy(alpha = 0.54f),
+    )
 
 @Composable
 fun IrisMenuRow(
@@ -522,28 +551,20 @@ fun IrisMenuRow(
                         onClick()
                     },
                 )
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 16.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         when {
             leading != null -> leading()
             icon != null -> {
-                Box(
-                    modifier =
-                        Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(IrisTheme.palette.panelAlt),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(20.dp),
-                    )
-                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(24.dp),
+                )
             }
         }
         Column(
@@ -578,6 +599,7 @@ fun IrisMenuRow(
                 imageVector = IrisIcons.ChevronRight,
                 contentDescription = null,
                 tint = IrisTheme.palette.muted,
+                modifier = Modifier.size(24.dp),
             )
         }
     }
@@ -738,6 +760,7 @@ fun IrisTextButton(
 @Composable
 fun IrisChatListRow(
     title: String,
+    modifier: Modifier = Modifier,
     isMuted: Boolean = false,
     isPinned: Boolean = false,
     preview: String?,
@@ -750,7 +773,6 @@ fun IrisChatListRow(
     lastMessageMine: Boolean,
     lastDelivery: DeliveryState?,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier,
 ) {
     val palette = IrisTheme.palette
     val haptics = rememberIrisHapticFeedback()
@@ -763,6 +785,7 @@ fun IrisChatListRow(
         modifier =
             modifier
                 .fillMaxWidth()
+                .heightIn(min = 84.dp)
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null,
@@ -842,7 +865,7 @@ fun IrisChatListRow(
                             modifier = Modifier.weight(1f),
                             style = MaterialTheme.typography.bodyMedium,
                             color = palette.muted,
-                            maxLines = 1,
+                            maxLines = 2,
                             overflow = TextOverflow.Ellipsis,
                         )
                     } else {
@@ -852,20 +875,22 @@ fun IrisChatListRow(
                         DeliveryGlyph(lastDelivery)
                     }
                     if (unreadCount > 0) {
-                        BadgedBox(
-                            badge = {
-                                Badge(
-                                    containerColor = palette.accent,
-                                    contentColor = MaterialTheme.colorScheme.onPrimary,
-                                ) {
-                                    Text(
-                                        if (unreadCount > 99) "99+" else unreadCount.toString(),
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                    )
-                                }
-                            },
+                        Surface(
+                            color = palette.accent,
+                            contentColor = MaterialTheme.colorScheme.onPrimary,
+                            shape = PillShape,
                         ) {
-                            Spacer(modifier = Modifier.size(1.dp))
+                            Text(
+                                text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                                modifier =
+                                    Modifier
+                                        .heightIn(min = 18.dp)
+                                        .widthIn(min = 18.dp)
+                                        .padding(horizontal = 6.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                textAlign = TextAlign.Center,
+                            )
                         }
                     }
                 }
@@ -955,8 +980,8 @@ fun messageBubbleShape(
     isFirstInCluster: Boolean,
     isLastInCluster: Boolean,
 ): Shape {
-    val large = 22.dp
-    val tail = 6.dp
+    val large = 18.dp
+    val tail = 4.dp
     return when {
         isFirstInCluster && isLastInCluster -> RoundedCornerShape(large)
         isOutgoing && isFirstInCluster ->

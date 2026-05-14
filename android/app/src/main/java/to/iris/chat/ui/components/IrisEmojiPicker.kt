@@ -27,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,7 +35,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -115,16 +113,8 @@ fun IrisEmojiPicker(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 6.dp)
                     .testTag("emojiPickerSearch"),
-            colors =
-                TextFieldDefaults.colors(
-                    focusedContainerColor = palette.panel,
-                    unfocusedContainerColor = palette.panel,
-                    disabledContainerColor = palette.panel,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent,
-                ),
-            shape = RoundedCornerShape(12.dp),
+            colors = irisTextFieldColors(containerColor = palette.panel),
+            shape = RoundedCornerShape(24.dp),
         )
 
         LazyVerticalGrid(

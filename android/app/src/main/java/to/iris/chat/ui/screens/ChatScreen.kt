@@ -43,10 +43,8 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.ripple
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -80,6 +78,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,6 +103,7 @@ import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
 import androidx.compose.foundation.lazy.items
 import to.iris.chat.ui.components.formatTimelineDay
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.isSameTimelineDay
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
@@ -485,6 +485,26 @@ fun ChatScreen(
             return@Scaffold
         }
         val visibleMessages = chat.messages
+        var scrollDateHeaderVisible by remember(chatId) { mutableStateOf(false) }
+        var scrollDateHeaderLabel by remember(chatId) { mutableStateOf<String?>(null) }
+
+        LaunchedEffect(chatId, visibleMessages, listState) {
+            snapshotFlow { listState.isScrollInProgress to listState.firstVisibleItemIndex }
+                .distinctUntilChanged()
+                .collectLatest { (isScrolling, firstVisibleIndex) ->
+                    visibleMessages.getOrNull(firstVisibleIndex)?.let { message ->
+                        scrollDateHeaderLabel = formatTimelineDay(message.createdAtSecs.toLong())
+                    }
+                    if (isScrolling) {
+                        scrollDateHeaderVisible = scrollDateHeaderLabel != null
+                    } else {
+                        delay(900)
+                        if (!listState.isScrollInProgress) {
+                            scrollDateHeaderVisible = false
+                        }
+                    }
+                }
+        }
 
         Box(
             modifier =
@@ -508,9 +528,8 @@ fun ChatScreen(
                         modifier =
                             Modifier
                                 .fillMaxSize()
-                                .testTag("chatTimeline")
-                                .padding(horizontal = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp, Alignment.Bottom),
+                                .testTag("chatTimeline"),
+                        verticalArrangement = Arrangement.spacedBy(0.dp, Alignment.Bottom),
                     ) {
                         itemsIndexed(visibleMessages, key = { _, message -> message.id }) { index, message ->
                             if (index == 0) {
@@ -530,31 +549,10 @@ fun ChatScreen(
                             val isLastInCluster = next == null || startsMessageCluster(message, next, chat.kind)
 
                             if (showDayChip) {
-                                // Signal-Android style: a tonal-elevation
-                                // capsule on the surfaceContainerHighest
-                                // tier so the date chip floats over the
-                                // timeline without the harsh "halftone"
-                                // alpha tint the previous version used.
-                                Box(
-                                    modifier =
-                                        Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 14.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Surface(
-                                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
-                                        shape = RoundedCornerShape(100.dp),
-                                        tonalElevation = 2.dp,
-                                    ) {
-                                        Text(
-                                            text = formatTimelineDay(message.createdAtSecs.toLong()),
-                                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurface,
-                                        )
-                                    }
-                                }
+                                TimelineDaySeparator(
+                                    text = formatTimelineDay(message.createdAtSecs.toLong()),
+                                    floating = false,
+                                )
                             }
 
                             MessageBubble(
@@ -611,6 +609,20 @@ fun ChatScreen(
                                 },
                                 chat = chat,
                                 appManager = appManager,
+                            )
+                        }
+                    }
+
+                    if (scrollDateHeaderVisible && scrollDateHeaderLabel != null) {
+                        scrollDateHeaderLabel?.let { label ->
+                            TimelineDaySeparator(
+                                text = label,
+                                floating = true,
+                                modifier =
+                                    Modifier
+                                        .align(Alignment.TopCenter)
+                                        .padding(top = 12.dp)
+                                        .testTag("chatFloatingDaySeparator"),
                             )
                         }
                     }
@@ -721,7 +733,7 @@ fun ChatScreen(
                                 }
                             }
                             .testTag("chatJumpToBottom"),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    color = IrisTheme.palette.panelRaised,
                     shape = CircleShape,
                     shadowElevation = 4.dp,
                 ) {
@@ -751,6 +763,44 @@ fun ChatScreen(
                     onDismiss = { inChatSearchOpen = false },
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun TimelineDaySeparator(
+    text: String,
+    floating: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .padding(top = if (floating) 0.dp else 12.dp, bottom = if (floating) 0.dp else 13.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (floating) {
+            Surface(
+                color = IrisTheme.palette.panelRaised,
+                shape = RoundedCornerShape(18.dp),
+                shadowElevation = 2.dp,
+                tonalElevation = 0.dp,
+            ) {
+                Text(
+                    text = text,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else {
+            Text(
+                text = text,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -1155,15 +1205,8 @@ private fun InChatSearchSheet(
                             placeholder = { Text("Search in $chatDisplayName") },
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            shape = RoundedCornerShape(14.dp),
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                disabledIndicatorColor = Color.Transparent,
-                            ),
+                            shape = RoundedCornerShape(24.dp),
+                            colors = irisTextFieldColors(containerColor = IrisTheme.palette.panelRaised),
                         )
                     }
                 },

@@ -40,7 +40,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -210,7 +211,9 @@ internal fun ComposerBar(
     val hasSendContent = draft.isNotBlank() || selectedAttachments.isNotEmpty()
     val canSend = hasSendContent && !isBusy
     val sendButtonFilled = canSend || isSending
-    val showDesktopComposerTools = LocalConfiguration.current.screenWidthDp >= 600
+    val density = LocalDensity.current
+    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val showDesktopComposerTools = windowWidth >= 600.dp
     var showingEmojiPicker by remember { mutableStateOf(false) }
     val attachInteractionSource = remember { MutableInteractionSource() }
     val emojiInteractionSource = remember { MutableInteractionSource() }
@@ -295,113 +298,129 @@ internal fun ComposerBar(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.Bottom,
             ) {
-                Box(
+                Surface(
                     modifier =
                         Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .clickable(
-                                enabled = !isBusy,
-                                interactionSource = attachInteractionSource,
-                                indication = null,
-                            ) {
-                                haptics.press()
-                                onAttach()
-                            }
-                            .testTag("chatAttachButton"),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    if (isUploading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = IrisTheme.palette.muted,
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Add,
-                            contentDescription = "Add",
-                            tint =
-                                if (isBusy) {
-                                    IrisTheme.palette.muted.copy(alpha = 0.54f)
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                            modifier = Modifier.size(24.dp),
-                        )
-                    }
-                }
-
-                if (showDesktopComposerTools) {
-                    Box(
-                        modifier =
-                            Modifier
-                                .size(44.dp)
-                                .clip(CircleShape)
-                                .clickable(
-                                    enabled = !isBusy,
-                                    interactionSource = emojiInteractionSource,
-                                    indication = null,
-                                ) {
-                                    haptics.press()
-                                    showingEmojiPicker = !showingEmojiPicker
-                                }
-                                .testTag("chatEmojiButton"),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            text = "☺",
-                            style = MaterialTheme.typography.titleLarge,
-                            color =
-                                if (isBusy) {
-                                    IrisTheme.palette.muted.copy(alpha = 0.54f)
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                },
-                        )
-                    }
-                }
-
-                BasicTextField(
-                    value = draft,
-                    onValueChange = onDraftChange,
-                    modifier =
-                        (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                             .weight(1f)
-                            .heightIn(min = 44.dp, max = 132.dp)
-                            .background(IrisTheme.palette.panelAlt, RoundedCornerShape(22.dp))
-                            .padding(horizontal = 16.dp, vertical = 10.dp)
-                            .testTag("chatMessageInput"),
-                    textStyle =
-                        MaterialTheme.typography.bodyLarge.copy(
-                            color = MaterialTheme.colorScheme.onSurface,
-                        ),
-                    cursorBrush = SolidColor(IrisTheme.palette.accent),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                    keyboardActions = KeyboardActions(onSend = { submitDraft() }),
-                    minLines = 1,
-                    maxLines = 5,
-                    decorationBox = { innerTextField ->
-                        Box(
-                            modifier = Modifier.fillMaxWidth(),
-                            contentAlignment = Alignment.CenterStart,
-                        ) {
-                            if (draft.isEmpty()) {
+                            .heightIn(min = 44.dp),
+                    color = IrisTheme.palette.panelAlt,
+                    shape = RoundedCornerShape(22.dp),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 0.dp,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Bottom,
+                    ) {
+                        if (showDesktopComposerTools) {
+                            Box(
+                                modifier =
+                                    Modifier
+                                        .size(44.dp)
+                                        .clip(CircleShape)
+                                        .clickable(
+                                            enabled = !isBusy,
+                                            interactionSource = emojiInteractionSource,
+                                            indication = null,
+                                        ) {
+                                            haptics.press()
+                                            showingEmojiPicker = !showingEmojiPicker
+                                        }
+                                        .testTag("chatEmojiButton"),
+                                contentAlignment = Alignment.Center,
+                            ) {
                                 Text(
-                                    text = "Message",
-                                    style = MaterialTheme.typography.bodyLarge,
-                                    color = IrisTheme.palette.muted,
+                                    text = "☺",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    color =
+                                        if (isBusy) {
+                                            IrisTheme.palette.muted.copy(alpha = 0.54f)
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface
+                                        },
                                 )
                             }
-                            innerTextField()
                         }
-                    },
-                )
+
+                        BasicTextField(
+                            value = draft,
+                            onValueChange = onDraftChange,
+                            modifier =
+                                (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
+                                    .weight(1f)
+                                    .heightIn(min = 44.dp, max = 132.dp)
+                                    .padding(start = if (showDesktopComposerTools) 0.dp else 16.dp, end = 8.dp)
+                                    .padding(vertical = 10.dp)
+                                    .testTag("chatMessageInput"),
+                            textStyle =
+                                MaterialTheme.typography.bodyLarge.copy(
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                ),
+                            cursorBrush = SolidColor(IrisTheme.palette.accent),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = { submitDraft() }),
+                            minLines = 1,
+                            maxLines = 5,
+                            decorationBox = { innerTextField ->
+                                Box(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    contentAlignment = Alignment.CenterStart,
+                                ) {
+                                    if (draft.isEmpty()) {
+                                        Text(
+                                            text = "Message",
+                                            style = MaterialTheme.typography.bodyLarge,
+                                            color = IrisTheme.palette.muted,
+                                        )
+                                    }
+                                    innerTextField()
+                                }
+                            },
+                        )
+
+                        Box(
+                            modifier =
+                                Modifier
+                                    .size(44.dp)
+                                    .clip(CircleShape)
+                                    .clickable(
+                                        enabled = !isBusy,
+                                        interactionSource = attachInteractionSource,
+                                        indication = null,
+                                    ) {
+                                        haptics.press()
+                                        onAttach()
+                                    }
+                                    .testTag("chatAttachButton"),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (isUploading) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    strokeWidth = 2.dp,
+                                    color = IrisTheme.palette.muted,
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Rounded.Add,
+                                    contentDescription = "Add",
+                                    tint =
+                                        if (isBusy) {
+                                            IrisTheme.palette.muted.copy(alpha = 0.54f)
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface
+                                        },
+                                    modifier = Modifier.size(24.dp),
+                                )
+                            }
+                        }
+                    }
+                }
 
                 Box(
                     modifier =
                         Modifier
-                            .size(44.dp)
+                            .size(40.dp)
                             .clip(CircleShape)
                             .background(
                                 if (sendButtonFilled) {

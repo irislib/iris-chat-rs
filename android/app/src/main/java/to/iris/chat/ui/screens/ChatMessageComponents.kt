@@ -60,10 +60,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.launch
@@ -104,7 +104,6 @@ import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.components.rememberRecentReactionEmoji
 import to.iris.chat.ui.components.uniqueReactionEmojis
 import to.iris.chat.ui.theme.IrisTheme
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
@@ -145,7 +144,9 @@ internal fun MessageBubble(
         rememberRecentReactionEmoji(context, emoji)
         onReact(emoji)
     }
-    val showDesktopActionDock = LocalConfiguration.current.screenWidthDp >= 600
+    val density = LocalDensity.current
+    val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
+    val showDesktopActionDock = windowWidth >= 600.dp
     val hoverInteractionSource = remember { MutableInteractionSource() }
     val bubbleInteractionSource = remember { MutableInteractionSource() }
     val isHovering by hoverInteractionSource.collectIsHoveredAsState()
@@ -218,8 +219,20 @@ internal fun MessageBubble(
             isFirstInCluster = isFirstInCluster,
             isLastInCluster = isLastInCluster,
         )
+    val bubbleMaxWidth = (windowWidth - 96.dp).coerceAtLeast(220.dp)
+    val clusterTopPadding =
+        if (isFirstInCluster) {
+            6.dp
+        } else {
+            1.dp
+        }
+    val clusterBottomPadding =
+        if (isLastInCluster) {
+            6.dp
+        } else {
+            1.dp
+        }
     val swipeOffsetX = remember(message.id) { Animatable(0f) }
-    val density = LocalDensity.current
     val swipeThresholdPx = with(density) { 60.dp.toPx() }
     val swipeMaxOffsetPx = with(density) { 90.dp.toPx() }
     val swipeScope = rememberCoroutineScope()
@@ -233,6 +246,7 @@ internal fun MessageBubble(
         modifier =
             Modifier
                 .fillMaxWidth()
+                .padding(top = clusterTopPadding, bottom = clusterBottomPadding)
                 .hoverable(hoverInteractionSource),
     ) {
         Row(
@@ -240,7 +254,7 @@ internal fun MessageBubble(
                 Modifier
                     .align(Alignment.Center)
                     .fillMaxWidth()
-                    .padding(horizontal = 14.dp),
+                    .padding(horizontal = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
@@ -269,6 +283,7 @@ internal fun MessageBubble(
             modifier =
                 Modifier
                     .align(if (message.isOutgoing) Alignment.CenterEnd else Alignment.CenterStart)
+                    .padding(horizontal = 16.dp)
                     .offset { IntOffset(swipeOffsetX.value.toInt(), 0) }
                     .pointerInput(message.id) {
                         detectHorizontalDragGestures(
@@ -333,7 +348,7 @@ internal fun MessageBubble(
                 Surface(
                     modifier =
                         Modifier
-                            .widthIn(max = 300.dp)
+                            .widthIn(max = bubbleMaxWidth)
                             .clip(bubbleShape)
                             .combinedClickable(
                                 interactionSource = bubbleInteractionSource,
@@ -360,8 +375,8 @@ internal fun MessageBubble(
                 ) {
                     Column(
                         modifier =
-                            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                            Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
                     ) {
                         if (!message.isOutgoing && chatKind == ChatKind.GROUP && isFirstInCluster) {
                             Text(

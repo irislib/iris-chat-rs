@@ -2,6 +2,8 @@ package to.iris.chat.ui.screens
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.core.CameraSelector
@@ -13,9 +15,18 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -27,9 +38,16 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
@@ -213,33 +231,91 @@ fun QrScannerDialog(
         )
     }
 
-    AlertDialog(
+    Dialog(
         onDismissRequest = onDismiss,
-        title = { Text("Scan code") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                error?.let {
-                    Text(
-                        text = it,
-                        color = MaterialTheme.colorScheme.error,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black),
+        ) {
+            AndroidView(
+                factory = { previewView },
+                modifier = Modifier.fillMaxSize(),
+            )
+            QrScannerCrosshair(modifier = Modifier.fillMaxSize())
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 4.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onDismiss) {
+                    Icon(
+                        imageVector = Icons.Rounded.Close,
+                        contentDescription = "Close scanner",
+                        tint = Color.White,
                     )
                 }
-                Box(
-                    modifier = Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    AndroidView(
-                        factory = { previewView },
-                        modifier = Modifier.size(280.dp),
-                    )
-                }
+                Text(
+                    text = "Scan code",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = Color.White,
+                )
             }
-        },
-        confirmButton = {},
-        dismissButton = {
-            IrisTextButton(onClick = onDismiss) {
-                Text("Close")
+            error?.let { message ->
+                Text(
+                    text = message,
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(horizontal = 24.dp, vertical = 28.dp)
+                            .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(18.dp))
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color.White,
+                )
             }
-        },
-    )
+        }
+    }
+}
+
+@Composable
+private fun QrScannerCrosshair(modifier: Modifier = Modifier) {
+    val path = remember { Path() }
+    Canvas(modifier = modifier) {
+        val crosshairWidth = size.minDimension * 0.6f
+        val lineLength = crosshairWidth * 0.125f
+        val topLeft = center - Offset(crosshairWidth / 2f, crosshairWidth / 2f)
+        val topRight = center + Offset(crosshairWidth / 2f, -crosshairWidth / 2f)
+        val bottomRight = center + Offset(crosshairWidth / 2f, crosshairWidth / 2f)
+        val bottomLeft = center + Offset(-crosshairWidth / 2f, crosshairWidth / 2f)
+        path.reset()
+        path.moveTo(topLeft.x, topLeft.y + lineLength)
+        path.lineTo(topLeft.x, topLeft.y)
+        path.lineTo(topLeft.x + lineLength, topLeft.y)
+        path.moveTo(topRight.x - lineLength, topRight.y)
+        path.lineTo(topRight.x, topRight.y)
+        path.lineTo(topRight.x, topRight.y + lineLength)
+        path.moveTo(bottomRight.x, bottomRight.y - lineLength)
+        path.lineTo(bottomRight.x, bottomRight.y)
+        path.lineTo(bottomRight.x - lineLength, bottomRight.y)
+        path.moveTo(bottomLeft.x + lineLength, bottomLeft.y)
+        path.lineTo(bottomLeft.x, bottomLeft.y)
+        path.lineTo(bottomLeft.x, bottomLeft.y - lineLength)
+        drawPath(
+            path = path,
+            color = Color.White,
+            style =
+                Stroke(
+                    width = 3.dp.toPx(),
+                    pathEffect = PathEffect.cornerPathEffect(10.dp.toPx()),
+                ),
+        )
+    }
 }

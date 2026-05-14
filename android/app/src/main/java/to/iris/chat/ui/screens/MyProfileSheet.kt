@@ -17,10 +17,12 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -70,10 +72,10 @@ import to.iris.chat.ui.components.IrisInlineAction
 import to.iris.chat.ui.components.IrisListSection
 import to.iris.chat.ui.components.IrisMenuRow
 import to.iris.chat.ui.components.IrisPrimaryButton
-import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisToggleRow
 import to.iris.chat.ui.components.IrisTopBar
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
@@ -262,7 +264,7 @@ fun MyProfileSheet(
                 } else {
                     when (selectedPage) {
                         SettingsPage.Profile -> {
-                            IrisSectionCard {
+                            SettingsFormSection {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -311,6 +313,8 @@ fun MyProfileSheet(
                                     singleLine = true,
                                     enabled = canManageDevices,
                                     modifier = Modifier.fillMaxWidth().testTag("myProfileDisplayNameInput"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = irisTextFieldColors(),
                                 )
                                 if (canManageDevices) {
                                     IrisSecondaryButton(
@@ -340,7 +344,7 @@ fun MyProfileSheet(
                                     modifier = Modifier.testTag("myProfileSaveProfileButton"),
                                 )
                                 if (canManageDevices) {
-                                    IrisPrimaryButton(
+                                    IrisSecondaryButton(
                                         text = "Manage devices",
                                         onClick = onManageDevices,
                                         modifier = Modifier.testTag("myProfileManageDevicesButton"),
@@ -357,13 +361,11 @@ fun MyProfileSheet(
                                     contentAlignment = Alignment.Center,
                                 ) {
                                     if (qrBitmap != null) {
-                                        Image(
-                                            bitmap = qrBitmap.asImageBitmap(),
+                                        IrisQrCodeImage(
+                                            bitmap = qrBitmap,
                                             contentDescription = "My user ID code",
-                                            modifier =
-                                                Modifier
-                                                    .size(260.dp)
-                                                    .testTag("myProfileQrCode"),
+                                            size = 260.dp,
+                                            tag = "myProfileQrCode",
                                         )
                                     }
                                 }
@@ -432,6 +434,8 @@ fun MyProfileSheet(
                                     placeholder = { Text(NotificationsServerDefault) },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth().testTag("myProfileNotificationsServerUrlInput"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = irisTextFieldColors(),
                                 )
                                 IrisInlineAction(
                                     text = NotificationsServerProjectLabel,
@@ -465,6 +469,8 @@ fun MyProfileSheet(
                                     label = { Text("Proxy URL") },
                                     singleLine = true,
                                     modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxyUrlInput"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = irisTextFieldColors(),
                                 )
                                 TextField(
                                     value = imageProxyKeyHex,
@@ -475,6 +481,8 @@ fun MyProfileSheet(
                                     singleLine = true,
                                     visualTransformation = PasswordVisualTransformation(),
                                     modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxyKeyInput"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = irisTextFieldColors(),
                                 )
                                 TextField(
                                     value = imageProxySaltHex,
@@ -485,6 +493,8 @@ fun MyProfileSheet(
                                     singleLine = true,
                                     visualTransformation = PasswordVisualTransformation(),
                                     modifier = Modifier.fillMaxWidth().testTag("myProfileImageProxySaltInput"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = irisTextFieldColors(),
                                 )
                                 IrisSecondaryButton(
                                     text = "Reset image proxy",
@@ -530,6 +540,8 @@ fun MyProfileSheet(
                                                     Modifier
                                                         .weight(1f)
                                                         .testTag("myProfileEditRelayInput"),
+                                                shape = RoundedCornerShape(10.dp),
+                                                colors = irisTextFieldColors(),
                                             )
                                             TextButton(
                                                 onClick = {
@@ -611,6 +623,8 @@ fun MyProfileSheet(
                                         label = { Text("Server URL") },
                                         singleLine = true,
                                         modifier = Modifier.weight(1f).testTag("myProfileNewRelayInput"),
+                                        shape = RoundedCornerShape(10.dp),
+                                        colors = irisTextFieldColors(),
                                     )
                                     IrisSecondaryButton(
                                         text = "Add",
@@ -915,22 +929,61 @@ private fun SettingsProfileMenuRow(
     imageData: ByteArray?,
     onClick: () -> Unit,
 ) {
+    val haptics = rememberIrisHapticFeedback()
+    val interactionSource = remember { MutableInteractionSource() }
     IrisListSection {
-        IrisMenuRow(
-            title = displayName.ifBlank { "Profile" },
-            subtitle = "My profile",
-            onClick = onClick,
-            modifier = Modifier.testTag(SettingsPage.Profile.tag),
-            leading = {
+        Row(
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 128.dp)
+                    .clickable(
+                        interactionSource = interactionSource,
+                        indication = null,
+                    ) {
+                        haptics.press()
+                        onClick()
+                    }
+                    .padding(horizontal = 16.dp, vertical = 24.dp)
+                    .testTag(SettingsPage.Profile.tag),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             IrisAvatar(
                 label = displayName.ifBlank { "Profile" },
-                size = 54.dp,
+                size = 80.dp,
                 emphasize = true,
                 imageUrl = imageUrl,
                 imageData = imageData,
             )
-            },
-        )
+            Column(
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .padding(start = 24.dp, end = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(
+                    text = displayName.ifBlank { "Profile" },
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = "My profile",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Icon(
+                imageVector = IrisIcons.ChevronRight,
+                contentDescription = null,
+                tint = IrisTheme.palette.muted,
+                modifier = Modifier.size(24.dp),
+            )
+        }
     }
 }
 

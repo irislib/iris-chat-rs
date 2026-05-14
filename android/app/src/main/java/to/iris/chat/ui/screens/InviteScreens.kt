@@ -1,7 +1,5 @@
 package to.iris.chat.ui.screens
 
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,13 +8,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -25,8 +23,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
@@ -38,6 +34,7 @@ import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 
@@ -79,16 +76,14 @@ fun CreateInviteScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (qrBitmap != null && inviteUrl != null) {
-                Image(
-                    bitmap = qrBitmap.asImageBitmap(),
+                IrisQrCodeImage(
+                    bitmap = qrBitmap,
                     contentDescription = "Invite code",
                     modifier =
                         Modifier
-                            .align(Alignment.CenterHorizontally)
-                            .size(260.dp)
-                            .background(Color.White)
-                            .padding(12.dp)
-                            .testTag("createInviteQrCode"),
+                            .align(Alignment.CenterHorizontally),
+                    size = 260.dp,
+                    tag = "createInviteQrCode",
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     IrisSecondaryButton(
@@ -171,15 +166,8 @@ fun JoinInviteScreen(
                         )
                     },
                     minLines = 2,
-                    colors =
-                        TextFieldDefaults.colors(
-                            focusedContainerColor = IrisTheme.palette.panelAlt,
-                            unfocusedContainerColor = IrisTheme.palette.panelAlt,
-                            disabledContainerColor = IrisTheme.palette.panelAlt,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent,
-                        ),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = irisTextFieldColors(),
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

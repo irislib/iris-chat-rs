@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.MaterialTheme
@@ -59,6 +60,7 @@ import to.iris.chat.rust.Screen
 import to.iris.chat.ui.components.IrisOfflineBannerState
 import to.iris.chat.ui.components.IrisTextButton
 import to.iris.chat.ui.components.LocalIrisOfflineBannerState
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.screens.ChatListScreen
 import to.iris.chat.ui.screens.ChatScreen
@@ -549,6 +551,8 @@ private fun ShareTargetDialog(
                     modifier = Modifier.fillMaxWidth(),
                     placeholder = { Text("Search") },
                     singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = irisTextFieldColors(),
                 )
                 LazyColumn(modifier = Modifier.heightIn(max = 380.dp)) {
                     items(filteredChats, key = { it.chatId }) { chat ->

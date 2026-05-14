@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -18,7 +19,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -27,7 +27,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -48,6 +47,7 @@ import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
@@ -323,15 +323,8 @@ fun GroupDetailsScreen(
                                 .fillMaxWidth()
                                 .testTag("groupDetailsNameInput"),
                         singleLine = true,
-                        colors =
-                            TextFieldDefaults.colors(
-                                focusedContainerColor = IrisTheme.palette.panelAlt,
-                                unfocusedContainerColor = IrisTheme.palette.panelAlt,
-                                disabledContainerColor = IrisTheme.palette.panelAlt,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                disabledIndicatorColor = Color.Transparent,
-                            ),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = irisTextFieldColors(),
                     )
                     IrisPrimaryButton(
                         text = if (appState.busy.updatingGroup) "Saving…" else "Save name",
@@ -367,15 +360,8 @@ fun GroupDetailsScreen(
                             )
                         },
                         singleLine = true,
-                        colors =
-                            TextFieldDefaults.colors(
-                                focusedContainerColor = IrisTheme.palette.panelAlt,
-                                unfocusedContainerColor = IrisTheme.palette.panelAlt,
-                                disabledContainerColor = IrisTheme.palette.panelAlt,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                disabledIndicatorColor = Color.Transparent,
-                            ),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = irisTextFieldColors(),
                     )
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                         IrisSecondaryButton(

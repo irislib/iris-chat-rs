@@ -19,7 +19,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -31,7 +30,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -52,6 +50,7 @@ import to.iris.chat.ui.components.IrisListSection
 import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
@@ -140,15 +139,8 @@ fun NewGroupScreen(
                             )
                         },
                         singleLine = true,
-                        colors =
-                            TextFieldDefaults.colors(
-                                focusedContainerColor = IrisTheme.palette.panelAlt,
-                                unfocusedContainerColor = IrisTheme.palette.panelAlt,
-                                disabledContainerColor = IrisTheme.palette.panelAlt,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                disabledIndicatorColor = Color.Transparent,
-                            ),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = irisTextFieldColors(),
                     )
 
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -306,15 +298,8 @@ fun NewGroupScreen(
                             )
                         },
                         singleLine = true,
-                        colors =
-                            TextFieldDefaults.colors(
-                                focusedContainerColor = IrisTheme.palette.panelAlt,
-                                unfocusedContainerColor = IrisTheme.palette.panelAlt,
-                                disabledContainerColor = IrisTheme.palette.panelAlt,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                disabledIndicatorColor = Color.Transparent,
-                            ),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = irisTextFieldColors(),
                     )
 
                     SelectedMemberChips(

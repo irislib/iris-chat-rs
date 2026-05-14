@@ -4,17 +4,20 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Color as AndroidColor
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Parcelable
 import android.provider.Settings
 import android.util.Log
-import android.view.KeyEvent
-import android.view.MotionEvent
+import androidx.activity.SystemBarStyle
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.SideEffect
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
@@ -71,7 +74,11 @@ class MainActivity : ComponentActivity() {
         handleLaunchIntent(intent)
 
         setContent {
-            IrisChatTheme {
+            val darkTheme = isSystemInDarkTheme()
+            SideEffect {
+                syncSystemBars(darkTheme)
+            }
+            IrisChatTheme(darkTheme = darkTheme) {
                 NdrApp(
                     container = container,
                     onNearbyVisibilityChange = ::setNearbyVisible,
@@ -82,24 +89,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun syncSystemBars(darkTheme: Boolean) {
+        val lightBackground = AndroidColor.rgb(251, 252, 255)
+        val systemBarStyle =
+            if (darkTheme) {
+                SystemBarStyle.dark(AndroidColor.BLACK)
+            } else {
+                SystemBarStyle.light(lightBackground, lightBackground)
+            }
+        enableEdgeToEdge(
+            statusBarStyle = systemBarStyle,
+            navigationBarStyle = systemBarStyle,
+        )
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleLaunchIntent(intent)
     }
 
-    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+    override fun onUserInteraction() {
+        super.onUserInteraction()
         if (::container.isInitialized) {
             container.appManager.recordUserActivity()
         }
-        return super.dispatchTouchEvent(ev)
-    }
-
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (::container.isInitialized) {
-            container.appManager.recordUserActivity()
-        }
-        return super.dispatchKeyEvent(event)
     }
 
     override fun onStart() {

@@ -40,12 +40,12 @@ private val DarkColors =
         onSecondary = IrisBlack,
         tertiary = IrisAccent,
         surface = IrisNightSurface,
-        onSurface = IrisWhite,
+        onSurface = IrisNightText,
         surfaceVariant = IrisNightSurfaceAlt,
         onSurfaceVariant = IrisMutedDark,
         outline = IrisNightBorder,
         background = IrisNightBackground,
-        onBackground = IrisWhite,
+        onBackground = IrisNightText,
         error = ColorError,
     )
 
@@ -55,13 +55,13 @@ private val IrisTypography =
             TextStyle(
                 fontWeight = FontWeight.Bold,
                 fontSize = 32.sp,
-                lineHeight = 36.sp,
+                lineHeight = 40.sp,
             ),
         headlineMedium =
             TextStyle(
                 fontWeight = FontWeight.Bold,
                 fontSize = 28.sp,
-                lineHeight = 32.sp,
+                lineHeight = 36.sp,
             ),
         headlineSmall =
             TextStyle(
@@ -71,21 +71,21 @@ private val IrisTypography =
             ),
         titleLarge =
             TextStyle(
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 20.sp,
-                lineHeight = 24.sp,
+                fontWeight = FontWeight.Normal,
+                fontSize = 22.sp,
+                lineHeight = 28.sp,
             ),
         titleMedium =
             TextStyle(
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 16.sp,
-                lineHeight = 22.sp,
+                fontWeight = FontWeight.Normal,
+                fontSize = 18.sp,
+                lineHeight = 24.sp,
             ),
         titleSmall =
             TextStyle(
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 14.sp,
-                lineHeight = 18.sp,
+                fontWeight = FontWeight.Normal,
+                fontSize = 16.sp,
+                lineHeight = 22.sp,
             ),
         bodyLarge =
             TextStyle(
@@ -102,26 +102,26 @@ private val IrisTypography =
         bodySmall =
             TextStyle(
                 fontWeight = FontWeight.Normal,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 lineHeight = 16.sp,
             ),
         labelLarge =
             TextStyle(
                 fontWeight = FontWeight.SemiBold,
                 fontSize = 14.sp,
-                lineHeight = 18.sp,
+                lineHeight = 20.sp,
             ),
         labelMedium =
             TextStyle(
                 fontWeight = FontWeight.Medium,
-                fontSize = 12.sp,
+                fontSize = 13.sp,
                 lineHeight = 16.sp,
             ),
         labelSmall =
             TextStyle(
                 fontWeight = FontWeight.Medium,
-                fontSize = 11.sp,
-                lineHeight = 14.sp,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
             ),
     )
 
@@ -141,6 +141,7 @@ data class IrisPalette(
     val accent: androidx.compose.ui.graphics.Color,
     val accentAlt: androidx.compose.ui.graphics.Color,
     val muted: androidx.compose.ui.graphics.Color,
+    val panelRaised: androidx.compose.ui.graphics.Color,
 )
 
 object IrisTheme {
@@ -165,6 +166,7 @@ fun IrisChatTheme(
                 accent = IrisPurple,
                 accentAlt = IrisAccent,
                 muted = IrisMutedDark,
+                panelRaised = IrisNightSurfaceRaised,
             )
         } else {
             IrisPalette(
@@ -177,6 +179,7 @@ fun IrisChatTheme(
                 accent = IrisPurple,
                 accentAlt = IrisAccent,
                 muted = IrisMutedLight,
+                panelRaised = IrisLightSurfaceRaised,
             )
         }
 

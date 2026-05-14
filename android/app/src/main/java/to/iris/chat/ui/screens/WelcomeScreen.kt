@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -31,7 +32,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -43,7 +43,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -62,6 +61,7 @@ import to.iris.chat.rust.Screen
 import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisSecondaryButton
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 
@@ -281,6 +281,7 @@ fun CreateAccountScreen(
                             submitCreateAccount()
                         },
                 ),
+                shape = RoundedCornerShape(10.dp),
                 colors = irisTextFieldColors(),
             )
         }
@@ -351,6 +352,7 @@ fun RestoreAccountScreen(
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 enabled = !appState.busy.restoringSession,
+                shape = RoundedCornerShape(10.dp),
                 colors = irisTextFieldColors(),
             )
         }
@@ -590,14 +592,3 @@ private fun OnboardingScaffold(
         }
     }
 }
-
-@Composable
-private fun irisTextFieldColors() =
-    TextFieldDefaults.colors(
-        focusedContainerColor = IrisTheme.palette.panelAlt,
-        unfocusedContainerColor = IrisTheme.palette.panelAlt,
-        disabledContainerColor = IrisTheme.palette.panelAlt,
-        focusedIndicatorColor = Color.Transparent,
-        unfocusedIndicatorColor = Color.Transparent,
-        disabledIndicatorColor = Color.Transparent,
-    )

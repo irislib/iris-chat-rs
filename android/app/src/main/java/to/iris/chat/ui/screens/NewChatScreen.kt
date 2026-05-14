@@ -1,8 +1,6 @@
 package to.iris.chat.ui.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -26,7 +24,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -37,7 +34,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
@@ -59,6 +55,7 @@ import to.iris.chat.ui.components.IrisMenuRow
 import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.theme.IrisTheme
 
@@ -215,15 +212,8 @@ fun NewChatScreen(
                                 handleNewChatInput(peerInput)
                             },
                         ),
-                    colors =
-                        TextFieldDefaults.colors(
-                            focusedContainerColor = IrisTheme.palette.panelAlt,
-                            unfocusedContainerColor = IrisTheme.palette.panelAlt,
-                            disabledContainerColor = IrisTheme.palette.panelAlt,
-                            focusedIndicatorColor = Color.Transparent,
-                            unfocusedIndicatorColor = Color.Transparent,
-                            disabledIndicatorColor = Color.Transparent,
-                        ),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = irisTextFieldColors(),
                 )
 
                 IrisSecondaryButton(
@@ -279,15 +269,10 @@ fun NewChatScreen(
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                     )
-                    Image(
-                        bitmap = qrBitmap.asImageBitmap(),
+                    IrisQrCodeImage(
+                        bitmap = qrBitmap,
                         contentDescription = "Invite code",
-                        modifier =
-                            Modifier
-                                .size(280.dp)
-                                .background(Color.White)
-                                .padding(12.dp)
-                                .testTag("newChatInviteQrCode"),
+                        tag = "newChatInviteQrCode",
                     )
                     Text(
                         text = "Scan this code to start a chat",

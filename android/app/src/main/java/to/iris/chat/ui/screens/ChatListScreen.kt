@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -37,7 +38,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.ripple
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Clear
@@ -84,6 +84,7 @@ import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisSearchViewMoreRow
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
+import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
@@ -857,7 +858,8 @@ private fun ChatListSearchField(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .heightIn(min = 48.dp)
                 .onFocusChanged { focused = it.isFocused }
                 .testTag("chatListSearchField"),
         placeholder = { Text("Search chats, groups, messages") },
@@ -884,16 +886,8 @@ private fun ChatListSearchField(
         },
         singleLine = true,
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        shape = RoundedCornerShape(14.dp),
-        colors =
-            TextFieldDefaults.colors(
-                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-                disabledIndicatorColor = Color.Transparent,
-            ),
+        shape = RoundedCornerShape(24.dp),
+        colors = irisTextFieldColors(containerColor = IrisTheme.palette.panelRaised),
     )
 }
 
