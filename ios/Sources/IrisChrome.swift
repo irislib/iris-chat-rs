@@ -330,6 +330,7 @@ struct IrisTopBar: View {
     let subtitle: String?
     let subtitleSystemImage: String?
     let isChatHeader: Bool
+    let centerTitle: Bool
     let canGoBack: Bool
     let onBack: () -> Void
     let backBadgeCount: UInt64
@@ -343,6 +344,7 @@ struct IrisTopBar: View {
         subtitle: String? = nil,
         subtitleSystemImage: String? = nil,
         isChatHeader: Bool = false,
+        centerTitle: Bool = false,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
         backBadgeCount: UInt64 = 0,
@@ -355,6 +357,7 @@ struct IrisTopBar: View {
         self.subtitle = subtitle
         self.subtitleSystemImage = subtitleSystemImage
         self.isChatHeader = isChatHeader
+        self.centerTitle = centerTitle
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.backBadgeCount = backBadgeCount
@@ -400,46 +403,28 @@ struct IrisTopBar: View {
     }
 
     var body: some View {
-        // Chat headers use Signal's tighter navigation-title cluster;
-        // other screens keep the roomier Iris top-bar spacing.
-        HStack(spacing: isChatHeader ? 8 : 14) {
-            if canGoBack {
-                Button(action: onBack) {
-                    ZStack(alignment: .topTrailing) {
-                        // Match the composer's attach button: 40pt
-                        // glass circle so the two are visually a
-                        // pair sitting at the same horizontal inset.
-                        // The 48pt content shape (visible disc still
-                        // pinned to the leading edge so the chevron
-                        // stays at x=8) gives the button some extra
-                        // hit area on the trailing side, so an off-
-                        // center thumb tap toward the title doesn't
-                        // slip past the disc.
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .bold))
-                            .foregroundStyle(palette.textPrimary)
-                            .frame(width: 40, height: 40)
-                            .irisGlassSurface(in: Circle())
-                        if backBadgeCount > 0 {
-                            Text(backBadgeCount > 99 ? "99+" : "\(backBadgeCount)")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(Color.white)
-                                .padding(.horizontal, 5)
-                                .frame(minWidth: 18, minHeight: 18)
-                                .background(Capsule().fill(palette.accent))
-                                .offset(x: 5, y: -5)
-                        }
-                    }
-                    .frame(width: 48, height: 48, alignment: .leading)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.irisPlain)
-                .accessibilityLabel("Back")
-                .accessibilityIdentifier("navigationBackButton")
+        Group {
+            if centerTitle && !canGoBack {
+                centeredTitleBar
             } else {
-                leading
-                    .frame(minWidth: 44, alignment: .leading)
+                leadingTitleBar
             }
+        }
+        // Tight horizontal padding — the chevron / attach button
+        // sits closer to the screen edge so it lines up cleanly with
+        // the composer's leading control. 6pt bottom padding gives
+        // the title cluster breathing room from whatever sits
+        // beneath the bar (the offline banner stripe, the day chip
+        // at the top of the timeline, …).
+        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 12 : 8)
+        .padding(.bottom, isChatHeader ? 4 : 6)
+        .frame(maxWidth: IrisLayout.chromeMaxWidth)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var leadingTitleBar: some View {
+        HStack(spacing: isChatHeader ? 8 : 14) {
+            leadingSlot
 
             Group {
                 if let onTitleTap {
@@ -460,16 +445,83 @@ struct IrisTopBar: View {
             trailing
                 .frame(minWidth: 44, alignment: .trailing)
         }
-        // Tight horizontal padding — the chevron / attach button
-        // sits closer to the screen edge so it lines up cleanly with
-        // the composer's leading control. 6pt bottom padding gives
-        // the title cluster breathing room from whatever sits
-        // beneath the bar (the offline banner stripe, the day chip
-        // at the top of the timeline, …).
-        .padding(.horizontal, IrisLayout.usesDesktopChrome ? 12 : 8)
-        .padding(.bottom, isChatHeader ? 4 : 6)
-        .frame(maxWidth: IrisLayout.chromeMaxWidth)
-        .frame(maxWidth: .infinity)
+    }
+
+    private var centeredTitleBar: some View {
+        ZStack {
+            titleContent
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.horizontal, 72)
+
+            HStack(spacing: 0) {
+                leadingSlot
+                    .frame(width: 52, alignment: .leading)
+                Spacer(minLength: 0)
+                trailing
+                    .frame(width: 52, alignment: .trailing)
+            }
+        }
+        .frame(height: 48)
+    }
+
+    @ViewBuilder
+    private var leadingSlot: some View {
+        if canGoBack {
+            Button(action: onBack) {
+                ZStack(alignment: .topTrailing) {
+                    // Match the composer's attach button: 40pt
+                    // glass circle so the two are visually a
+                    // pair sitting at the same horizontal inset.
+                    // The 48pt content shape (visible disc still
+                    // pinned to the leading edge so the chevron
+                    // stays at x=8) gives the button some extra
+                    // hit area on the trailing side, so an off-
+                    // center thumb tap toward the title doesn't
+                    // slip past the disc.
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(palette.textPrimary)
+                        .frame(width: 40, height: 40)
+                        .irisGlassSurface(in: Circle())
+                    if backBadgeCount > 0 {
+                        Text(backBadgeCount > 99 ? "99+" : "\(backBadgeCount)")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.white)
+                            .padding(.horizontal, 5)
+                            .frame(minWidth: 18, minHeight: 18)
+                            .background(Capsule().fill(palette.accent))
+                            .offset(x: 5, y: -5)
+                    }
+                }
+                .frame(width: 48, height: 48, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.irisPlain)
+            .accessibilityLabel("Back")
+            .accessibilityIdentifier("navigationBackButton")
+        } else {
+            leading
+                .frame(minWidth: 44, alignment: .leading)
+        }
+    }
+}
+
+struct IrisNavigationHeaderChrome: View {
+    let palette: IrisPalette
+
+    var body: some View {
+        LinearGradient(
+            colors: [
+                palette.background,
+                palette.background.opacity(0.92),
+                palette.background.opacity(0.64),
+                palette.background.opacity(0)
+            ],
+            startPoint: .top,
+            endPoint: .bottom
+        )
+        .frame(height: 104, alignment: .top)
+        .allowsHitTesting(false)
     }
 }
 

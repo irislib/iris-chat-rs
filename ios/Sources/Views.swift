@@ -331,6 +331,7 @@ struct RootView: View {
                 subtitle: chatHeaderSubtitle(for: screen),
                 subtitleSystemImage: chatHeaderSubtitleSystemImage(for: screen),
                 isChatHeader: usesCompactTopBar(screen),
+                centerTitle: usesCenteredTopBarTitle(screen),
                 canGoBack: route.depth > 0,
                 onBack: manager.navigateBack,
                 backBadgeCount: backUnreadCount(for: screen),
@@ -359,6 +360,11 @@ struct RootView: View {
 
     private func usesCompactTopBar(_ screen: Screen) -> Bool {
         if case .chat = screen { return true }
+        if case .chatList = screen { return true }
+        return false
+    }
+
+    private func usesCenteredTopBarTitle(_ screen: Screen) -> Bool {
         if case .chatList = screen { return true }
         return false
     }
@@ -889,6 +895,7 @@ struct NavigationShell<Content: View>: View {
     let subtitle: String?
     let subtitleSystemImage: String?
     let isChatHeader: Bool
+    let centerTitle: Bool
     let canGoBack: Bool
     let onBack: () -> Void
     let backBadgeCount: UInt64
@@ -904,6 +911,7 @@ struct NavigationShell<Content: View>: View {
         subtitle: String? = nil,
         subtitleSystemImage: String? = nil,
         isChatHeader: Bool = false,
+        centerTitle: Bool = false,
         canGoBack: Bool,
         onBack: @escaping () -> Void,
         backBadgeCount: UInt64 = 0,
@@ -918,6 +926,7 @@ struct NavigationShell<Content: View>: View {
         self.subtitle = subtitle
         self.subtitleSystemImage = subtitleSystemImage
         self.isChatHeader = isChatHeader
+        self.centerTitle = centerTitle
         self.canGoBack = canGoBack
         self.onBack = onBack
         self.backBadgeCount = backBadgeCount
@@ -945,6 +954,7 @@ struct NavigationShell<Content: View>: View {
                         subtitle: subtitle,
                         subtitleSystemImage: subtitleSystemImage,
                         isChatHeader: isChatHeader,
+                        centerTitle: centerTitle,
                         canGoBack: canGoBack,
                         onBack: onBack,
                         backBadgeCount: backBadgeCount,
@@ -955,17 +965,15 @@ struct NavigationShell<Content: View>: View {
                     )
                     offlineBanner
                 }
-                // Signal-style "fade into chat" header: a vertical
-                // gradient fading from the toolbar tone at the top
-                // into the chat background at the bottom — no
-                // hairline divider, the title cluster floats on a
-                // soft gradient that softens into the timeline.
+                // Signal-style no-divider header: the title cluster
+                // floats on a soft background fade that dissolves
+                // into the scrolling chat/list content.
                 // Drawn here (not inside IrisTopBar) because
                 // .safeAreaInset content can't extend its background
                 // up into the system status bar with the normal
                 // .ignoresSafeArea modifier.
                 .background(alignment: .top) {
-                    NavigationHeaderChrome(palette: palette)
+                    IrisNavigationHeaderChrome(palette: palette)
                         .ignoresSafeArea(.all, edges: .top)
                 }
             }
@@ -1234,26 +1242,6 @@ private final class RouteHostingController: UIHostingController<AnyView> {
     }
 }
 #endif
-
-private struct NavigationHeaderChrome: View {
-    let palette: IrisPalette
-
-    var body: some View {
-        // Pure background color fading to transparent — no toolbar
-        // tone lift. In dark theme that's black-at-top → transparent,
-        // in light theme white-at-top → transparent. Identical fade
-        // shape, just inverted by the palette.
-        LinearGradient(
-            colors: [
-                palette.background,
-                palette.background.opacity(0.78),
-                palette.background.opacity(0)
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-    }
-}
 
 #if os(iOS)
 private struct OfflineStatusBanner: View {
