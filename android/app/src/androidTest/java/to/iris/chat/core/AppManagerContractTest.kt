@@ -217,7 +217,7 @@ class AppManagerContractTest {
             ).toJson(),
         )
 
-        createManager()
+        val appManager = createManager()
         val firstRust = rustFactory.instances.single()
 
         waitFor("restore account bundle dispatch") {
@@ -230,6 +230,12 @@ class AppManagerContractTest {
         assertEquals("nsec1owner", action.ownerNsec)
         assertEquals("owner-hex", action.ownerPubkeyHex)
         assertEquals("nsec1device", action.deviceNsec)
+        assertTrue(appManager.bootstrapState.value is AccountBootstrapState.Loading)
+
+        firstRust.emit(AppUpdate.FullState(makeLoggedInState(rev = 1u)))
+        waitFor("bootstrap settles after restored account") {
+            appManager.bootstrapState.value is AccountBootstrapState.LoggedIn
+        }
     }
 
     @Test
@@ -701,6 +707,7 @@ class AppManagerContractTest {
                     mutedChatIds = emptyList(),
                     pinnedChatIds = emptyList(),
                     debugLoggingEnabled = false,
+                    acceptUnknownDirectMessages = true,
                     mobilePushServerUrl = "",
                 ),
             toast = toast,
@@ -994,6 +1001,7 @@ private object AppManagerContractDefaults {
                     mutedChatIds = emptyList(),
                     pinnedChatIds = emptyList(),
                     debugLoggingEnabled = false,
+                    acceptUnknownDirectMessages = true,
                     mobilePushServerUrl = "",
                 ),
             toast = null,

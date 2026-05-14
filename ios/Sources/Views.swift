@@ -188,7 +188,9 @@ struct RootView: View {
             ZStack(alignment: .top) {
                 BackgroundFill()
 
-                if usesDesktopChatShell {
+                if manager.bootstrapInFlight {
+                    LoadingOverlay()
+                } else if usesDesktopChatShell {
                     VStack(spacing: 0) {
 #if os(macOS)
                         if manager.updates.available {
@@ -221,11 +223,6 @@ struct RootView: View {
                 }
 
                 ToastOverlay(center: manager.toasts)
-
-                if manager.bootstrapInFlight {
-                    LoadingOverlay()
-                        .allowsHitTesting(false)
-                }
             }
         .sheet(item: $inChatSearch) { target in
             InChatSearchSheet(manager: manager, target: target) {

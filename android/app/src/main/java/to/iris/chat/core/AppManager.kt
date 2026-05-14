@@ -333,6 +333,7 @@ class AppManager(
 
     private var lastRevApplied: ULong = 0u
     private var restoreCheckComplete = false
+    private var persistedRestoreInFlight = false
     private var cachedAccountBundle: StoredAccountBundle? = null
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
     private var pendingNavigationOverride: PendingNavigationOverride? = null
@@ -1399,20 +1400,31 @@ class AppManager(
 
         restoreCheckComplete = true
         val bundle = StoredAccountBundle.fromJson(decrypted)
+        persistedRestoreInFlight = true
         if (bundle != null) {
             cachedAccountBundle = bundle
             IrisDebugLog.d(TAG, "restoreSessionFromSecureStore dispatch bundle restore")
-            dispatchToRust(
-                AppAction.RestoreAccountBundle(
-                    ownerNsec = bundle.ownerNsec,
-                    ownerPubkeyHex = bundle.ownerPubkeyHex,
-                    deviceNsec = bundle.deviceNsec,
-                ),
-                showsToastOnFailure = false,
-            )
+            val dispatched =
+                dispatchToRust(
+                    AppAction.RestoreAccountBundle(
+                        ownerNsec = bundle.ownerNsec,
+                        ownerPubkeyHex = bundle.ownerPubkeyHex,
+                        deviceNsec = bundle.deviceNsec,
+                    ),
+                    showsToastOnFailure = false,
+                )
+            if (!dispatched) {
+                persistedRestoreInFlight = false
+                publishBootstrapNeedsLogin()
+            }
         } else {
             IrisDebugLog.d(TAG, "restoreSessionFromSecureStore dispatch direct restore")
-            dispatchToRust(AppAction.RestoreSession(decrypted), showsToastOnFailure = false)
+            val dispatched =
+                dispatchToRust(AppAction.RestoreSession(decrypted), showsToastOnFailure = false)
+            if (!dispatched) {
+                persistedRestoreInFlight = false
+                publishBootstrapNeedsLogin()
+            }
         }
     }
 
@@ -1649,6 +1661,13 @@ class AppManager(
             return
         }
         val account = snapshot.account
+        if (persistedRestoreInFlight) {
+            if (account == null && snapshot.busy.restoringSession) {
+                mutableBootstrapState.value = AccountBootstrapState.Loading
+                return
+            }
+            persistedRestoreInFlight = false
+        }
         mutableBootstrapState.value =
             when {
                 account != null ->

@@ -40,6 +40,12 @@ public partial class RootView : UserControl
         if (_manager == null) return;
 
         LoadingOverlay.Visibility = _manager.BootstrapInFlight ? Visibility.Visible : Visibility.Collapsed;
+        if (_manager.BootstrapInFlight)
+        {
+            _currentScreenKey = "__loading";
+            ScreenHost.Content = null;
+            return;
+        }
 
         var toast = _manager.ToastMessage;
         if (!string.IsNullOrEmpty(toast))

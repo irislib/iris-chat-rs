@@ -987,6 +987,7 @@ final class AppManager: ObservableObject {
     private var pendingSharePayloadURLs: [String: URL] = [:]
     private var backgroundSuspendPrepared = false
     private var storedAccountBundle: StoredAccountBundle?
+    private var persistedRestoreInFlight = false
     private var nearbySettingsWasOpened = false
     // UI-test escape hatch: when IRIS_UI_TEST_SEED_PEER + IRIS_UI_TEST_SEED_COUNT
     // are set, AppManager auto-creates a chat with that peer once the account
@@ -1132,7 +1133,7 @@ final class AppManager: ObservableObject {
         }
         Task {
             try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard bootstrapInFlight else {
+            guard bootstrapInFlight, !persistedRestoreInFlight else {
                 return
             }
             appendClientDebugLog(category: "bootstrap.timeout", detail: "cleared loading overlay")
@@ -2447,7 +2448,7 @@ final class AppManager: ObservableObject {
 #if os(iOS)
             syncIosStateSideEffects(for: reconciledState)
 #endif
-            bootstrapInFlight = false
+            settleBootstrapIfNeeded(with: reconciledState)
             if let toast = reconciledState.toast, !toast.isEmpty {
                 showToast(toast)
             }
@@ -2495,22 +2496,38 @@ final class AppManager: ObservableObject {
 
     private func restorePersistedSession() {
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.
-        defer {
-            bootstrapInFlight = false
-        }
         guard let bundle = secretStore.load() else {
             storedAccountBundle = nil
+            bootstrapInFlight = false
             return
         }
         secretStore.save(bundle)
         storedAccountBundle = bundle
-        dispatchToRust(
+        persistedRestoreInFlight = true
+        let dispatched = dispatchToRust(
             .restoreAccountBundle(
                 ownerNsec: bundle.ownerNsec,
                 ownerPubkeyHex: bundle.ownerPubkeyHex,
                 deviceNsec: bundle.deviceNsec
             )
         )
+        if !dispatched {
+            persistedRestoreInFlight = false
+            bootstrapInFlight = false
+        }
+    }
+
+    private func settleBootstrapIfNeeded(with nextState: AppState) {
+        guard persistedRestoreInFlight else {
+            bootstrapInFlight = false
+            return
+        }
+        guard nextState.account == nil && nextState.busy.restoringSession else {
+            persistedRestoreInFlight = false
+            bootstrapInFlight = false
+            return
+        }
+        bootstrapInFlight = true
     }
 
     private func stateByReconcilingPendingNavigation(_ nextState: AppState) -> AppState {

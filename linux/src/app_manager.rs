@@ -48,6 +48,8 @@ pub struct AppManager {
     nearby_first_open_path: PathBuf,
     local_state: RefCell<AppState>,
     last_rev_applied: Cell<u64>,
+    bootstrap_in_flight: Cell<bool>,
+    persisted_restore_in_flight: Cell<bool>,
     pending_navigation_override: RefCell<Option<PendingNavigationOverride>>,
     staged_attachments: RefCell<HashMap<String, Vec<OutgoingAttachment>>>,
     last_focused_chat_id: RefCell<Option<String>>,
@@ -123,7 +125,9 @@ impl AppManager {
             );
         }
 
-        if let Some(bundle) = secret_store.load() {
+        let persisted_bundle = secret_store.load();
+        let persisted_restore_in_flight = persisted_bundle.is_some();
+        if let Some(bundle) = persisted_bundle {
             ffi.dispatch(AppAction::RestoreAccountBundle {
                 owner_nsec: bundle.owner_nsec,
                 owner_pubkey_hex: bundle.owner_pubkey_hex,
@@ -143,6 +147,8 @@ impl AppManager {
             nearby_first_open_path: secrets_dir.join("nearby-first-open"),
             last_rev_applied: Cell::new(initial_state.rev),
             local_state: RefCell::new(initial_state),
+            bootstrap_in_flight: Cell::new(persisted_restore_in_flight),
+            persisted_restore_in_flight: Cell::new(persisted_restore_in_flight),
             pending_navigation_override: RefCell::new(None),
             staged_attachments: RefCell::new(HashMap::new()),
             last_focused_chat_id: RefCell::new(None),
@@ -237,6 +243,10 @@ impl AppManager {
         self.local_state.borrow().clone()
     }
 
+    pub fn bootstrap_in_flight(&self) -> bool {
+        self.bootstrap_in_flight.get()
+    }
+
     pub fn update_rx(&self) -> async_channel::Receiver<AppUpdate> {
         self.update_rx.clone()
     }
@@ -274,10 +284,24 @@ impl AppManager {
                 let reconciled = self.state_by_reconciling_pending_navigation(state);
                 self.last_rev_applied.set(rev);
                 *self.local_state.borrow_mut() = reconciled.clone();
+                self.settle_bootstrap_if_needed(&reconciled);
                 Some(AppUpdate::FullState(reconciled))
             }
             other => Some(other),
         }
+    }
+
+    fn settle_bootstrap_if_needed(&self, state: &AppState) {
+        if !self.persisted_restore_in_flight.get() {
+            self.bootstrap_in_flight.set(false);
+            return;
+        }
+        if state.account.is_none() && state.busy.restoring_session {
+            self.bootstrap_in_flight.set(true);
+            return;
+        }
+        self.persisted_restore_in_flight.set(false);
+        self.bootstrap_in_flight.set(false);
     }
 
     fn handle_optimistic_navigation(&self, action: AppAction) -> bool {
@@ -315,10 +339,7 @@ impl AppManager {
                 true
             }
             AppAction::UpdateScreenStack { stack } => {
-                self.navigate_optimistically(
-                    stack.clone(),
-                    AppAction::UpdateScreenStack { stack },
-                );
+                self.navigate_optimistically(stack.clone(), AppAction::UpdateScreenStack { stack });
                 true
             }
             _ => false,
@@ -419,7 +440,9 @@ impl AppManager {
         let next_state =
             self.state_by_applying_local_screen_stack(stack, self.local_state.borrow().clone());
         *self.local_state.borrow_mut() = next_state.clone();
-        let _ = self.update_tx_ui.send_blocking(AppUpdate::FullState(next_state));
+        let _ = self
+            .update_tx_ui
+            .send_blocking(AppUpdate::FullState(next_state));
     }
 
     fn state_by_applying_local_screen_stack(
@@ -547,7 +570,10 @@ fn active_chat_id(state: &AppState) -> Option<String> {
         .unwrap_or(&state.router.default_screen);
     match active {
         Screen::Chat { chat_id } => Some(chat_id.trim().to_string()),
-        _ => state.current_chat.as_ref().map(|chat| chat.chat_id.trim().to_string()),
+        _ => state
+            .current_chat
+            .as_ref()
+            .map(|chat| chat.chat_id.trim().to_string()),
     }
 }
 

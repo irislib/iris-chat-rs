@@ -405,6 +405,19 @@ fn apply_state(
         slot.remove(&child);
     }
 
+    if manager.bootstrap_in_flight() {
+        header.back.set_visible(false);
+        header.new_chat.set_visible(false);
+        header.settings.set_visible(false);
+        header.settings.set_child(gtk::Widget::NONE);
+        header.chat_info.set_visible(false);
+        header.chat_search.set_visible(false);
+        header.title.set_label("Loading");
+        header.title_status.set_visible(false);
+        slot.append(&loading_screen());
+        return;
+    }
+
     let screen = current_screen(state);
     header
         .back
@@ -493,6 +506,18 @@ fn apply_state(
     clamp.set_child(Some(&widget));
     clamp.set_vexpand(true);
     slot.append(&clamp);
+}
+
+fn loading_screen() -> gtk::Widget {
+    let container = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    container.set_vexpand(true);
+    container.set_hexpand(true);
+    container.set_valign(gtk::Align::Center);
+    container.set_halign(gtk::Align::Center);
+    let spinner = gtk::Spinner::new();
+    spinner.start();
+    container.append(&spinner);
+    container.upcast()
 }
 
 fn build_own_avatar(account: &AccountSnapshot, state: &AppState) -> gtk::Widget {

@@ -1273,6 +1273,13 @@ final class IrisChatTests: XCTestCase {
         default:
             XCTFail("unexpected action \(first)")
         }
+        XCTAssertTrue(manager.bootstrapInFlight)
+        rust.emit(.fullState(makeLargeFixtureState(
+            rev: 1,
+            router: Router(defaultScreen: .chatList, screenStack: []),
+            account: makeAccount()
+        )))
+        await Task.yield()
         XCTAssertFalse(manager.bootstrapInFlight)
     }
 
@@ -1876,8 +1883,15 @@ final class IrisChatTests: XCTestCase {
         )
 
         await Task.yield()
-        XCTAssertFalse(manager.bootstrapInFlight)
         XCTAssertEqual(rust.dispatchedActions.count, 1)
+        XCTAssertTrue(manager.bootstrapInFlight)
+        rust.emit(.fullState(makeLargeFixtureState(
+            rev: 1,
+            router: Router(defaultScreen: .chatList, screenStack: []),
+            account: makeAccount()
+        )))
+        await Task.yield()
+        XCTAssertFalse(manager.bootstrapInFlight)
     }
 
     @MainActor

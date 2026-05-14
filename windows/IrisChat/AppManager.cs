@@ -52,6 +52,7 @@ public sealed class AppManager : INotifyPropertyChanged
     private AppState _state;
     private DesktopNearbySnapshot _nearbySnapshot;
     private ulong _lastRevApplied;
+    private bool _persistedRestoreInFlight;
     private PendingNavigationOverride? _pendingNavigationOverride;
 
     public AppManager(string dataDir, IDesktopNotificationPoster? notifier = null)
@@ -673,11 +674,20 @@ public sealed class AppManager : INotifyPropertyChanged
             Notify(nameof(BootstrapInFlight));
             return;
         }
-        DispatchToRust(new AppAction.RestoreAccountBundle(
+        _persistedRestoreInFlight = true;
+        BootstrapInFlight = true;
+        Notify(nameof(BootstrapInFlight));
+        var dispatched = DispatchToRust(new AppAction.RestoreAccountBundle(
             bundle.OwnerNsec,
             bundle.OwnerPubkeyHex,
             bundle.DeviceNsec
         ), showToastOnFailure: false);
+        if (!dispatched)
+        {
+            _persistedRestoreInFlight = false;
+            BootstrapInFlight = false;
+            Notify(nameof(BootstrapInFlight));
+        }
     }
 
     private void Apply(AppUpdate update)
@@ -698,7 +708,7 @@ public sealed class AppManager : INotifyPropertyChanged
                 var next = StateByReconcilingPendingNavigation(f.v1);
                 _state = next;
                 _lastRevApplied = f.v1.rev;
-                BootstrapInFlight = false;
+                SettleBootstrapIfNeeded(next);
 
                 SyncNearbyPreference(prev, next);
                 PostDesktopNotifications(prev, next);
@@ -720,6 +730,22 @@ public sealed class AppManager : INotifyPropertyChanged
                 );
                 break;
         }
+    }
+
+    private void SettleBootstrapIfNeeded(AppState next)
+    {
+        if (!_persistedRestoreInFlight)
+        {
+            BootstrapInFlight = false;
+            return;
+        }
+        if (next.account == null && next.busy.restoringSession)
+        {
+            BootstrapInFlight = true;
+            return;
+        }
+        _persistedRestoreInFlight = false;
+        BootstrapInFlight = false;
     }
 
     private void ApplyNearbySnapshot(DesktopNearbySnapshot snapshot)
