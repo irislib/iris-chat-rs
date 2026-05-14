@@ -13,7 +13,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
     scrolled.set_vexpand(true);
+    scrolled.set_child(Some(&content(state, manager)));
+    scrolled.upcast()
+}
 
+pub(crate) fn content(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let inner = gtk::Box::new(gtk::Orientation::Vertical, 16);
     inner.set_margin_top(20);
     inner.set_margin_bottom(20);
@@ -26,8 +30,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         empty.set_vexpand(true);
         empty.set_valign(gtk::Align::Center);
         inner.append(&empty);
-        scrolled.set_child(Some(&inner));
-        return scrolled.upcast();
+        return inner.upcast();
     };
 
     inner.append(&owner_card(roster));
@@ -36,8 +39,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     }
     inner.append(&devices_card(state, roster, manager));
 
-    scrolled.set_child(Some(&inner));
-    scrolled.upcast()
+    inner.upcast()
 }
 
 fn owner_card(_roster: &DeviceRosterSnapshot) -> gtk::Widget {

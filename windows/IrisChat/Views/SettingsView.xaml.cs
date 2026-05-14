@@ -102,6 +102,7 @@ public partial class SettingsView : UserControl
         foreach (var page in new FrameworkElement[]
         {
             ProfilePage,
+            DevicesPage,
             MessagingPage,
             NotificationsPage,
             MediaPage,
@@ -120,6 +121,7 @@ public partial class SettingsView : UserControl
 
         var selected = _selectedPage switch
         {
+            "Devices" => DevicesPage,
             "Messaging" => MessagingPage,
             "Notifications" => NotificationsPage,
             "Media" => MediaPage,
@@ -291,9 +293,6 @@ public partial class SettingsView : UserControl
 
     private void OnResetRelays(object sender, RoutedEventArgs e) =>
         App.CurrentManager.ResetNostrRelays();
-
-    private void OnManageDevices(object sender, RoutedEventArgs e) =>
-        App.CurrentManager.Push(new Screen.DeviceRoster());
 
     private void OnCopyUserId(object sender, RoutedEventArgs e)
     {

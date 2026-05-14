@@ -50,6 +50,33 @@ fun DeviceRosterScreen(
     appManager: AppManager,
     appState: AppState,
 ) {
+    Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
+        topBar = {
+            IrisTopBar(
+                title = "Manage devices",
+                onBack = { appManager.navigateBack() },
+            )
+        },
+    ) { padding ->
+        DeviceRosterContent(
+            appManager = appManager,
+            appState = appState,
+            modifier =
+                Modifier
+                    .fillMaxSize()
+                    .padding(padding),
+        )
+    }
+}
+
+@Composable
+fun DeviceRosterContent(
+    appManager: AppManager,
+    appState: AppState,
+    modifier: Modifier = Modifier,
+    embedded: Boolean = false,
+) {
     val roster = appState.deviceRoster
     val clipboard = rememberIrisClipboard()
     var deviceInput by remember { mutableStateOf("") }
@@ -70,145 +97,146 @@ fun DeviceRosterScreen(
     val isCurrentDeviceRegistered =
         roster?.devices?.any { it.devicePubkeyHex == roster.currentDevicePublicKeyHex } == true
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            IrisTopBar(
-                title = "Manage devices",
-                onBack = { appManager.navigateBack() },
+    if (roster == null) {
+        Column(
+            modifier =
+                modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text("Loading devices…")
+        }
+        return
+    }
+
+    Column(
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .padding(
+                    horizontal = if (embedded) 0.dp else 16.dp,
+                    vertical = if (embedded) 0.dp else 14.dp,
+                ),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "Linked devices",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 2.dp),
             )
-        },
-    ) { padding ->
-        if (roster == null) {
-            Column(
-                modifier =
-                    Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text("Loading devices…")
+            IrisListSection {
+                IrisMenuRow(
+                    title = "Copy user ID",
+                    icon = IrisIcons.Copy,
+                    onClick = { clipboard.setText("User ID", roster.ownerNpub) },
+                    modifier = Modifier.testTag("deviceRosterOwnerNpub"),
+                )
+                IrisMenuRow(
+                    title = "Copy this device code",
+                    icon = IrisIcons.Copy,
+                    onClick = { clipboard.setText("Link code", roster.currentDeviceNpub) },
+                    modifier = Modifier.testTag("deviceRosterCurrentDeviceNpub"),
+                )
             }
-            return@Scaffold
         }
 
         Column(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    text = "Linked devices",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 2.dp),
-                )
-                IrisListSection {
-                    IrisMenuRow(
-                        title = "Copy user ID",
-                        icon = IrisIcons.Copy,
-                        onClick = { clipboard.setText("User ID", roster.ownerNpub) },
-                        modifier = Modifier.testTag("deviceRosterOwnerNpub"),
-                    )
-                    IrisMenuRow(
-                        title = "Copy this device code",
-                        icon = IrisIcons.Copy,
-                        onClick = { clipboard.setText("Link code", roster.currentDeviceNpub) },
-                        modifier = Modifier.testTag("deviceRosterCurrentDeviceNpub"),
-                    )
-                }
-            }
-
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(
-                    text = "Link another device",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(horizontal = 2.dp),
-                )
-                Text(
-                    text =
-                        if (roster.canManageDevices) {
-                            "Scan the code from the device you want to link, or paste it."
-                        } else if (isCurrentDeviceRegistered) {
-                            "This device can view the list but cannot change it."
-                        } else {
-                            "Sign in with your secret key before changing devices."
-                        },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = IrisTheme.palette.muted,
-                )
-
-                if (roster.canManageDevices) {
-                    TextField(
-                        value = deviceInput,
-                        onValueChange = { deviceInput = it },
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .testTag("deviceRosterAddInput"),
-                        placeholder = {
-                            Text(
-                                text = "Link code",
-                                color = IrisTheme.palette.muted,
-                            )
-                        },
-                        isError = deviceInput.isNotBlank() && resolvedInput?.errorMessage != null,
-                        minLines = 2,
-                        shape = RoundedCornerShape(10.dp),
-                        colors = irisTextFieldColors(),
-                    )
-
-                    resolvedInput?.errorMessage?.let { error ->
-                        Text(
-                            text = error,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        IrisSecondaryButton(
-                            text = "Scan code",
-                            onClick = { showScanner = true },
-                            modifier = Modifier.testTag("deviceRosterScanButton"),
-                            icon = {
-                                Icon(
-                                    imageVector = IrisIcons.ScanQr,
-                                    contentDescription = null,
-                                )
-                            },
-                        )
-
-                        IrisPrimaryButton(
-                            text = if (appState.busy.updatingRoster) "Linking…" else "Link device",
-                            onClick = {
-                                appManager.addAuthorizedDevice(normalizedInput)
-                                deviceInput = ""
-                            },
-                            enabled = canAddDevice,
-                            modifier = Modifier.testTag("deviceRosterAddButton"),
-                            icon = {
-                                Icon(
-                                    imageVector = IrisIcons.Devices,
-                                    contentDescription = null,
-                                )
-                            },
-                        )
-                    }
-                }
-            }
-
             Text(
-                text = "Devices",
+                text = "Link another device",
                 style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 2.dp),
+            )
+            Text(
+                text =
+                    if (roster.canManageDevices) {
+                        "Scan the code from the device you want to link, or paste it."
+                    } else if (isCurrentDeviceRegistered) {
+                        "This device can view the list but cannot change it."
+                    } else {
+                        "Sign in with your secret key before changing devices."
+                    },
+                style = MaterialTheme.typography.bodyMedium,
+                color = IrisTheme.palette.muted,
             )
 
+            if (roster.canManageDevices) {
+                TextField(
+                    value = deviceInput,
+                    onValueChange = { deviceInput = it },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag("deviceRosterAddInput"),
+                    placeholder = {
+                        Text(
+                            text = "Link code",
+                            color = IrisTheme.palette.muted,
+                        )
+                    },
+                    isError = deviceInput.isNotBlank() && resolvedInput?.errorMessage != null,
+                    minLines = 2,
+                    shape = RoundedCornerShape(10.dp),
+                    colors = irisTextFieldColors(),
+                )
+
+                resolvedInput?.errorMessage?.let { error ->
+                    Text(
+                        text = error,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    IrisSecondaryButton(
+                        text = "Scan code",
+                        onClick = { showScanner = true },
+                        modifier = Modifier.testTag("deviceRosterScanButton"),
+                        icon = {
+                            Icon(
+                                imageVector = IrisIcons.ScanQr,
+                                contentDescription = null,
+                            )
+                        },
+                    )
+
+                    IrisPrimaryButton(
+                        text = if (appState.busy.updatingRoster) "Linking…" else "Link device",
+                        onClick = {
+                            appManager.addAuthorizedDevice(normalizedInput)
+                            deviceInput = ""
+                        },
+                        enabled = canAddDevice,
+                        modifier = Modifier.testTag("deviceRosterAddButton"),
+                        icon = {
+                            Icon(
+                                imageVector = IrisIcons.Devices,
+                                contentDescription = null,
+                            )
+                        },
+                    )
+                }
+            }
+        }
+
+        Text(
+            text = "Devices",
+            style = MaterialTheme.typography.titleMedium,
+        )
+
+        if (embedded) {
+            DeviceRosterRows(
+                appManager = appManager,
+                appState = appState,
+                rosterDevices = roster.devices,
+                canManageDevices = roster.canManageDevices,
+                modifier = Modifier.testTag("deviceRosterList"),
+            )
+        } else {
             LazyColumn(
                 modifier =
                     Modifier
@@ -217,26 +245,7 @@ fun DeviceRosterScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 if (roster.devices.isEmpty()) {
-                    item {
-                        IrisListSection(
-                            modifier = Modifier.testTag("deviceRosterEmptyState"),
-                        ) {
-                            Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(4.dp),
-                            ) {
-                                Text(
-                                    text = "No linked devices",
-                                    style = MaterialTheme.typography.titleMedium,
-                                )
-                                Text(
-                                    text = "Linked devices will appear here.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = IrisTheme.palette.muted,
-                                )
-                            }
-                        }
-                    }
+                    item { DeviceRosterEmptyState() }
                 }
                 items(roster.devices, key = { it.devicePubkeyHex }) { device ->
                     DeviceRosterRow(
@@ -251,7 +260,7 @@ fun DeviceRosterScreen(
         }
     }
 
-    if (showScanner && roster != null) {
+    if (showScanner) {
         QrScannerDialog(
             onDismiss = { showScanner = false },
             onScanned = { scanned ->
@@ -270,6 +279,55 @@ fun DeviceRosterScreen(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun DeviceRosterRows(
+    appManager: AppManager,
+    appState: AppState,
+    rosterDevices: List<DeviceEntrySnapshot>,
+    canManageDevices: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (rosterDevices.isEmpty()) {
+            DeviceRosterEmptyState()
+        }
+        rosterDevices.forEach { device ->
+            DeviceRosterRow(
+                device = device,
+                canManageDevices = canManageDevices,
+                isUpdatingRoster = appState.busy.updatingRoster,
+                onApprove = { appManager.addAuthorizedDevice(device.devicePubkeyHex) },
+                onRemove = { appManager.removeAuthorizedDevice(device.devicePubkeyHex) },
+            )
+        }
+    }
+}
+
+@Composable
+private fun DeviceRosterEmptyState() {
+    IrisListSection(
+        modifier = Modifier.testTag("deviceRosterEmptyState"),
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(
+                text = "No linked devices",
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Text(
+                text = "Linked devices will appear here.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = IrisTheme.palette.muted,
+            )
+        }
     }
 }
 

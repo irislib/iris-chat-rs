@@ -312,6 +312,7 @@ fun NdrApp(
                                 } else {
                                     MyProfileSheet(
                                         appManager = appManager,
+                                        appState = appState,
                                         npub = account.npub,
                                         displayName = account.displayName,
                                         pictureUrl = account.pictureUrl,
@@ -328,7 +329,6 @@ fun NdrApp(
                                         networkStatus = appState.networkStatus,
                                         onNearbyBluetoothChange = onNearbyVisibilityChange,
                                         onNearbyLanChange = onNearbyLanVisibilityChange,
-                                        onManageDevices = { appManager.pushScreen(Screen.DeviceRoster) },
                                         onLogout = { appManager.logout() },
                                         onDismiss = { appManager.navigateBack() },
                                     )

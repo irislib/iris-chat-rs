@@ -2,12 +2,12 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use iris_chat_core::{AppAction, AppState, PreferencesSnapshot, Screen};
+use iris_chat_core::{AppAction, AppState, PreferencesSnapshot};
 
 use crate::app_manager::AppManager;
 use crate::platform::clipboard;
 use crate::platform::startup;
-use crate::screens::confirm_delete_app_data;
+use crate::screens::{confirm_delete_app_data, device_roster};
 use crate::widgets::{image_cache, qr};
 
 const IRIS_SOURCE_URL: &str =
@@ -16,6 +16,7 @@ const IRIS_SOURCE_URL: &str =
 #[derive(Clone, Copy)]
 enum SettingsPage {
     Profile,
+    Devices,
     Messaging,
     Notifications,
     Media,
@@ -31,6 +32,7 @@ impl SettingsPage {
     fn id(self) -> &'static str {
         match self {
             Self::Profile => "profile",
+            Self::Devices => "devices",
             Self::Messaging => "messaging",
             Self::Notifications => "notifications",
             Self::Media => "media",
@@ -46,6 +48,7 @@ impl SettingsPage {
     fn title(self) -> &'static str {
         match self {
             Self::Profile => "Profile",
+            Self::Devices => "Devices",
             Self::Messaging => "Messaging",
             Self::Notifications => "Notifications",
             Self::Media => "Media",
@@ -61,6 +64,7 @@ impl SettingsPage {
     fn icon_name(self) -> &'static str {
         match self {
             Self::Profile => "avatar-default-symbolic",
+            Self::Devices => "computer-symbolic",
             Self::Messaging => "mail-message-new-symbolic",
             Self::Notifications => "preferences-system-notifications-symbolic",
             Self::Media => "image-x-generic-symbolic",
@@ -90,6 +94,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
             Some(SettingsPage::Profile.id()),
         );
     }
+
+    stack.add_named(
+        &device_roster::content(state, manager),
+        Some(SettingsPage::Devices.id()),
+    );
 
     stack.add_named(
         &settings_detail_page(vec![messaging_group(&state.preferences, manager)]),
@@ -198,6 +207,7 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
 
     let primary = adw::PreferencesGroup::new();
     for settings_page in [
+        SettingsPage::Devices,
         SettingsPage::Messaging,
         SettingsPage::Notifications,
         SettingsPage::Media,
@@ -562,25 +572,6 @@ fn profile_group(
         present_qr_dialog(parent.as_ref(), &display_name, &npub);
     });
     group.add(&qr_row);
-
-    let devices_row = adw::ActionRow::builder()
-        .title("Manage devices")
-        .activatable(true)
-        .build();
-    let dev_icon = gtk::Image::from_icon_name("computer-symbolic");
-    devices_row.add_prefix(&dev_icon);
-    let chevron = gtk::Image::from_icon_name("go-next-symbolic");
-    chevron.add_css_class("dim-label");
-    devices_row.add_suffix(&chevron);
-    {
-        let manager = manager.clone();
-        devices_row.connect_activated(move |_| {
-            manager.dispatch(AppAction::PushScreen {
-                screen: Screen::DeviceRoster,
-            });
-        });
-    }
-    group.add(&devices_row);
 
     group
 }

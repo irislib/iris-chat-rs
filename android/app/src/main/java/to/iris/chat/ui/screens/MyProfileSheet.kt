@@ -67,6 +67,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.AppState
 import to.iris.chat.rust.NetworkStatusSnapshot
 import to.iris.chat.rust.PreferencesSnapshot
 import to.iris.chat.rust.proxiedImageUrl
@@ -103,6 +104,7 @@ private enum class SettingsPage(
     val tag: String,
 ) {
     Profile("Profile", "settingsProfileRow"),
+    Devices("Devices", "settingsDevicesRow"),
     Messaging("Messaging", "settingsMessagingRow"),
     Notifications("Notifications", "settingsNotificationsRow"),
     Media("Media", "settingsMediaRow"),
@@ -117,6 +119,7 @@ private enum class SettingsPage(
     companion object {
         val menuPages =
             listOf(
+                Devices,
                 Messaging,
                 Notifications,
                 Media,
@@ -134,6 +137,7 @@ private enum class SettingsPage(
 @Composable
 fun MyProfileSheet(
     appManager: AppManager,
+    appState: AppState,
     npub: String,
     displayName: String,
     pictureUrl: String?,
@@ -150,7 +154,6 @@ fun MyProfileSheet(
     networkStatus: NetworkStatusSnapshot?,
     onNearbyBluetoothChange: (Boolean) -> Unit,
     onNearbyLanChange: (Boolean) -> Unit,
-    onManageDevices: () -> Unit,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -174,10 +177,6 @@ fun MyProfileSheet(
                 }
             }
         }
-    val qrBitmap =
-        remember(npub) {
-            createQrBitmap(npub, size = 768)
-        }
     var supportBusy by remember { mutableStateOf(false) }
     var pendingSecretExport by remember { mutableStateOf<SecretExportKind?>(null) }
     var showLogoutConfirmation by remember { mutableStateOf(false) }
@@ -188,6 +187,7 @@ fun MyProfileSheet(
     var editingRelayUrl by remember { mutableStateOf<String?>(null) }
     var editingRelayDraft by remember { mutableStateOf("") }
     var selectedPage by remember { mutableStateOf<SettingsPage?>(null) }
+    var showProfileQr by remember { mutableStateOf(false) }
     val trimmedPictureUrl = pictureUrl?.trim().orEmpty()
     val isHttpPictureUrl =
         trimmedPictureUrl.startsWith("http://") || trimmedPictureUrl.startsWith("https://")
@@ -216,6 +216,10 @@ fun MyProfileSheet(
             )
         }
     val profilePictureInteractionSource = remember { MutableInteractionSource() }
+    val qrBitmap =
+        remember(npub) {
+            createQrBitmap(npub, size = 768)
+        }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -254,14 +258,15 @@ fun MyProfileSheet(
                         imageUrl = proxiedAvatarUrl,
                         imageData = avatarBytes,
                         onClick = { selectedPage = SettingsPage.Profile },
+                        onQrClick = { showProfileQr = true },
                     )
                     SettingsMenuSection {
-                        SettingsPage.menuPages.take(6).forEach { page ->
+                        SettingsPage.menuPages.take(7).forEach { page ->
                             SettingsMenuRow(page = page, onClick = { selectedPage = page })
                         }
                     }
                     SettingsMenuSection {
-                        SettingsPage.menuPages.drop(6).forEach { page ->
+                        SettingsPage.menuPages.drop(7).forEach { page ->
                             SettingsMenuRow(page = page, onClick = { selectedPage = page })
                         }
                     }
@@ -288,10 +293,17 @@ fun MyProfileSheet(
                                         pictureUrl = pictureUrl,
                                     )
                                 },
-                                onManageDevices = onManageDevices,
-                                qrBitmap = qrBitmap,
+                                onShowQr = { showProfileQr = true },
                                 onCopyUserId = { clipboard.setText("User ID", npub) },
                                 onCopyDeviceCode = { clipboard.setText("Link code", deviceNpub) },
+                            )
+                        }
+
+                        SettingsPage.Devices -> {
+                            DeviceRosterContent(
+                                appManager = appManager,
+                                appState = appState,
+                                embedded = true,
                             )
                         }
 
@@ -740,6 +752,14 @@ fun MyProfileSheet(
         )
     }
 
+    if (showProfileQr && qrBitmap != null) {
+        ProfileQrDialog(
+            qrBitmap = qrBitmap,
+            onDismiss = { showProfileQr = false },
+            onCopy = { clipboard.setText("User ID", npub) },
+        )
+    }
+
     if (showLogoutConfirmation) {
         DeleteAppDataConfirmationDialog(
             onDismiss = { showLogoutConfirmation = false },
@@ -846,8 +866,7 @@ private fun ProfileSettingsPage(
     onOpenPicture: () -> Unit,
     onChangePicture: () -> Unit,
     onSaveProfile: () -> Unit,
-    onManageDevices: () -> Unit,
-    qrBitmap: Bitmap?,
+    onShowQr: () -> Unit,
     onCopyUserId: () -> Unit,
     onCopyDeviceCode: () -> Unit,
 ) {
@@ -885,19 +904,15 @@ private fun ProfileSettingsPage(
                     modifier = Modifier.testTag("myProfileSaveProfileButton"),
                 )
             }
-            if (canManageDevices) {
-                ProfileActionRow(
-                    title = "Manage devices",
-                    icon = IrisIcons.Devices,
-                    onClick = onManageDevices,
-                    modifier = Modifier.testTag("myProfileManageDevicesButton"),
-                )
-            }
         }
 
-        ProfileQrSection(qrBitmap = qrBitmap)
-
         IrisListSection {
+            ProfileActionRow(
+                title = "Show my code",
+                icon = IrisIcons.ScanQr,
+                onClick = onShowQr,
+                modifier = Modifier.testTag("myProfileShowQrButton"),
+            )
             ProfileActionRow(
                 title = "Copy user ID",
                 icon = IrisIcons.Copy,
@@ -1099,24 +1114,42 @@ private fun ProfileActionRow(
 }
 
 @Composable
-private fun ProfileQrSection(qrBitmap: Bitmap?) {
-    if (qrBitmap == null) {
-        return
-    }
-
-    Box(
-        modifier =
-            Modifier
-                .fillMaxWidth()
-                .padding(vertical = 4.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        IrisQrCodeImage(
-            bitmap = qrBitmap,
-            contentDescription = "My user ID code",
-            size = 260.dp,
-            tag = "myProfileQrCode",
-        )
+private fun ProfileQrDialog(
+    qrBitmap: Bitmap,
+    onDismiss: () -> Unit,
+    onCopy: () -> Unit,
+) {
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            color = IrisTheme.palette.panel,
+            shape = RoundedCornerShape(20.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, IrisTheme.palette.border),
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(14.dp),
+            ) {
+                Text(
+                    text = "My code",
+                    style = MaterialTheme.typography.titleLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                IrisQrCodeImage(
+                    bitmap = qrBitmap,
+                    contentDescription = "My user ID code",
+                    size = 260.dp,
+                    tag = "settingsProfileQrCode",
+                )
+                IrisSecondaryButton(
+                    text = "Copy",
+                    onClick = onCopy,
+                    icon = {
+                        Icon(imageVector = IrisIcons.Copy, contentDescription = null)
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -1126,9 +1159,11 @@ private fun SettingsProfileMenuRow(
     imageUrl: String?,
     imageData: ByteArray?,
     onClick: () -> Unit,
+    onQrClick: () -> Unit,
 ) {
     val haptics = rememberIrisHapticFeedback()
     val interactionSource = remember { MutableInteractionSource() }
+    val qrInteractionSource = remember { MutableInteractionSource() }
     IrisListSection {
         Row(
             modifier =
@@ -1175,12 +1210,28 @@ private fun SettingsProfileMenuRow(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            Icon(
-                imageVector = IrisIcons.ScanQr,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(24.dp),
-            )
+            Box(
+                modifier =
+                    Modifier
+                        .size(36.dp)
+                        .background(IrisTheme.palette.panelAlt, CircleShape)
+                        .clickable(
+                            interactionSource = qrInteractionSource,
+                            indication = null,
+                        ) {
+                            haptics.press()
+                            onQrClick()
+                        }
+                        .testTag("settingsProfileQrButton"),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = IrisIcons.ScanQr,
+                    contentDescription = "Show my code",
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
         }
     }
 }
@@ -1249,6 +1300,7 @@ private fun SettingsToggleRow(
 private fun settingsPageIcon(page: SettingsPage): ImageVector =
     when (page) {
         SettingsPage.Profile -> IrisIcons.Devices
+        SettingsPage.Devices -> IrisIcons.Devices
         SettingsPage.Messaging -> IrisIcons.NewChat
         SettingsPage.Notifications -> IrisIcons.Notifications
         SettingsPage.Media -> IrisIcons.Image
