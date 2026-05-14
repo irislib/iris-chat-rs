@@ -951,8 +951,8 @@ struct IrisModalCloseButton: View {
     init(
         accessibilityLabel: String = "Close",
         tone: Tone = .standard,
-        iconSize: CGFloat = 22,
-        hitSize: CGFloat = 38,
+        iconSize: CGFloat = 14,
+        hitSize: CGFloat = 44,
         action: @escaping () -> Void
     ) {
         self.accessibilityLabel = accessibilityLabel
@@ -977,13 +977,18 @@ struct IrisModalCloseButton: View {
     }
 
     private var buttonSize: CGFloat {
-        min(max(iconSize + 18, 32), hitSize)
+        switch tone {
+        case .standard:
+            return min(40, hitSize)
+        case .light:
+            return min(max(iconSize + 18, 40), hitSize)
+        }
     }
 
     private var foregroundColor: Color {
         switch tone {
         case .standard:
-            return palette.action
+            return palette.textPrimary
         case .light:
             return Color.white.opacity(0.9)
         }
@@ -1013,14 +1018,37 @@ struct IrisModalBackButton: View {
         Button(action: action) {
             Image(systemName: "chevron.left")
                 .font(.system(size: 17, weight: .bold))
-                .foregroundStyle(palette.action)
-                .frame(width: 32, height: 32)
+                .foregroundStyle(palette.textPrimary)
+                .frame(width: 40, height: 40)
                 .background(Circle().fill(palette.panelAlt.opacity(0.95)))
                 .frame(width: 44, height: 44)
                 .contentShape(Circle())
         }
         .buttonStyle(.irisPlain)
         .accessibilityLabel(accessibilityLabel)
+    }
+}
+
+struct IrisUnreadBadge: View {
+    @Environment(\.irisPalette) private var palette
+
+    let count: UInt64
+
+    var body: some View {
+        if count > 0 {
+            Text(count > 99 ? "99+" : "\(count)")
+                .font(.system(size: 13, weight: .semibold))
+                .monospacedDigit()
+                .foregroundStyle(palette.onAccent)
+                .lineLimit(1)
+                .minimumScaleFactor(0.85)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 7)
+                .frame(minWidth: 22, minHeight: 20)
+                .background(Capsule(style: .continuous).fill(palette.accent))
+                .layoutPriority(2)
+                .accessibilityLabel("\(count) unread")
+        }
     }
 }
 
@@ -1221,16 +1249,7 @@ struct IrisChatRow: View {
 
     @ViewBuilder
     private var unreadBadge: some View {
-        if unreadCount > 0 {
-            Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(palette.onAccent)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .frame(minWidth: 22)
-                .background(Capsule(style: .continuous).fill(palette.accent))
-                .accessibilityLabel("\(unreadCount) unread")
-        }
+        IrisUnreadBadge(count: unreadCount)
     }
 
     private var previewText: Text {

@@ -227,76 +227,76 @@ struct RootView: View {
 
                 ToastOverlay(center: manager.toasts)
             }
-        .sheet(item: $inChatSearch) { target in
-            InChatSearchSheet(manager: manager, target: target) {
-                inChatSearch = nil
-            }
-            .irisModalSurface()
+            .sheet(item: $inChatSearch) { target in
+                InChatSearchSheet(manager: manager, target: target) {
+                    inChatSearch = nil
+                }
+                .irisModalSurface()
 #if os(iOS)
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
 #elseif os(macOS)
-            .frame(minWidth: 420, minHeight: 520)
+                .frame(minWidth: 420, minHeight: 520)
 #endif
-            .irisDismissOnMacOutsideClick { inChatSearch = nil }
-        }
-        }
-#if os(iOS)
-        .sheet(isPresented: $showingSettingsSheet) {
-            SettingsScreen(
-                manager: manager,
-                focusedSection: $settingsFocus,
-                modalClose: { showingSettingsSheet = false }
-            )
-            .irisModalSurface()
-            .presentationDetents([.large])
-            .presentationDragIndicator(.visible)
-        }
-        .irisOnChange(of: manager.state.account?.publicKeyHex) { accountId in
-            if accountId == nil {
-                showingSettingsSheet = false
+                .irisDismissOnMacOutsideClick { inChatSearch = nil }
             }
-        }
+#if os(iOS)
+            .sheet(isPresented: $showingSettingsSheet) {
+                SettingsScreen(
+                    manager: manager,
+                    focusedSection: $settingsFocus,
+                    modalClose: { showingSettingsSheet = false }
+                )
+                .irisModalSurface()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
+            .irisOnChange(of: manager.state.account?.publicKeyHex) { accountId in
+                if accountId == nil {
+                    showingSettingsSheet = false
+                }
+            }
 #endif
 #if os(iOS) || os(macOS)
-        .sheet(isPresented: $showingNearbyIris) {
-            NearbyIrisScreen(
-                manager: manager,
-                service: manager.nearbyIris,
-                onClose: { showingNearbyIris = false }
-            )
-            .irisModalSurface()
+            .sheet(isPresented: $showingNearbyIris) {
+                NearbyIrisScreen(
+                    manager: manager,
+                    service: manager.nearbyIris,
+                    onClose: { showingNearbyIris = false }
+                )
+                .irisModalSurface()
 #if os(macOS)
                 .frame(minWidth: 420, minHeight: 520)
 #endif
                 .irisDismissOnMacOutsideClick { showingNearbyIris = false }
-        }
+            }
 #endif
 #if os(iOS) || os(macOS)
-        .sheet(
-            item: Binding(
-                get: { manager.pendingShare },
-                set: { value in
-                    if value == nil {
-                        manager.clearPendingShare()
+            .sheet(
+                item: Binding(
+                    get: { manager.pendingShare },
+                    set: { value in
+                        if value == nil {
+                            manager.clearPendingShare()
+                        }
                     }
-                }
-            )
-        ) { share in
+                )
+            ) { share in
 #if os(iOS)
-            ShareTargetSheet(manager: manager, share: share)
-                .irisModalSurface()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
+                ShareTargetSheet(manager: manager, share: share)
+                    .irisModalSurface()
+                    .presentationDetents([.medium, .large])
+                    .presentationDragIndicator(.visible)
 #elseif os(macOS)
-            ShareTargetSheet(manager: manager, share: share)
-                .frame(minWidth: 380, minHeight: 420)
+                ShareTargetSheet(manager: manager, share: share)
+                    .frame(minWidth: 380, minHeight: 420)
+#endif
+            }
+            .onAppear {
+                manager.nearbyIris.startBluetoothStateMonitoring()
+            }
 #endif
         }
-        .onAppear {
-            manager.nearbyIris.startBluetoothStateMonitoring()
-        }
-#endif
     }
 
     @ViewBuilder
@@ -330,7 +330,7 @@ struct RootView: View {
                 title: screenTitle(screen),
                 subtitle: chatHeaderSubtitle(for: screen),
                 subtitleSystemImage: chatHeaderSubtitleSystemImage(for: screen),
-                isChatHeader: isChatScreen(screen),
+                isChatHeader: usesCompactTopBar(screen),
                 canGoBack: route.depth > 0,
                 onBack: manager.navigateBack,
                 backBadgeCount: backUnreadCount(for: screen),
@@ -357,8 +357,9 @@ struct RootView: View {
         }
     }
 
-    private func isChatScreen(_ screen: Screen) -> Bool {
+    private func usesCompactTopBar(_ screen: Screen) -> Bool {
         if case .chat = screen { return true }
+        if case .chatList = screen { return true }
         return false
     }
 
@@ -2680,7 +2681,12 @@ private struct IrisChatListSearchBar: UIViewRepresentable {
         searchBar.autocorrectionType = .no
         searchBar.returnKeyType = .search
         searchBar.enablesReturnKeyAutomatically = false
+        searchBar.searchBarStyle = .minimal
+        searchBar.backgroundColor = .clear
         searchBar.backgroundImage = UIImage()
+        searchBar.tintColor = .label
+        searchBar.searchTextField.backgroundColor = .secondarySystemFill
+        searchBar.searchTextField.textColor = .label
         searchBar.searchTextField.accessibilityIdentifier = "chatListSearchField"
         searchBar.searchTextField.clearButtonMode = .never
         context.coordinator.attach(to: searchBar)
@@ -3861,16 +3867,7 @@ private struct ChatListTableRowContent: View {
 
     @ViewBuilder
     private var unreadBadge: some View {
-        if unreadCount > 0 {
-            Text(unreadCount > 99 ? "99+" : "\(unreadCount)")
-                .font(.footnote.weight(.semibold))
-                .foregroundStyle(palette.onAccent)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .frame(minWidth: 22)
-                .background(Capsule(style: .continuous).fill(palette.accent))
-                .accessibilityLabel("\(unreadCount) unread")
-        }
+        IrisUnreadBadge(count: unreadCount)
     }
 }
 
