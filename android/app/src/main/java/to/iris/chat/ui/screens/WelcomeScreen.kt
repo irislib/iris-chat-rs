@@ -6,8 +6,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -16,14 +20,16 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Devices
 import androidx.compose.material.icons.rounded.Key
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
@@ -63,34 +69,42 @@ import to.iris.chat.ui.theme.IrisTheme
 fun WelcomeScreen(
     appManager: AppManager,
 ) {
-    Box(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 28.dp),
-        contentAlignment = Alignment.Center,
+    val scrollState = rememberScrollState()
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(20.dp),
-        ) {
-            WelcomeHero(
-                appManager = appManager,
+        Column(modifier = Modifier.fillMaxSize()) {
+            Box(
                 modifier =
                     Modifier
-                        .widthIn(max = 360.dp)
+                        .weight(1f)
                         .fillMaxWidth()
-                        .testTag("welcomeChooserCard"),
-            )
-            if (BuildConfig.TRUSTED_TEST_BUILD) {
-                WelcomeTrustedBuildCard(
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 32.dp, vertical = 40.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                WelcomeBrand(
                     modifier =
                         Modifier
                             .widthIn(max = 360.dp)
                             .fillMaxWidth()
-                            .testTag("welcomeSecondaryCard"),
+                            .testTag("welcomeChooserCard"),
+                )
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                color = MaterialTheme.colorScheme.background,
+                shadowElevation = if (scrollState.canScrollForward) 8.dp else 0.dp,
+            ) {
+                WelcomeActions(
+                    appManager = appManager,
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .padding(horizontal = 32.dp, vertical = 24.dp),
                 )
             }
         }
@@ -98,8 +112,7 @@ fun WelcomeScreen(
 }
 
 @Composable
-private fun WelcomeHero(
-    appManager: AppManager,
+private fun WelcomeBrand(
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -127,7 +140,19 @@ private fun WelcomeHero(
                 fontWeight = FontWeight.ExtraBold,
             )
         }
+    }
+}
 
+@Composable
+private fun WelcomeActions(
+    appManager: AppManager,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         Column(
             modifier =
                 Modifier
@@ -181,19 +206,14 @@ private fun WelcomeHero(
                         .testTag("welcomeAddDeviceAction"),
             )
         }
-    }
-}
-
-@Composable
-private fun WelcomeTrustedBuildCard(
-    modifier: Modifier = Modifier,
-) {
-    IrisSectionCard(modifier = modifier) {
-        Text(
-            text = "Test build",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-        )
+        if (BuildConfig.TRUSTED_TEST_BUILD) {
+            Text(
+                text = "Test build",
+                modifier = Modifier.testTag("welcomeSecondaryCard"),
+                style = MaterialTheme.typography.labelMedium,
+                color = IrisTheme.palette.muted,
+            )
+        }
     }
 }
 
@@ -219,20 +239,25 @@ fun CreateAccountScreen(
         keyboardController?.show()
     }
 
-    OnboardingColumn {
-        BackToWelcomeButton(appManager = appManager)
-
+    OnboardingScaffold(
+        title = "Create profile",
+        onBack = { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) },
+        bottomContent = {
+            IrisPrimaryButton(
+                text = if (appState.busy.creatingAccount) "Creating…" else "Create profile",
+                onClick = submitCreateAccount,
+                enabled = canCreateAccount,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag("generateKeyButton"),
+            )
+        },
+    ) {
         Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .testTag("createAccountScreen"),
+            modifier = Modifier.testTag("createAccountScreen"),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                text = "Create profile",
-                style = MaterialTheme.typography.headlineSmall,
-            )
             TextField(
                 value = displayName,
                 onValueChange = { displayName = it },
@@ -255,17 +280,8 @@ fun CreateAccountScreen(
                         onDone = {
                             submitCreateAccount()
                         },
-                    ),
+                ),
                 colors = irisTextFieldColors(),
-            )
-            IrisPrimaryButton(
-                text = if (appState.busy.creatingAccount) "Creating…" else "Create profile",
-                onClick = submitCreateAccount,
-                enabled = canCreateAccount,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("generateKeyButton"),
             )
         }
 
@@ -281,25 +297,31 @@ fun RestoreAccountScreen(
     var restoreInput by rememberSaveable { mutableStateOf("") }
     var lastSubmittedSecret by rememberSaveable { mutableStateOf<String?>(null) }
 
-    OnboardingColumn {
-        BackToWelcomeButton(appManager = appManager)
-
+    OnboardingScaffold(
+        title = "Restore profile",
+        subtitle = "Paste your secret key.",
+        onBack = { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) },
+        bottomContent = {
+            IrisPrimaryButton(
+                text = if (appState.busy.restoringSession) "Restoring…" else "Restore profile",
+                onClick = {
+                    lastSubmittedSecret = restoreInput.trim()
+                    appManager.restoreSession(restoreInput)
+                },
+                enabled =
+                    restoreInput.trim().isNotEmpty() &&
+                        !appState.busy.restoringSession,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag("importKeyButton"),
+            )
+        },
+    ) {
         Column(
-            modifier =
-                Modifier
-                    .fillMaxWidth()
-                    .testTag("restoreAccountScreen"),
+            modifier = Modifier.testTag("restoreAccountScreen"),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                text = "Restore profile",
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            Text(
-                text = "Paste your secret key.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = IrisTheme.palette.muted,
-            )
             TextField(
                 value = restoreInput,
                 onValueChange = { value ->
@@ -330,20 +352,6 @@ fun RestoreAccountScreen(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 enabled = !appState.busy.restoringSession,
                 colors = irisTextFieldColors(),
-            )
-            IrisPrimaryButton(
-                text = if (appState.busy.restoringSession) "Restoring…" else "Restore profile",
-                onClick = {
-                    lastSubmittedSecret = restoreInput.trim()
-                    appManager.restoreSession(restoreInput)
-                },
-                enabled =
-                    restoreInput.trim().isNotEmpty() &&
-                        !appState.busy.restoringSession,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .testTag("importKeyButton"),
             )
         }
 
@@ -382,11 +390,35 @@ fun AddDeviceScreen(
         }
     }
 
-    OnboardingColumn {
-        if (!awaitingApproval) {
-            BackToWelcomeButton(appManager = appManager)
-        }
-
+    OnboardingScaffold(
+        title = if (awaitingApproval) "Finish linking" else "Link this device",
+        subtitle =
+            if (awaitingApproval) {
+                "Waiting for approval from your signed-in device."
+            } else {
+                "Scan this code with your signed-in device."
+            },
+        onBack =
+            if (awaitingApproval) {
+                null
+            } else {
+                { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) }
+            },
+        bottomContent =
+            if (awaitingApproval) {
+                {
+                    IrisSecondaryButton(
+                        text = "Sign out",
+                        onClick = { showLogoutConfirmation = true },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("awaitingApprovalLogoutButton"),
+                    )
+                }
+            } else {
+                null
+            },
+    ) {
         Column(
             modifier =
                 Modifier
@@ -394,21 +426,6 @@ fun AddDeviceScreen(
                     .testTag("addDeviceScreen"),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            Text(
-                text = if (awaitingApproval) "Finish linking" else "Link this device",
-                style = MaterialTheme.typography.headlineSmall,
-            )
-            Text(
-                text =
-                    if (awaitingApproval) {
-                        "Waiting for approval from your signed-in device."
-                    } else {
-                        "Scan this code with your signed-in device."
-                    },
-                style = MaterialTheme.typography.bodyMedium,
-                color = IrisTheme.palette.muted,
-            )
-
             if (!awaitingApproval) {
                 val linkDevice = appState.linkDevice
                 if (linkDevice == null) {
@@ -461,15 +478,7 @@ fun AddDeviceScreen(
             }
         }
 
-        if (awaitingApproval) {
-            IrisSecondaryButton(
-                text = "Sign out",
-                onClick = { showLogoutConfirmation = true },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("awaitingApprovalLogoutButton"),
-            )
-        } else {
+        if (!awaitingApproval) {
             OnboardingMessageCard(message = appState.toast)
         }
     }
@@ -487,12 +496,16 @@ fun AddDeviceScreen(
 }
 
 @Composable
-private fun BackToWelcomeButton(appManager: AppManager) {
-    TextButton(
-        onClick = { appManager.dispatch(AppAction.UpdateScreenStack(emptyList())) },
+private fun OnboardingBackButton(onClick: () -> Unit) {
+    IconButton(
+        onClick = onClick,
         modifier = Modifier.testTag("onboardingBackButton"),
     ) {
-        Text("Back")
+        Icon(
+            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+            contentDescription = "Back",
+            tint = MaterialTheme.colorScheme.onSurface,
+        )
     }
 }
 
@@ -509,18 +522,73 @@ private fun OnboardingMessageCard(message: String?) {
 }
 
 @Composable
-private fun OnboardingColumn(
+private fun OnboardingScaffold(
+    title: String,
+    subtitle: String? = null,
+    onBack: (() -> Unit)?,
+    bottomContent: (@Composable ColumnScope.() -> Unit)? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    Column(
-        modifier =
-            Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 40.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
-        content = content,
-    )
+    val scrollState = rememberScrollState()
+    Surface(
+        modifier = Modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.background,
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .verticalScroll(scrollState)
+                        .padding(horizontal = 32.dp)
+                        .padding(top = 24.dp, bottom = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                if (onBack != null) {
+                    OnboardingBackButton(onClick = onBack)
+                } else {
+                    Spacer(modifier = Modifier.height(48.dp))
+                }
+
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = IrisTheme.palette.muted,
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+                content()
+            }
+
+            if (bottomContent != null) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.background,
+                    shadowElevation = if (scrollState.canScrollForward) 8.dp else 0.dp,
+                ) {
+                    Column(
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .navigationBarsPadding()
+                                .imePadding()
+                                .padding(horizontal = 32.dp)
+                                .padding(top = 8.dp, bottom = 24.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        content = bottomContent,
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
