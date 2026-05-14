@@ -884,6 +884,7 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> UINavigationController {
         let navigationController = UINavigationController()
+        configureNavigationController(navigationController)
         navigationController.setNavigationBarHidden(true, animated: false)
         navigationController.delegate = context.coordinator
         navigationController.interactivePopGestureRecognizer?.delegate = context.coordinator
@@ -893,6 +894,7 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ navigationController: UINavigationController, context: Context) {
+        configureNavigationController(navigationController)
         navigationController.interactivePopGestureRecognizer?.delegate = context.coordinator
         navigationController.interactivePopGestureRecognizer?.isEnabled = true
         context.coordinator.update(
@@ -900,6 +902,21 @@ private struct UIKitRouteNavigationHost: UIViewControllerRepresentable {
             routes: routes,
             makeContent: makeContent
         )
+    }
+
+    private func configureNavigationController(_ navigationController: UINavigationController) {
+        navigationController.view.backgroundColor = .clear
+        navigationController.navigationBar.prefersLargeTitles = false
+
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithTransparentBackground()
+        appearance.shadowColor = .clear
+        navigationController.navigationBar.standardAppearance = appearance
+        navigationController.navigationBar.scrollEdgeAppearance = appearance
+        navigationController.navigationBar.compactAppearance = appearance
+        if #available(iOS 15.0, *) {
+            navigationController.navigationBar.compactScrollEdgeAppearance = appearance
+        }
     }
 
     final class Coordinator: NSObject, UINavigationControllerDelegate, UIGestureRecognizerDelegate {
@@ -1058,6 +1075,7 @@ private final class RouteHostingController: UIHostingController<AnyView> {
         self.route = route
         super.init(rootView: rootView)
         view.backgroundColor = .clear
+        navigationItem.backButtonDisplayMode = .minimal
     }
 
     @MainActor
