@@ -3003,39 +3003,18 @@ private struct IrisChatListSearchBar: UIViewRepresentable {
 
     private static func applyAppearance(to searchBar: UISearchBar, isDark: Bool) {
         let style: UIUserInterfaceStyle = isDark ? .dark : .light
-        let textColor = isDark ? UIColor.white : UIColor(red: 0x0F / 255.0, green: 0x14 / 255.0, blue: 0x19 / 255.0, alpha: 1)
-        let mutedColor = isDark
-            ? UIColor(red: 0xEB / 255.0, green: 0xEB / 255.0, blue: 0xF5 / 255.0, alpha: 0.7)
-            : UIColor(red: 0x53 / 255.0, green: 0x64 / 255.0, blue: 0x71 / 255.0, alpha: 1)
-        let fieldColor = signalSearchFieldBackground(isDark: isDark)
         let field = searchBar.searchTextField
 
         searchBar.overrideUserInterfaceStyle = style
-        searchBar.tintColor = textColor
+        searchBar.tintColor = .label
         searchBar.backgroundColor = .clear
         searchBar.barTintColor = .clear
         searchBar.searchBarStyle = .minimal
 
         field.overrideUserInterfaceStyle = style
-        field.borderStyle = .none
-        field.background = nil
-        field.backgroundColor = fieldColor
-        field.layer.backgroundColor = fieldColor.cgColor
-        field.layer.cornerRadius = 10
-        field.layer.masksToBounds = true
-        field.textColor = textColor
-        field.tintColor = textColor
-        field.leftView?.tintColor = mutedColor
-        field.attributedPlaceholder = NSAttributedString(
-            string: "Search",
-            attributes: [.foregroundColor: mutedColor]
-        )
-    }
-
-    private static func signalSearchFieldBackground(isDark: Bool) -> UIColor {
-        isDark
-            ? UIColor(red: 0x1C / 255.0, green: 0x1C / 255.0, blue: 0x1E / 255.0, alpha: 1)
-            : UIColor(red: 0xEF / 255.0, green: 0xEF / 255.0, blue: 0xF0 / 255.0, alpha: 1)
+        field.textColor = .label
+        field.tintColor = .label
+        field.leftView?.tintColor = .secondaryLabel
     }
 
     final class Coordinator: NSObject, UISearchBarDelegate {
@@ -3061,9 +3040,8 @@ private struct IrisChatListSearchBar: UIViewRepresentable {
         }
 
         func updateCloseButton(for searchBar: UISearchBar, isDark: Bool) {
-            closeButton.tintColor = isDark
-                ? UIColor(red: 0xEB / 255.0, green: 0xEB / 255.0, blue: 0xF5 / 255.0, alpha: 0.7)
-                : UIColor(red: 0x53 / 255.0, green: 0x64 / 255.0, blue: 0x71 / 255.0, alpha: 1)
+            closeButton.overrideUserInterfaceStyle = isDark ? .dark : .light
+            closeButton.tintColor = .secondaryLabel
             searchBar.searchTextField.rightView = isFocused ? closeButton : nil
             searchBar.searchTextField.rightViewMode = isFocused ? .always : .never
         }
