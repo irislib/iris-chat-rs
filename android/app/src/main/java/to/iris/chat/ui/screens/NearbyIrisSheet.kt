@@ -28,6 +28,7 @@ import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.delay
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
+import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
@@ -97,7 +98,6 @@ fun NearbyIrisSheet(
                                 status = nearbyBluetoothTransportStatus(snapshot),
                                 checked = snapshot.visible,
                                 peers = snapshot.bluetoothPeers,
-                                mailbagSummary = snapshot.mailbagSummary,
                                 onCheckedChange = onVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.let {
@@ -118,7 +118,6 @@ fun NearbyIrisSheet(
                                 status = nearbyWifiTransportStatus(snapshot),
                                 checked = snapshot.localNetworkVisible,
                                 peers = snapshot.localNetworkPeers,
-                                mailbagSummary = snapshot.mailbagSummary,
                                 onCheckedChange = onLocalNetworkVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.let {
@@ -162,6 +161,10 @@ internal fun rememberNearbySnapshotState(service: IrisNearbyService) = produceSt
     }
 }
 
+// Mirrors `NearbyTransportRow` (title + optional summary + Switch on
+// the first line; expanded copy below when on) so the Mailbag reads
+// as a peer to Bluetooth / Wi-Fi — another transport-layer thing the
+// user can pause without losing data.
 @Composable
 private fun NearbyMailbagRow(
     appManager: AppManager,
@@ -179,18 +182,10 @@ private fun NearbyMailbagRow(
         ) {
             Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(text = "Mailbag", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    // Mailbag carries other people's messages too — call
-                    // that out so users understand what gets stored on
-                    // their device when this is on.
-                    text = "Anonymously carries messages by you and others over Bluetooth or Wi-Fi, so they keep moving where there's no internet.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = IrisTheme.palette.muted,
-                )
                 if (summary != null) {
                     Text(
                         text = summary,
-                        style = MaterialTheme.typography.labelSmall,
+                        style = MaterialTheme.typography.bodyMedium,
                         color = IrisTheme.palette.muted,
                     )
                 }
@@ -201,6 +196,17 @@ private fun NearbyMailbagRow(
                     appManager.dispatch(AppAction.SetNearbyMailbagEnabled(next))
                 },
                 modifier = Modifier.testTag("nearbyMailbagSwitch"),
+            )
+        }
+        if (enabled) {
+            Text(
+                // Mailbag carries other people's messages too — call
+                // that out so users understand what gets stored on
+                // their device when this is on.
+                text = "Anonymously carries messages by you and others over Bluetooth or Wi-Fi, so they keep moving where there's no internet.",
+                modifier = Modifier.padding(top = 8.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = IrisTheme.palette.muted,
             )
         }
     }
@@ -214,7 +220,6 @@ private fun NearbyTransportRow(
     status: String?,
     checked: Boolean,
     peers: List<IrisNearbyService.Peer>,
-    mailbagSummary: String?,
     onCheckedChange: (Boolean) -> Unit,
     onOpenPeer: (IrisNearbyService.Peer) -> Unit,
     modifier: Modifier = Modifier,
@@ -272,14 +277,6 @@ private fun NearbyTransportRow(
                         onOpenChat = { onOpenPeer(peer) },
                     )
                 }
-            }
-            if (mailbagSummary != null) {
-                Text(
-                    text = "Mailbag · $mailbagSummary",
-                    modifier = Modifier.padding(top = 8.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = IrisTheme.palette.muted,
-                )
             }
         }
     }

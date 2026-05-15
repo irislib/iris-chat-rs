@@ -4531,45 +4531,10 @@ private struct NearbyIrisScreen: View {
 
             transportControls
 
-            mailbagSection
-
             Spacer(minLength: 0)
         }
         .background(palette.background)
         .irisModalSurface()
-    }
-
-    @ViewBuilder
-    private var mailbagSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Toggle(isOn: Binding(
-                get: { manager.state.preferences.nearbyMailbagEnabled },
-                set: { enabled in
-                    manager.dispatch(.setNearbyMailbagEnabled(enabled: enabled))
-                }
-            )) {
-                Text("Mailbag")
-                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.textPrimary)
-            }
-            .irisControlTint()
-            .accessibilityIdentifier("nearbyMailbagToggle")
-
-            Text("Anonymously carries messages by you and others over Bluetooth or Wi-Fi, so they keep moving where there's no internet.")
-                .font(.system(.caption, design: .rounded))
-                .foregroundStyle(palette.muted)
-                .fixedSize(horizontal: false, vertical: true)
-            if let summary = service.mailbagSummary {
-                Text(summary)
-                    .font(.system(.caption2, design: .rounded, weight: .semibold))
-                    .foregroundStyle(palette.muted)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 14)
-        .background(palette.panel)
-        .accessibilityIdentifier("nearbyMailbagSection")
     }
 
     private var header: some View {
@@ -4612,8 +4577,63 @@ private struct NearbyIrisScreen: View {
                 isOn: lanBinding,
                 accessibilityID: "nearbyLanSwitch"
             )
+
+            Rectangle()
+                .fill(palette.border)
+                .frame(height: 1)
+                .padding(.leading, 18)
+
+            mailbagRow
         }
         .background(palette.panel)
+    }
+
+    @ViewBuilder
+    private var mailbagRow: some View {
+        // Mirrors `transportRow` so Mailbag reads as a peer to
+        // Bluetooth and Wi-Fi — same row chrome (title + optional
+        // subtitle on the left, switch on the right, footer that
+        // appears when the toggle is on), so the user understands
+        // it's another transport-layer thing they can pause without
+        // losing data.
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Mailbag")
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                    if let summary = service.mailbagSummary {
+                        Text(summary)
+                            .font(.system(.caption, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { manager.state.preferences.nearbyMailbagEnabled },
+                    set: { enabled in
+                        manager.dispatch(.setNearbyMailbagEnabled(enabled: enabled))
+                    }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .irisControlTint()
+                .accessibilityIdentifier("nearbyMailbagSwitch")
+            }
+            .frame(height: 52)
+
+            if manager.state.preferences.nearbyMailbagEnabled {
+                Text("Anonymously carries messages by you and others over Bluetooth or Wi-Fi, so they keep moving where there's no internet.")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(palette.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.bottom, 12)
+            }
+        }
+        .padding(.horizontal, 18)
+        .accessibilityIdentifier("nearbyMailbagSection")
     }
 
     private func transportRow(

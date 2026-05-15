@@ -30,6 +30,28 @@ pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
     }
     content.append(&lan);
 
+    // Mirrors the Wi-Fi row so Mailbag reads as another transport-
+    // layer thing the user can pause without losing the bag's
+    // existing contents. The subtitle calls out that this carries
+    // other people's messages too.
+    let mailbag = adw::SwitchRow::builder()
+        .title("Mailbag")
+        .subtitle(
+            "Anonymously carries messages by you and others over Bluetooth or Wi-Fi, \
+             so they keep moving where there's no internet.",
+        )
+        .build();
+    mailbag.set_active(manager.current_state().preferences.nearby_mailbag_enabled);
+    {
+        let manager = manager.clone();
+        mailbag.connect_active_notify(move |row| {
+            manager.dispatch(AppAction::SetNearbyMailbagEnabled {
+                enabled: row.is_active(),
+            });
+        });
+    }
+    content.append(&mailbag);
+
     let status = gtk::Label::new(None);
     status.add_css_class("dim-label");
     status.set_xalign(0.0);
@@ -118,8 +140,12 @@ fn peer_row(peer: &DesktopNearbyPeerSnapshot, manager: &Rc<AppManager>) -> adw::
     if let Some(owner) = peer.owner_pubkey_hex.clone() {
         let manager = manager.clone();
         row.connect_activated(move |_| {
-            manager.dispatch(AppAction::CreateChat {
-                peer_input: owner.clone(),
+            // OpenChat (not CreateChat) so the desktop navigates
+            // optimistically rather than depending on the Rust state
+            // round-trip — the modal dismissal would otherwise race
+            // the stack update.
+            manager.dispatch(AppAction::OpenChat {
+                chat_id: owner.clone(),
             });
         });
     }
