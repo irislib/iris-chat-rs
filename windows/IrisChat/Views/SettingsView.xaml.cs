@@ -14,6 +14,8 @@ public partial class SettingsView : UserControl
     private const string IrisSourceUrl =
         "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs";
 
+    private static string IrisChatProfileUrl(string npub) => $"https://chat.iris.to/#/{npub}";
+
     private bool _suppressToggleDispatch;
     private string _selectedPage = "Profile";
     private bool _profileQrVisible;
@@ -43,7 +45,7 @@ public partial class SettingsView : UserControl
                 ProfileNameInput.Text = account.displayName;
             NpubText.Text = "Signed in";
             ProfileQrName.Text = string.IsNullOrEmpty(account.displayName) ? "User ID" : account.displayName;
-            ProfileQr.Text = _profileQrVisible ? account.npub : null;
+            ProfileQr.Text = _profileQrVisible ? IrisChatProfileUrl(account.npub) : null;
             ProfileQrPanel.Visibility = _profileQrVisible ? Visibility.Visible : Visibility.Collapsed;
             ExportOwnerKeyButton.Visibility = account.hasOwnerSigningAuthority
                 ? Visibility.Visible
@@ -306,7 +308,7 @@ public partial class SettingsView : UserControl
     private void OnCopyUserId(object sender, RoutedEventArgs e)
     {
         var npub = App.CurrentManager.Account?.npub;
-        if (!string.IsNullOrEmpty(npub)) App.CurrentManager.CopyToClipboard(npub);
+        if (!string.IsNullOrEmpty(npub)) App.CurrentManager.CopyToClipboard(IrisChatProfileUrl(npub));
     }
 
     private void OnToggleProfileQr(object sender, RoutedEventArgs e)

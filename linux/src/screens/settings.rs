@@ -13,6 +13,10 @@ use crate::widgets::{image_cache, qr};
 const IRIS_SOURCE_URL: &str =
     "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs";
 
+fn iris_chat_profile_url(npub: &str) -> String {
+    format!("https://chat.iris.to/#/{npub}")
+}
+
 #[derive(Clone, Copy)]
 enum SettingsPage {
     Profile,
@@ -565,7 +569,7 @@ fn profile_group(
     let chevron = gtk::Image::from_icon_name("go-next-symbolic");
     chevron.add_css_class("dim-label");
     qr_row.add_suffix(&chevron);
-    let npub = account.npub.clone();
+    let profile_url = iris_chat_profile_url(&account.npub);
     let display_name = account.display_name.clone();
     let manager_for_qr = manager.clone();
     qr_row.connect_activated(move |row| {
@@ -573,7 +577,7 @@ fn profile_group(
         present_qr_dialog(
             parent.as_ref(),
             &display_name,
-            &npub,
+            &profile_url,
             manager_for_qr.clone(),
         );
     });
@@ -585,7 +589,7 @@ fn profile_group(
 fn present_qr_dialog(
     parent: Option<&gtk::Window>,
     name: &str,
-    npub: &str,
+    profile_url: &str,
     manager: Rc<AppManager>,
 ) {
     let dialog = adw::Dialog::builder().content_width(360).build();
@@ -623,7 +627,7 @@ fn present_qr_dialog(
     badge.set_margin_start(0);
     badge.set_margin_end(0);
 
-    let qr_widget = qr::build(npub, 216);
+    let qr_widget = qr::build(profile_url, 216);
     qr_widget.set_margin_top(32);
     qr_widget.set_margin_start(40);
     qr_widget.set_margin_end(40);
@@ -642,8 +646,8 @@ fn present_qr_dialog(
     name_label.add_css_class("title-3");
     name_row.append(&name_label);
     name_button.set_child(Some(&name_row));
-    let npub_for_name_copy = npub.to_string();
-    name_button.connect_clicked(move |_| clipboard::copy(&npub_for_name_copy));
+    let profile_url_for_name_copy = profile_url.to_string();
+    name_button.connect_clicked(move |_| clipboard::copy(&profile_url_for_name_copy));
     badge.append(&name_button);
     content.append(&badge);
 
@@ -651,8 +655,8 @@ fn present_qr_dialog(
     actions.set_halign(gtk::Align::Center);
     let copy = gtk::Button::with_label("Copy");
     copy.add_css_class("pill");
-    let npub_owned = npub.to_string();
-    copy.connect_clicked(move |_| clipboard::copy(&npub_owned));
+    let profile_url_owned = profile_url.to_string();
+    copy.connect_clicked(move |_| clipboard::copy(&profile_url_owned));
     actions.append(&copy);
     let dialog_for_action_scan = dialog.clone();
     let manager_for_action_scan = manager.clone();
