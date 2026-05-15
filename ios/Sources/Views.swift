@@ -320,7 +320,16 @@ struct RootView: View {
 #endif
             }
             .onAppear {
-                manager.nearbyIris.startBluetoothStateMonitoring()
+                // Constructing the CBCentralManager triggers the iOS
+                // Bluetooth permission alert on first use, so only
+                // start the power-state monitor when the user has
+                // previously opted into Nearby Bluetooth. The Nearby
+                // settings page kicks off its own monitor in onAppear
+                // (Views.swift NearbySettingsRows) when the user opens
+                // it for the first time.
+                if manager.state.preferences.nearbyBluetoothEnabled {
+                    manager.nearbyIris.startBluetoothStateMonitoring()
+                }
             }
 #endif
         }
