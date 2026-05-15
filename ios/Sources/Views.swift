@@ -17,6 +17,9 @@ private let irisPrivacyURL = URL(string: "https://chat.iris.to/privacy")!
 private let irisTermsURL = URL(string: "https://chat.iris.to/terms")!
 private let irisChildSafetyURL = URL(string: "https://chat.iris.to/csae")!
 private let irisSupportEmail = "irismessenger@pm.me"
+private func irisChatProfileURL(npub: String) -> URL {
+    URL(string: "https://chat.iris.to/#/\(npub)")!
+}
 private let disappearingMessageOptions: [(String, UInt64?)] = [
     ("Off", nil),
     ("5 minutes", 300),
@@ -6717,6 +6720,10 @@ private struct ProfileQrCodePane: View {
         account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName
     }
 
+    private var profileURL: URL {
+        irisChatProfileURL(npub: account.npub)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 22) {
@@ -6732,7 +6739,7 @@ private struct ProfileQrCodePane: View {
                     }
                     .accessibilityIdentifier("profileQrCopyButton")
 
-                    ShareLink(item: account.npub) {
+                    ShareLink(item: profileURL) {
                         ProfileQrActionLabel(systemImage: "square.and.arrow.up", title: "Share")
                     }
                     .buttonStyle(.irisPlain)
@@ -6759,7 +6766,7 @@ private struct ProfileQrCodePane: View {
 
     private var qrCard: some View {
         VStack(spacing: 16) {
-            QrCodeImage(text: account.npub, size: 214)
+            QrCodeImage(text: profileURL.absoluteString, size: 214)
                 .padding(14)
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
@@ -6784,7 +6791,7 @@ private struct ProfileQrCodePane: View {
     }
 
     private func copyUserID() {
-        manager.copyToClipboard(account.npub)
+        manager.copyToClipboard(profileURL.absoluteString)
         copyResetTask?.cancel()
         withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
             copiedUserID = true

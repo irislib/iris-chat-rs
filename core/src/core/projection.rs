@@ -397,7 +397,7 @@ impl AppCore {
                     .as_ref()
                     .map(|logged_in| &logged_in.local_invite)
             })?;
-        let url = nostr_double_ratchet_nostr::invite_url(invite, CHAT_INVITE_ROOT_URL).ok()?;
+        let url = super::invites::chat_invite_url(invite).ok()?;
         Some(PublicInviteSnapshot { url })
     }
 
@@ -420,7 +420,7 @@ impl AppCore {
         invite.purpose = Some("link".to_string());
         invite.owner_public_key = Some(logged_in.owner_pubkey);
         Some(LinkDeviceSnapshot {
-            url: nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL).ok()?,
+            url: super::invites::chat_invite_url(&invite).ok()?,
             device_input: logged_in.device_keys.public_key().to_bech32().ok()?,
         })
     }

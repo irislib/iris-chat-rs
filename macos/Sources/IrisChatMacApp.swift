@@ -18,7 +18,15 @@ struct IrisChatMacApp: App {
                     manager.updates.runStartupCheckIfNeeded()
                 }
                 .onOpenURL { url in
-                    _ = manager.handleShareURL(url)
+                    if !manager.handleShareURL(url) {
+                        manager.handleChatLink(url)
+                    }
+                }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    guard let url = activity.webpageURL else {
+                        return
+                    }
+                    manager.handleChatLink(url)
                 }
                 .irisOnChange(of: scenePhase) { phase in
                     if phase == .active {

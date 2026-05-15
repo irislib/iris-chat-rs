@@ -98,6 +98,8 @@ private const val NotificationsServerProjectUrl =
     "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-notification-server"
 private const val NotificationsServerProjectLabel = "Notification server source code"
 
+private fun irisChatProfileUrl(npub: String): String = "https://chat.iris.to/#/$npub"
+
 private enum class SecretExportKind {
     Owner,
     Device,
@@ -221,9 +223,10 @@ fun MyProfileSheet(
             )
         }
     val profilePictureInteractionSource = remember { MutableInteractionSource() }
+    val profileShareUrl = remember(npub) { irisChatProfileUrl(npub) }
     val qrBitmap =
-        remember(npub) {
-            createQrBitmap(npub, size = 768)
+        remember(profileShareUrl) {
+            createQrBitmap(profileShareUrl, size = 768)
         }
     val canShareProfileCode = remember(context) { canShareText(context) }
 
@@ -784,8 +787,8 @@ fun MyProfileSheet(
             displayName = displayName,
             canShare = canShareProfileCode,
             onDismiss = { showProfileQr = false },
-            onCopy = { clipboard.setText("User ID", npub) },
-            onShare = { shareText(context, npub, "Share user ID") },
+            onCopy = { clipboard.setText("Profile link", profileShareUrl) },
+            onShare = { shareText(context, profileShareUrl, "Share profile") },
             onScan = { showProfileQrScanner = true },
         )
     }
@@ -1198,14 +1201,14 @@ private fun ProfileQrDialog(
                 ) {
                     ProfileQrIconAction(
                         icon = IrisIcons.Copy,
-                        contentDescription = "Copy user ID",
+                        contentDescription = "Copy profile link",
                         onClick = onCopy,
                         modifier = Modifier.testTag("settingsProfileQrCopyButton"),
                     )
                     if (canShare) {
                         ProfileQrIconAction(
                             icon = IrisIcons.Share,
-                            contentDescription = "Share user ID",
+                            contentDescription = "Share profile",
                             onClick = onShare,
                             modifier = Modifier.testTag("settingsProfileQrShareButton"),
                         )

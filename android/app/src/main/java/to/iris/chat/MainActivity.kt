@@ -250,6 +250,14 @@ class MainActivity : ComponentActivity() {
             return uri.toString()
         }
 
+        val decodedFragment = Uri.decode(uri.fragment.orEmpty())
+        if (
+            decodedFragment.contains("\"ephemeralKey\"") &&
+            decodedFragment.contains("\"sharedSecret\"")
+        ) {
+            return uri.toString()
+        }
+
         return null
     }
 

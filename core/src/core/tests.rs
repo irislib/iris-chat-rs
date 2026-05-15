@@ -4859,7 +4859,7 @@ fn linked_device_missing_local_session_exposes_link_code() {
         .as_ref()
         .expect("link-device snapshot");
     let invite =
-        nostr_double_ratchet_nostr::parse_invite_url(&snapshot.url).expect("parse link invite");
+        super::invites::parse_public_invite_input(&snapshot.url).expect("parse link invite");
     assert_eq!(invite.purpose.as_deref(), Some("link"));
     assert_eq!(invite.owner_public_key, Some(owner.public_key()));
     assert_eq!(
@@ -5341,7 +5341,7 @@ fn start_linked_device_creates_ownerless_link_invite() {
         .as_ref()
         .expect("link-device snapshot");
     let invite =
-        nostr_double_ratchet_nostr::parse_invite_url(&snapshot.url).expect("parse link invite");
+        super::invites::parse_public_invite_input(&snapshot.url).expect("parse link invite");
     assert_eq!(invite.purpose.as_deref(), Some("link"));
     assert!(invite.owner_public_key.is_none());
     assert_eq!(
@@ -5373,8 +5373,7 @@ fn owner_device_accepts_link_invite_and_registers_new_device() {
     )
     .expect("link invite");
     invite.purpose = Some("link".to_string());
-    let invite_url =
-        nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL).expect("invite url");
+    let invite_url = super::invites::chat_invite_url(&invite).expect("invite url");
 
     core.handle_action(AppAction::AddAuthorizedDevice {
         device_input: invite_url,
@@ -6032,7 +6031,7 @@ fn create_invite_generates_private_link_without_public_republish() {
         .as_ref()
         .expect("private invite snapshot");
     let invite =
-        nostr_double_ratchet_nostr::parse_invite_url(&snapshot.url).expect("parse private invite");
+        super::invites::parse_public_invite_input(&snapshot.url).expect("parse private invite");
     assert_eq!(invite.purpose.as_deref(), Some("private"));
     assert_eq!(invite.max_uses, Some(1));
     assert_eq!(invite.owner_public_key, Some(owner.public_key()));

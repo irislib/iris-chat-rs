@@ -3361,7 +3361,15 @@ private func isInviteChatLink(_ url: URL) -> Bool {
     }
 
     let fragmentComponents = chatLinkFragmentComponents(url)
-    return fragmentComponents.first?.lowercased() == "invite" && fragmentComponents.count >= 2
+    if fragmentComponents.first?.lowercased() == "invite" && fragmentComponents.count >= 2 {
+        return true
+    }
+
+    guard let fragment = url.fragment else {
+        return false
+    }
+    let decoded = fragment.removingPercentEncoding ?? fragment
+    return decoded.contains("\"ephemeralKey\"") && decoded.contains("\"sharedSecret\"")
 }
 
 private func chatLinkPeerCandidates(_ url: URL) -> [String] {

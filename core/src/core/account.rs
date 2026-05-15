@@ -1,4 +1,4 @@
-use super::invites::{load_private_chat_invites, parse_public_invite_input};
+use super::invites::{chat_invite_url, load_private_chat_invites, parse_public_invite_input};
 use super::*;
 
 impl AppCore {
@@ -191,7 +191,7 @@ impl AppCore {
         let device_id = device_pubkey.to_hex();
         let mut invite = Invite::create_new(device_pubkey, Some(device_id), Some(1))?;
         invite.purpose = Some("link".to_string());
-        let url = nostr_double_ratchet_nostr::invite_url(&invite, CHAT_INVITE_ROOT_URL)?;
+        let url = chat_invite_url(&invite)?;
 
         let client = Client::new(device_keys.clone());
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
