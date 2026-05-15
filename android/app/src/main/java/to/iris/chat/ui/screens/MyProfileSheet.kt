@@ -68,6 +68,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
+import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.NetworkStatusSnapshot
@@ -161,6 +162,7 @@ fun MyProfileSheet(
     onNearbyBluetoothChange: (Boolean) -> Unit,
     onNearbyLanChange: (Boolean) -> Unit,
     onNearbyEnabledChange: (Boolean) -> Unit,
+    nearbyService: IrisNearbyService? = null,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -340,7 +342,7 @@ fun MyProfileSheet(
                         SettingsPage.Messaging -> {
                             SettingsRowsSection {
                                 SettingsToggleRow(
-                                    title = "Accept chat requests",
+                                    title = "Accept message requests from unknowns",
                                     checked = preferences.acceptUnknownDirectMessages,
                                     onCheckedChange = { enabled ->
                                         appManager.dispatch(AppAction.SetAcceptUnknownDirectMessages(enabled))
@@ -363,6 +365,27 @@ fun MyProfileSheet(
                                     },
                                     tag = "myProfileReadReceiptsSwitch",
                                 )
+                                SettingsToggleRow(
+                                    title = "Sync mailbag",
+                                    checked = preferences.nearbyMailbagEnabled,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetNearbyMailbagEnabled(enabled))
+                                    },
+                                    tag = "myProfileMailbagSwitch",
+                                )
+                                // The bag's contents survive the toggle so the
+                                // user can pause sync without losing what's
+                                // already queued; surface the wipe action only
+                                // when there's something to wipe.
+                                if (nearbyService != null && nearbyService.mailbagEventCount() > 0) {
+                                    ProfileActionRow(
+                                        title = "Empty mailbag (${nearbyService.mailbagEventCount()})",
+                                        icon = IrisIcons.DeleteForever,
+                                        destructive = true,
+                                        onClick = { nearbyService.emptyMailbag() },
+                                        modifier = Modifier.testTag("myProfileEmptyMailbagButton"),
+                                    )
+                                }
                             }
                         }
 
@@ -1133,10 +1156,11 @@ private fun ProfileActionRow(
     icon: ImageVector,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    destructive: Boolean = false,
 ) {
     val haptics = rememberIrisHapticFeedback()
     val interactionSource = remember(title) { MutableInteractionSource() }
-    val rowColor = MaterialTheme.colorScheme.onSurface
+    val rowColor = if (destructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface
     Row(
         modifier =
             modifier

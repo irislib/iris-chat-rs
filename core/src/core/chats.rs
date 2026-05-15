@@ -384,6 +384,14 @@ impl AppCore {
             return;
         };
 
+        if !is_group_chat_id(&normalized_chat_id)
+            && self.is_owner_blocked(&normalized_chat_id)
+        {
+            self.state.toast = Some("User is blocked.".to_string());
+            self.emit_state();
+            return;
+        }
+
         let now = unix_now();
         self.active_chat_id = Some(normalized_chat_id.clone());
         self.screen_stack = vec![Screen::Chat {
@@ -916,6 +924,26 @@ impl AppCore {
             .insert_message_sorted(message.clone());
         if let Some(thread) = self.threads.get_mut(chat_id) {
             thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
+        }
+        // Any outgoing message landing in a direct thread — local send
+        // OR self-synced reply from a linked device — counts as
+        // implicit Accept. Add the peer to the accepted set so the
+        // push subscription includes them too (the projection's
+        // `is_request` flag already flips off on any outgoing, but the
+        // wire layer only sees this set, not message history).
+        if !is_group_chat_id(chat_id)
+            && !self
+                .preferences
+                .accepted_owner_pubkeys
+                .iter()
+                .any(|hex| hex == chat_id)
+        {
+            self.preferences
+                .accepted_owner_pubkeys
+                .push(chat_id.to_string());
+            self.preferences.accepted_owner_pubkeys.sort();
+            self.preferences.accepted_owner_pubkeys.dedup();
+            self.mark_mobile_push_dirty();
         }
         self.bump_typing_floor(chat_id, created_at_secs);
         if expires_at_secs.is_some() {
@@ -1484,10 +1512,23 @@ impl AppCore {
         else {
             return false;
         };
+        let sender_hex = sender_owner.to_hex();
+        // Blocked peers are dropped regardless of any other setting,
+        // including self-sync rumors from a linked device that
+        // happens to share a session with the blocked peer. This is
+        // the local-ingest guard; the same blocklist also keeps the
+        // peer out of the nostr + push subscriptions in the first
+        // place, but events can still arrive via mirrored relays.
+        if sender_owner != local_owner && self.is_owner_blocked(&sender_hex) {
+            self.push_debug_log(
+                "runtime_rumor.blocked_sender.skip",
+                format!("sender_owner={sender_hex}"),
+            );
+            return false;
+        }
         if sender_owner == local_owner || self.preferences.accept_unknown_direct_messages {
             return true;
         }
-        let sender_hex = sender_owner.to_hex();
         let known = chat_id
             .and_then(|chat_id| self.threads.get(chat_id))
             .is_some()

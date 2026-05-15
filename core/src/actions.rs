@@ -119,6 +119,29 @@ pub enum AppAction {
     SetAcceptUnknownDirectMessages {
         enabled: bool,
     },
+    /// Block / unblock a peer owner (Signal-style global blocklist).
+    /// When blocked, the core drops the peer from both the nostr
+    /// relay subscription and the mobile push subscription, refuses
+    /// outgoing sends, and hides their thread / discards their
+    /// incoming messages.
+    SetUserBlocked {
+        owner_pubkey_hex: String,
+        blocked: bool,
+    },
+    /// Mark a direct chat's peer as accepted (Signal whitelist). The
+    /// projection's `is_request` flag flips to false. Sending the
+    /// first outgoing message also implicitly accepts.
+    SetMessageRequestAccepted {
+        chat_id: String,
+    },
+    /// Pause / resume the nearby mailbag's store-and-forward writer
+    /// and reader. The bag's existing contents survive the toggle so
+    /// the user can flip it back on without losing what was queued;
+    /// wiping is a separate, shell-local "Empty mailbag" action that
+    /// targets the platform's nearby service directly.
+    SetNearbyMailbagEnabled {
+        enabled: bool,
+    },
     AddNostrRelay {
         relay_url: String,
     },

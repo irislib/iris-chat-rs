@@ -101,7 +101,10 @@ fun NearbyIrisSheet(
                                 onCheckedChange = onVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.let {
-                                        appManager.createChat(it)
+                                        // openChat (not createChat) navigates optimistically;
+                                        // otherwise the sheet dismissal races the Rust round-trip
+                                        // and leaves the user on the chat list.
+                                        appManager.openChat(it)
                                         onDismiss()
                                     }
                                 },
@@ -119,11 +122,20 @@ fun NearbyIrisSheet(
                                 onCheckedChange = onLocalNetworkVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.let {
-                                        appManager.createChat(it)
+                                        // openChat (not createChat) navigates optimistically;
+                                        // otherwise the sheet dismissal races the Rust round-trip
+                                        // and leaves the user on the chat list.
+                                        appManager.openChat(it)
                                         onDismiss()
                                     }
                                 },
                                 modifier = Modifier.testTag("nearbyLanSwitch"),
+                            )
+                            IrisDivider()
+                            NearbyMailbagRow(
+                                appManager = appManager,
+                                enabled = appState.preferences.nearbyMailbagEnabled,
+                                summary = snapshot.mailbagSummary,
                             )
                         }
                     }
@@ -146,6 +158,50 @@ internal fun rememberNearbySnapshotState(service: IrisNearbyService) = produceSt
         val next = service.snapshot
         if (next != value) {
             value = next
+        }
+    }
+}
+
+@Composable
+private fun NearbyMailbagRow(
+    appManager: AppManager,
+    enabled: Boolean,
+    summary: String?,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(text = "Mailbag", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    // Mailbag carries other people's messages too — call
+                    // that out so users understand what gets stored on
+                    // their device when this is on.
+                    text = "Anonymously carries messages by you and others over Bluetooth or Wi-Fi, so they keep moving where there's no internet.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = IrisTheme.palette.muted,
+                )
+                if (summary != null) {
+                    Text(
+                        text = summary,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = IrisTheme.palette.muted,
+                    )
+                }
+            }
+            Switch(
+                checked = enabled,
+                onCheckedChange = { next ->
+                    appManager.dispatch(AppAction.SetNearbyMailbagEnabled(next))
+                },
+                modifier = Modifier.testTag("nearbyMailbagSwitch"),
+            )
         }
     }
 }

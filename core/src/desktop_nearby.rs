@@ -226,6 +226,19 @@ impl DesktopNearbyService {
         snapshot_locked(&inner)
     }
 
+    /// Wipe every event currently in the mailbag (our outbound queue
+    /// + items we're forwarding for others). Independent of the
+    /// on/off toggle so the user can clear without disabling future
+    /// sync; the toggle controls whether the bag accepts new items.
+    pub fn empty_mailbag(&self) {
+        {
+            let mut inner = lock_desktop_nearby_inner(&self.inner);
+            inner.own_outbound.clear();
+            inner.forwarded.clear();
+        }
+        self.notify();
+    }
+
     pub fn publish(&self, event_id: String, kind: u32, created_at_secs: u64, event_json: String) {
         let record = StoredNearbyEvent {
             id: event_id.clone(),
@@ -234,17 +247,21 @@ impl DesktopNearbyService {
             author_pubkey_hex: event_author_hex(&event_json),
             event_json,
         };
+        let mailbag_enabled = self.app.state().preferences.nearby_mailbag_enabled;
         {
             let mut inner = lock_desktop_nearby_inner(&self.inner);
-            inner.own_outbound.insert(event_id.clone(), record.clone());
-            inner.forwarded.remove(&event_id);
-            if kind == 0 {
-                if let Some(profile) = NearbyProfileEvent::from_event_json(&record.event_json) {
-                    inner.own_profile_event_id = Some(event_id);
-                    inner.known_profiles.insert(profile.id.clone(), profile);
+            if mailbag_enabled {
+                inner.own_outbound.insert(event_id.clone(), record.clone());
+                inner.forwarded.remove(&event_id);
+                if kind == 0 {
+                    if let Some(profile) = NearbyProfileEvent::from_event_json(&record.event_json)
+                    {
+                        inner.own_profile_event_id = Some(event_id);
+                        inner.known_profiles.insert(profile.id.clone(), profile);
+                    }
                 }
+                prune_mailbags(&mut inner);
             }
-            prune_mailbags(&mut inner);
             if !inner.visible {
                 return;
             }
@@ -302,6 +319,12 @@ impl DesktopNearbyService {
     }
 
     fn send_inventory(&self, excluding_peer_id: Option<&str>) {
+        if !self.app.state().preferences.nearby_mailbag_enabled {
+            // Mailbag off → don't advertise our bag to peers (the
+            // contents survive the toggle for when it flips back on,
+            // but until then we're silent on the sync wire).
+            return;
+        }
         let records = {
             let inner = lock_desktop_nearby_inner(&self.inner);
             mailbag_events(&inner)
@@ -772,6 +795,9 @@ impl DesktopNearbyRuntime {
     }
 
     fn handle_inventory(&self, id: &str, size: u64) {
+        if !self.app.state().preferences.nearby_mailbag_enabled {
+            return;
+        }
         let wanted = {
             let inner = lock_desktop_nearby_inner(&self.inner);
             id.len() == 64
@@ -785,6 +811,9 @@ impl DesktopNearbyRuntime {
     }
 
     fn handle_want(&self, id: &str) {
+        if !self.app.state().preferences.nearby_mailbag_enabled {
+            return;
+        }
         let record = {
             let inner = lock_desktop_nearby_inner(&self.inner);
             inner
@@ -831,11 +860,17 @@ impl DesktopNearbyRuntime {
         if !self.app.ingest_nearby_event_json(event_json.to_string()) {
             return;
         }
+        let mailbag_enabled = self.app.state().preferences.nearby_mailbag_enabled;
         {
             let mut inner = lock_desktop_nearby_inner(&self.inner);
             remember_profile(&mut inner, event_json, remote_peer_id);
-            inner.forwarded.insert(record.id.clone(), record);
-            prune_mailbags(&mut inner);
+            // Mailbag off → ingest the event for the local app but
+            // don't store it for forwarding to other peers. Existing
+            // entries are left alone so the bag survives the toggle.
+            if mailbag_enabled {
+                inner.forwarded.insert(record.id.clone(), record);
+                prune_mailbags(&mut inner);
+            }
         }
         self.notify();
         self.send_inventory(remote_peer_id);

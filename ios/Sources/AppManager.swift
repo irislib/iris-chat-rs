@@ -81,10 +81,6 @@ struct PendingShare: Codable, Identifiable, Equatable {
     }
 }
 
-private struct BlockedUsersFile: Codable, Equatable {
-    var userIds: [String]
-}
-
 #if os(iOS)
 private final class ShareSuggestionDonor {
     private let groupIdentifier = "iris-chat-share-suggestions"
@@ -956,7 +952,6 @@ final class AppManager: ObservableObject {
     private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
     private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
-    private static let blockedUsersFilename = "blocked-users.json"
 
     @Published private(set) var state: AppState
     @Published private(set) var bootstrapInFlight = true
@@ -964,7 +959,6 @@ final class AppManager: ObservableObject {
     @Published private(set) var lastForegroundedAt = Date()
     @Published private(set) var appSceneIsActive = true
     @Published private(set) var lastUserActivityAt = Date()
-    @Published private(set) var blockedUserIds: Set<String> = []
     /// Set when the user taps a hit in the search bar's Messages
     /// section — ChatScreen reads it on appear, scrolls the timeline
     /// to that message id, then clears via `consumePendingScroll()`.
@@ -1098,7 +1092,6 @@ final class AppManager: ObservableObject {
         self.desktopNotifications = desktopNotifications ?? SystemDesktopNotificationPoster(environment: environment)
 #endif
         self.dataDir = resolvedDataDir
-        self.blockedUserIds = Self.loadBlockedUserIds(dataDir: resolvedDataDir, fileManager: fileManager)
 #if os(macOS)
         self.currentAppVersion = appVersion
         let manifestUrl = environment["IRIS_UPDATE_MANIFEST_URL"]
@@ -1174,6 +1167,9 @@ final class AppManager: ObservableObject {
         nearbyIris.onLanPermissionGranted = { [weak self] in
             self?.markNearbyLanPermissionGranted()
         }
+        nearbyIris.isMailbagEnabled = { [weak self] in
+            self?.state.preferences.nearbyMailbagEnabled ?? true
+        }
         if initialState.preferences.nearbyBluetoothEnabled, nearbyIris.bluetoothPermissionGranted {
             nearbyIris.setVisible(true)
         }
@@ -1224,8 +1220,15 @@ final class AppManager: ObservableObject {
 #endif
 #if os(iOS)
         if let fixture = screenshotFixture {
+            // Env-only escape hatch: makes the first fixture nearby
+            // peer tappable for the e2e test that exercises
+            // tap-peer → chat navigation. Unset for the regular
+            // screenshot path so the modal still renders with every
+            // peer disabled.
+            let firstPeerOwnerHex = ProcessInfo.processInfo
+                .environment["IRIS_UI_TEST_NEARBY_TAPPABLE_FIRST_PEER_HEX"]
             nearbyIris.applyScreenshotFixturePeers(
-                peers: fixture.nearbyPeerSnapshots(),
+                peers: fixture.nearbyPeerSnapshots(firstPeerOwnerHex: firstPeerOwnerHex),
                 bluetoothPeerIDs: fixture.nearbyBluetoothPeerIDs(),
                 lanPeerIDs: fixture.nearbyLanPeerIDs()
             )
@@ -1243,20 +1246,20 @@ final class AppManager: ObservableObject {
 
     func isUserBlocked(_ userId: String) -> Bool {
         let normalized = Self.normalizedBlockedUserId(userId)
-        return !normalized.isEmpty && blockedUserIds.contains(normalized)
+        guard !normalized.isEmpty else { return false }
+        return state.preferences.blockedOwnerPubkeys.contains(normalized)
     }
 
     func setUserBlocked(_ userId: String, blocked: Bool) {
         let normalized = Self.normalizedBlockedUserId(userId)
         guard !normalized.isEmpty else { return }
-        if blocked {
-            blockedUserIds.insert(normalized)
-            showToast("User blocked")
-        } else {
-            blockedUserIds.remove(normalized)
-            showToast("User unblocked")
-        }
-        persistBlockedUserIds()
+        // Block list lives in the Rust core now (Signal-style): a
+        // single source of truth that also drives the nostr + push
+        // subscription filters and the local-ingest guard. The UI
+        // toast still fires here so the user sees immediate feedback
+        // before the state round-trip lands.
+        dispatch(.setUserBlocked(ownerPubkeyHex: normalized, blocked: blocked))
+        showToast(blocked ? "User blocked" : "User unblocked")
     }
 
     func navigateBack() {
@@ -1376,28 +1379,6 @@ final class AppManager: ObservableObject {
         return normalizePeerInput(input: trimmed)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-    }
-
-    private static func blockedUsersURL(dataDir: URL) -> URL {
-        dataDir.appendingPathComponent(blockedUsersFilename, isDirectory: false)
-    }
-
-    private static func loadBlockedUserIds(dataDir: URL, fileManager: FileManager) -> Set<String> {
-        let url = blockedUsersURL(dataDir: dataDir)
-        guard fileManager.fileExists(atPath: url.path),
-              let data = try? Data(contentsOf: url),
-              let file = try? JSONDecoder().decode(BlockedUsersFile.self, from: data) else {
-            return []
-        }
-        return Set(file.userIds.map(normalizedBlockedUserId).filter { !$0.isEmpty })
-    }
-
-    private func persistBlockedUserIds() {
-        let file = BlockedUsersFile(userIds: blockedUserIds.sorted())
-        guard let data = try? JSONEncoder().encode(file) else {
-            return
-        }
-        try? data.write(to: Self.blockedUsersURL(dataDir: dataDir), options: [.atomic])
     }
 
     private func handleOptimisticNavigation(_ action: AppAction) -> Bool {

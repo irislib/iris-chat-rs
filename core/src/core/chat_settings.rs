@@ -253,6 +253,16 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn set_nearby_mailbag_enabled(&mut self, enabled: bool) {
+        if self.preferences.nearby_mailbag_enabled == enabled {
+            return;
+        }
+        self.preferences.nearby_mailbag_enabled = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn set_nearby_bluetooth_enabled(&mut self, enabled: bool) {
         if self.preferences.nearby_bluetooth_enabled == enabled {
             return;
@@ -288,6 +298,82 @@ impl AppCore {
             return;
         }
         self.preferences.accept_unknown_direct_messages = enabled;
+        // The toggle gates whether non-accepted peers stay in the
+        // nostr/push subscription author set, so a flip has to push
+        // a fresh subscription out to both layers.
+        self.request_protocol_subscription_refresh();
+        self.mark_mobile_push_dirty();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn set_user_blocked(&mut self, owner_pubkey_hex: &str, blocked: bool) {
+        let normalized = owner_pubkey_hex.trim().to_lowercase();
+        if normalized.is_empty() {
+            return;
+        }
+        let already_blocked = self
+            .preferences
+            .blocked_owner_pubkeys
+            .iter()
+            .any(|hex| hex == &normalized);
+        if blocked == already_blocked {
+            return;
+        }
+        if blocked {
+            self.preferences.blocked_owner_pubkeys.push(normalized);
+            self.preferences.blocked_owner_pubkeys.sort();
+            self.preferences.blocked_owner_pubkeys.dedup();
+        } else {
+            self.preferences
+                .blocked_owner_pubkeys
+                .retain(|hex| hex != &normalized);
+        }
+        self.request_protocol_subscription_refresh();
+        self.mark_mobile_push_dirty();
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
+    pub(super) fn accept_message_request(&mut self, chat_id: &str) {
+        let normalized = chat_id.trim().to_lowercase();
+        if normalized.is_empty() {
+            return;
+        }
+        // For group threads the peer to whitelist is the group's
+        // creator (Signal-style: accepting means "I trust whoever
+        // added me"). For direct threads the chat_id is already the
+        // peer's owner pubkey.
+        let target_owner_hex = if is_group_chat_id(&normalized) {
+            let Some(group_id) = parse_group_id_from_chat_id(&normalized) else {
+                return;
+            };
+            let Some(group) = self.groups.get(&group_id) else {
+                return;
+            };
+            group.created_by.to_string()
+        } else {
+            normalized
+        };
+        if self
+            .preferences
+            .accepted_owner_pubkeys
+            .iter()
+            .any(|hex| hex == &target_owner_hex)
+        {
+            return;
+        }
+        self.preferences.accepted_owner_pubkeys.push(target_owner_hex);
+        self.preferences.accepted_owner_pubkeys.sort();
+        self.preferences.accepted_owner_pubkeys.dedup();
+        // Accepting a request moves the peer into the
+        // "subscribed-when-toggle-is-off" set, so push needs to learn
+        // about them. Nostr already has the session, but refreshing is
+        // cheap and keeps both layers in sync.
+        self.request_protocol_subscription_refresh();
+        self.mark_mobile_push_dirty();
         self.rebuild_state();
         self.persist_best_effort();
         self.emit_state();

@@ -690,7 +690,7 @@ fn messaging_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw
     let group = adw::PreferencesGroup::builder().title("Messaging").build();
 
     let accept_requests = adw::SwitchRow::builder()
-        .title("Accept chat requests")
+        .title("Accept message requests from unknowns")
         .build();
     accept_requests.set_active(prefs.accept_unknown_direct_messages);
     {

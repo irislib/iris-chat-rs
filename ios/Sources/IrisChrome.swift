@@ -1013,8 +1013,16 @@ extension View {
 }
 
 /// A reusable button that copies a string and briefly swaps its label to
-/// "Copied" without changing the button's width.
+/// "Copied" without changing the row's shape. Defaults to the rounded
+/// "secondary" pill style; pass `style: .menuRow` to render as a flat,
+/// left-aligned settings/options row (matches Mute chat / Block user).
 struct IrisCopyButton: View {
+    enum Style {
+        case secondary
+        case menuRow
+    }
+
+    @Environment(\.irisPalette) private var palette
     let label: String
     let value: String
     var copiedLabel: String = "Copied"
@@ -1022,22 +1030,50 @@ struct IrisCopyButton: View {
     var copiedSystemImage: String? = "checkmark"
     var compact: Bool = true
     var feedbackDuration: Double = 1.4
+    var style: Style = .secondary
 
     @State private var copied = false
     @State private var resetTask: Task<Void, Never>?
 
     var body: some View {
-        Button(action: copy) {
-            ZStack {
-                inner(text: label, icon: systemImage)
-                    .opacity(copied ? 0 : 1)
-                inner(text: copiedLabel, icon: copiedSystemImage)
-                    .opacity(copied ? 1 : 0)
-                    .accessibilityHidden(true)
+        switch style {
+        case .secondary:
+            Button(action: copy) {
+                ZStack {
+                    inner(text: label, icon: systemImage)
+                        .opacity(copied ? 0 : 1)
+                    inner(text: copiedLabel, icon: copiedSystemImage)
+                        .opacity(copied ? 1 : 0)
+                        .accessibilityHidden(true)
+                }
             }
+            .buttonStyle(IrisSecondaryButtonStyle(compact: compact))
+            .accessibilityLabel(copied ? copiedLabel : label)
+        case .menuRow:
+            Button(action: copy) {
+                HStack(spacing: 12) {
+                    Image(systemName: copied ? (copiedSystemImage ?? "checkmark") : (systemImage ?? "doc.on.doc"))
+                        .frame(width: 24)
+                    // Keep the row width stable across the copy/copied
+                    // swap so adjacent rows don't shift — overlay the
+                    // two labels at the same leading edge.
+                    ZStack(alignment: .leading) {
+                        Text(label)
+                            .opacity(copied ? 0 : 1)
+                        Text(copiedLabel)
+                            .opacity(copied ? 1 : 0)
+                            .accessibilityHidden(true)
+                    }
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(palette.textPrimary)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.irisPlain)
+            .accessibilityLabel(copied ? copiedLabel : label)
         }
-        .buttonStyle(IrisSecondaryButtonStyle(compact: compact))
-        .accessibilityLabel(copied ? copiedLabel : label)
     }
 
     @ViewBuilder
@@ -1371,7 +1407,7 @@ struct IrisChatRow: View {
                         previewText
                             .font(.subheadline)
                             .foregroundStyle(palette.muted)
-                            .lineLimit(previewLeading == nil ? 2 : 1, reservesSpace: previewLeading == nil)
+                            .lineLimit(2, reservesSpace: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .layoutPriority(1)
 
@@ -1511,6 +1547,7 @@ struct IrisComposerBar: View {
     let placeholder: String
     let isSending: Bool
     let isUploading: Bool
+    let uploadFraction: Double?
     @FocusState.Binding var isFocused: Bool
     let onDraftChange: () -> Void
     let onAttach: ([URL]) -> Void
@@ -1547,9 +1584,15 @@ struct IrisComposerBar: View {
                     Text("Uploading")
                         .font(.system(.caption, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.muted)
-                    ProgressView()
-                        .progressViewStyle(.linear)
-                        .tint(palette.accent)
+                    if let fraction = uploadFraction {
+                        ProgressView(value: fraction)
+                            .progressViewStyle(.linear)
+                            .tint(palette.accent)
+                    } else {
+                        ProgressView()
+                            .progressViewStyle(.linear)
+                            .tint(palette.accent)
+                    }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -2019,9 +2062,57 @@ private struct IrisSelectedAttachmentChip: View {
     let enabled: Bool
     let onRemove: () -> Void
 
+    @State private var thumbnail: PlatformImage?
+
+    private static let thumbSize: CGFloat = 56
+
     var body: some View {
         let category = irisAttachmentCategory(from: attachment.filename)
 
+        if category == .image {
+            imageChip
+                .accessibilityLabel("\(category.rawValue), \(attachment.filename)")
+                .task(id: attachment.path) {
+                    await loadThumbnailIfNeeded()
+                }
+        } else {
+            fileChip(category: category)
+        }
+    }
+
+    private var imageChip: some View {
+        ZStack(alignment: .topTrailing) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(palette.panel)
+                if let thumbnail {
+                    Image(platformImage: thumbnail)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "photo.fill")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                }
+            }
+            .frame(width: Self.thumbSize, height: Self.thumbSize)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            Button(action: onRemove) {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(palette.textPrimary, palette.panel)
+                    .padding(4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.irisPlain)
+            .disabled(!enabled)
+            .accessibilityIdentifier("chatSelectedAttachmentRemove")
+        }
+    }
+
+    private func fileChip(category: IrisAttachmentCategory) -> some View {
         HStack(spacing: 7) {
             Image(systemName: category.systemIcon)
                 .font(.system(size: 14, weight: .semibold))
@@ -2056,6 +2147,72 @@ private struct IrisSelectedAttachmentChip: View {
                 .fill(palette.panel)
         )
     }
+
+    @MainActor
+    private func loadThumbnailIfNeeded() async {
+        if thumbnail != nil { return }
+        if let cached = IrisStagedThumbnailCache.image(for: attachment.path) {
+            thumbnail = cached
+            return
+        }
+        let path = attachment.path
+        let image: PlatformImage? = await Task.detached(priority: .userInitiated) {
+            irisLoadStagedThumbnail(path: path)
+        }.value
+        guard let image else { return }
+        IrisStagedThumbnailCache.store(image, for: attachment.path)
+        thumbnail = image
+    }
+}
+
+private enum IrisStagedThumbnailCache {
+    private static let cache: NSCache<NSString, PlatformImage> = {
+        let cache = NSCache<NSString, PlatformImage>()
+        cache.countLimit = 32
+        cache.totalCostLimit = 16 * 1024 * 1024
+        return cache
+    }()
+
+    static func image(for key: String) -> PlatformImage? {
+        cache.object(forKey: key as NSString)
+    }
+
+    static func store(_ image: PlatformImage, for key: String) {
+        cache.setObject(image, forKey: key as NSString, cost: irisAvatarImageCost(image))
+    }
+}
+
+private func irisLoadStagedThumbnail(path: String) -> PlatformImage? {
+    let url = URL(fileURLWithPath: path) as CFURL
+    let sourceOptions: [CFString: Any] = [
+        kCGImageSourceShouldCache: false
+    ]
+    guard let source = CGImageSourceCreateWithURL(url, sourceOptions as CFDictionary) else {
+        return nil
+    }
+    let thumbnailOptions: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceShouldCacheImmediately: true,
+        kCGImageSourceThumbnailMaxPixelSize: 256
+    ]
+    guard let cgImage = CGImageSourceCreateThumbnailAtIndex(
+        source,
+        0,
+        thumbnailOptions as CFDictionary
+    ) else {
+        return nil
+    }
+    #if os(iOS)
+    return PlatformImage(cgImage: cgImage)
+    #elseif os(macOS)
+    return PlatformImage(
+        cgImage: cgImage,
+        size: NSSize(width: cgImage.width, height: cgImage.height)
+    )
+    #else
+    return nil
+    #endif
 }
 
 private struct IrisPrimaryCircleButtonStyle: ButtonStyle {

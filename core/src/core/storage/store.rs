@@ -711,6 +711,9 @@ fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.pinned_chat_ids.hash(&mut hasher);
     preferences.debug_logging_enabled.hash(&mut hasher);
     preferences.accept_unknown_direct_messages.hash(&mut hasher);
+    preferences.blocked_owner_pubkeys.hash(&mut hasher);
+    preferences.accepted_owner_pubkeys.hash(&mut hasher);
+    preferences.nearby_mailbag_enabled.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -935,7 +938,9 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex,
                     mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
                     debug_logging_enabled, accept_unknown_direct_messages,
-                    nearby_enabled
+                    nearby_enabled,
+                    blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
+                    nearby_mailbag_enabled
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -961,6 +966,11 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     debug_logging_enabled: row.get::<_, i64>(15)? != 0,
                     accept_unknown_direct_messages: row.get::<_, i64>(16)? != 0,
                     nearby_enabled: row.get::<_, i64>(17)? != 0,
+                    blocked_owner_pubkeys: serde_json::from_str(&row.get::<_, String>(18)?)
+                        .unwrap_or_default(),
+                    accepted_owner_pubkeys: serde_json::from_str(&row.get::<_, String>(19)?)
+                        .unwrap_or_default(),
+                    nearby_mailbag_enabled: row.get::<_, i64>(20)? != 0,
                 })
             },
         )
@@ -977,8 +987,10 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             nearby_bluetooth_enabled, nearby_lan_enabled, nostr_relay_urls_json, image_proxy_enabled,
             image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex,
             mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
-            debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
+            debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled,
+            blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
+            nearby_mailbag_enabled
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
          ON CONFLICT(id) DO UPDATE SET
             send_typing_indicators = excluded.send_typing_indicators,
             send_read_receipts = excluded.send_read_receipts,
@@ -997,7 +1009,10 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             pinned_chat_ids_json = excluded.pinned_chat_ids_json,
             debug_logging_enabled = excluded.debug_logging_enabled,
             accept_unknown_direct_messages = excluded.accept_unknown_direct_messages,
-            nearby_enabled = excluded.nearby_enabled",
+            nearby_enabled = excluded.nearby_enabled,
+            blocked_owner_pubkeys_json = excluded.blocked_owner_pubkeys_json,
+            accepted_owner_pubkeys_json = excluded.accepted_owner_pubkeys_json,
+            nearby_mailbag_enabled = excluded.nearby_mailbag_enabled",
         params![
             preferences.send_typing_indicators as i64,
             preferences.send_read_receipts as i64,
@@ -1017,6 +1032,9 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             preferences.debug_logging_enabled as i64,
             preferences.accept_unknown_direct_messages as i64,
             preferences.nearby_enabled as i64,
+            serde_json::to_string(&preferences.blocked_owner_pubkeys)?,
+            serde_json::to_string(&preferences.accepted_owner_pubkeys)?,
+            preferences.nearby_mailbag_enabled as i64,
         ],
     )?;
     Ok(())

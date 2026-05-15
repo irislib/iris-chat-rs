@@ -4,21 +4,53 @@ use crate::state::{ChatKind, ChatMessageKind, MutualGroupsSnapshot};
 /// Direct chats where every loaded message is incoming behave like a
 /// Signal "message request": somebody messaged us, we haven't replied,
 /// so the UI gates the conversation behind Accept / Delete / Block and
-/// suppresses outgoing receipts. Sending an outgoing message — the
-/// natural acceptance signal — instantly flips this to `false`.
-pub(super) fn is_message_request_thread(thread: &ThreadRecord, kind: &ChatKind) -> bool {
-    if !matches!(kind, ChatKind::Direct) {
+/// suppresses outgoing receipts. The thread flips out of request state
+/// when the peer is in the accepted-peers set (Signal's whitelist),
+/// which happens on explicit Accept or on sending the first outgoing
+/// message.
+pub(super) fn is_message_request_thread(
+    thread: &ThreadRecord,
+    kind: &ChatKind,
+    accepted_owner_pubkeys: &[String],
+    group_creator_hex: Option<&str>,
+    local_owner_hex: Option<&str>,
+) -> bool {
+    // Any outgoing message — including ones self-synced from a linked
+    // device after we replied there — counts as implicit acceptance,
+    // so the bar disappears on every device once the user engages
+    // anywhere.
+    if thread.messages.iter().any(|m| m.is_outgoing) {
         return false;
     }
-    let has_outgoing = thread.messages.iter().any(|m| m.is_outgoing);
-    if has_outgoing {
-        return false;
+    match kind {
+        ChatKind::Direct => {
+            if accepted_owner_pubkeys
+                .iter()
+                .any(|hex| hex == &thread.chat_id)
+            {
+                return false;
+            }
+            thread
+                .messages
+                .iter()
+                .any(|m| !m.is_outgoing && matches!(m.kind, ChatMessageKind::User))
+        }
+        ChatKind::Group => {
+            // Group adds by unknowns get the same Signal-style request
+            // gate: we created it, the creator is in our accepted set
+            // (Signal whitelist equivalent), or it's a request.
+            let Some(creator) = group_creator_hex else {
+                return false;
+            };
+            if local_owner_hex == Some(creator) {
+                return false;
+            }
+            if accepted_owner_pubkeys.iter().any(|hex| hex == creator) {
+                return false;
+            }
+            true
+        }
     }
-    let has_incoming_user_message = thread
-        .messages
-        .iter()
-        .any(|m| !m.is_outgoing && matches!(m.kind, ChatMessageKind::User));
-    has_incoming_user_message
 }
 
 impl AppCore {
@@ -31,7 +63,31 @@ impl AppCore {
             return false;
         };
         let kind = chat_kind_for_id(chat_id);
-        is_message_request_thread(thread, &kind)
+        let group_creator_hex = parse_group_id_from_chat_id(chat_id)
+            .and_then(|group_id| self.groups.get(&group_id))
+            .map(|group| group.created_by.to_string());
+        let local_owner_hex = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
+        is_message_request_thread(
+            thread,
+            &kind,
+            &self.preferences.accepted_owner_pubkeys,
+            group_creator_hex.as_deref(),
+            local_owner_hex.as_deref(),
+        )
+    }
+
+    pub(super) fn is_owner_blocked(&self, owner_pubkey_hex: &str) -> bool {
+        let needle = owner_pubkey_hex.trim().to_lowercase();
+        if needle.is_empty() {
+            return false;
+        }
+        self.preferences
+            .blocked_owner_pubkeys
+            .iter()
+            .any(|hex| hex == &needle)
     }
 }
 
@@ -96,7 +152,19 @@ impl AppCore {
         };
 
         self.prune_expired_typing_indicators();
-        let mut threads: Vec<&ThreadRecord> = self.threads.values().collect();
+        let mut threads: Vec<&ThreadRecord> = self
+            .threads
+            .values()
+            .filter(|thread| {
+                // Hide blocked peers' direct threads from the chat
+                // list entirely (matches Android's Signal client
+                // hiding behavior; Signal-iOS keeps them but their
+                // composer is replaced with a Blocked bar — we already
+                // drop the peer from subscriptions either way).
+                !matches!(chat_kind_for_id(&thread.chat_id), ChatKind::Direct)
+                    || !self.is_owner_blocked(&thread.chat_id)
+            })
+            .collect();
         threads.sort_by(|left, right| {
             let left_pinned = self.is_chat_pinned(&left.chat_id);
             let right_pinned = self.is_chat_pinned(&right.chat_id);
@@ -105,6 +173,10 @@ impl AppCore {
                 .then_with(|| right.updated_at_secs.cmp(&left.updated_at_secs))
         });
 
+        let local_owner_hex = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
         self.state.chat_list = threads
             .iter()
             .map(|thread| {
@@ -133,7 +205,16 @@ impl AppCore {
                 } else {
                     None
                 };
-                let is_request = is_message_request_thread(thread, &thread_kind);
+                let group_creator_hex = group_snapshot
+                    .as_ref()
+                    .map(|group| group.created_by.to_string());
+                let is_request = is_message_request_thread(
+                    thread,
+                    &thread_kind,
+                    &self.preferences.accepted_owner_pubkeys,
+                    group_creator_hex.as_deref(),
+                    local_owner_hex.as_deref(),
+                );
                 ChatThreadSnapshot {
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
@@ -173,7 +254,16 @@ impl AppCore {
                     None
                 };
                 let current_chat_kind = chat_kind_for_id(&thread.chat_id);
-                let is_request = is_message_request_thread(thread, &current_chat_kind);
+                let current_group_creator_hex = group_snapshot
+                    .as_ref()
+                    .map(|group| group.created_by.to_string());
+                let is_request = is_message_request_thread(
+                    thread,
+                    &current_chat_kind,
+                    &self.preferences.accepted_owner_pubkeys,
+                    current_group_creator_hex.as_deref(),
+                    local_owner_hex.as_deref(),
+                );
                 CurrentChatSnapshot {
                     chat_id: thread.chat_id.clone(),
                     kind: current_chat_kind,

@@ -2150,8 +2150,12 @@ private struct DirectChatInfoScreen: View {
 
                         Divider().overlay(palette.border)
 
-                        IrisCopyButton(label: "Copy user ID", value: peerInputToNpub(input: chatId), compact: false)
-                            .accessibilityIdentifier("directChatCopyUserIdButton")
+                        IrisCopyButton(
+                            label: "Copy user ID",
+                            value: peerInputToNpub(input: chatId),
+                            style: .menuRow
+                        )
+                        .accessibilityIdentifier("directChatCopyUserIdButton")
                     }
 
                     IrisSectionCard {
@@ -4347,7 +4351,7 @@ private struct ChatListTableRowContent: View {
                     previewText
                         .font(.subheadline)
                         .foregroundStyle(palette.muted)
-                        .lineLimit(previewLeading == nil ? 2 : 1, reservesSpace: previewLeading == nil)
+                        .lineLimit(2, reservesSpace: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .layoutPriority(1)
 
@@ -4538,10 +4542,20 @@ private struct NearbyIrisScreen: View {
     @ViewBuilder
     private var mailbagSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Mailbag")
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(palette.textPrimary)
-            Text("Carries your messages and other people's anonymously over Bluetooth or Wi-Fi, so they keep moving even where there's no internet.")
+            Toggle(isOn: Binding(
+                get: { manager.state.preferences.nearbyMailbagEnabled },
+                set: { enabled in
+                    manager.dispatch(.setNearbyMailbagEnabled(enabled: enabled))
+                }
+            )) {
+                Text("Mailbag")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+            }
+            .irisControlTint()
+            .accessibilityIdentifier("nearbyMailbagToggle")
+
+            Text("Anonymously carries messages by you and others over Bluetooth or Wi-Fi, so they keep moving where there's no internet.")
                 .font(.system(.caption, design: .rounded))
                 .foregroundStyle(palette.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -4697,7 +4711,10 @@ private struct NearbyIrisScreen: View {
 
     private func openPeer(_ peer: IrisNearbyPeer) {
         guard let ownerPubkeyHex = peer.ownerPubkeyHex else { return }
-        manager.dispatch(.createChat(peerInput: ownerPubkeyHex))
+        // openChat (not createChat) navigates optimistically; otherwise
+        // the sheet dismissal races the Rust round-trip and the user
+        // ends up back on the chat list with the new row but no chat open.
+        manager.dispatch(.openChat(chatId: ownerPubkeyHex))
         onClose()
     }
 }
@@ -5823,16 +5840,18 @@ private struct DeviceRosterContent: View {
                     subtitle: "These devices can use your profile."
                 )
 
-                Button("Copy user ID") {
-                    manager.copyToClipboard(roster.ownerNpub)
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
+                IrisCopyButton(
+                    label: "Copy user ID",
+                    value: roster.ownerNpub,
+                    style: .menuRow
+                )
                 .accessibilityIdentifier("deviceRosterOwnerNpub")
 
-                Button("Copy this device code") {
-                    manager.copyToClipboard(roster.currentDeviceNpub)
-                }
-                .buttonStyle(IrisSecondaryButtonStyle())
+                IrisCopyButton(
+                    label: "Copy this device code",
+                    value: roster.currentDeviceNpub,
+                    style: .menuRow
+                )
                 .accessibilityIdentifier("deviceRosterCurrentDeviceNpub")
             }
 
@@ -6344,7 +6363,7 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("myProfileReadReceiptsToggle")
 
                 Toggle(
-                    "New chats from anyone",
+                    "Accept message requests from unknowns",
                     isOn: Binding(
                         get: { manager.state.preferences.acceptUnknownDirectMessages },
                         set: { enabled in
@@ -6369,6 +6388,10 @@ struct SettingsScreen: View {
                     .accessibilityIdentifier("myProfileStartupAtLoginToggle")
                 }
             }
+
+#if os(iOS) || os(macOS)
+            MailbagSettingsCard(manager: manager, service: manager.nearbyIris)
+#endif
 
         case .notifications:
             IrisSectionCard {
@@ -7244,6 +7267,62 @@ private struct DesktopUpdateSettingsSection: View {
 }
 #endif
 
+#if os(iOS) || os(macOS)
+private struct MailbagSettingsCard: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var manager: AppManager
+    @ObservedObject var service: IrisNearbyService
+
+    var body: some View {
+        IrisSectionCard {
+            CardHeader(title: "Mailbag")
+
+            Toggle(isOn: Binding(
+                get: { manager.state.preferences.nearbyMailbagEnabled },
+                set: { enabled in
+                    manager.dispatch(.setNearbyMailbagEnabled(enabled: enabled))
+                }
+            )) {
+                Text("Sync mailbag")
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+            }
+            .irisControlTint()
+            .accessibilityIdentifier("mailbagSettingsToggle")
+
+            Text("Anonymously carries messages by you and others over Bluetooth or Wi-Fi, so they keep moving where there's no internet. Turn off to stop reading and writing without losing what's already in the bag.")
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // The bag's contents survive the toggle so the user can
+            // flip it off without losing work; clearing is a separate
+            // action, only surfaced when there's actually something to
+            // clear.
+            if service.mailbagEventCount > 0 {
+                Divider().overlay(palette.border)
+                Button(role: .destructive) {
+                    service.emptyMailbag()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "trash")
+                            .frame(width: 24)
+                        Text("Empty mailbag (\(service.mailbagEventCount))")
+                            .font(.system(.body, design: .rounded, weight: .semibold))
+                        Spacer(minLength: 0)
+                    }
+                    .foregroundStyle(.red)
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityIdentifier("mailbagSettingsEmptyButton")
+            }
+        }
+    }
+}
+#endif
+
 private struct NotificationsSettingsSection: View {
     @ObservedObject var manager: AppManager
 
@@ -7596,9 +7675,17 @@ private struct ProfileEditorCard: View {
             .buttonStyle(IrisSecondaryButtonStyle())
             .accessibilityIdentifier("myProfileQrButton")
 
-            VStack(spacing: 10) {
-                IrisCopyButton(label: "Copy user ID", value: account.npub, compact: false)
-                IrisCopyButton(label: "Copy this device code", value: account.deviceNpub, compact: false)
+            VStack(spacing: 4) {
+                IrisCopyButton(
+                    label: "Copy user ID",
+                    value: account.npub,
+                    style: .menuRow
+                )
+                IrisCopyButton(
+                    label: "Copy this device code",
+                    value: account.deviceNpub,
+                    style: .menuRow
+                )
             }
         }
         .fileImporter(

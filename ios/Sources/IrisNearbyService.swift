@@ -55,6 +55,13 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static func shouldStoreInMailbag(kind: UInt32) -> Bool {
         !mailbagSuppressedKinds.contains(kind)
     }
+
+    /// Wired by AppManager to the core preference. When false, the
+    /// service stops writing new events into the mailbag and stops
+    /// advertising / pulling its contents over the wire; existing
+    /// entries survive so the user can flip the toggle back on
+    /// without losing what was queued.
+    var isMailbagEnabled: () -> Bool = { true }
     private static let nonIrisBackoff: TimeInterval = 60
     private static let helloInterval: TimeInterval = 5
     private static let inventoryResendInterval: TimeInterval = 60
@@ -527,8 +534,11 @@ final class IrisNearbyService: NSObject, ObservableObject {
         )
         // Receipts + typing indicators go direct to currently-connected
         // peers but never into the mailbag for store-and-forward. See
-        // `mailbagSuppressedKinds`.
-        if Self.shouldStoreInMailbag(kind: kind) {
+        // `mailbagSuppressedKinds`. When the user has paused the
+        // mailbag (Nearby → Mailbag toggle off, persisted in the core
+        // preference), we still send live to connected peers but stop
+        // writing new entries into the local bag.
+        if Self.shouldStoreInMailbag(kind: kind), isMailbagEnabled() {
             ownOutbound[eventID] = record
             forwarded.removeValue(forKey: eventID)
         }
@@ -819,6 +829,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func sendInventory(excludingPeerID: String?, onlyPeerID: String?) {
+        // Mailbag paused → don't advertise our bag. The contents
+        // survive for when it flips back on, but until then we're
+        // silent on the sync wire.
+        guard isMailbagEnabled() else { return }
         let records = Array(mailbagEvents().prefix(200))
         guard !records.isEmpty else { return }
         for record in records {
@@ -1342,6 +1356,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func handleInventory(_ envelope: [String: Any]) {
+        // Mailbag paused → don't pull items from peer inventories.
+        guard isMailbagEnabled() else { return }
         guard let id = envelope["id"] as? String,
               id.count == 64,
               ownOutbound[id] == nil,
@@ -1356,6 +1372,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     private func handleWant(_ envelope: [String: Any]) {
+        // Mailbag paused → don't serve items from our bag to peers.
+        guard isMailbagEnabled() else { return }
         guard let id = envelope["id"] as? String,
               let record = ownOutbound[id] ?? forwarded[id] else { return }
         let requester = envelopeRemotePeerID(envelope)
@@ -1432,6 +1450,15 @@ final class IrisNearbyService: NSObject, ObservableObject {
         // them) but are never stored or re-broadcast — see
         // `mailbagSuppressedKinds`.
         guard Self.shouldStoreInMailbag(kind: record.kind) else {
+            if let remotePeerID {
+                markPeerSeenEvent(record.id, peerID: remotePeerID)
+            }
+            return
+        }
+        // Mailbag paused → ingest for the local app but don't store
+        // for forwarding. Existing entries survive the toggle so the
+        // user can flip it back on without losing what was queued.
+        guard isMailbagEnabled() else {
             if let remotePeerID {
                 markPeerSeenEvent(record.id, peerID: remotePeerID)
             }
@@ -1852,6 +1879,22 @@ final class IrisNearbyService: NSObject, ObservableObject {
             return bluetoothStatus(peripheralManager.state)
         }
         return "Visible"
+    }
+
+    /// Number of events the local mailbag is currently carrying
+    /// (yours + others'). Surfaces in settings so the Empty mailbag
+    /// row can hide itself when there's nothing to wipe.
+    var mailbagEventCount: Int {
+        ownOutbound.count + forwarded.count
+    }
+
+    /// Wipe every event the mailbag is currently carrying. Independent
+    /// of `isMailbagEnabled` — the toggle pauses read/write/sync, this
+    /// clears what's already there.
+    func emptyMailbag() {
+        ownOutbound.removeAll()
+        forwarded.removeAll()
+        objectWillChange.send()
     }
 
     private func mailbagEvents() -> [IrisNearbyStoredEvent] {

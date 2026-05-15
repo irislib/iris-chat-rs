@@ -351,6 +351,8 @@ pub(super) struct PersistedPreferences {
     pub(super) nearby_bluetooth_enabled: bool,
     #[serde(default)]
     pub(super) nearby_lan_enabled: bool,
+    #[serde(default = "default_true")]
+    pub(super) nearby_mailbag_enabled: bool,
     #[serde(default = "default_nostr_relay_urls")]
     pub(super) nostr_relay_urls: Vec<String>,
     #[serde(default = "default_true")]
@@ -367,6 +369,10 @@ pub(super) struct PersistedPreferences {
     pub(super) muted_chat_ids: Vec<String>,
     #[serde(default)]
     pub(super) pinned_chat_ids: Vec<String>,
+    #[serde(default)]
+    pub(super) blocked_owner_pubkeys: Vec<String>,
+    #[serde(default)]
+    pub(super) accepted_owner_pubkeys: Vec<String>,
     #[serde(default)]
     pub(super) debug_logging_enabled: bool,
     #[serde(default = "default_true")]
@@ -386,6 +392,7 @@ impl Default for PersistedPreferences {
             nearby_enabled: defaults.nearby_enabled,
             nearby_bluetooth_enabled: defaults.nearby_bluetooth_enabled,
             nearby_lan_enabled: defaults.nearby_lan_enabled,
+            nearby_mailbag_enabled: defaults.nearby_mailbag_enabled,
             nostr_relay_urls: defaults.nostr_relay_urls,
             image_proxy_enabled: defaults.image_proxy_enabled,
             image_proxy_url: defaults.image_proxy_url,
@@ -394,6 +401,8 @@ impl Default for PersistedPreferences {
             mobile_push_server_url: defaults.mobile_push_server_url,
             muted_chat_ids: defaults.muted_chat_ids,
             pinned_chat_ids: defaults.pinned_chat_ids,
+            blocked_owner_pubkeys: defaults.blocked_owner_pubkeys,
+            accepted_owner_pubkeys: defaults.accepted_owner_pubkeys,
             debug_logging_enabled: defaults.debug_logging_enabled,
             accept_unknown_direct_messages: defaults.accept_unknown_direct_messages,
         }

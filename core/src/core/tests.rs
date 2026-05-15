@@ -6396,6 +6396,400 @@ fn private_invite_response_from_unknown_sender_can_be_blocked() {
 }
 
 #[test]
+fn stranger_message_creates_is_request_thread_with_default_settings() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("stranger-request-default", &owner, &device);
+    let (content, _inner_id) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "hello from a stranger",
+        1_777_159_493,
+        Vec::new(),
+    );
+
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("a".repeat(64)));
+    core.rebuild_state();
+
+    let chat_id = sender.public_key().to_hex();
+    let snapshot = core
+        .state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == chat_id)
+        .expect("stranger thread must surface in the chat list");
+    assert!(
+        snapshot.is_request,
+        "stranger thread without accept is a request"
+    );
+}
+
+#[test]
+fn explicit_accept_clears_is_request_without_outgoing_message() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("stranger-explicit-accept", &owner, &device);
+    let (content, _inner_id) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "hi",
+        1_777_159_493,
+        Vec::new(),
+    );
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("b".repeat(64)));
+    let chat_id = sender.public_key().to_hex();
+
+    core.handle_action(AppAction::SetMessageRequestAccepted {
+        chat_id: chat_id.clone(),
+    });
+
+    let snapshot = core
+        .state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == chat_id)
+        .expect("thread visible after accept");
+    assert!(
+        !snapshot.is_request,
+        "explicit accept must clear the request gate even without a reply"
+    );
+    assert!(
+        core.state
+            .preferences
+            .accepted_owner_pubkeys
+            .contains(&chat_id),
+        "accept persists the peer in the whitelist"
+    );
+}
+
+#[test]
+fn self_synced_outgoing_message_from_linked_device_marks_thread_accepted() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("stranger-cross-device-accept", &owner, &device);
+
+    // Stranger sends in: request thread.
+    let (incoming, _) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "hi",
+        1_777_159_493,
+        Vec::new(),
+    );
+    core.apply_decrypted_runtime_message(
+        sender.public_key(),
+        None,
+        incoming,
+        Some("c".repeat(64)),
+    );
+
+    // Linked device replies — arrives as an outgoing self-sync rumor
+    // authored by the local owner, conversation-owner = the peer.
+    let (outgoing, _) = runtime_rumor_json(
+        owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "replied from my laptop",
+        1_777_159_500,
+        Vec::new(),
+    );
+    core.apply_decrypted_runtime_message_with_metadata(
+        owner.public_key(),
+        None,
+        Some(sender.public_key()),
+        outgoing,
+        Some("d".repeat(64)),
+    );
+    core.rebuild_state();
+
+    let chat_id = sender.public_key().to_hex();
+    let snapshot = core
+        .state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == chat_id)
+        .expect("thread surfaces after cross-device reply");
+    assert!(
+        !snapshot.is_request,
+        "self-synced outgoing reply from another device implicitly accepts"
+    );
+    assert!(
+        core.state
+            .preferences
+            .accepted_owner_pubkeys
+            .contains(&chat_id),
+        "cross-device reply also lands the peer in the whitelist so push sub picks them up"
+    );
+}
+
+#[test]
+fn blocking_a_peer_removes_them_from_chat_list_and_subscribable_set() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("block-drops-from-subs", &owner, &device);
+
+    let (content, _) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "hi",
+        1_777_159_493,
+        Vec::new(),
+    );
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("e".repeat(64)));
+    let peer_hex = sender.public_key().to_hex();
+    core.rebuild_state();
+    assert!(
+        core.state
+            .chat_list
+            .iter()
+            .any(|chat| chat.chat_id == peer_hex),
+        "fresh stranger thread is visible before blocking"
+    );
+
+    core.handle_action(AppAction::SetUserBlocked {
+        owner_pubkey_hex: peer_hex.clone(),
+        blocked: true,
+    });
+
+    assert!(
+        !core
+            .state
+            .chat_list
+            .iter()
+            .any(|chat| chat.chat_id == peer_hex),
+        "blocked peer's thread must disappear from the chat list"
+    );
+    assert!(
+        !core.subscribable_message_author_hexes().contains(&peer_hex),
+        "blocked peer must never be in the subscribable author set"
+    );
+    let push = core.build_mobile_push_sync_snapshot();
+    assert!(
+        !push.message_author_pubkeys.contains(&peer_hex),
+        "blocked peer must be dropped from the mobile push sub"
+    );
+}
+
+#[test]
+fn blocked_peer_subsequent_message_is_dropped_at_ingest() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("block-ingest-guard", &owner, &device);
+
+    core.handle_action(AppAction::SetUserBlocked {
+        owner_pubkey_hex: sender.public_key().to_hex(),
+        blocked: true,
+    });
+
+    let (content, _) = runtime_rumor_json(
+        sender.public_key(),
+        CHAT_MESSAGE_KIND,
+        "still pestering you",
+        1_777_159_493,
+        Vec::new(),
+    );
+    core.apply_decrypted_runtime_message(sender.public_key(), None, content, Some("f".repeat(64)));
+
+    assert!(
+        !core.threads.contains_key(&sender.public_key().to_hex()),
+        "blocked peer's message must not create or grow a thread"
+    );
+}
+
+#[test]
+fn group_created_by_unknown_creator_surfaces_as_request_and_clears_on_accept() {
+    use nostr_double_ratchet::{group::GroupSnapshot, GroupProtocol, OwnerPubkey, UnixSeconds};
+
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let creator = Keys::generate();
+    let mut core = logged_in_test_core("group-stranger-request", &owner, &device);
+
+    let group_id = "groupchat_stranger".to_string();
+    let chat_id = format!("group:{group_id}");
+    let group = GroupSnapshot {
+        group_id: group_id.clone(),
+        protocol: GroupProtocol::PairwiseFanoutV1,
+        name: "Stranger's group".to_string(),
+        created_by: OwnerPubkey::from_bytes(creator.public_key().to_bytes()),
+        members: vec![
+            OwnerPubkey::from_bytes(creator.public_key().to_bytes()),
+            OwnerPubkey::from_bytes(owner.public_key().to_bytes()),
+        ],
+        admins: vec![OwnerPubkey::from_bytes(creator.public_key().to_bytes())],
+        revision: 1,
+        created_at: UnixSeconds(1_777_159_000),
+        updated_at: UnixSeconds(1_777_159_000),
+    };
+    core.apply_group_decrypted_event(
+        nostr_double_ratchet::group::GroupIncomingEvent::MetadataUpdated(group),
+    );
+    core.rebuild_state();
+
+    let snapshot = core
+        .state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == chat_id)
+        .expect("group thread visible after metadata arrives");
+    assert!(
+        snapshot.is_request,
+        "group add from an unknown creator must surface as a request"
+    );
+
+    core.handle_action(AppAction::SetMessageRequestAccepted {
+        chat_id: chat_id.clone(),
+    });
+    let after = core
+        .state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == chat_id)
+        .expect("group still visible after accept");
+    assert!(
+        !after.is_request,
+        "accepting a group request flips it out of request state"
+    );
+    assert!(
+        core.state
+            .preferences
+            .accepted_owner_pubkeys
+            .contains(&creator.public_key().to_hex()),
+        "group accept whitelists the creator (Signal pattern) so future adds by them auto-accept"
+    );
+}
+
+#[test]
+fn group_created_by_accepted_peer_is_not_a_request() {
+    use nostr_double_ratchet::{group::GroupSnapshot, GroupProtocol, OwnerPubkey, UnixSeconds};
+
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let creator = Keys::generate();
+    let mut core = logged_in_test_core("group-known-creator", &owner, &device);
+
+    // Pretend we already accepted a direct request from this creator.
+    core.handle_action(AppAction::SetMessageRequestAccepted {
+        chat_id: creator.public_key().to_hex(),
+    });
+    let chat_id = "group:trusted_group".to_string();
+    let group = GroupSnapshot {
+        group_id: "trusted_group".to_string(),
+        protocol: GroupProtocol::PairwiseFanoutV1,
+        name: "Friend's group".to_string(),
+        created_by: OwnerPubkey::from_bytes(creator.public_key().to_bytes()),
+        members: vec![
+            OwnerPubkey::from_bytes(creator.public_key().to_bytes()),
+            OwnerPubkey::from_bytes(owner.public_key().to_bytes()),
+        ],
+        admins: vec![OwnerPubkey::from_bytes(creator.public_key().to_bytes())],
+        revision: 1,
+        created_at: UnixSeconds(1_777_159_000),
+        updated_at: UnixSeconds(1_777_159_000),
+    };
+    core.apply_group_decrypted_event(
+        nostr_double_ratchet::group::GroupIncomingEvent::MetadataUpdated(group),
+    );
+    core.rebuild_state();
+
+    let snapshot = core
+        .state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == chat_id)
+        .expect("group thread visible");
+    assert!(
+        !snapshot.is_request,
+        "group added by an accepted peer must not gate behind a request"
+    );
+}
+
+#[test]
+fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
+    // Drive a real invite handshake so Alice ends up with a session
+    // for Bob — that's the only way `known_message_author_pubkeys`
+    // gets populated, and the subscription filter we're testing is a
+    // post-processing pass over that set.
+    let alice_owner = Keys::generate();
+    let alice_device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+
+    let mut alice =
+        logged_in_test_core("push-filter-toggle-alice", &alice_owner, &alice_device);
+    alice.pending_relay_publishes.clear();
+    alice.handle_action(AppAction::CreatePublicInvite);
+    let invite_url = alice
+        .state
+        .public_invite
+        .as_ref()
+        .expect("alice invite")
+        .url
+        .clone();
+
+    let mut bob = logged_in_test_core("push-filter-toggle-bob", &bob_owner, &bob_device);
+    bob.pending_relay_publishes.clear();
+    bob.handle_action(AppAction::AcceptInvite {
+        invite_input: invite_url,
+    });
+    bob.handle_action(AppAction::SendMessage {
+        chat_id: alice_owner.public_key().to_hex(),
+        text: "hi alice".to_string(),
+    });
+    let response = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
+        .into_iter()
+        .next()
+        .expect("invite response event");
+    alice.handle_relay_event(response);
+    let messages = pending_events_with_kind(&bob, MESSAGE_EVENT_KIND);
+    for event in messages {
+        alice.handle_relay_event(event);
+    }
+
+    assert!(
+        !alice.subscribable_message_author_hexes().is_empty(),
+        "alice should have at least one subscribable author after bob's invite handshake"
+    );
+    let bob_hex = bob_owner.public_key().to_hex();
+    let initial_set = alice.subscribable_message_author_hexes();
+    let bob_event_authors: Vec<String> = initial_set.iter().cloned().collect();
+
+    // Toggle off without an accept: bob isn't whitelisted, so the
+    // sub filter drops his event authors.
+    alice.handle_action(AppAction::SetAcceptUnknownDirectMessages { enabled: false });
+    let narrowed = alice.subscribable_message_author_hexes();
+    for author in &bob_event_authors {
+        assert!(
+            !narrowed.contains(author),
+            "non-accepted peer's event author {author} must drop with unknown-users toggle off"
+        );
+    }
+    let push_narrowed = alice.build_mobile_push_sync_snapshot();
+    for author in &bob_event_authors {
+        assert!(
+            !push_narrowed.message_author_pubkeys.contains(author),
+            "mobile push subscription must mirror the filter for {author}"
+        );
+    }
+
+    // Now accept bob: his event authors come back into the sub.
+    alice.handle_action(AppAction::SetMessageRequestAccepted {
+        chat_id: bob_hex.clone(),
+    });
+    let after_accept = alice.subscribable_message_author_hexes();
+    assert!(
+        bob_event_authors
+            .iter()
+            .all(|author| after_accept.contains(author)),
+        "explicit accept reintroduces the peer's authors regardless of the toggle"
+    );
+}
+
+#[test]
 fn remote_runtime_rumor_pubkey_must_match_authenticated_sender() {
     let owner = Keys::generate();
     let device = Keys::generate();

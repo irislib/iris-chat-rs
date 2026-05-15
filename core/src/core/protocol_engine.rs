@@ -628,8 +628,27 @@ impl ProtocolEngine {
     }
 
     pub(super) fn known_message_author_pubkeys(&self) -> Vec<PublicKey> {
+        self.message_author_pubkeys_filtered(|_| true)
+    }
+
+    /// Walks every session and returns its expected event-author
+    /// pubkeys, but only for sessions whose peer owner passes the
+    /// `accept_owner` predicate. The owner-aware variant lets the
+    /// caller drop blocked / non-accepted peers from the subscription
+    /// filter without losing the device-ephemeral keys that nostr
+    /// actually filters on.
+    pub(super) fn message_author_pubkeys_filtered<F>(&self, accept_owner: F) -> Vec<PublicKey>
+    where
+        F: Fn(PublicKey) -> bool,
+    {
         let mut authors = HashSet::new();
         for user in self.session_manager.snapshot().users {
+            let Ok(owner) = PublicKey::parse(&user.owner_pubkey.to_string()) else {
+                continue;
+            };
+            if !accept_owner(owner) {
+                continue;
+            }
             for device in user.devices {
                 if let Some(session) = device.active_session.as_ref() {
                     collect_expected_sender_pubkeys(session, &mut authors);

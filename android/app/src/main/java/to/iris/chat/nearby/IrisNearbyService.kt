@@ -288,6 +288,26 @@ class IrisNearbyService(
 
     private fun nearbyActive(): Boolean = visible || localNetworkVisible
 
+    /// Mirrors the core preference: when off, this service pauses
+    /// mailbag reads and writes so existing entries survive but the
+    /// bag stops growing and stops being advertised to peers.
+    private fun isMailbagEnabled(): Boolean =
+        appManager.state.value.preferences.nearbyMailbagEnabled
+
+    /// Wipe every event the mailbag is currently carrying. Independent
+    /// of the on/off toggle so the user can clear without disabling
+    /// future sync. The UI polls `snapshot` every 2s, so the change
+    /// surfaces on the next tick without an explicit emit here.
+    fun emptyMailbag() {
+        ownOutbound.clear()
+        forwarded.clear()
+    }
+
+    /// Number of events the local mailbag is currently carrying
+    /// (yours + others'). Settings reads this so the Empty mailbag
+    /// row only surfaces when there's something to wipe.
+    fun mailbagEventCount(): Int = ownOutbound.size + forwarded.size
+
     private inline fun <T> guardBluetooth(
         operation: String,
         fallback: T,
@@ -341,9 +361,14 @@ class IrisNearbyService(
                 authorPubkeyHex = eventAuthorHex(event.eventJson),
                 storedAtMillis = System.currentTimeMillis(),
             )
-        ownOutbound[event.eventId] = record
-        forwarded.remove(event.eventId)
-        peerInventorySentMillis.clear()
+        // Mailbag paused → don't write new entries. The bag's existing
+        // contents survive the toggle so flipping back on doesn't lose
+        // what was queued; the broadcast/replay path skips it below.
+        if (isMailbagEnabled()) {
+            ownOutbound[event.eventId] = record
+            forwarded.remove(event.eventId)
+            peerInventorySentMillis.clear()
+        }
         if (record.kind == 0L) {
             NearbyProfileEvent.fromEventJson(event.eventJson)?.let { profile ->
                 ownProfileEventId = record.id
@@ -656,6 +681,12 @@ class IrisNearbyService(
         excludingPeerId: String?,
         onlyPeerId: String?,
     ) {
+        // Mailbag paused → don't advertise our bag. The contents
+        // survive for when it flips back on, but we're silent on the
+        // sync wire until then.
+        if (!isMailbagEnabled()) {
+            return
+        }
         val records = mailbagEvents().take(200)
         if (records.isEmpty()) {
             return
@@ -1129,6 +1160,10 @@ class IrisNearbyService(
         envelope: JSONObject,
         remotePeerId: String?,
     ) {
+        // Mailbag paused → don't pull items from peer inventories.
+        if (!isMailbagEnabled()) {
+            return
+        }
         val id = envelope.optString("id")
         val size = envelope.optInt("size", 0)
         if (
@@ -1145,6 +1180,10 @@ class IrisNearbyService(
         envelope: JSONObject,
         remotePeerId: String?,
     ) {
+        // Mailbag paused → don't serve items from our bag to peers.
+        if (!isMailbagEnabled()) {
+            return
+        }
         val id = envelope.optString("id")
         val record = ownOutbound[id] ?: forwarded[id] ?: return
         sendEvent(record, excludingPeerId = null, onlyPeerId = remotePeerId)
@@ -1237,9 +1276,14 @@ class IrisNearbyService(
         }
         rememberProfile(eventJson, remotePeerId)
         remotePeerId?.let { markPeerSeenEvent(record.id, it) }
-        forwarded[record.id] = record
-        pruneMailbags()
-        sendEventJson(eventJson, excludingPeerId = remotePeerId, onlyPeerId = null)
+        // Mailbag paused → ingest the event for the local app but
+        // don't store it for forwarding to other peers. Existing
+        // entries survive the toggle.
+        if (isMailbagEnabled()) {
+            forwarded[record.id] = record
+            pruneMailbags()
+            sendEventJson(eventJson, excludingPeerId = remotePeerId, onlyPeerId = null)
+        }
         IrisDebugLog.d(TAG, "accepted event kind=${record.kind} id=${record.id}")
     }
 

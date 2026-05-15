@@ -557,6 +557,7 @@ impl AppCore {
             self.preferences.nearby_bluetooth_enabled =
                 persisted.preferences.nearby_bluetooth_enabled;
             self.preferences.nearby_lan_enabled = persisted.preferences.nearby_lan_enabled;
+            self.preferences.nearby_mailbag_enabled = persisted.preferences.nearby_mailbag_enabled;
             self.preferences.nostr_relay_urls =
                 normalize_nostr_relay_urls(&persisted.preferences.nostr_relay_urls);
             self.preferences.image_proxy_enabled = persisted.preferences.image_proxy_enabled;
@@ -576,6 +577,14 @@ impl AppCore {
             self.preferences.pinned_chat_ids = persisted.preferences.pinned_chat_ids.clone();
             self.preferences.pinned_chat_ids.sort();
             self.preferences.pinned_chat_ids.dedup();
+            self.preferences.blocked_owner_pubkeys =
+                persisted.preferences.blocked_owner_pubkeys.clone();
+            self.preferences.blocked_owner_pubkeys.sort();
+            self.preferences.blocked_owner_pubkeys.dedup();
+            self.preferences.accepted_owner_pubkeys =
+                persisted.preferences.accepted_owner_pubkeys.clone();
+            self.preferences.accepted_owner_pubkeys.sort();
+            self.preferences.accepted_owner_pubkeys.dedup();
             self.seen_event_order = persisted
                 .seen_event_ids
                 .iter()

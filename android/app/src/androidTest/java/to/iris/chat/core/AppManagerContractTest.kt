@@ -693,6 +693,7 @@ class AppManagerContractTest {
                     nearbyEnabled = true,
                     nearbyBluetoothEnabled = false,
                     nearbyLanEnabled = false,
+                    nearbyMailbagEnabled = true,
                     nostrRelayUrls =
                         listOf(
                             "wss://relay.damus.io",
@@ -707,6 +708,8 @@ class AppManagerContractTest {
                     imageProxySaltHex = "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
                     mutedChatIds = emptyList(),
                     pinnedChatIds = emptyList(),
+                    blockedOwnerPubkeys = emptyList(),
+                    acceptedOwnerPubkeys = emptyList(),
                     debugLoggingEnabled = false,
                     acceptUnknownDirectMessages = true,
                     mobilePushServerUrl = "",
@@ -988,6 +991,7 @@ private object AppManagerContractDefaults {
                     nearbyEnabled = true,
                     nearbyBluetoothEnabled = false,
                     nearbyLanEnabled = false,
+                    nearbyMailbagEnabled = true,
                     nostrRelayUrls =
                         listOf(
                             "wss://relay.damus.io",
@@ -1002,6 +1006,8 @@ private object AppManagerContractDefaults {
                     imageProxySaltHex = "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
                     mutedChatIds = emptyList(),
                     pinnedChatIds = emptyList(),
+                    blockedOwnerPubkeys = emptyList(),
+                    acceptedOwnerPubkeys = emptyList(),
                     debugLoggingEnabled = false,
                     acceptUnknownDirectMessages = true,
                     mobilePushServerUrl = "",

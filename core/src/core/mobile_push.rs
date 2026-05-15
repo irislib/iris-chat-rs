@@ -51,9 +51,15 @@ impl AppCore {
             .filter(|chat_id| !is_group_chat_id(chat_id))
             .cloned()
             .collect();
+        // `subscribable_message_author_hexes` already excludes blocked
+        // peers and (when the unknown-users toggle is off) non-accepted
+        // peers; here we additionally drop muted threads so the push
+        // server doesn't wake the device for chats the user has
+        // silenced (the relay sub still carries them so the local app
+        // updates when foregrounded).
         let mut message_author_pubkeys = HashSet::new();
         message_author_pubkeys.extend(
-            self.known_message_author_hexes()
+            self.subscribable_message_author_hexes()
                 .into_iter()
                 .filter(|author| !muted_direct_chat_ids.contains(author)),
         );

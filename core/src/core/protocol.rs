@@ -1120,15 +1120,7 @@ impl AppCore {
             .map(|pubkey| pubkey.to_hex())
             .collect::<HashSet<_>>();
         let invite_authors = sorted_hexes(invite_authors);
-        let message_authors = self
-            .protocol_engine
-            .as_ref()
-            .map(ProtocolEngine::known_message_author_pubkeys)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|pubkey| pubkey.to_hex())
-            .collect::<HashSet<_>>();
-        let message_authors = sorted_hexes(message_authors);
+        let message_authors = sorted_hexes(self.subscribable_message_author_hexes());
         let group_sender_key_authors = self
             .protocol_engine
             .as_ref()
@@ -1642,11 +1634,40 @@ impl AppCore {
             .unwrap_or(false)
     }
 
-    pub(super) fn known_message_author_hexes(&self) -> HashSet<String> {
-        self.protocol_engine
-            .as_ref()
-            .map(ProtocolEngine::known_message_author_pubkeys)
-            .unwrap_or_default()
+    /// Walks every active and inactive session and returns the
+    /// expected event-author pubkeys (hex), narrowed to peers the
+    /// user actually wants traffic from: blocked owners are always
+    /// excluded, and when the unknown-users toggle is off, owners
+    /// that aren't in the accepted set are excluded too. The owner
+    /// gate is applied per-session (so we never include any of a
+    /// blocked owner's device-ephemeral event authors). The result
+    /// feeds both the nostr relay subscription's `authors` filter and
+    /// the mobile-push subscription body.
+    pub(super) fn subscribable_message_author_hexes(&self) -> HashSet<String> {
+        let accept_unknown = self.preferences.accept_unknown_direct_messages;
+        let blocked: HashSet<String> = self
+            .preferences
+            .blocked_owner_pubkeys
+            .iter()
+            .cloned()
+            .collect();
+        let accepted: HashSet<String> = self
+            .preferences
+            .accepted_owner_pubkeys
+            .iter()
+            .cloned()
+            .collect();
+        let Some(engine) = self.protocol_engine.as_ref() else {
+            return HashSet::new();
+        };
+        engine
+            .message_author_pubkeys_filtered(|owner| {
+                let hex = owner.to_hex();
+                if blocked.contains(&hex) {
+                    return false;
+                }
+                accept_unknown || accepted.contains(&hex)
+            })
             .into_iter()
             .map(|pubkey| pubkey.to_hex())
             .collect()

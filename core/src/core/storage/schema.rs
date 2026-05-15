@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 16;
+const SCHEMA_VERSION: u32 = 18;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -30,7 +30,10 @@ CREATE TABLE IF NOT EXISTS preferences (
     pinned_chat_ids_json TEXT NOT NULL DEFAULT '[]',
     debug_logging_enabled INTEGER NOT NULL DEFAULT 0,
     accept_unknown_direct_messages INTEGER NOT NULL DEFAULT 1,
-    nearby_enabled INTEGER NOT NULL DEFAULT 1
+    nearby_enabled INTEGER NOT NULL DEFAULT 1,
+    blocked_owner_pubkeys_json TEXT NOT NULL DEFAULT '[]',
+    accepted_owner_pubkeys_json TEXT NOT NULL DEFAULT '[]',
+    nearby_mailbag_enabled INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS owner_profiles (
@@ -368,6 +371,33 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         tx.execute_batch(
             "ALTER TABLE preferences
              ADD COLUMN nearby_enabled INTEGER NOT NULL DEFAULT 1;",
+        )?;
+    }
+    if current < 17 {
+        // Signal-style per-peer state: a blocklist that the core uses
+        // to drop blocked authors from the nostr + push subscriptions,
+        // and an accepted-peers set that the chat-request gate (Signal
+        // whitelist) reads to decide whether a thread shows the
+        // Accept / Delete / Block bar. Both are JSON arrays of owner
+        // pubkey hex, stored on the singleton `preferences` row so
+        // they ride the existing load/persist path.
+        if !column_exists(&tx, "preferences", "blocked_owner_pubkeys_json")? {
+            tx.execute_batch(
+                "ALTER TABLE preferences
+                 ADD COLUMN blocked_owner_pubkeys_json TEXT NOT NULL DEFAULT '[]';",
+            )?;
+        }
+        if !column_exists(&tx, "preferences", "accepted_owner_pubkeys_json")? {
+            tx.execute_batch(
+                "ALTER TABLE preferences
+                 ADD COLUMN accepted_owner_pubkeys_json TEXT NOT NULL DEFAULT '[]';",
+            )?;
+        }
+    }
+    if current < 18 && !column_exists(&tx, "preferences", "nearby_mailbag_enabled")? {
+        tx.execute_batch(
+            "ALTER TABLE preferences
+             ADD COLUMN nearby_mailbag_enabled INTEGER NOT NULL DEFAULT 1;",
         )?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;

@@ -471,7 +471,8 @@ private func fallbackAppState(toast: String?) -> AppState {
             creatingInvite: false,
             acceptingInvite: false,
             syncingNetwork: false,
-            uploadingAttachment: false
+            uploadingAttachment: false,
+            uploadProgress: nil
         ),
         chatList: [],
         currentChat: nil,
@@ -494,6 +495,7 @@ private func fallbackAppState(toast: String?) -> AppState {
             nearbyEnabled: true,
             nearbyBluetoothEnabled: false,
             nearbyLanEnabled: false,
+            nearbyMailbagEnabled: true,
             nostrRelayUrls: [
                 "wss://relay.damus.io",
                 "wss://nos.lol",
@@ -507,6 +509,8 @@ private func fallbackAppState(toast: String?) -> AppState {
             imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
             mutedChatIds: [],
             pinnedChatIds: [],
+            blockedOwnerPubkeys: [],
+            acceptedOwnerPubkeys: [],
             debugLoggingEnabled: false,
             acceptUnknownDirectMessages: true,
             mobilePushServerUrl: ""

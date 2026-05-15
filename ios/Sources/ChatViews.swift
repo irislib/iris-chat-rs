@@ -43,11 +43,10 @@ private struct IrisMessageRequestBar: View {
     let onAccept: () -> Void
     let onDelete: () -> Void
     let onBlock: () -> Void
-    let onOpenMessagingSettings: () -> Void
 
     var body: some View {
         VStack(spacing: 10) {
-            Text("\(displayName) hasn't been added to your chats yet. No read receipts are sent until you accept.")
+            Text("Message request from \(displayName)")
                 .font(.system(.footnote, design: .rounded, weight: .medium))
                 .foregroundStyle(palette.muted)
                 .multilineTextAlignment(.center)
@@ -76,15 +75,6 @@ private struct IrisMessageRequestBar: View {
                 )
             }
             .padding(.horizontal, 14)
-
-            Button(action: onOpenMessagingSettings) {
-                Text("Manage who can message you")
-                    .font(.system(.caption, design: .rounded, weight: .semibold))
-                    .underline()
-                    .foregroundStyle(palette.muted)
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("messageRequestSettingsLink")
         }
         .padding(.vertical, 12)
         .frame(maxWidth: .infinity)
@@ -112,6 +102,61 @@ private struct IrisMessageRequestBar: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(accessibilityId)
+    }
+}
+
+/// Identifies the chat the block confirmation dialog is acting on.
+/// `Identifiable` lets `.confirmationDialog(item:)` rebuild the sheet
+/// when the user changes target without a separate `isPresented` flag.
+private struct BlockConfirmationTarget: Identifiable {
+    let chatId: String
+    let displayName: String
+    var id: String { chatId }
+}
+
+/// Signal-style block confirmation: tapping Block on the
+/// message-request bar lifts a sheet with "Block" (keep the thread
+/// for evidence) and "Block and Delete" (wipe the chat too). Mirrors
+/// `ConversationViewController+MessageRequest.swift` in signal-ios.
+/// Extracted to a `ViewModifier` so the ChatScreen body type-checks
+/// in reasonable time — the inline form pushed the closure over the
+/// compiler's expression-complexity threshold.
+private struct BlockConfirmationModifier: ViewModifier {
+    @Binding var target: BlockConfirmationTarget?
+    let manager: AppManager
+
+    func body(content: Content) -> some View {
+        content.confirmationDialog(
+            target.map { "Block \($0.displayName)?" } ?? "Block?",
+            isPresented: Binding(
+                get: { target != nil },
+                set: { presented in
+                    if !presented { target = nil }
+                }
+            ),
+            titleVisibility: .visible,
+            presenting: target,
+            actions: { item in
+                Button("Block", role: .destructive) {
+                    manager.setUserBlocked(item.chatId, blocked: true)
+                    target = nil
+                }
+                .accessibilityIdentifier("messageRequestBlockConfirmKeep")
+                Button("Block and Delete", role: .destructive) {
+                    manager.setUserBlocked(item.chatId, blocked: true)
+                    manager.dispatch(.deleteChat(chatId: item.chatId))
+                    manager.navigateBack()
+                    target = nil
+                }
+                .accessibilityIdentifier("messageRequestBlockConfirmDelete")
+                Button("Cancel", role: .cancel) {
+                    target = nil
+                }
+            },
+            message: { _ in
+                Text("They won't be able to message you. No notification is sent.")
+            }
+        )
     }
 }
 
@@ -156,6 +201,7 @@ struct ChatScreen: View {
     /// reply; sending a message naturally clears `isRequest` for good
     /// because there's now an outgoing message in the thread.
     @State private var acceptedRequestChatId: String?
+    @State private var blockConfirmationChat: BlockConfirmationTarget?
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -535,6 +581,7 @@ struct ChatScreen: View {
                                             displayName: chat.displayName,
                                             onAccept: {
                                                 acceptedRequestChatId = chat.chatId
+                                                manager.dispatch(.setMessageRequestAccepted(chatId: chat.chatId))
                                                 isComposerFocused = true
                                             },
                                             onDelete: {
@@ -542,12 +589,10 @@ struct ChatScreen: View {
                                                 manager.navigateBack()
                                             },
                                             onBlock: {
-                                                manager.setUserBlocked(chat.chatId, blocked: true)
-                                                manager.dispatch(.deleteChat(chatId: chat.chatId))
-                                                manager.navigateBack()
-                                            },
-                                            onOpenMessagingSettings: {
-                                                manager.openMessagingSettings()
+                                                blockConfirmationChat = BlockConfirmationTarget(
+                                                    chatId: chat.chatId,
+                                                    displayName: chat.displayName
+                                                )
                                             }
                                         )
                                     } else {
@@ -557,6 +602,7 @@ struct ChatScreen: View {
                                             placeholder: "Message",
                                             isSending: manager.state.busy.sendingMessage,
                                             isUploading: manager.state.busy.uploadingAttachment,
+                                            uploadFraction: uploadFraction(manager.state.busy.uploadProgress),
                                             isFocused: $isComposerFocused,
                                             onDraftChange: {
                                                 sendTypingIfNeeded()
@@ -638,6 +684,7 @@ struct ChatScreen: View {
                 reactorsSelection = nil
             }
         }
+        .modifier(BlockConfirmationModifier(target: $blockConfirmationChat, manager: manager))
         .onDisappear {
             pendingScrollSettle?.cancel()
             pendingScrollSettle = nil
@@ -771,10 +818,20 @@ struct ChatScreen: View {
                 await manager.openAttachment(attachment)
             },
             onOpenImage: { data, attachment in
+                let imageAttachments = message.attachments.filter { $0.isImage }
+                let initialIndex = imageAttachments.firstIndex {
+                    $0.htreeUrl == attachment.htreeUrl
+                } ?? 0
                 imageViewerItem = ImageViewerItem(
-                    data: data,
-                    filename: attachment.filename,
-                    forwardText: forwardableAttachmentText(attachment)
+                    attachments: imageAttachments,
+                    initialIndex: initialIndex,
+                    initialData: data,
+                    downloadAttachment: { att in
+                        await manager.downloadAttachment(att)
+                    },
+                    forwardableTextFor: { att in
+                        forwardableAttachmentText(att)
+                    }
                 )
             }
         ))
@@ -1703,7 +1760,20 @@ private struct ChatMessageRow: View, Equatable {
                                     isOutgoing: message.isOutgoing
                                 )
                             }
-                            ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                            let imageAttachments = message.attachments.filter { $0.isImage }
+                            let nonImageAttachments = message.attachments.filter { !$0.isImage }
+                            if !imageAttachments.isEmpty {
+                                ChatImageAlbumView(
+                                    attachments: imageAttachments,
+                                    isOutgoing: message.isOutgoing,
+                                    downloadAttachment: downloadAttachment,
+                                    onOpenImage: onOpenImage,
+                                    onForward: { attachment in
+                                        onForwardAttachment(attachment)
+                                    }
+                                )
+                            }
+                            ForEach(Array(nonImageAttachments.enumerated()), id: \.offset) { _, attachment in
                                 ChatAttachmentView(
                                     attachment: attachment,
                                     isOutgoing: message.isOutgoing,
@@ -3685,6 +3755,187 @@ private func imagePreviewCost(_ image: PlatformImage) -> Int {
     #endif
 }
 
+private struct ChatImageAlbumView: View {
+    let attachments: [MessageAttachmentSnapshot]
+    let isOutgoing: Bool
+    let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
+    let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
+    let onForward: (MessageAttachmentSnapshot) -> Void
+
+    private let albumWidth: CGFloat = 232
+    private let gap: CGFloat = 2
+
+    var body: some View {
+        switch attachments.count {
+        case 0:
+            EmptyView()
+        case 1:
+            cell(attachments[0], width: 220, height: 150, contentMode: .fill)
+        case 2:
+            HStack(spacing: gap) {
+                cell(attachments[0], width: (albumWidth - gap) / 2, height: 150, contentMode: .fill)
+                cell(attachments[1], width: (albumWidth - gap) / 2, height: 150, contentMode: .fill)
+            }
+        case 3:
+            HStack(spacing: gap) {
+                cell(attachments[0], width: albumWidth * 0.58 - gap / 2, height: albumWidth * 0.86, contentMode: .fill)
+                VStack(spacing: gap) {
+                    cell(attachments[1], width: albumWidth * 0.42 - gap / 2, height: (albumWidth * 0.86 - gap) / 2, contentMode: .fill)
+                    cell(attachments[2], width: albumWidth * 0.42 - gap / 2, height: (albumWidth * 0.86 - gap) / 2, contentMode: .fill)
+                }
+            }
+        default:
+            let cellSize = (albumWidth - gap) / 2
+            VStack(spacing: gap) {
+                HStack(spacing: gap) {
+                    cell(attachments[0], width: cellSize, height: cellSize, contentMode: .fill)
+                    cell(attachments[1], width: cellSize, height: cellSize, contentMode: .fill)
+                }
+                HStack(spacing: gap) {
+                    cell(attachments[2], width: cellSize, height: cellSize, contentMode: .fill)
+                    overflowCell(at: 3, width: cellSize, height: cellSize)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func cell(
+        _ attachment: MessageAttachmentSnapshot,
+        width: CGFloat,
+        height: CGFloat,
+        contentMode: ContentMode
+    ) -> some View {
+        ChatAlbumImageCell(
+            attachment: attachment,
+            isOutgoing: isOutgoing,
+            width: width,
+            height: height,
+            downloadAttachment: downloadAttachment,
+            onOpenImage: onOpenImage,
+            onForward: { onForward(attachment) }
+        )
+    }
+
+    @ViewBuilder
+    private func overflowCell(at index: Int, width: CGFloat, height: CGFloat) -> some View {
+        ZStack {
+            ChatAlbumImageCell(
+                attachment: attachments[index],
+                isOutgoing: isOutgoing,
+                width: width,
+                height: height,
+                downloadAttachment: downloadAttachment,
+                onOpenImage: onOpenImage,
+                onForward: { onForward(attachments[index]) }
+            )
+            if attachments.count > 4 {
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(Color.black.opacity(0.45))
+                    .allowsHitTesting(false)
+                Text("+\(attachments.count - 4)")
+                    .font(.system(size: 24, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+}
+
+private struct ChatAlbumImageCell: View {
+    @Environment(\.irisPalette) private var palette
+
+    let attachment: MessageAttachmentSnapshot
+    let isOutgoing: Bool
+    let width: CGFloat
+    let height: CGFloat
+    let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
+    let onOpenImage: (Data, MessageAttachmentSnapshot) -> Void
+    let onForward: () -> Void
+
+    @State private var localImageData: Data?
+    @State private var localPreviewImage: PlatformImage?
+    @State private var isLoadingImage = false
+    @State private var failedImageLoad = false
+
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
+            if let localPreviewImage {
+                Image(platformImage: localPreviewImage)
+                    .resizable()
+                    .scaledToFill()
+            } else if let localImageData, isAnimatedImage(data: localImageData, filename: attachment.filename) {
+                IrisAnimatedImageDataView(data: localImageData)
+                    .allowsHitTesting(false)
+            } else if isLoadingImage {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: failedImageLoad ? "exclamationmark.triangle.fill" : "photo.fill")
+                    .font(.system(size: 22, weight: .semibold))
+                    .opacity(0.72)
+            }
+        }
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
+        .onTapGesture {
+            if let localImageData {
+                onOpenImage(localImageData, attachment)
+            } else {
+                Task {
+                    await loadImageIfNeeded()
+                    if let localImageData {
+                        onOpenImage(localImageData, attachment)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityLabel(attachment.filename)
+        .contextMenu {
+            Button("Forward", action: onForward)
+            Button("Copy link") {
+                PlatformClipboard.setString(attachment.htreeUrl)
+            }
+        }
+        .task(id: attachment.htreeUrl) {
+            await loadImageIfNeeded()
+        }
+    }
+
+    @MainActor
+    private func loadImageIfNeeded() async {
+        guard localImageData == nil, !isLoadingImage else { return }
+        isLoadingImage = true
+        failedImageLoad = false
+        if let cached = ChatAttachmentPreviewImageCache.image(for: attachment.htreeUrl) {
+            localPreviewImage = cached
+        }
+        guard let data = await downloadAttachment(attachment) else {
+            isLoadingImage = false
+            failedImageLoad = true
+            return
+        }
+        let isAnimated = isAnimatedImage(data: data, filename: attachment.filename)
+        if !isAnimated, localPreviewImage == nil {
+            if let preview = makeChatAttachmentPreviewImage(data: data, filename: attachment.filename) {
+                ChatAttachmentPreviewImageCache.store(preview, for: attachment.htreeUrl)
+                localPreviewImage = preview
+            } else {
+                isLoadingImage = false
+                failedImageLoad = true
+                return
+            }
+        }
+        localImageData = data
+        isLoadingImage = false
+    }
+}
+
 private struct ChatAttachmentView: View {
     @Environment(\.irisPalette) private var palette
 
@@ -3703,7 +3954,29 @@ private struct ChatAttachmentView: View {
 
     var body: some View {
         if attachment.isImage {
-            Button {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
+                if let localPreviewImage {
+                    Image(platformImage: localPreviewImage)
+                        .resizable()
+                        .scaledToFill()
+                } else if let localImageData, isAnimatedImage(data: localImageData, filename: attachment.filename) {
+                    IrisAnimatedImageDataView(data: localImageData)
+                        .allowsHitTesting(false)
+                } else if isLoadingImage {
+                    ProgressView()
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: failedImageLoad ? "exclamationmark.triangle.fill" : "photo.fill")
+                        .font(.system(size: 28, weight: .semibold))
+                        .opacity(0.72)
+                }
+            }
+            .frame(width: 220, height: 150)
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .onTapGesture {
                 if let localImageData {
                     onOpenImage(localImageData, attachment)
                 } else {
@@ -3714,33 +3987,9 @@ private struct ChatAttachmentView: View {
                         }
                     }
                 }
-            } label: {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
-                        .frame(width: 220, height: 150)
-                    if let localPreviewImage {
-                        Image(platformImage: localPreviewImage)
-                            .resizable()
-                            .scaledToFill()
-                            .frame(width: 220, height: 150)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                    } else if let localImageData, isAnimatedImage(data: localImageData, filename: attachment.filename) {
-                        IrisAnimatedImageDataView(data: localImageData)
-                            .frame(width: 220, height: 150)
-                            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                            .allowsHitTesting(false)
-                    } else if isLoadingImage {
-                        ProgressView()
-                            .controlSize(.small)
-                    } else {
-                        Image(systemName: failedImageLoad ? "exclamationmark.triangle.fill" : "photo.fill")
-                            .font(.system(size: 28, weight: .semibold))
-                            .opacity(0.72)
-                    }
-                }
             }
-            .buttonStyle(.irisPlain)
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
             .accessibilityLabel(attachment.filename)
             .contextMenu {
                 Button("Forward", action: onForward)
@@ -3834,20 +4083,11 @@ private struct ChatAttachmentView: View {
 
 private struct ImageViewerItem: Identifiable, Equatable {
     let id = UUID()
-    let data: Data
-    let filename: String
-    let forwardText: String?
-
-    var isAnimated: Bool {
-        isAnimatedImage(data: data, filename: filename)
-    }
-
-    var image: PlatformImage? {
-        guard !isAnimated else {
-            return nil
-        }
-        return PlatformImage(data: data)
-    }
+    let attachments: [MessageAttachmentSnapshot]
+    let initialIndex: Int
+    let initialData: Data
+    let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
+    let forwardableTextFor: (MessageAttachmentSnapshot) -> String
 
     static func == (lhs: ImageViewerItem, rhs: ImageViewerItem) -> Bool {
         lhs.id == rhs.id
@@ -3886,7 +4126,30 @@ private struct IrisImageViewer: View {
     let item: ImageViewerItem
     let onForwardText: (String) -> Void
     let onClose: () -> Void
+
+    @State private var currentIndex: Int
+    @State private var loadedData: [String: Data]
     @State private var sharedFileURL: URL?
+
+    init(item: ImageViewerItem, onForwardText: @escaping (String) -> Void, onClose: @escaping () -> Void) {
+        self.item = item
+        self.onForwardText = onForwardText
+        self.onClose = onClose
+        _currentIndex = State(initialValue: item.initialIndex)
+        var initial: [String: Data] = [:]
+        if item.attachments.indices.contains(item.initialIndex) {
+            initial[item.attachments[item.initialIndex].htreeUrl] = item.initialData
+        }
+        _loadedData = State(initialValue: initial)
+    }
+
+    private var currentAttachment: MessageAttachmentSnapshot? {
+        item.attachments.indices.contains(currentIndex) ? item.attachments[currentIndex] : nil
+    }
+
+    private var currentData: Data? {
+        currentAttachment.flatMap { loadedData[$0.htreeUrl] }
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -3895,7 +4158,7 @@ private struct IrisImageViewer: View {
                     .ignoresSafeArea()
                     .onTapGesture(perform: onClose)
 
-                imageContent
+                carouselContent
                     .padding(.top, geometry.safeAreaInsets.top + 68)
                     .padding(.bottom, geometry.safeAreaInsets.bottom + (usesCompactTopActions ? 40 : 94))
 
@@ -3904,6 +4167,8 @@ private struct IrisImageViewer: View {
                     Spacer(minLength: 0)
                     if !usesCompactTopActions {
                         bottomChrome(bottomInset: geometry.safeAreaInsets.bottom)
+                    } else {
+                        compactPageIndicator(bottomInset: geometry.safeAreaInsets.bottom)
                     }
                 }
                 .ignoresSafeArea()
@@ -3915,25 +4180,97 @@ private struct IrisImageViewer: View {
         .irisOnEscapeKey(onClose)
         .zIndex(10)
         .task(id: item.id) {
-            sharedFileURL = writeTempImage(data: item.data, filename: item.filename)
+            await ensureLoaded(index: currentIndex)
+            updateSharedFile()
+            await preloadAllExcept(index: currentIndex)
+        }
+        .onChange(of: currentIndex) { newValue in
+            Task {
+                await ensureLoaded(index: newValue)
+                updateSharedFile()
+            }
         }
     }
 
     @ViewBuilder
-    private var imageContent: some View {
-        if item.isAnimated {
-            IrisAnimatedImageDataView(data: item.data)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .allowsHitTesting(false)
-        } else if let image = item.image {
-            Image(platformImage: image)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ProgressView()
-                .tint(.white)
+    private var carouselContent: some View {
+        #if os(iOS)
+        TabView(selection: $currentIndex) {
+            ForEach(Array(item.attachments.enumerated()), id: \.offset) { idx, attachment in
+                IrisImageViewerPage(
+                    data: loadedData[attachment.htreeUrl],
+                    filename: attachment.filename
+                )
+                .tag(idx)
+            }
         }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        #else
+        ZStack {
+            if let attachment = currentAttachment {
+                IrisImageViewerPage(
+                    data: loadedData[attachment.htreeUrl],
+                    filename: attachment.filename
+                )
+            }
+            if item.attachments.count > 1 {
+                HStack {
+                    chevronButton(systemName: "chevron.left", disabled: currentIndex == 0) {
+                        if currentIndex > 0 { currentIndex -= 1 }
+                    }
+                    Spacer()
+                    chevronButton(systemName: "chevron.right", disabled: currentIndex >= item.attachments.count - 1) {
+                        if currentIndex < item.attachments.count - 1 { currentIndex += 1 }
+                    }
+                }
+                .padding(.horizontal, 18)
+            }
+        }
+        .irisOnLeftArrowKey {
+            if currentIndex > 0 { currentIndex -= 1 }
+        }
+        .irisOnRightArrowKey {
+            if currentIndex < item.attachments.count - 1 { currentIndex += 1 }
+        }
+        #endif
+    }
+
+    private func chevronButton(systemName: String, disabled: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(disabled ? 0.32 : 0.92))
+                .frame(width: 46, height: 46)
+                .background(Circle().fill(Color.black.opacity(disabled ? 0.24 : 0.5)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.irisPlain)
+        .disabled(disabled)
+    }
+
+    @MainActor
+    private func ensureLoaded(index: Int) async {
+        guard item.attachments.indices.contains(index) else { return }
+        let attachment = item.attachments[index]
+        if loadedData[attachment.htreeUrl] != nil { return }
+        guard let data = await item.downloadAttachment(attachment) else { return }
+        loadedData[attachment.htreeUrl] = data
+    }
+
+    @MainActor
+    private func preloadAllExcept(index: Int) async {
+        for (idx, _) in item.attachments.enumerated() where idx != index {
+            await ensureLoaded(index: idx)
+        }
+    }
+
+    @MainActor
+    private func updateSharedFile() {
+        guard let attachment = currentAttachment, let data = loadedData[attachment.htreeUrl] else {
+            sharedFileURL = nil
+            return
+        }
+        sharedFileURL = writeTempImage(data: data, filename: attachment.filename)
     }
 
     private var usesCompactTopActions: Bool {
@@ -3947,8 +4284,8 @@ private struct IrisImageViewer: View {
     private func topChrome(topInset: CGFloat) -> some View {
         HStack(spacing: 10) {
             if usesCompactTopActions {
-                IrisImageViewerForwardButton(item: item, onForwardText: onForwardText)
-                IrisImageViewerShareButton(sharedFileURL: sharedFileURL)
+                forwardButton
+                shareButton
             }
             Spacer(minLength: 0)
             IrisModalCloseButton(
@@ -3965,11 +4302,13 @@ private struct IrisImageViewer: View {
     }
 
     private func bottomChrome(bottomInset: CGFloat) -> some View {
-        HStack(spacing: 0) {
-            IrisImageViewerForwardButton(item: item, onForwardText: onForwardText)
-            Spacer(minLength: 12)
-            IrisImageViewerShareButton(sharedFileURL: sharedFileURL)
-            Spacer(minLength: 0)
+        VStack(spacing: 12) {
+            pageIndicator
+            HStack(spacing: 0) {
+                forwardButton
+                Spacer(minLength: 12)
+                shareButton
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 10)
@@ -3986,6 +4325,45 @@ private struct IrisImageViewer: View {
             )
             .allowsHitTesting(false)
         }
+    }
+
+    @ViewBuilder
+    private func compactPageIndicator(bottomInset: CGFloat) -> some View {
+        if item.attachments.count > 1 {
+            pageIndicator
+                .padding(.bottom, bottomInset + 14)
+        }
+    }
+
+    @ViewBuilder
+    private var pageIndicator: some View {
+        if item.attachments.count > 1 {
+            HStack(spacing: 6) {
+                ForEach(0..<item.attachments.count, id: \.self) { idx in
+                    Circle()
+                        .fill(Color.white.opacity(idx == currentIndex ? 0.95 : 0.38))
+                        .frame(width: 6, height: 6)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(Capsule(style: .continuous).fill(Color.black.opacity(0.42)))
+            .accessibilityHidden(true)
+        }
+    }
+
+    @ViewBuilder
+    private var forwardButton: some View {
+        if let attachment = currentAttachment {
+            IrisImageViewerForwardButton(
+                text: item.forwardableTextFor(attachment),
+                onForwardText: onForwardText
+            )
+        }
+    }
+
+    private var shareButton: some View {
+        IrisImageViewerShareButton(sharedFileURL: sharedFileURL)
     }
 }
 
@@ -4026,20 +4404,59 @@ private struct IrisImageViewerShareButton: View {
 }
 
 private struct IrisImageViewerForwardButton: View {
-    let item: ImageViewerItem
+    let text: String
     let onForwardText: (String) -> Void
 
     var body: some View {
-        if let forwardText = item.forwardText,
-           !forwardText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Button {
-                onForwardText(forwardText)
+                onForwardText(text)
             } label: {
                 IrisImageViewerIconButtonLabel(systemName: "arrowshape.turn.up.right")
             }
             .buttonStyle(.irisPlain)
             .accessibilityLabel("Forward")
             .accessibilityIdentifier("imageViewerForwardButton")
+        }
+    }
+}
+
+private struct IrisImageViewerPage: View {
+    let data: Data?
+    let filename: String
+
+    @State private var decoded: PlatformImage?
+    @State private var decodedKey: Int = 0
+
+    var body: some View {
+        Group {
+            if let data {
+                if isAnimatedImage(data: data, filename: filename) {
+                    IrisAnimatedImageDataView(data: data)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(false)
+                } else if let image = decoded {
+                    Image(platformImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView()
+                        .tint(.white)
+                        .task(id: data.count) {
+                            let bytes = data
+                            let image = await Task.detached(priority: .userInitiated) {
+                                PlatformImage(data: bytes)
+                            }.value
+                            await MainActor.run {
+                                decoded = image
+                            }
+                        }
+                }
+            } else {
+                ProgressView()
+                    .tint(.white)
+            }
         }
     }
 }
@@ -4056,6 +4473,12 @@ private struct IrisImageViewerIconButtonLabel: View {
             .background(Circle().fill(Color.black.opacity(0.48)))
             .contentShape(Circle())
     }
+}
+
+private func uploadFraction(_ progress: UploadProgress?) -> Double? {
+    guard let progress, progress.totalBytes > 0 else { return nil }
+    let fraction = Double(progress.bytesUploaded) / Double(progress.totalBytes)
+    return min(max(fraction, 0), 1)
 }
 
 private func safeImageShareFilename(data: Data, filename: String) -> String {

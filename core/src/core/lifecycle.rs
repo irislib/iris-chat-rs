@@ -141,6 +141,7 @@ impl AppCore {
                 InternalEvent::RelayPublishDrainFinished { .. } => "RelayPublishDrainFinished",
                 InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
+                InternalEvent::AttachmentUploadProgress { .. } => "AttachmentUploadProgress",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
                     "ProfilePictureUploadFinished"
                 }
@@ -402,6 +403,16 @@ impl AppCore {
             AppAction::SetAcceptUnknownDirectMessages { enabled } => {
                 self.set_accept_unknown_direct_messages(enabled)
             }
+            AppAction::SetUserBlocked {
+                owner_pubkey_hex,
+                blocked,
+            } => self.set_user_blocked(&owner_pubkey_hex, blocked),
+            AppAction::SetMessageRequestAccepted { chat_id } => {
+                self.accept_message_request(&chat_id)
+            }
+            AppAction::SetNearbyMailbagEnabled { enabled } => {
+                self.set_nearby_mailbag_enabled(enabled)
+            }
             AppAction::AddNostrRelay { relay_url } => self.add_nostr_relay(&relay_url),
             AppAction::UpdateNostrRelay {
                 old_relay_url,
@@ -633,6 +644,12 @@ impl AppCore {
             }
             InternalEvent::AttachmentUploadFinished { chat_id, result } => {
                 self.handle_attachment_upload_finished(chat_id, result);
+            }
+            InternalEvent::AttachmentUploadProgress {
+                bytes_uploaded,
+                total_bytes,
+            } => {
+                self.handle_attachment_upload_progress(bytes_uploaded, total_bytes);
             }
             InternalEvent::ProfilePictureUploadFinished { result } => {
                 self.handle_profile_picture_upload_finished(result);

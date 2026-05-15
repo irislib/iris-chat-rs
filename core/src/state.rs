@@ -39,6 +39,13 @@ pub struct BusyState {
     pub accepting_invite: bool,
     pub syncing_network: bool,
     pub uploading_attachment: bool,
+    pub upload_progress: Option<UploadProgress>,
+}
+
+#[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]
+pub struct UploadProgress {
+    pub bytes_uploaded: u64,
+    pub total_bytes: u64,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -51,6 +58,11 @@ pub struct PreferencesSnapshot {
     pub nearby_enabled: bool,
     pub nearby_bluetooth_enabled: bool,
     pub nearby_lan_enabled: bool,
+    /// Whether the on-device nearby mailbag actively reads and writes
+    /// store-and-forward records. When off, the local bag is left
+    /// alone (so contents survive a toggle off → on cycle) but no new
+    /// events are stored and the broadcast/replay path skips it.
+    pub nearby_mailbag_enabled: bool,
     pub nostr_relay_urls: Vec<String>,
     pub image_proxy_enabled: bool,
     pub image_proxy_url: String,
@@ -58,6 +70,16 @@ pub struct PreferencesSnapshot {
     pub image_proxy_salt_hex: String,
     pub muted_chat_ids: Vec<String>,
     pub pinned_chat_ids: Vec<String>,
+    /// Owner pubkeys (hex) the local user has blocked. Blocking drops
+    /// the peer from the nostr relay subscription, the mobile push
+    /// subscription, and hides their thread from the chat list; any
+    /// further messages from them are also discarded at ingest.
+    pub blocked_owner_pubkeys: Vec<String>,
+    /// Owner pubkeys (hex) for which the user has accepted a message
+    /// request (Signal-style "whitelist"). A direct chat is treated as
+    /// a `is_request` thread until the peer is in this set; sending an
+    /// outgoing message implicitly adds them.
+    pub accepted_owner_pubkeys: Vec<String>,
     pub debug_logging_enabled: bool,
     pub accept_unknown_direct_messages: bool,
     /// User-configurable notification server URL. Empty string means
@@ -79,6 +101,7 @@ impl Default for PreferencesSnapshot {
             nearby_enabled: true,
             nearby_bluetooth_enabled: false,
             nearby_lan_enabled: false,
+            nearby_mailbag_enabled: true,
             nostr_relay_urls: crate::core::configured_relays(),
             image_proxy_enabled: true,
             image_proxy_url: crate::image_proxy::DEFAULT_IMAGE_PROXY_URL.to_string(),
@@ -86,6 +109,8 @@ impl Default for PreferencesSnapshot {
             image_proxy_salt_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
             muted_chat_ids: Vec::new(),
             pinned_chat_ids: Vec::new(),
+            blocked_owner_pubkeys: Vec::new(),
+            accepted_owner_pubkeys: Vec::new(),
             debug_logging_enabled: false,
             accept_unknown_direct_messages: true,
             mobile_push_server_url: String::new(),

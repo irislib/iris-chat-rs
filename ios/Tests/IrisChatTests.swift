@@ -109,6 +109,7 @@ private final class MockRustApp: RustAppClient {
             nearbyEnabled: true,
             nearbyBluetoothEnabled: false,
             nearbyLanEnabled: false,
+            nearbyMailbagEnabled: true,
             nostrRelayUrls: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://relay.snort.social", "wss://temp.iris.to"],
             imageProxyEnabled: true,
             imageProxyUrl: "https://imgproxy.iris.to",
@@ -116,6 +117,8 @@ private final class MockRustApp: RustAppClient {
             imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
             mutedChatIds: [],
             pinnedChatIds: [],
+            blockedOwnerPubkeys: [],
+            acceptedOwnerPubkeys: [],
             debugLoggingEnabled: false,
             acceptUnknownDirectMessages: true,
             mobilePushServerUrl: ""
@@ -321,6 +324,7 @@ private func makeAppState(
         nearbyEnabled: true,
         nearbyBluetoothEnabled: false,
         nearbyLanEnabled: false,
+        nearbyMailbagEnabled: true,
         nostrRelayUrls: ["wss://relay.damus.io", "wss://nos.lol", "wss://relay.primal.net", "wss://relay.snort.social", "wss://temp.iris.to"],
         imageProxyEnabled: true,
         imageProxyUrl: "https://imgproxy.iris.to",
@@ -328,6 +332,8 @@ private func makeAppState(
         imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
         mutedChatIds: [],
         pinnedChatIds: [],
+        blockedOwnerPubkeys: [],
+        acceptedOwnerPubkeys: [],
         debugLoggingEnabled: false,
         acceptUnknownDirectMessages: true,
         mobilePushServerUrl: ""
@@ -706,10 +712,11 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
-    func testBlockedUserPreventsOutgoingDirectMessagesAndPersists() {
+    func testSetUserBlockedDispatchesActionToCore() {
         let dataDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: dataDir) }
+        let ownerHex = "aa" + String(repeating: "11", count: 31)
         let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
         let manager = AppManager(
             rust: rust,
@@ -717,22 +724,17 @@ final class IrisChatTests: XCTestCase {
             dataDir: dataDir
         )
 
-        manager.setUserBlocked("owner", blocked: true)
-        manager.dispatch(.sendMessage(chatId: "owner", text: "hello"))
+        // Block list lives in the Rust core (Signal-style): the iOS
+        // manager has nothing of its own to persist — it just
+        // dispatches and trusts the core to surface the new state.
+        // Block-list-driven outgoing-message refusal lives in the
+        // Rust core too (`send_message` → "User is blocked."), so
+        // there's no shell-side fast path left to assert here.
+        manager.setUserBlocked(ownerHex, blocked: true)
+        XCTAssertTrue(rust.dispatchedActions.contains(.setUserBlocked(ownerPubkeyHex: ownerHex, blocked: true)))
 
-        XCTAssertTrue(manager.isUserBlocked("owner"))
-        XCTAssertFalse(rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "hello")))
-
-        let restored = AppManager(
-            rust: MockRustApp(state: makeLargeFixtureState(rev: 2, account: makeAccount())),
-            secretStore: InMemorySecretStore(),
-            dataDir: dataDir
-        )
-        XCTAssertTrue(restored.isUserBlocked("owner"))
-
-        manager.setUserBlocked("owner", blocked: false)
-        manager.dispatch(.sendMessage(chatId: "owner", text: "hello"))
-        XCTAssertTrue(rust.dispatchedActions.contains(.sendMessage(chatId: "owner", text: "hello")))
+        manager.setUserBlocked(ownerHex, blocked: false)
+        XCTAssertTrue(rust.dispatchedActions.contains(.setUserBlocked(ownerPubkeyHex: ownerHex, blocked: false)))
     }
 
     func testLaunchRecoveryDefaultsAreClearedWithoutAffectingAuthStartup() {

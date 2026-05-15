@@ -337,6 +337,7 @@ fun NdrApp(
                                         onNearbyBluetoothChange = onNearbyVisibilityChange,
                                         onNearbyLanChange = onNearbyLanVisibilityChange,
                                         onNearbyEnabledChange = onNearbyEnabledChange,
+                                        nearbyService = container.nearbyIrisService,
                                         onLogout = { appManager.logout() },
                                         onDismiss = { appManager.navigateBack() },
                                     )
