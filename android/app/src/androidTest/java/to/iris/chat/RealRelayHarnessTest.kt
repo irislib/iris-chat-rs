@@ -478,6 +478,7 @@ class RealRelayHarnessTest {
                 entry.devicePubkeyHex.equals(normalizedDeviceHex, ignoreCase = true)
             }
 
+        waitForRelayDrainIfRequested()
         reportStatus(
             "device_pubkey_hex" to normalizedDeviceHex,
             "device_removed" to (removedEntry == null).toString(),
@@ -507,8 +508,11 @@ class RealRelayHarnessTest {
     @Test
     fun wait_for_revoked_state() {
         requireHarnessInvocation("revoked-state wait is driven by the relay matrix")
+        val wakeRelay = relayWakeCallback()
+        wakeRelay()
         val account =
             waitForState("revoked device state", timeoutMs = 180_000) {
+                wakeRelay()
                 appManager()
                     .state
                     .value

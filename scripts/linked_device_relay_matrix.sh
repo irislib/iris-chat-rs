@@ -388,7 +388,7 @@ run_matrix_step "C wait for m3 from B" "${SERIAL_C}" "to.iris.chat.RealRelayHarn
 run_matrix_step "A wait for B self-sync m3" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m3" -e direction outgoing >/dev/null
 
 echo "Revoking B from the roster"
-run_matrix_step "revoke B from roster" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#remove_authorized_device_from_args" -e device_input "${DEVICE_B_HEX}" >/dev/null
+run_matrix_step "revoke B from roster" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#remove_authorized_device_from_args" -e device_input "${DEVICE_B_HEX}" "${RELAY_DRAIN_ARGS[@]}" >/dev/null
 run_matrix_step "B wait for revoked state" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_revoked_state" >/dev/null
 
 echo "Three-device relay matrix passed"
