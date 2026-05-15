@@ -66,6 +66,39 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn delete_profile_metadata(&mut self) {
+        let Some((owner_hex, owner_keys)) = self.logged_in.as_ref().and_then(|logged_in| {
+            logged_in
+                .owner_keys
+                .clone()
+                .map(|keys| (logged_in.owner_pubkey.to_hex(), keys))
+        }) else {
+            self.state.toast = Some("Secret key is required to delete profile.".to_string());
+            self.emit_state();
+            return;
+        };
+
+        self.owner_profiles.remove(&owner_hex);
+        self.persist_best_effort();
+
+        match EventBuilder::new(Kind::Metadata, "{}").sign_with_keys(&owner_keys) {
+            Ok(event) => {
+                if self.publish_runtime_event(event, "profile-delete", None) {
+                    self.state.toast = Some("Profile deleted".to_string());
+                } else {
+                    self.state.toast = Some("Profile could not be deleted.".to_string());
+                }
+            }
+            Err(error) => {
+                self.push_debug_log("profile.delete.error", error.to_string());
+                self.state.toast = Some("Profile could not be deleted.".to_string());
+            }
+        }
+
+        self.rebuild_state();
+        self.emit_state();
+    }
+
     pub(super) fn upload_profile_picture(&mut self, file_path: &str) {
         self.push_debug_log("profile.picture.upload.start", format!("path={file_path}"));
         let Some(logged_in) = self.logged_in.as_ref() else {

@@ -2243,6 +2243,16 @@ final class AppManager: ObservableObject {
         ))
     }
 
+    func deleteProfileAndLocalData() {
+        guard dispatchToRust(.deleteProfileMetadata) else {
+            return
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            self?.logout()
+        }
+    }
+
     func restoreSession(ownerNsec: String) {
         let trimmed = ownerNsec.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {

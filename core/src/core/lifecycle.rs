@@ -316,6 +316,7 @@ impl AppCore {
             AppAction::UpdateProfileMetadata { name, picture_url } => {
                 self.update_profile_metadata(&name, picture_url.as_deref())
             }
+            AppAction::DeleteProfileMetadata => self.delete_profile_metadata(),
             AppAction::RestoreSession { owner_nsec } => self.restore_primary_session(&owner_nsec),
             AppAction::RestoreAccountBundle {
                 owner_nsec,

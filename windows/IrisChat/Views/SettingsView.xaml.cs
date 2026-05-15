@@ -365,7 +365,7 @@ public partial class SettingsView : UserControl
         var result = MessageBox.Show(
             Window.GetWindow(this),
             "This removes your secret keys, messages, and cached files from this device.",
-            "Delete app data?",
+            "Delete all local data?",
             MessageBoxButton.OKCancel,
             MessageBoxImage.Warning
         );

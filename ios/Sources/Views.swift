@@ -13,6 +13,10 @@ import PhotosUI
 
 private let irisSourceURL = URL(string: "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-chat-rs")!
 private let irisSourceLabel = "Iris Chat source code"
+private let irisPrivacyURL = URL(string: "https://chat.iris.to/privacy")!
+private let irisTermsURL = URL(string: "https://chat.iris.to/terms")!
+private let irisChildSafetyURL = URL(string: "https://chat.iris.to/csae")!
+private let irisSupportEmail = "irismessenger@pm.me"
 private let disappearingMessageOptions: [(String, UInt64?)] = [
     ("Off", nil),
     ("5 minutes", 300),
@@ -53,6 +57,17 @@ private func hasHashtreePicture(_ url: String?) -> Bool {
         return false
     }
     return trimmed.hasPrefix("htree://") || trimmed.hasPrefix("nhash://")
+}
+
+private func irisMailtoURL(to email: String, subject: String, body: String) -> URL? {
+    var components = URLComponents()
+    components.scheme = "mailto"
+    components.path = email
+    components.queryItems = [
+        URLQueryItem(name: "subject", value: subject),
+        URLQueryItem(name: "body", value: body),
+    ]
+    return components.url
 }
 
 private func proxiedImageURL(
@@ -105,6 +120,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
     case security
     case updates
     case about
+    case legal
     case support
     case accountData
 
@@ -122,6 +138,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .security: return "Security"
         case .updates: return "Updates"
         case .about: return "About"
+        case .legal: return "Legal"
         case .support: return "Support"
         case .accountData: return "Account data"
         }
@@ -139,6 +156,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .security: return "lock.fill"
         case .updates: return "arrow.down.circle.fill"
         case .about: return "info.circle.fill"
+        case .legal: return "doc.text.fill"
         case .support: return "wrench.and.screwdriver.fill"
         case .accountData: return "trash.fill"
         }
@@ -156,6 +174,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .security: return "settingsSecurityRow"
         case .updates: return "settingsUpdatesRow"
         case .about: return "settingsAboutRow"
+        case .legal: return "settingsLegalRow"
         case .support: return "settingsSupportRow"
         case .accountData: return "settingsAccountDataRow"
         }
@@ -174,7 +193,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         #if os(macOS)
         pages.append(.updates)
         #endif
-        pages.append(contentsOf: [.about, .support, .accountData])
+        pages.append(contentsOf: [.about, .legal, .support, .accountData])
         return pages
     }
 }
@@ -2036,6 +2055,7 @@ private struct DirectChatInfoScreen: View {
     @State private var commonGroupsLoadedFor: String?
     @State private var showingBlockConfirmation = false
     @State private var showingUnblockConfirmation = false
+    @State private var showingReportConfirmation = false
 
     private var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
@@ -2165,6 +2185,24 @@ private struct DirectChatInfoScreen: View {
                         Divider().overlay(palette.border)
 
                         Button(role: .destructive) {
+                            showingReportConfirmation = true
+                        } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "flag.fill")
+                                    .frame(width: 24)
+                                Text("Report user")
+                                    .font(.system(.body, design: .rounded, weight: .semibold))
+                                Spacer(minLength: 0)
+                            }
+                            .foregroundStyle(.red)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.irisPlain)
+                        .accessibilityIdentifier("directChatReportButton")
+
+                        Divider().overlay(palette.border)
+
+                        Button(role: .destructive) {
                             manager.dispatch(.deleteChat(chatId: chatId))
                             onClose()
                         } label: {
@@ -2219,6 +2257,23 @@ private struct DirectChatInfoScreen: View {
         ) {
             Button("Unblock user") {
                 manager.setUserBlocked(chatId, blocked: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Report user?",
+            isPresented: $showingReportConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Report and block", role: .destructive) {
+                if let chat {
+                    reportUser(chat, block: true)
+                }
+            }
+            Button("Report only") {
+                if let chat {
+                    reportUser(chat, block: false)
+                }
             }
             Button("Cancel", role: .cancel) {}
         }
@@ -2303,6 +2358,30 @@ private struct DirectChatInfoScreen: View {
         guard commonGroupsLoadedFor != chatId else { return }
         commonGroupsLoadedFor = chatId
         commonGroups = manager.mutualGroups(ownerInput: chatId)
+    }
+
+    private func reportUser(_ chat: CurrentChatSnapshot, block: Bool) {
+        if block {
+            manager.setUserBlocked(chatId, blocked: true)
+        }
+
+        let userId = peerInputToNpub(input: chatId)
+        let body = """
+        Reported user: \(chat.displayName)
+        User ID: \(userId)
+        App: Iris Chat \(manager.buildSummaryText())
+
+        What happened:
+        """
+        guard let url = irisMailtoURL(
+            to: irisSupportEmail,
+            subject: "Iris Chat user report",
+            body: body
+        ) else {
+            manager.copyToClipboard("User ID: \(userId)")
+            return
+        }
+        PlatformExternalURL.open(url)
     }
 
     private func groupId(from chatId: String) -> String? {
@@ -2663,7 +2742,7 @@ struct AddDeviceScreen: View {
                 manager.startLinkedDevice(ownerInput: "")
             }
         }
-        .alert("Delete app data?", isPresented: $showingLogoutConfirmation) {
+        .alert("Delete all local data?", isPresented: $showingLogoutConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
                 manager.logout()
@@ -5862,7 +5941,7 @@ struct DeviceRevokedScreen: View {
             }
             .accessibilityIdentifier("deviceRevokedScreen")
         }
-        .alert("Delete app data?", isPresented: $showingLogoutConfirmation) {
+        .alert("Delete all local data?", isPresented: $showingLogoutConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
                 manager.logout()
@@ -5880,8 +5959,8 @@ struct SettingsScreen: View {
     @Binding var focusedSection: SettingsFocusSection?
     let modalClose: (() -> Void)?
     @State private var pendingSecretExport: SecretExportKind?
-    @State private var showingLogoutConfirmation = false
-    @State private var showingDeleteAllConfirmation = false
+    @State private var showingDeleteProfileConfirmation = false
+    @State private var showingDeleteLocalDataConfirmation = false
     @State private var showingProfileQr = false
     @State private var profileName = ""
     @State private var profilePictureViewerItem: IrisProfilePictureViewerItem?
@@ -5980,23 +6059,23 @@ struct SettingsScreen: View {
                 }
             )
         }
-        .alert("Delete app data?", isPresented: $showingLogoutConfirmation) {
+        .alert("Delete profile?", isPresented: $showingDeleteProfileConfirmation) {
             Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                manager.logout()
+            Button("Delete profile", role: .destructive) {
+                manager.deleteProfileAndLocalData()
             }
-            .accessibilityIdentifier("myProfileConfirmLogoutButton")
+            .accessibilityIdentifier("myProfileConfirmDeleteProfileButton")
         } message: {
-            Text("This removes your secret keys, messages, and cached files from this device.")
+            Text("This clears your public profile, then removes local data from this device.")
         }
-        .alert("Delete app data?", isPresented: $showingDeleteAllConfirmation) {
+        .alert("Delete all local data?", isPresented: $showingDeleteLocalDataConfirmation) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
                 manager.resetAppState()
             }
-            .accessibilityIdentifier("myProfileConfirmDeleteAllDataButton")
+            .accessibilityIdentifier("myProfileConfirmDeleteLocalDataButton")
         } message: {
-            Text("This removes your secret keys, messages, and cached files from this device.")
+            Text("This removes secret keys, messages, and cached files from this device. Your public profile is not changed.")
         }
     }
 
@@ -6183,6 +6262,18 @@ struct SettingsScreen: View {
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileReadReceiptsToggle")
 
+                Toggle(
+                    "New chats from anyone",
+                    isOn: Binding(
+                        get: { manager.state.preferences.acceptUnknownDirectMessages },
+                        set: { enabled in
+                            manager.dispatch(.setAcceptUnknownDirectMessages(enabled: enabled))
+                        }
+                    )
+                )
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileAcceptUnknownMessagesToggle")
+
                 if PlatformStartupAtLogin.isSupported {
                     Toggle(
                         "Open at login",
@@ -6302,6 +6393,55 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("myProfileSourceCodeButton")
             }
 
+        case .legal:
+            IrisSectionCard {
+                CardHeader(title: "Legal")
+
+                SettingsExternalLinkRow(
+                    title: "Privacy Policy",
+                    subtitle: "chat.iris.to/privacy",
+                    systemImage: "hand.raised.fill",
+                    destination: irisPrivacyURL,
+                    accessibilityIdentifier: "myProfilePrivacyPolicyButton"
+                )
+
+                Divider().overlay(palette.border)
+
+                SettingsExternalLinkRow(
+                    title: "Terms of Use",
+                    subtitle: "chat.iris.to/terms",
+                    systemImage: "doc.text.fill",
+                    destination: irisTermsURL,
+                    accessibilityIdentifier: "myProfileTermsButton"
+                )
+
+                Divider().overlay(palette.border)
+
+                SettingsExternalLinkRow(
+                    title: "Child Safety",
+                    subtitle: "chat.iris.to/csae",
+                    systemImage: "shield.lefthalf.filled",
+                    destination: irisChildSafetyURL,
+                    accessibilityIdentifier: "myProfileChildSafetyButton"
+                )
+
+                Divider().overlay(palette.border)
+
+                if let contactURL = irisMailtoURL(
+                    to: irisSupportEmail,
+                    subject: "Iris Chat support",
+                    body: ""
+                ) {
+                    SettingsExternalLinkRow(
+                        title: "Contact",
+                        subtitle: irisSupportEmail,
+                        systemImage: "envelope.fill",
+                        destination: contactURL,
+                        accessibilityIdentifier: "myProfileContactButton"
+                    )
+                }
+            }
+
         case .support:
             IrisSectionCard {
                 CardHeader(title: "Support")
@@ -6362,20 +6502,21 @@ struct SettingsScreen: View {
             IrisSectionCard {
                 CardHeader(
                     title: "Account data",
-                    subtitle: "Local profile, secret keys, messages, and cached files are removed from this device."
+                    subtitle: "Manage your profile and data on this device."
                 )
 
-                Button("Logout", role: .destructive) {
-                    showingLogoutConfirmation = true
+                Button("Delete profile", role: .destructive) {
+                    showingDeleteProfileConfirmation = true
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
-                .accessibilityIdentifier("myProfileLogoutButton")
+                .disabled(manager.state.account?.hasOwnerSigningAuthority != true)
+                .accessibilityIdentifier("myProfileDeleteProfileButton")
 
-                Button("Delete all data", role: .destructive) {
-                    showingDeleteAllConfirmation = true
+                Button("Delete all local data", role: .destructive) {
+                    showingDeleteLocalDataConfirmation = true
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
-                .accessibilityIdentifier("myProfileDeleteAllDataButton")
+                .accessibilityIdentifier("myProfileDeleteLocalDataButton")
             }
         }
     }
@@ -6848,6 +6989,43 @@ private struct SettingsMenuRow: View {
         }
         .buttonStyle(.irisPlain)
         .accessibilityIdentifier(page.accessibilityID)
+    }
+}
+
+private struct SettingsExternalLinkRow: View {
+    @Environment(\.irisPalette) private var palette
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let destination: URL
+    let accessibilityIdentifier: String
+
+    var body: some View {
+        Link(destination: destination) {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title)
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                    Text(subtitle)
+                        .font(.system(.footnote, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+            }
+            .padding(.vertical, 7)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 

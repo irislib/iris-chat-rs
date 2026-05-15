@@ -749,7 +749,7 @@ fun MyProfileSheet(
                                     },
                                 )
                                 IrisSecondaryButton(
-                                    text = "Delete all data",
+                                    text = "Delete all local data",
                                     onClick = { showDeleteAllConfirmation = true },
                                     modifier = Modifier.testTag("myProfileDeleteAllDataButton"),
                                     icon = {

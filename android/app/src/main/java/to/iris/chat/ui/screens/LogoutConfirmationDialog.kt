@@ -19,7 +19,7 @@ fun DeleteAppDataConfirmationDialog(
     val haptics = rememberIrisHapticFeedback()
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Delete app data?") },
+        title = { Text("Delete all local data?") },
         text = {
             Text("This removes your secret keys, messages, and cached files from this device.")
         },

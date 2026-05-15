@@ -118,7 +118,7 @@ pub(crate) fn chat_input_action(input: &str) -> iris_chat_core::AppAction {
 
 pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc<AppManager>) {
     let dialog = adw::Dialog::builder()
-        .title("Delete app data?")
+        .title("Delete all local data?")
         .content_width(340)
         .build();
 
@@ -128,7 +128,7 @@ pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc
     content.set_margin_start(20);
     content.set_margin_end(20);
 
-    let title = gtk::Label::new(Some("Delete app data?"));
+    let title = gtk::Label::new(Some("Delete all local data?"));
     title.add_css_class("title-2");
     title.set_halign(gtk::Align::Start);
     content.append(&title);

@@ -1,3 +1,9 @@
+# Iris Chat 2026.5.15.1
+
+- iOS Settings now includes Privacy, Terms, Child Safety, and Contact links for App Store review.
+- Direct chat profiles now include a report action alongside block.
+- Account data now separates Delete profile from Delete all local data. Delete profile clears the public profile first.
+
 # Iris Chat 2026.5.15
 
 - Settings now has Devices as its own page, and profile QR codes only open when you tap for them.

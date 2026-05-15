@@ -1635,6 +1635,60 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testDeleteProfileAndLocalDataBlanksProfileBeforeLocalReset() async {
+        let logoutExpectation = expectation(description: "logout dispatched")
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
+        rust.onDispatch = { action in
+            switch action {
+            case .deleteProfileMetadata:
+                rust.currentState = makeLargeFixtureState(rev: 2, account: makeAccount())
+            case .logout:
+                rust.currentState = makeAppState(rev: 3)
+                logoutExpectation.fulfill()
+            default:
+                break
+            }
+        }
+        let store = InMemorySecretStore(
+            bundle: StoredAccountBundle(
+                ownerNsec: "nsec1owner",
+                ownerPubkeyHex: "owner-hex",
+                deviceNsec: "nsec1device"
+            )
+        )
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let staleFile = tempDir.appendingPathComponent("stale.txt")
+        FileManager.default.createFile(atPath: staleFile.path, contents: Data("old".utf8))
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.deleteProfileAndLocalData()
+        await fulfillment(of: [logoutExpectation], timeout: 2)
+
+        let deletionFlowActions = rust.dispatchedActions.filter { action in
+            switch action {
+            case .deleteProfileMetadata, .logout:
+                return true
+            default:
+                return false
+            }
+        }
+        XCTAssertEqual(deletionFlowActions, [.deleteProfileMetadata, .logout])
+        XCTAssertNil(store.load())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: staleFile.path))
+        XCTAssertEqual(manager.state.router.defaultScreen, .welcome)
+        XCTAssertEqual(manager.state.rev, 3)
+    }
+
+    @MainActor
     func testNavigateBackDispatchesExplicitStack() async {
         let rust = MockRustApp(
             state: makeLargeFixtureState(

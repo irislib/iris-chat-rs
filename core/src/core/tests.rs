@@ -3687,6 +3687,62 @@ fn create_account_without_name_still_offers_profile_metadata_to_nearby() {
 }
 
 #[test]
+fn delete_profile_metadata_publishes_blank_profile_and_clears_local_record() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (update_tx, update_rx) = flume::unbounded();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let mut core = AppCore::new(
+        update_tx,
+        flume::unbounded().0,
+        temp_dir.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let device_id = device.public_key().to_hex();
+    let invite =
+        Invite::create_new(device.public_key(), Some(device_id.clone()), None).expect("invite");
+    let owner_hex = owner.public_key().to_hex();
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner.clone()),
+        device_keys: device.clone(),
+        client: Client::new(device.clone()),
+        relay_urls: Vec::new(),
+        local_invite: invite,
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    core.owner_profiles.insert(
+        owner_hex.clone(),
+        OwnerProfileRecord {
+            name: Some("Alice".to_string()),
+            display_name: Some("Alice".to_string()),
+            picture: Some("https://example.com/alice.jpg".to_string()),
+            updated_at_secs: 1,
+        },
+    );
+
+    core.handle_action(AppAction::DeleteProfileMetadata);
+
+    assert!(!core.owner_profiles.contains_key(&owner_hex));
+    let profile_event_json = update_rx
+        .try_iter()
+        .filter_map(|update| match update {
+            AppUpdate::NearbyPublishedEvent {
+                kind: 0,
+                event_json,
+                ..
+            } => Some(event_json),
+            _ => None,
+        })
+        .last()
+        .expect("profile deletion event");
+    let profile_event: Event =
+        serde_json::from_str(&profile_event_json).expect("profile deletion event");
+    assert_eq!(profile_event.pubkey.to_hex(), owner_hex);
+    assert_eq!(profile_event.content, "{}");
+}
+
+#[test]
 fn nearby_presence_event_binds_owner_to_ble_nonce_pair() {
     let owner = Keys::generate();
     let device = Keys::generate();

@@ -705,7 +705,7 @@ final class IrisChatUITests: XCTestCase {
         )
     }
 
-    func testLogoutReturnsToWelcomeChooser() {
+    func testDeleteLocalDataReturnsToWelcomeChooser() {
         let app = launchCleanApp()
 
         createAccount(app)
@@ -715,10 +715,10 @@ final class IrisChatUITests: XCTestCase {
 
         XCTAssertTrue(element(app, "settingsScreen").waitForExistence(timeout: 10))
         openSettingsPage(app, "settingsAccountDataRow")
-        XCTAssertTrue(element(app, "myProfileLogoutButton").waitForExistence(timeout: 10))
-        element(app, "myProfileLogoutButton").tap()
-        XCTAssertTrue(element(app, "myProfileConfirmLogoutButton").waitForExistence(timeout: 10))
-        app.buttons["myProfileConfirmLogoutButton"].firstMatch.tap()
+        XCTAssertTrue(element(app, "myProfileDeleteLocalDataButton").waitForExistence(timeout: 10))
+        element(app, "myProfileDeleteLocalDataButton").tap()
+        XCTAssertTrue(element(app, "myProfileConfirmDeleteLocalDataButton").waitForExistence(timeout: 10))
+        app.buttons["myProfileConfirmDeleteLocalDataButton"].firstMatch.tap()
 
         XCTAssertTrue(element(app, "welcomeChooserCard").waitForExistence(timeout: 20))
         XCTAssertTrue(element(app, "welcomeCreateAction").waitForExistence(timeout: 10))

@@ -218,4 +218,7 @@ pub enum AppAction {
         chat_id: String,
         text: String,
     },
+    /// Publish a blank owner metadata event so public profile name/photo are
+    /// cleared before the shell removes local keys and data.
+    DeleteProfileMetadata,
 }
