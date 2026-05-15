@@ -1,5 +1,39 @@
 use super::*;
-use crate::state::MutualGroupsSnapshot;
+use crate::state::{ChatKind, ChatMessageKind, MutualGroupsSnapshot};
+
+/// Direct chats where every loaded message is incoming behave like a
+/// Signal "message request": somebody messaged us, we haven't replied,
+/// so the UI gates the conversation behind Accept / Delete / Block and
+/// suppresses outgoing receipts. Sending an outgoing message — the
+/// natural acceptance signal — instantly flips this to `false`.
+pub(super) fn is_message_request_thread(thread: &ThreadRecord, kind: &ChatKind) -> bool {
+    if !matches!(kind, ChatKind::Direct) {
+        return false;
+    }
+    let has_outgoing = thread.messages.iter().any(|m| m.is_outgoing);
+    if has_outgoing {
+        return false;
+    }
+    let has_incoming_user_message = thread
+        .messages
+        .iter()
+        .any(|m| !m.is_outgoing && matches!(m.kind, ChatMessageKind::User));
+    has_incoming_user_message
+}
+
+impl AppCore {
+    /// Reads the thread record + chat kind for `chat_id` and answers
+    /// the same question as the `is_request` snapshot field. Used by
+    /// the receipt pipeline to suppress "delivered" emission for
+    /// requests that the user hasn't accepted yet.
+    pub(super) fn thread_is_message_request(&self, chat_id: &str) -> bool {
+        let Some(thread) = self.threads.get(chat_id) else {
+            return false;
+        };
+        let kind = chat_kind_for_id(chat_id);
+        is_message_request_thread(thread, &kind)
+    }
+}
 
 /// Compare two `AppState` snapshots ignoring `rev`. Returns true if the UI
 /// would render identically.
@@ -99,6 +133,7 @@ impl AppCore {
                 } else {
                     None
                 };
+                let is_request = is_message_request_thread(thread, &thread_kind);
                 ChatThreadSnapshot {
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
@@ -118,6 +153,7 @@ impl AppCore {
                     is_muted,
                     is_pinned,
                     draft: thread.draft.clone(),
+                    is_request,
                 }
             })
             .collect();
@@ -136,9 +172,11 @@ impl AppCore {
                 } else {
                     None
                 };
+                let current_chat_kind = chat_kind_for_id(&thread.chat_id);
+                let is_request = is_message_request_thread(thread, &current_chat_kind);
                 CurrentChatSnapshot {
                     chat_id: thread.chat_id.clone(),
-                    kind: chat_kind_for_id(&thread.chat_id),
+                    kind: current_chat_kind,
                     display_name: group_snapshot
                         .as_ref()
                         .map(|group| group.name.clone())
@@ -164,6 +202,7 @@ impl AppCore {
                     messages: thread.messages.clone(),
                     typing_indicators: self.typing_indicator_snapshots(&thread.chat_id),
                     draft: thread.draft.clone(),
+                    is_request,
                 }
             });
 
@@ -477,6 +516,8 @@ impl AppCore {
                     is_muted: self.is_chat_muted(&thread.chat_id),
                     is_pinned: self.is_chat_pinned(&thread.chat_id),
                     draft: thread.draft.clone(),
+                    // Group chats are never message-requests.
+                    is_request: false,
                 })
             })
             .collect::<Vec<_>>();

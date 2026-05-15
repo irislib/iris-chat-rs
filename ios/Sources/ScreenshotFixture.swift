@@ -276,7 +276,8 @@ extension ScreenshotFixture {
             isTyping: false,
             isMuted: thread.isMuted,
             isPinned: thread.isPinned,
-            draft: ""
+            draft: "",
+            isRequest: false
         )
     }
 
@@ -307,7 +308,8 @@ extension ScreenshotFixture {
             isMuted: thread.isMuted,
             messages: messages,
             typingIndicators: [],
-            draft: ""
+            draft: "",
+            isRequest: false
         )
     }
 

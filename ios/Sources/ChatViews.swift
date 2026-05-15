@@ -31,6 +31,90 @@ private struct IrisBlockedComposerBar: View {
     }
 }
 
+/// Message-request gate shown in place of the composer when the user
+/// hasn't replied to a stranger yet. Mirrors Signal's pattern — the
+/// recipient can read the message and decide whether to engage. While
+/// this bar is up, the Rust core suppresses outgoing delivered / read
+/// receipts so the sender gets no signal about whether the message
+/// was seen.
+private struct IrisMessageRequestBar: View {
+    @Environment(\.irisPalette) private var palette
+    let displayName: String
+    let onAccept: () -> Void
+    let onDelete: () -> Void
+    let onBlock: () -> Void
+    let onOpenMessagingSettings: () -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Text("\(displayName) hasn't been added to your chats yet. No read receipts are sent until you accept.")
+                .font(.system(.footnote, design: .rounded, weight: .medium))
+                .foregroundStyle(palette.muted)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 14)
+
+            HStack(spacing: 8) {
+                requestButton(
+                    "Block",
+                    accessibilityId: "messageRequestBlockButton",
+                    role: .destructive,
+                    action: onBlock
+                )
+                requestButton(
+                    "Delete",
+                    accessibilityId: "messageRequestDeleteButton",
+                    role: nil,
+                    action: onDelete
+                )
+                requestButton(
+                    "Accept",
+                    accessibilityId: "messageRequestAcceptButton",
+                    role: nil,
+                    emphasized: true,
+                    action: onAccept
+                )
+            }
+            .padding(.horizontal, 14)
+
+            Button(action: onOpenMessagingSettings) {
+                Text("Manage who can message you")
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .underline()
+                    .foregroundStyle(palette.muted)
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("messageRequestSettingsLink")
+        }
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .accessibilityIdentifier("messageRequestBar")
+    }
+
+    @ViewBuilder
+    private func requestButton(
+        _ label: String,
+        accessibilityId: String,
+        role: ButtonRole?,
+        emphasized: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(role: role, action: action) {
+            Text(label)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .frame(maxWidth: .infinity, minHeight: 36)
+                .foregroundStyle(emphasized ? Color.white : palette.textPrimary)
+                .background(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(emphasized ? palette.accent : palette.panelAlt)
+                )
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier(accessibilityId)
+    }
+}
+
 struct ChatScreen: View {
     @Environment(\.irisPalette) private var palette
     @Environment(\.irisNavigationHeaderTopInset) private var navigationHeaderTopInset
@@ -66,6 +150,12 @@ struct ChatScreen: View {
     @State private var reactorsSelection: MessageReactorsSelection?
     @State private var lastPersistedDraft: String?
     @State private var draftFlushWork: DispatchWorkItem?
+    /// Session-scoped acceptance for message-request chats. While
+    /// `chat.isRequest` is still true at the model layer (Rust),
+    /// tapping Accept just hides the gate locally so the user can
+    /// reply; sending a message naturally clears `isRequest` for good
+    /// because there's now an outgoing message in the thread.
+    @State private var acceptedRequestChatId: String?
     @FocusState private var isComposerFocused: Bool
 
     private var chat: CurrentChatSnapshot? {
@@ -429,8 +519,9 @@ struct ChatScreen: View {
                             // behind it for the blur to reveal.
                             .safeAreaInset(edge: .bottom, spacing: 0) {
                                 let composerBlocked = chat.kind == .direct && manager.isUserBlocked(chat.chatId)
+                                let isRequest = chat.isRequest && acceptedRequestChatId != chat.chatId
                                 VStack(spacing: 0) {
-                                    if let replyTarget, !composerBlocked {
+                                    if let replyTarget, !composerBlocked, !isRequest {
                                         IrisReplyComposerStrip(message: replyTarget) {
                                             self.replyTarget = nil
                                         }
@@ -439,6 +530,26 @@ struct ChatScreen: View {
                                         IrisBlockedComposerBar {
                                             manager.setUserBlocked(chat.chatId, blocked: false)
                                         }
+                                    } else if isRequest {
+                                        IrisMessageRequestBar(
+                                            displayName: chat.displayName,
+                                            onAccept: {
+                                                acceptedRequestChatId = chat.chatId
+                                                isComposerFocused = true
+                                            },
+                                            onDelete: {
+                                                manager.dispatch(.deleteChat(chatId: chat.chatId))
+                                                manager.navigateBack()
+                                            },
+                                            onBlock: {
+                                                manager.setUserBlocked(chat.chatId, blocked: true)
+                                                manager.dispatch(.deleteChat(chatId: chat.chatId))
+                                                manager.navigateBack()
+                                            },
+                                            onOpenMessagingSettings: {
+                                                manager.openMessagingSettings()
+                                            }
+                                        )
                                     } else {
                                         IrisComposerBar(
                                             draft: $draft,

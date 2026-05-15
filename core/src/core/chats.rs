@@ -1387,7 +1387,13 @@ impl AppCore {
                     Some(inner_event_id.clone()),
                     outer_event_id.clone(),
                 );
-                if !is_outgoing && self.preferences.send_read_receipts {
+                if !is_outgoing
+                    && self.preferences.send_read_receipts
+                    && !self.thread_is_message_request(&chat_id)
+                {
+                    // Suppress delivered receipts for unaccepted
+                    // requests so the sender can't tell whether the
+                    // user has seen the conversation arrive.
                     self.send_receipt(&chat_id, "delivered", vec![inner_event_id]);
                 }
             }

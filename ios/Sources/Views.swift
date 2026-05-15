@@ -110,7 +110,15 @@ private enum SecretExportKind: Identifiable {
 
 enum SettingsFocusSection: Hashable {
     case messageServers
+    case messaging
 }
+
+#if os(iOS)
+/// Posted with a `SettingsFocusSection` in `userInfo["focus"]` (or
+/// `nil`) when a deep child wants the settings sheet opened on a
+/// specific page. `IrisRoot` listens and flips its `@State`.
+let irisOpenSettingsNotification = Notification.Name("to.iris.chat.open-settings")
+#endif
 
 private enum SettingsPage: String, CaseIterable, Identifiable {
     case profile
@@ -268,6 +276,12 @@ struct RootView: View {
                 if accountId == nil {
                     showingSettingsSheet = false
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: irisOpenSettingsNotification)) { note in
+                if let focus = note.userInfo?["focus"] as? SettingsFocusSection {
+                    settingsFocus = focus
+                }
+                showingSettingsSheet = true
             }
 #endif
 #if os(iOS) || os(macOS)
@@ -6555,6 +6569,8 @@ struct SettingsScreen: View {
         switch focusedSection {
         case .messageServers:
             selectedPage = .messageServers
+        case .messaging:
+            selectedPage = .messaging
         }
         self.focusedSection = nil
     }

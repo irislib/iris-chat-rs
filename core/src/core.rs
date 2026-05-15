@@ -237,6 +237,7 @@ fn build_chat_snapshot_with_messages(
         draft: thread
             .map(|thread| thread.draft.clone())
             .unwrap_or_default(),
+        is_request: thread.map(|thread| thread.is_request).unwrap_or(false),
     })
 }
 

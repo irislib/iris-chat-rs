@@ -54,6 +54,7 @@ pub fn build_large_test_app_state(
         messages,
         typing_indicators: Vec::new(),
         draft: current_thread.draft.clone(),
+        is_request: current_thread.is_request,
     };
 
     AppState {
@@ -190,6 +191,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
         } else {
             String::new()
         },
+        is_request: false,
     }
 }
 

@@ -265,6 +265,13 @@ pub struct ChatThreadSnapshot {
     /// "Draft: …" in place of the last message preview when this is
     /// non-empty (Signal pattern).
     pub draft: String,
+    /// True when this is a direct chat where the user has not yet
+    /// replied to a stranger — i.e. incoming messages exist but no
+    /// outgoing ones do. Shells render an Accept / Delete / Block
+    /// gate (Signal-style "message request"), suppress read /
+    /// delivery / typing receipts, and treat the conversation as
+    /// untrusted until the user accepts.
+    pub is_request: bool,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -283,6 +290,9 @@ pub struct CurrentChatSnapshot {
     /// Same persisted draft text exposed on `ChatThreadSnapshot`. The
     /// chat screen pre-fills its composer with this on first appear.
     pub draft: String,
+    /// Mirrors `ChatThreadSnapshot::is_request`. Chat screens replace
+    /// the composer with an Accept / Delete / Block gate when set.
+    pub is_request: bool,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

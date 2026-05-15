@@ -1259,6 +1259,20 @@ final class AppManager: ObservableObject {
         )
     }
 
+#if os(iOS)
+    /// Deep-link from anywhere in the iOS UI to the Messaging page in
+    /// the settings modal. Implemented via NotificationCenter so the
+    /// originating view doesn't need to thread a binding to
+    /// `IrisRoot`'s `showingSettingsSheet`.
+    func openMessagingSettings() {
+        NotificationCenter.default.post(
+            name: irisOpenSettingsNotification,
+            object: nil,
+            userInfo: ["focus": SettingsFocusSection.messaging]
+        )
+    }
+#endif
+
     func dispatch(_ action: AppAction) {
         if shouldBlockOutgoingAction(action) {
             showToast("User is blocked")

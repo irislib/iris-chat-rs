@@ -181,7 +181,8 @@ private final class MockRustApp: RustAppClient {
             isMuted: thread?.isMuted ?? false,
             messages: [],
             typingIndicators: [],
-            draft: thread?.draft ?? ""
+            draft: thread?.draft ?? "",
+            isRequest: thread?.isRequest ?? false
         )
     }
 
@@ -431,7 +432,8 @@ private func makeChatThread(
         isTyping: false,
         isMuted: false,
         isPinned: false,
-        draft: ""
+        draft: "",
+        isRequest: false
     )
 }
 
@@ -452,7 +454,8 @@ private func makeCurrentChat(
         isMuted: false,
         messages: messages,
         typingIndicators: [],
-        draft: ""
+        draft: "",
+        isRequest: false
     )
 }
 

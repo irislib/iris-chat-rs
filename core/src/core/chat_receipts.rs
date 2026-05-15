@@ -54,7 +54,12 @@ impl AppCore {
             thread.unread_count = 0;
             changed = true;
         }
-        if self.preferences.send_read_receipts {
+        if self.preferences.send_read_receipts
+            && !self.thread_is_message_request(&normalized_chat_id)
+        {
+            // Don't emit seen receipts for an unaccepted message
+            // request — the sender shouldn't get "read" feedback
+            // until the recipient has opted in by tapping Accept.
             self.send_receipt(&normalized_chat_id, "seen", receipt_ids);
         }
 
