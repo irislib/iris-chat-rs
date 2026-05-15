@@ -37,6 +37,9 @@ targets:
         PROVISIONING_PROFILE_SPECIFIER: $(IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER)
         INFOPLIST_FILE: Info.plist
         INFOPLIST_KEY_CFBundleDisplayName: Iris Chat
+      configs:
+        Release:
+          CODE_SIGN_ENTITLEMENTS: Release.entitlements
     dependencies:
       - framework: Frameworks/IrisChatCore.xcframework
         embed: false

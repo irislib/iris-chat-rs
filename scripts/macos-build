@@ -260,14 +260,12 @@ run_macos_app() {
     require_var IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER
     local team_id
     team_id="$(extract_team_id "$identity")"
-    local entitlements="$MACOS_DIR/Release.entitlements"
     sign_args=(
       CODE_SIGN_STYLE=Manual
       CODE_SIGN_IDENTITY="$identity"
       "DEVELOPMENT_TEAM=${team_id}"
       "IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER=$IRIS_MACOS_PROVISIONING_PROFILE_SPECIFIER"
       "IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER=$IRIS_MACOS_SHARE_PROVISIONING_PROFILE_SPECIFIER"
-      "CODE_SIGN_ENTITLEMENTS=$entitlements"
       ENABLE_HARDENED_RUNTIME=YES
       CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO
       OTHER_CODE_SIGN_FLAGS="--timestamp"
@@ -287,7 +285,7 @@ run_macos_app() {
     -scheme IrisChatMac \
     -configuration Release \
     -derivedDataPath "$derived" \
-    -destination 'generic/platform=macOS,name=Any Mac' \
+    -destination 'platform=macOS,arch=arm64' \
     ARCHS=arm64 \
     VALID_ARCHS=arm64 \
     ONLY_ACTIVE_ARCH=NO \
