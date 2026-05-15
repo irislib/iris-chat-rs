@@ -63,6 +63,7 @@ class IrisNearbyService(
         val peers: List<Peer>,
         val bluetoothPeers: List<Peer>,
         val localNetworkPeers: List<Peer>,
+        val mailbagSummary: String?,
     )
 
     data class Peer(
@@ -172,6 +173,11 @@ class IrisNearbyService(
                 peers = sortedPeers,
                 bluetoothPeers = sortedPeers.filter { it.id in bluetoothPeerIds },
                 localNetworkPeers = sortedPeers.filter { it.id in localNetworkPeerIds },
+                mailbagSummary = run {
+                    val mine = ownOutbound.size
+                    val others = forwarded.size
+                    if (mine + others == 0) null else "$mine yours · $others from others"
+                },
             )
         }
 
@@ -1457,7 +1463,9 @@ class IrisNearbyService(
 
     private fun transportLabel(remotePeerId: String?): String {
         if (remotePeerId.isNullOrBlank()) return "nearby"
-        return if (recentBluetoothPeerIds().contains(remotePeerId)) "bluetooth" else "wifi"
+        val kind = if (recentBluetoothPeerIds().contains(remotePeerId)) "bluetooth" else "wifi"
+        val peerName = peers[remotePeerId]?.name?.trim().orEmpty()
+        return if (peerName.isNotEmpty()) "$kind · $peerName" else kind
     }
 
     private fun recentBluetoothPeerIds(nowMillis: Long = System.currentTimeMillis()): Set<String> =

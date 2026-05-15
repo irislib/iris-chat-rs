@@ -218,6 +218,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return peers.filter { peerIDs.contains($0.id) }
     }
 
+    /// Concise one-liner for the Nearby UI: "N yours · M from others"
+    /// when the mailbag has anything queued. Reads in-memory dictionaries
+    /// already maintained by the ingest path; no extra storage or polling.
+    var mailbagSummary: String? {
+        let mine = ownOutbound.count
+        let others = forwarded.count
+        guard mine + others > 0 else { return nil }
+        return "\(mine) yours · \(others) from others"
+    }
+
     var lanPeers: [IrisNearbyPeer] {
         let peerIDs = lanService?.peerIDs() ?? []
         return peers.filter { peerIDs.contains($0.id) }
@@ -1499,10 +1509,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private func transportLabel(for remotePeerID: String?) -> String {
         guard let remotePeerID, !remotePeerID.isEmpty else { return "nearby" }
-        if recentBluetoothPeerIDs.contains(remotePeerID) {
-            return "bluetooth"
+        let kind = recentBluetoothPeerIDs.contains(remotePeerID) ? "bluetooth" : "wifi"
+        if let peerName = peers.first(where: { $0.id == remotePeerID })?.name,
+           !peerName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return "\(kind) · \(peerName)"
         }
-        return "wifi"
+        return kind
     }
 
     private var recentBluetoothPeerIDs: Set<String> {

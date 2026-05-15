@@ -4577,6 +4577,13 @@ private struct NearbyIrisScreen: View {
                 } else if !peers.isEmpty {
                     peerStrip(peers)
                 }
+                if let mailbag = service.mailbagSummary {
+                    Text("Mailbag · \(mailbag)")
+                        .font(.system(.caption2, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.bottom, 10)
+                }
             }
         }
         .padding(.horizontal, 18)

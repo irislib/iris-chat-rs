@@ -97,6 +97,7 @@ fun NearbyIrisSheet(
                                 status = nearbyBluetoothTransportStatus(snapshot),
                                 checked = snapshot.visible,
                                 peers = snapshot.bluetoothPeers,
+                                mailbagSummary = snapshot.mailbagSummary,
                                 onCheckedChange = onVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.let {
@@ -114,6 +115,7 @@ fun NearbyIrisSheet(
                                 status = nearbyWifiTransportStatus(snapshot),
                                 checked = snapshot.localNetworkVisible,
                                 peers = snapshot.localNetworkPeers,
+                                mailbagSummary = snapshot.mailbagSummary,
                                 onCheckedChange = onLocalNetworkVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.let {
@@ -156,6 +158,7 @@ private fun NearbyTransportRow(
     status: String?,
     checked: Boolean,
     peers: List<IrisNearbyService.Peer>,
+    mailbagSummary: String?,
     onCheckedChange: (Boolean) -> Unit,
     onOpenPeer: (IrisNearbyService.Peer) -> Unit,
     modifier: Modifier = Modifier,
@@ -213,6 +216,14 @@ private fun NearbyTransportRow(
                         onOpenChat = { onOpenPeer(peer) },
                     )
                 }
+            }
+            if (mailbagSummary != null) {
+                Text(
+                    text = "Mailbag · $mailbagSummary",
+                    modifier = Modifier.padding(top = 8.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = IrisTheme.palette.muted,
+                )
             }
         }
     }
