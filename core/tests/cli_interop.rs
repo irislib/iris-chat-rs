@@ -723,6 +723,23 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
         ],
     );
 
+    let group = run_iris(
+        alice_linked.path(),
+        &[
+            "group",
+            "create",
+            "SenderKey CLI",
+            bob_user_id,
+            charlie_user_id,
+        ],
+    );
+    let group_id = group["data"]["current_chat"]["group_id"]
+        .as_str()
+        .expect("group id");
+    run_iris(bob.path(), &["sync", "--wait-ms", "5000"]);
+    run_iris(charlie.path(), &["sync", "--wait-ms", "5000"]);
+    run_iris(alice.path(), &["sync", "--wait-ms", "5000"]);
+
     let mut bob_child = start_iris(bob.path(), &["listen", "--interval-ms", "100"]);
     let bob_stdout = bob_child.stdout.take().expect("bob stdout");
     let bob_stderr = spawn_stderr_reader(bob_child.stderr.take().expect("bob stderr"));
@@ -741,19 +758,6 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
     let alice_receiver = spawn_json_reader(alice_stdout);
     wait_for_listener_ready(&mut alice_child, &alice_receiver, &alice_stderr);
 
-    let group = run_iris(
-        alice_linked.path(),
-        &[
-            "group",
-            "create",
-            "SenderKey CLI",
-            bob_user_id,
-            charlie_user_id,
-        ],
-    );
-    let group_id = group["data"]["current_chat"]["group_id"]
-        .as_str()
-        .expect("group id");
     let alice_body = "linked alice sender-key cli group";
     let sent = run_iris(
         alice_linked.path(),

@@ -1049,8 +1049,7 @@ impl ProtocolEngine {
         let now = unix_now();
         let typing = pairwise_codec::typing_event(
             self.owner_pubkey,
-            pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis())
-                .with_expiration(1),
+            pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis()).with_expiration(1),
         )?;
         let bootstrap =
             self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;

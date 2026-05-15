@@ -6149,11 +6149,8 @@ fn accepting_invite_alone_installs_session_and_publishes_response() {
     let bob_owner = Keys::generate();
     let bob_device = Keys::generate();
 
-    let mut alice = logged_in_test_core(
-        "accept-invite-bootstrap-alice",
-        &alice_owner,
-        &alice_device,
-    );
+    let mut alice =
+        logged_in_test_core("accept-invite-bootstrap-alice", &alice_owner, &alice_device);
     alice.pending_relay_publishes.clear();
     alice.handle_action(AppAction::CreatePublicInvite);
     let invite_url = alice
@@ -6196,10 +6193,9 @@ fn accepting_invite_alone_installs_session_and_publishes_response() {
         .expect("invite response event");
     alice.handle_relay_event(response);
     assert!(
-        alice
-            .protocol_engine
-            .as_ref()
-            .is_some_and(|engine| engine.active_session_count_for_owner(bob_owner.public_key()) > 0),
+        alice.protocol_engine.as_ref().is_some_and(|engine| engine
+            .active_session_count_for_owner(bob_owner.public_key())
+            > 0),
         "Alice must install Bob's session from the invite-response"
     );
 }
@@ -6936,7 +6932,10 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
         "typing",
         now_secs,
         vec![
-            vec!["ms".to_string(), format!("{}", now_secs.saturating_mul(1000))],
+            vec![
+                "ms".to_string(),
+                format!("{}", now_secs.saturating_mul(1000)),
+            ],
             vec!["expiration".to_string(), format!("{}", now_secs + 60)],
         ],
     );
