@@ -550,6 +550,7 @@ class RealRelayHarnessTest {
     @Test
     fun report_runtime_debug_snapshot() {
         ensureLoggedIn()
+        waitForRelayDrainIfRequested()
         val state = appManager().state.value
         val debug = readJsonObject(DEBUG_SNAPSHOT_FILENAME)
         val plan = debug?.optJSONObject("current_protocol_plan")
@@ -739,9 +740,14 @@ class RealRelayHarnessTest {
     fun wait_for_group_chat_from_args() {
         ensureLoggedIn()
         val chatId = requiredArg("chat_id")
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
+        val wakeRelay = relayWakeCallback(chatId)
 
         val existing =
-            waitForState("group thread in chat list", timeoutMs = 180_000) {
+            waitForState("group thread in chat list", timeoutMs = timeoutMs) {
+                wakeRelay()
                 appManager()
                     .state
                     .value
@@ -773,24 +779,28 @@ class RealRelayHarnessTest {
         val chatId = optionalArg("chat_id")
         val groupId = optionalArg("group_id")
         val expectedMemberCount = requiredArg("member_count").toULong()
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
         val resolvedChatId =
             when {
                 !chatId.isNullOrBlank() -> chatId
                 !groupId.isNullOrBlank() -> "group:$groupId"
                 else -> throw AssertionError("Missing instrumentation argument: chat_id or group_id")
             }
+        val wakeRelay = relayWakeCallback(resolvedChatId)
 
-        ensureChatOpenById(resolvedChatId)
         val current =
-            waitForState("group member count $expectedMemberCount", timeoutMs = 180_000) {
-                appManager()
-                    .state
-                    .value
-                    .currentChat
-                    ?.takeIf { chat ->
-                        chat.chatId == resolvedChatId &&
-                            chat.memberCount == expectedMemberCount
-                    }
+            waitForState("group member count $expectedMemberCount", timeoutMs = timeoutMs) {
+                wakeRelay()
+                val state = appManager().state.value
+                state.currentChat?.takeIf { chat ->
+                    chat.chatId == resolvedChatId &&
+                        chat.memberCount == expectedMemberCount
+                } ?: state.chatList
+                    .firstOrNull { thread -> thread.chatId == resolvedChatId }
+                    ?.also { thread -> appManager().openChat(thread.chatId) }
+                    ?.let { null }
             }
 
         reportStatus(
@@ -805,8 +815,13 @@ class RealRelayHarnessTest {
         ensureLoggedIn()
         val chatId = requiredArg("chat_id")
         val groupName = requiredArg("group_name")
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
+        val wakeRelay = relayWakeCallback(chatId)
         val thread =
-            waitForState("group name $groupName", timeoutMs = 180_000) {
+            waitForState("group name $groupName", timeoutMs = timeoutMs) {
+                wakeRelay()
                 appManager()
                     .state
                     .value
@@ -1197,20 +1212,11 @@ class RealRelayHarnessTest {
                 else -> null
             }
         val resolvedChatId = expectedChatId ?: seededChat?.chatId
-        var lastRelayWakeAt = 0L
-        fun wakeRelayAndChatIfNeeded() {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastRelayWakeAt < HARNESS_RELAY_WAKE_INTERVAL_MS) {
-                return
-            }
-            lastRelayWakeAt = now
-            appManager().appForegrounded()
-            resolvedChatId?.let(appManager()::openChat)
-        }
+        val wakeRelay = relayWakeCallback(resolvedChatId)
 
         val matchedChatId =
             waitForState("${direction.ifBlank { "incoming" }} message", timeoutMs = timeoutMs) {
-                wakeRelayAndChatIfNeeded()
+                wakeRelay()
                 fun matchesResolvedChat(chatId: String): Boolean =
                     resolvedChatId?.let { expected -> chatId.equals(expected, ignoreCase = true) }
                         ?: chatMatchesExpectedChat(chatId, peerInput, expectedChatId)
@@ -1908,19 +1914,11 @@ class RealRelayHarnessTest {
         val timeoutMs =
             ((optionalArg("relay_drain_timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
                 .coerceAtLeast(1_000L)
-        var lastRelayWakeAt = 0L
-        fun wakeRelayIfNeeded() {
-            val now = SystemClock.elapsedRealtime()
-            if (now - lastRelayWakeAt < HARNESS_RELAY_WAKE_INTERVAL_MS) {
-                return
-            }
-            lastRelayWakeAt = now
-            appManager().appForegrounded()
-        }
-        wakeRelayIfNeeded()
+        val wakeRelay = relayWakeCallback()
+        wakeRelay()
         val status =
             waitForState("relay publish drain", timeoutMs = timeoutMs) {
-                wakeRelayIfNeeded()
+                wakeRelay()
                 val pendingRuntimeOutboundCount =
                     if (runtimeOnly) {
                         pendingRelayPublishCount("runtime")
@@ -2743,6 +2741,18 @@ class RealRelayHarnessTest {
             SystemClock.sleep(100)
         }
         return null
+    }
+
+    private fun relayWakeCallback(openChatId: String? = null): () -> Unit {
+        var lastRelayWakeAt = 0L
+        return {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastRelayWakeAt >= HARNESS_RELAY_WAKE_INTERVAL_MS) {
+                lastRelayWakeAt = now
+                appManager().appForegrounded()
+                openChatId?.let(appManager()::openChat)
+            }
+        }
     }
 
     private companion object {

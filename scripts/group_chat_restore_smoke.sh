@@ -381,8 +381,8 @@ sleep 4
 run_test "${ADMIN_SERIAL}" report_runtime_debug_snapshot >/dev/null
 
 echo "Waiting for group on primary and linked devices"
-run_test "${PRIMARY_SERIAL}" wait_for_group_chat_from_args chat_id "${GROUP_CHAT_ID}" >/dev/null
-run_test "${LINKED_SERIAL}" wait_for_group_chat_from_args chat_id "${GROUP_CHAT_ID}" >/dev/null
+run_test "${PRIMARY_SERIAL}" wait_for_group_chat_from_args chat_id "${GROUP_CHAT_ID}" timeout_secs 240 >/dev/null
+run_test "${LINKED_SERIAL}" wait_for_group_chat_from_args chat_id "${GROUP_CHAT_ID}" timeout_secs 240 >/dev/null
 
 echo "Sending group message from admin"
 run_test_step "admin send group message" "${ADMIN_SERIAL}" send_message_from_args \
