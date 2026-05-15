@@ -1619,6 +1619,7 @@ private struct ChatMessageRow: View, Equatable {
                                         IrisDeliveryGlyph(delivery: message.delivery)
                                     }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .trailing)
                                 .foregroundStyle(
                                     (message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
                                         .opacity(0.72)

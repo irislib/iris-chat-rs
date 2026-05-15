@@ -39,23 +39,20 @@
             <ItemsControl x:Name="AttachmentsList"
                           Visibility="Collapsed"
                           Margin="0,4,0,0" />
-            <Grid x:Name="MetaRow" Margin="0,4,0,0">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" />
-                    <ColumnDefinition Width="Auto" />
-                </Grid.ColumnDefinitions>
+            <StackPanel x:Name="MetaRow"
+                        Orientation="Horizontal"
+                        HorizontalAlignment="Right"
+                        Margin="0,4,0,0">
                 <TextBlock x:Name="TimeText"
-                           Grid.Column="0"
                            Foreground="#FFFFFFFF"
                            Opacity="0.6"
                            FontSize="10" />
                 <TextBlock x:Name="DeliveryText"
-                           Grid.Column="1"
                            Foreground="#FFFFFFFF"
                            Opacity="0.6"
                            FontSize="10"
                            Margin="6,0,0,0" />
-            </Grid>
+            </StackPanel>
         </StackPanel>
     </Border>
 </UserControl>
