@@ -4,6 +4,45 @@ final class IrisChatUITests: XCTestCase {
     private let validPeerNpub = "npub18w35g6gn47qwmryulxzvfucmujvrqqljjpapyl8x0rqaljh6f2usml77dj"
     private let validOwnerNsec = "nsec1qyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqszqgpqyqstywftw"
 
+    /// Regression: constructing CBCentralManager / CBPeripheralManager
+    /// in the root view's onAppear was triggering the iOS Bluetooth
+    /// permission alert before the user ever opened the Nearby modal.
+    /// Apple's UGC review notes flag unsolicited permission prompts.
+    /// The simulator persists Bluetooth + Local-Network grants per
+    /// bundle id across launches and `simctl privacy` doesn't expose a
+    /// reset for either — `scripts/test_no_unsolicited_permissions.sh`
+    /// erases the sim before invoking this so the test starts from
+    /// "permission not determined".
+    func testNoUnsolicitedPermissionPromptsOnFirstLaunch() throws {
+#if os(macOS)
+        throw XCTSkip("Permission prompts are iOS-only")
+#else
+        let app = launchCleanApp()
+        // The Bluetooth / Local Network prompts (if they regress) fire
+        // from the root view's `.onAppear`, so they'd be on screen by
+        // the time the welcome chooser paints — no account-creation
+        // round-trip needed for this test.
+        XCTAssertTrue(
+            element(app, "welcomeChooserCard").waitForExistence(timeout: 20),
+            "welcome chooser never appeared"
+        )
+        Thread.sleep(forTimeInterval: 3)
+
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let alert = springboard.alerts.firstMatch
+        if alert.waitForExistence(timeout: 2) {
+            let label = alert.label
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.lifetime = .keepAlways
+            attachment.name = "unsolicited-permission-alert"
+            add(attachment)
+            XCTFail(
+                "System permission alert appeared on first launch before Nearby was opened. Alert label: \(label)"
+            )
+        }
+#endif
+    }
+
     func testCreateAccountAndOpenProfileSheet() {
         let app = launchCleanApp()
 

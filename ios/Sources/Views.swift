@@ -4522,10 +4522,35 @@ private struct NearbyIrisScreen: View {
 
             transportControls
 
+            mailbagSection
+
             Spacer(minLength: 0)
         }
         .background(palette.background)
         .irisModalSurface()
+    }
+
+    @ViewBuilder
+    private var mailbagSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Mailbag")
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(palette.textPrimary)
+            Text("Carries your messages and other people's anonymously over Bluetooth or Wi-Fi, so they keep moving even where there's no internet.")
+                .font(.system(.caption, design: .rounded))
+                .foregroundStyle(palette.muted)
+                .fixedSize(horizontal: false, vertical: true)
+            if let summary = service.mailbagSummary {
+                Text(summary)
+                    .font(.system(.caption2, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 14)
+        .background(palette.panel)
+        .accessibilityIdentifier("nearbyMailbagSection")
     }
 
     private var header: some View {
@@ -4610,13 +4635,6 @@ private struct NearbyIrisScreen: View {
                         .padding(.bottom, 12)
                 } else if !peers.isEmpty {
                     peerStrip(peers)
-                }
-                if let mailbag = service.mailbagSummary {
-                    Text("Mailbag · \(mailbag)")
-                        .font(.system(.caption2, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.muted)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.bottom, 10)
                 }
             }
         }
