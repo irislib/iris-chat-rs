@@ -40,6 +40,21 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private static let maxPendingNotificationBytes = 2 * 1024 * 1024
     private static let maxPeerDedupEntries = 512
     private static let nearbyPresenceKind: UInt32 = 22242
+    /// Event kinds that are ephemeral / per-recipient signals and shouldn't
+    /// be carried in the offline mailbag — relaying a "seen" or "typing"
+    /// hours later via a third-party peer would leak metadata about a
+    /// conversation the original sender didn't intend to broadcast. They
+    /// still go out over the live BT / Wi-Fi link to currently-connected
+    /// peers; just no store-and-forward.
+    /// 7 = reaction (kept; reactions are legitimate content)
+    /// 14 = chat message (kept)
+    /// 15 = receipt (delivered / seen) — suppressed
+    /// 25 = typing — suppressed
+    private static let mailbagSuppressedKinds: Set<UInt32> = [15, 25]
+
+    private static func shouldStoreInMailbag(kind: UInt32) -> Bool {
+        !mailbagSuppressedKinds.contains(kind)
+    }
     private static let nonIrisBackoff: TimeInterval = 60
     private static let helloInterval: TimeInterval = 5
     private static let inventoryResendInterval: TimeInterval = 60
@@ -148,12 +163,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
     var sidebarSubtitle: String {
         if !isNearbyActive {
             if shouldShowBluetoothPermissionPrompt {
-                return "Click to enable"
+                return "Tap to enable"
             }
             if !bluetoothPermissionGranted {
                 return "No Bluetooth access"
             }
-            return "Off"
+            return "Tap to enable"
         }
         if !peers.isEmpty {
             return Self.nearbySummary(for: peers)
@@ -510,8 +525,13 @@ final class IrisNearbyService: NSObject, ObservableObject {
             authorPubkeyHex: Self.eventAuthorHex(eventJson),
             storedAt: Date()
         )
-        ownOutbound[eventID] = record
-        forwarded.removeValue(forKey: eventID)
+        // Receipts + typing indicators go direct to currently-connected
+        // peers but never into the mailbag for store-and-forward. See
+        // `mailbagSuppressedKinds`.
+        if Self.shouldStoreInMailbag(kind: kind) {
+            ownOutbound[eventID] = record
+            forwarded.removeValue(forKey: eventID)
+        }
         if kind == 0, let profile = IrisNearbyProfileEvent.fromEventJson(eventJson) {
             ownProfileEventID = eventID
             knownProfiles[eventID] = profile
@@ -1407,6 +1427,16 @@ final class IrisNearbyService: NSObject, ObservableObject {
         let accepted = ingestEventJson?(eventJson, transport) ?? false
         guard accepted else { return }
         rememberProfile(from: eventJson, remotePeerID: remotePeerID)
+        // Ephemeral kinds are ingested locally (so the user's own
+        // delivered/seen state updates when a peer's receipt reaches
+        // them) but are never stored or re-broadcast — see
+        // `mailbagSuppressedKinds`.
+        guard Self.shouldStoreInMailbag(kind: record.kind) else {
+            if let remotePeerID {
+                markPeerSeenEvent(record.id, peerID: remotePeerID)
+            }
+            return
+        }
         forwarded[record.id] = record
         pruneMailbags()
         if let remotePeerID {

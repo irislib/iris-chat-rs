@@ -473,7 +473,12 @@ struct RootView: View {
                 IrisAvatar(
                     label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
                     size: 40,
-                    emphasize: true,
+                    // emphasize=false → background is the neutral panel
+                    // tint, not brand purple. With emphasize on, the
+                    // button-press opacity dip made the purple bleed
+                    // through the loaded picture, which read as a weird
+                    // purple flash on tap.
+                    emphasize: false,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
                     manager: manager,
