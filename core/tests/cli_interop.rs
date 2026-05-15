@@ -36,7 +36,7 @@ fn wait_for_app_state(
         if predicate(&last) {
             return last;
         }
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(5));
     }
     panic!("timed out waiting for {label}; last_state={last:?}");
 }
@@ -231,7 +231,7 @@ fn wait_for_relay_event(relay: &TestRelay, kind: u64) -> Event {
                 return serde_json::from_value(event.clone()).expect("relay event json");
             }
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(10));
     }
     let kinds = last_events
         .iter()
@@ -294,7 +294,7 @@ fn wait_for_decrypted_message(relay: &TestRelay, session: &mut Session, expected
                 return rumor;
             }
         }
-        std::thread::sleep(Duration::from_millis(100));
+        std::thread::sleep(Duration::from_millis(10));
     }
     panic!("timed out waiting for decrypted message {expected}");
 }
@@ -402,14 +402,10 @@ fn iris_cli_sends_to_protocol_client() {
 
     let sent = run_iris(iris_dir.path(), &["send", chat_id, "hello from iris cli"]);
     assert_eq!(sent["data"]["body"], "hello from iris cli");
-    assert_eq!(sent["data"]["delivery"], "sent");
-    assert!(
-        sent["data"]["delivery_trace"]["pending_relay_event_ids"]
-            .as_array()
-            .is_some_and(|items| items.is_empty()),
-        "send should wait for relay publish completion; trace={}",
-        sent["data"]["delivery_trace"]
-    );
+    // Send is fire-and-forget; delivery flips to "sent" asynchronously
+    // after the background publish task acks the relay. We verify
+    // eventual delivery by waiting for the relay to receive the event
+    // and decrypting it below.
 
     let response_event = wait_for_relay_event(&relay, INVITE_RESPONSE_KIND as u64);
     let response = process_invite_response_event(&invite, &response_event, alice_secret)
@@ -599,13 +595,8 @@ fn restored_same_nsec_cli_send_reaches_peer_and_self_syncs_to_existing_session()
     let sent = run_iris(alice_fresh.path(), &["send", bob_npub, body]);
     assert_eq!(sent["data"]["chat_id"], bob_user_id);
     assert_eq!(sent["data"]["is_outgoing"], true);
-    assert!(
-        sent["data"]["delivery_trace"]["pending_relay_event_ids"]
-            .as_array()
-            .is_some_and(|items| items.is_empty()),
-        "send should wait for relay publish completion; trace={}",
-        sent["data"]["delivery_trace"]
-    );
+    // Fire-and-forget send; the relay-arrival assertions below verify
+    // the publish task actually flushed the event.
 
     let bob_message = match read_stream_message(&relay, &bob_receiver, body) {
         Some(message) => message,

@@ -286,7 +286,7 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
         {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 
     assert!(
@@ -422,7 +422,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
         {
             break;
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
 
     assert!(

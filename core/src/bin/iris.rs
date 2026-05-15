@@ -53,8 +53,6 @@ Maintenance:
   update     Update iris
   help       Print help";
 
-const SEND_NETWORK_TIMEOUT: Duration = Duration::from_secs(20);
-
 #[derive(Parser)]
 #[command(name = "iris")]
 #[command(version = env!("IRIS_APP_VERSION"))]
@@ -1149,7 +1147,12 @@ fn send_message(
             text: message.to_string(),
         }
     };
-    cli.dispatch_and_wait_network(action, SEND_NETWORK_TIMEOUT)?;
+    // Fire-and-forget: wait only for the local state to settle (message
+    // encrypted, added to the chat, queued for publish). Relay delivery
+    // happens asynchronously in the background; we don't block on it.
+    // Callers that need to verify publish completion should `sync --wait-ms`
+    // or poll the message's delivery field.
+    cli.dispatch_and_wait(action, Duration::from_secs(2))?;
     let state = cli.app.state();
     fail_on_toast(&state)?;
     let current = state.current_chat.context("No chat is open.")?;

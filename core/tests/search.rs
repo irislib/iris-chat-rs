@@ -39,8 +39,20 @@ fn ffi_search_works_against_pre_search_database() {
         "test".to_string(),
     );
     let _inbox = ReconcilerInbox::install(&app);
-    std::thread::sleep(Duration::from_millis(200));
-    let result = app.search("abracadabra".to_string(), None, 20);
+    // The FTS5 index gets rebuilt on migration in the background;
+    // poll search() until it returns a hit (or panic on timeout)
+    // rather than guessing how long migration takes.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let result = loop {
+        let result = app.search("abracadabra".to_string(), None, 20);
+        if !result.messages.is_empty() {
+            break result;
+        }
+        if Instant::now() > deadline {
+            panic!("search index never returned a hit within 5s");
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    };
     assert_eq!(result.messages.len(), 1, "{:?}", result.messages);
     assert!(result.messages[0].body.contains("abracadabra"));
 }
@@ -230,7 +242,7 @@ impl ReconcilerInbox {
                     return;
                 }
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(Duration::from_millis(2));
         }
         panic!("predicate never observed within {timeout:?}");
     }
@@ -249,7 +261,7 @@ impl ReconcilerInbox {
                     }
                 }
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(Duration::from_millis(2));
         }
         panic!("current_chat never advanced past {prior:?} within {timeout:?}");
     }
@@ -356,6 +368,6 @@ fn ensure_account(temp: &TempDir, name: &str) -> String {
         if let Some(account) = snapshot.account {
             return account.npub;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(2));
     }
 }

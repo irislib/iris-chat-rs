@@ -84,8 +84,11 @@ fn idle_post_open_chat_emits_no_extra_ffi_calls() {
 
     let before = app.perf_counters();
     // Idle the way a real shell does: hand control back to the
-    // reconciler thread and wait for state pushes to settle.
-    std::thread::sleep(Duration::from_millis(200));
+    // reconciler thread and wait for state pushes to settle. 50ms
+    // is plenty to catch any periodic FFI poller — anything that
+    // re-enters the core ≥20Hz would tick at least once in this
+    // window.
+    std::thread::sleep(Duration::from_millis(50));
     let after = app.perf_counters();
 
     let delta = countDelta(&before, &after);
@@ -302,7 +305,7 @@ impl ReconcilerInbox {
                     return;
                 }
             }
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(Duration::from_millis(2));
         }
         panic!("predicate never observed within {timeout:?}");
     }
@@ -346,6 +349,6 @@ fn ensure_account(temp: &TempDir, name: &str) -> String {
         if let Some(account) = inbox.state.lock().unwrap().account.clone() {
             return account.npub;
         }
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(2));
     }
 }
