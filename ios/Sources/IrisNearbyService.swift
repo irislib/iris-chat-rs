@@ -196,6 +196,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     var bluetoothTransportWarning: String? {
+        if screenshotFixtureBluetoothPeerIDs != nil { return nil }
         guard isVisible, Self.isBlockingStatus(status) else {
             return nil
         }
@@ -203,6 +204,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     var lanTransportWarning: String? {
+        if screenshotFixtureLanPeerIDs != nil { return nil }
         guard isLanVisible, Self.isBlockingLanStatus(lanStatus) else {
             return nil
         }
@@ -214,6 +216,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     var bluetoothPeers: [IrisNearbyPeer] {
+        if let override = screenshotFixtureBluetoothPeerIDs {
+            return peers.filter { override.contains($0.id) }
+        }
         let peerIDs = recentBluetoothPeerIDs
         return peers.filter { peerIDs.contains($0.id) }
     }
@@ -229,8 +234,38 @@ final class IrisNearbyService: NSObject, ObservableObject {
     }
 
     var lanPeers: [IrisNearbyPeer] {
+        if let override = screenshotFixtureLanPeerIDs {
+            return peers.filter { override.contains($0.id) }
+        }
         let peerIDs = lanService?.peerIDs() ?? []
         return peers.filter { peerIDs.contains($0.id) }
+    }
+
+    private var screenshotFixtureBluetoothPeerIDs: Set<String>?
+    private var screenshotFixtureLanPeerIDs: Set<String>?
+
+    /// Test escape hatch used by `ScreenshotFixture` to paint a populated
+    /// Nearby modal without any real Bluetooth or LAN traffic.
+    func applyScreenshotFixturePeers(
+        peers: [IrisNearbyPeer],
+        bluetoothPeerIDs: [String],
+        lanPeerIDs: [String]
+    ) {
+        self.peers = peers
+        self.screenshotFixtureBluetoothPeerIDs = Set(bluetoothPeerIDs)
+        self.screenshotFixtureLanPeerIDs = Set(lanPeerIDs)
+        if !isVisible {
+            isVisible = true
+        }
+        if !isLanVisible {
+            isLanVisible = true
+        }
+        if !bluetoothPeerIDs.isEmpty {
+            status = "Visible"
+        }
+        if !lanPeerIDs.isEmpty {
+            lanStatus = "Visible"
+        }
     }
 
     private static func nearbySummary(for peers: [IrisNearbyPeer]) -> String {

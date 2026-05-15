@@ -1041,6 +1041,10 @@ final class AppManager: ObservableObject {
     private var seedTestMessagesDispatched = false
     private var uiTestSeedCount: Int?
     private var uiTestSeedDaySplitIndex: Int?
+#if os(iOS)
+    private let screenshotFixture: ScreenshotFixture?
+    private let screenshotFixtureReferenceDate: Date
+#endif
     private lazy var reconciler = UpdateBridge(owner: self)
     init(
         rust: RustAppClient? = nil,
@@ -1074,6 +1078,10 @@ final class AppManager: ObservableObject {
             self.uiTestSeedDaySplitIndex = daySplitIndex
             self.pendingTestSeed = PendingTestSeed(peer: peer, count: count, daySplitIndex: daySplitIndex)
         }
+#if os(iOS)
+        self.screenshotFixture = ScreenshotFixture.enabled(environment: environment) ? .default : nil
+        self.screenshotFixtureReferenceDate = Date()
+#endif
         try? fileManager.createDirectory(at: resolvedDataDir, withIntermediateDirectories: true)
         AppPaths.prepareDataDirForBackgroundNotificationReads(resolvedDataDir, fileManager: fileManager)
 
@@ -1201,6 +1209,15 @@ final class AppManager: ObservableObject {
         }
 #endif
 #endif
+#if os(iOS)
+        if let fixture = screenshotFixture {
+            nearbyIris.applyScreenshotFixturePeers(
+                peers: fixture.nearbyPeerSnapshots(),
+                bluetoothPeerIDs: fixture.nearbyBluetoothPeerIDs(),
+                lanPeerIDs: fixture.nearbyLanPeerIDs()
+            )
+        }
+#endif
     }
 
     var activeScreen: Screen {
@@ -1247,11 +1264,53 @@ final class AppManager: ObservableObject {
             showToast("User is blocked")
             return
         }
+#if os(iOS)
+        if interceptScreenshotFixtureAction(action) {
+            return
+        }
+#endif
         if handleOptimisticNavigation(action) {
             return
         }
         dispatchToRust(action)
     }
+
+#if os(iOS)
+    /// Routes UI taps that target a fixture chat (or write to one) past the
+    /// Rust core, which has no record of these synthetic chats and would
+    /// surface a dispatch-failed toast. The screen stack is still updated
+    /// locally so navigation works in screenshot mode.
+    private func interceptScreenshotFixtureAction(_ action: AppAction) -> Bool {
+        guard let fixture = screenshotFixture else { return false }
+        switch action {
+        case .openChat(let chatId):
+            let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard fixture.chatIsFixture(trimmed) else { return false }
+            pendingNavigationOverride = nil
+            applyLocalScreenStack([.chat(chatId: trimmed)])
+            state = fixture.applyTo(state: state, referenceDate: screenshotFixtureReferenceDate)
+            return true
+        case .sendMessage(let chatId, _),
+             .sendDisappearingMessage(let chatId, _, _),
+             .sendAttachment(let chatId, _, _, _),
+             .sendAttachments(let chatId, _, _),
+             .sendTyping(let chatId),
+             .stopTyping(let chatId),
+             .deleteChat(let chatId),
+             .setChatMuted(let chatId, _),
+             .setChatPinned(let chatId, _),
+             .setChatUnread(let chatId, _),
+             .setChatMessageTtl(let chatId, _),
+             .setChatDraft(let chatId, _),
+             .toggleReaction(let chatId, _, _),
+             .markMessagesSeen(let chatId, _),
+             .sendReceipt(let chatId, _, _):
+            return fixture.chatIsFixture(chatId)
+        default:
+            return false
+        }
+    }
+#endif
 
     func mutualGroups(ownerInput: String) -> [ChatThreadSnapshot] {
         rust.mutualGroups(ownerInput: ownerInput)
@@ -2644,6 +2703,7 @@ final class AppManager: ObservableObject {
             )
 #if os(iOS)
             reconciledState = stateByApplyingUiTestSeedDaySplit(reconciledState)
+            reconciledState = stateByApplyingScreenshotFixture(reconciledState)
 #endif
             lastRevApplied = nextState.rev
             postDesktopNotifications(from: oldState, to: reconciledState)
@@ -2704,6 +2764,25 @@ final class AppManager: ObservableObject {
     }
 
 #if os(iOS)
+    private func stateByApplyingScreenshotFixture(_ source: AppState) -> AppState {
+        guard let fixture = screenshotFixture else { return source }
+        // Rust has no record of fixture chats, so every Rust-driven state
+        // update clears the screen stack — that would yank the user back
+        // to the chat list mid-screenshot. Pin the current local stack
+        // when it terminates in a fixture chat.
+        var pinned = source
+        if let active = state.router.screenStack.last,
+           case let .chat(chatId) = active,
+           fixture.chatIsFixture(chatId),
+           source.router.screenStack.last != active {
+            pinned.router = Router(
+                defaultScreen: source.router.defaultScreen,
+                screenStack: state.router.screenStack
+            )
+        }
+        return fixture.applyTo(state: pinned, referenceDate: screenshotFixtureReferenceDate)
+    }
+
     private func stateByApplyingUiTestSeedDaySplit(_ source: AppState) -> AppState {
         guard isUiTestRun,
               let splitIndex = uiTestSeedDaySplitIndex,

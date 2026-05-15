@@ -1572,7 +1572,6 @@ private struct ChatMessageRow: View, Equatable {
                                         isDarkMode: colorScheme == .dark
                                     ))
                                     .lineLimit(1)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
 
                             if let reply = parsed.reply {
@@ -1606,6 +1605,13 @@ private struct ChatMessageRow: View, Equatable {
                                 )
                             }
                             if isLastInCluster {
+                                // Footer inherits the bubble VStack's
+                                // alignment (.trailing for outgoing,
+                                // .leading for incoming). No frame /
+                                // Spacer here on purpose — both pull the
+                                // bubble wider than its content. Footer
+                                // alignment for incoming bubbles is
+                                // Signal-ish-but-leading on iOS.
                                 HStack(spacing: 6) {
                                     if message.expiresAtSecs != nil {
                                         Image(systemName: "timer")
@@ -1619,7 +1625,6 @@ private struct ChatMessageRow: View, Equatable {
                                         IrisDeliveryGlyph(delivery: message.delivery)
                                     }
                                 }
-                                .frame(maxWidth: .infinity, alignment: .trailing)
                                 .foregroundStyle(
                                     (message.isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs)
                                         .opacity(0.72)
