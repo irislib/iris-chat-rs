@@ -581,6 +581,12 @@ private final class ChatPageLoadRunner: @unchecked Sendable {
     }
 }
 
+/// Trampoline so `AppPaths.appVersion(bundle:)` can call the FFI
+/// `appVersion()` free function without name-resolving back to itself.
+private func irisCoreAppVersion() -> String {
+    appVersion()
+}
+
 enum AppPaths {
     static let appGroupIdentifier = "group.to.iris.chat"
 
@@ -591,15 +597,25 @@ enum AppPaths {
         // optional 4th .build segment from CFBundleVersion (= the integer
         // IRIS_APP_VERSION_CODE = major*10000 + minor*1000 + patch*100 + build);
         // its last two digits are the build segment.
-        let short = bundle.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.0"
-        if let buildString = bundle.infoDictionary?["CFBundleVersion"] as? String,
-           let code = Int(buildString) {
-            let buildSegment = code % 100
-            if buildSegment > 0 {
-                return "\(short).\(buildSegment)"
-            }
+        let short = (bundle.infoDictionary?["CFBundleShortVersionString"] as? String).flatMap {
+            $0.isEmpty ? nil : $0
         }
-        return short
+        if let short {
+            if let buildString = bundle.infoDictionary?["CFBundleVersion"] as? String,
+               let code = Int(buildString) {
+                let buildSegment = code % 100
+                if buildSegment > 0 {
+                    return "\(short).\(buildSegment)"
+                }
+            }
+            return short
+        }
+        // Local dev builds skip release.env, so MARKETING_VERSION
+        // substitutes to empty and the bundle plist carries no version.
+        // Use the Rust crate's compiled-in version (build.rs falls back
+        // to CARGO_PKG_VERSION) so the About panel still shows a real
+        // number instead of a stale hardcoded fallback.
+        return irisCoreAppVersion()
     }
 
     static func testRunId(environment: [String: String]) -> String? {
