@@ -391,6 +391,7 @@ impl AppCore {
             AppAction::SetStartupAtLoginEnabled { enabled } => {
                 self.set_startup_at_login_enabled(enabled)
             }
+            AppAction::SetNearbyEnabled { enabled } => self.set_nearby_enabled(enabled),
             AppAction::SetNearbyBluetoothEnabled { enabled } => {
                 self.set_nearby_bluetooth_enabled(enabled)
             }

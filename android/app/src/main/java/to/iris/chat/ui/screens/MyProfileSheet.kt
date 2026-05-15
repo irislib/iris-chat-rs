@@ -160,6 +160,7 @@ fun MyProfileSheet(
     networkStatus: NetworkStatusSnapshot?,
     onNearbyBluetoothChange: (Boolean) -> Unit,
     onNearbyLanChange: (Boolean) -> Unit,
+    onNearbyEnabledChange: (Boolean) -> Unit,
     onLogout: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -339,6 +340,14 @@ fun MyProfileSheet(
                         SettingsPage.Messaging -> {
                             SettingsRowsSection {
                                 SettingsToggleRow(
+                                    title = "Accept chat requests",
+                                    checked = preferences.acceptUnknownDirectMessages,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetAcceptUnknownDirectMessages(enabled))
+                                    },
+                                    tag = "myProfileAcceptChatRequestsSwitch",
+                                )
+                                SettingsToggleRow(
                                     title = "Typing indicators",
                                     checked = sendTypingIndicators,
                                     onCheckedChange = { enabled ->
@@ -461,17 +470,25 @@ fun MyProfileSheet(
                         SettingsPage.Nearby -> {
                             SettingsRowsSection {
                                 SettingsToggleRow(
-                                    title = "Bluetooth",
-                                    checked = preferences.nearbyBluetoothEnabled,
-                                    onCheckedChange = onNearbyBluetoothChange,
-                                    tag = "myProfileNearbyBluetoothSwitch",
+                                    title = "Nearby",
+                                    checked = preferences.nearbyEnabled,
+                                    onCheckedChange = onNearbyEnabledChange,
+                                    tag = "myProfileNearbyEnabledSwitch",
                                 )
-                                SettingsToggleRow(
-                                    title = "Wi-Fi",
-                                    checked = preferences.nearbyLanEnabled,
-                                    onCheckedChange = onNearbyLanChange,
-                                    tag = "myProfileNearbyLanSwitch",
-                                )
+                                if (preferences.nearbyEnabled) {
+                                    SettingsToggleRow(
+                                        title = "Bluetooth",
+                                        checked = preferences.nearbyBluetoothEnabled,
+                                        onCheckedChange = onNearbyBluetoothChange,
+                                        tag = "myProfileNearbyBluetoothSwitch",
+                                    )
+                                    SettingsToggleRow(
+                                        title = "Wi-Fi",
+                                        checked = preferences.nearbyLanEnabled,
+                                        onCheckedChange = onNearbyLanChange,
+                                        tag = "myProfileNearbyLanSwitch",
+                                    )
+                                }
                             }
                         }
 

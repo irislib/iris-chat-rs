@@ -255,6 +255,8 @@
                         <TextBlock Text="Messaging"
                                    Style="{StaticResource SectionTitleText}"
                                    Margin="0,0,0,12" />
+                        <CheckBox x:Name="AcceptChatRequestsToggle" Content="Accept chat requests" Margin="0,0,0,8"
+                                  Checked="OnAcceptChatRequestsChanged" Unchecked="OnAcceptChatRequestsChanged" />
                         <CheckBox x:Name="TypingToggle" Content="Typing indicators" Margin="0,0,0,8"
                                   Checked="OnTypingChanged" Unchecked="OnTypingChanged" />
                         <CheckBox x:Name="ReceiptsToggle" Content="Received / seen" Margin="0,0,0,8"
@@ -309,6 +311,11 @@
                         <TextBlock Text="Nearby"
                                    Style="{StaticResource SectionTitleText}"
                                    Margin="0,0,0,12" />
+                        <CheckBox x:Name="NearbyEnabledToggle"
+                                  Content="Nearby"
+                                  Checked="OnNearbyEnabledChanged"
+                                  Unchecked="OnNearbyEnabledChanged"
+                                  Margin="0,0,0,8" />
                         <CheckBox x:Name="NearbyLanToggle"
                                   Content="Wi-Fi"
                                   Checked="OnNearbyLanChanged"

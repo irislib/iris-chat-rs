@@ -690,6 +690,7 @@ class AppManagerContractTest {
                     desktopNotificationsEnabled = true,
                     inviteAcceptanceNotificationsEnabled = true,
                     startupAtLoginEnabled = false,
+                    nearbyEnabled = true,
                     nearbyBluetoothEnabled = false,
                     nearbyLanEnabled = false,
                     nostrRelayUrls =
@@ -984,6 +985,7 @@ private object AppManagerContractDefaults {
                     desktopNotificationsEnabled = true,
                     inviteAcceptanceNotificationsEnabled = true,
                     startupAtLoginEnabled = false,
+                    nearbyEnabled = true,
                     nearbyBluetoothEnabled = false,
                     nearbyLanEnabled = false,
                     nostrRelayUrls =

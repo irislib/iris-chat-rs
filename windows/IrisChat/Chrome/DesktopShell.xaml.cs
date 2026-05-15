@@ -60,7 +60,10 @@ public partial class DesktopShell : UserControl
         var chats = _manager.ChatList ?? Array.Empty<ChatThreadSnapshot>();
         var activeChatId = _activeScreen is Screen.Chat c ? c.chatId : null;
         ChatRows.Items.Clear();
-        ChatRows.Items.Add(BuildNearbyRow());
+        if (_manager.Preferences.nearbyEnabled)
+        {
+            ChatRows.Items.Add(BuildNearbyRow());
+        }
         foreach (var chat in chats)
         {
             var row = new ChatRow { Chat = chat, IsActive = chat.chatId == activeChatId };

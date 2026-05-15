@@ -104,6 +104,9 @@ pub enum AppAction {
     SetStartupAtLoginEnabled {
         enabled: bool,
     },
+    SetNearbyEnabled {
+        enabled: bool,
+    },
     SetNearbyBluetoothEnabled {
         enabled: bool,
     },

@@ -232,6 +232,27 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn set_nearby_enabled(&mut self, enabled: bool) {
+        let mut changed = self.preferences.nearby_enabled != enabled;
+        self.preferences.nearby_enabled = enabled;
+        if !enabled {
+            if self.preferences.nearby_bluetooth_enabled {
+                self.preferences.nearby_bluetooth_enabled = false;
+                changed = true;
+            }
+            if self.preferences.nearby_lan_enabled {
+                self.preferences.nearby_lan_enabled = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            return;
+        }
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn set_nearby_bluetooth_enabled(&mut self, enabled: bool) {
         if self.preferences.nearby_bluetooth_enabled == enabled {
             return;

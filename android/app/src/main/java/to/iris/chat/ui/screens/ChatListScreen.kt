@@ -326,7 +326,7 @@ fun ChatListScreen(
                     }
                 }
             } else {
-                if (nearbyService != null) {
+                if (nearbyService != null && appState.preferences.nearbyEnabled) {
                     item(key = "nearby") {
                         NearbyChatListItem(
                             service = nearbyService,

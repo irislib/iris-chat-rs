@@ -36,7 +36,9 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         list.set_margin_end(12);
 
         let now = unix_now();
-        list.append(&nearby_row(manager));
+        if state.preferences.nearby_enabled {
+            list.append(&nearby_row(manager));
+        }
         for chat in &state.chat_list {
             list.append(&row_for(chat, &state.preferences, now, manager));
         }

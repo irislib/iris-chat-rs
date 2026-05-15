@@ -2894,7 +2894,9 @@ struct ChatListScreen: View {
                     }
                 } else {
 #if os(iOS) || os(macOS)
-                    NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
+                    if manager.state.preferences.nearbyEnabled {
+                        NearbyChatListRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
+                    }
 #endif
 
                     if manager.state.chatList.isEmpty {
@@ -7045,22 +7047,33 @@ private struct NearbySettingsRows: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             settingsToggle(
-                title: "Bluetooth",
+                title: "Nearby",
                 isOn: Binding(
-                    get: { manager.state.preferences.nearbyBluetoothEnabled },
-                    set: { manager.setNearbyBluetoothEnabled($0) }
+                    get: { manager.state.preferences.nearbyEnabled },
+                    set: { manager.setNearbyEnabled($0) }
                 ),
-                accessibilityID: "myProfileNearbyBluetoothSwitch"
+                accessibilityID: "myProfileNearbyEnabledSwitch"
             )
 
-            settingsToggle(
-                title: "Wi-Fi",
-                isOn: Binding(
-                    get: { manager.state.preferences.nearbyLanEnabled },
-                    set: { manager.setNearbyLanEnabled($0) }
-                ),
-                accessibilityID: "myProfileNearbyLanSwitch"
-            )
+            if manager.state.preferences.nearbyEnabled {
+                settingsToggle(
+                    title: "Bluetooth",
+                    isOn: Binding(
+                        get: { manager.state.preferences.nearbyBluetoothEnabled },
+                        set: { manager.setNearbyBluetoothEnabled($0) }
+                    ),
+                    accessibilityID: "myProfileNearbyBluetoothSwitch"
+                )
+
+                settingsToggle(
+                    title: "Wi-Fi",
+                    isOn: Binding(
+                        get: { manager.state.preferences.nearbyLanEnabled },
+                        set: { manager.setNearbyLanEnabled($0) }
+                    ),
+                    accessibilityID: "myProfileNearbyLanSwitch"
+                )
+            }
         }
         .onAppear {
             service.startBluetoothStateMonitoring()

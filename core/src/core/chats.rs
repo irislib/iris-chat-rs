@@ -1466,7 +1466,7 @@ impl AppCore {
         sender_owner
     }
 
-    fn should_accept_direct_runtime_message(
+    pub(super) fn should_accept_direct_runtime_message(
         &mut self,
         sender_owner: PublicKey,
         chat_id: Option<&str>,

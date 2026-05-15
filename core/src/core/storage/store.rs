@@ -698,6 +698,7 @@ fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
         .invite_acceptance_notifications_enabled
         .hash(&mut hasher);
     preferences.startup_at_login_enabled.hash(&mut hasher);
+    preferences.nearby_enabled.hash(&mut hasher);
     preferences.nearby_bluetooth_enabled.hash(&mut hasher);
     preferences.nearby_lan_enabled.hash(&mut hasher);
     preferences.nostr_relay_urls.hash(&mut hasher);
@@ -933,7 +934,8 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     nostr_relay_urls_json, image_proxy_enabled,
                     image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex,
                     mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
-                    debug_logging_enabled, accept_unknown_direct_messages
+                    debug_logging_enabled, accept_unknown_direct_messages,
+                    nearby_enabled
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -958,6 +960,7 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                         .unwrap_or_default(),
                     debug_logging_enabled: row.get::<_, i64>(15)? != 0,
                     accept_unknown_direct_messages: row.get::<_, i64>(16)? != 0,
+                    nearby_enabled: row.get::<_, i64>(17)? != 0,
                 })
             },
         )
@@ -974,8 +977,8 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             nearby_bluetooth_enabled, nearby_lan_enabled, nostr_relay_urls_json, image_proxy_enabled,
             image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex,
             mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
-            debug_logging_enabled, accept_unknown_direct_messages
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)
+            debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)
          ON CONFLICT(id) DO UPDATE SET
             send_typing_indicators = excluded.send_typing_indicators,
             send_read_receipts = excluded.send_read_receipts,
@@ -993,7 +996,8 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             muted_chat_ids_json = excluded.muted_chat_ids_json,
             pinned_chat_ids_json = excluded.pinned_chat_ids_json,
             debug_logging_enabled = excluded.debug_logging_enabled,
-            accept_unknown_direct_messages = excluded.accept_unknown_direct_messages",
+            accept_unknown_direct_messages = excluded.accept_unknown_direct_messages,
+            nearby_enabled = excluded.nearby_enabled",
         params![
             preferences.send_typing_indicators as i64,
             preferences.send_read_receipts as i64,
@@ -1012,6 +1016,7 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             serde_json::to_string(&preferences.pinned_chat_ids)?,
             preferences.debug_logging_enabled as i64,
             preferences.accept_unknown_direct_messages as i64,
+            preferences.nearby_enabled as i64,
         ],
     )?;
     Ok(())

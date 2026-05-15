@@ -6343,6 +6343,59 @@ fn runtime_message_from_known_sender_is_kept_when_unknowns_are_blocked() {
 }
 
 #[test]
+fn private_invite_response_from_unknown_sender_can_be_blocked() {
+    let alice_owner = Keys::generate();
+    let alice_device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+
+    let mut alice = logged_in_test_core(
+        "private-invite-block-unknown-alice",
+        &alice_owner,
+        &alice_device,
+    );
+    alice.pending_relay_publishes.clear();
+    alice.preferences.accept_unknown_direct_messages = false;
+    alice.handle_action(AppAction::CreatePublicInvite);
+    let invite_url = alice
+        .state
+        .public_invite
+        .as_ref()
+        .expect("alice invite")
+        .url
+        .clone();
+
+    let mut bob = logged_in_test_core(
+        "private-invite-block-unknown-bob",
+        &bob_owner,
+        &bob_device,
+    );
+    bob.pending_relay_publishes.clear();
+    bob.handle_action(AppAction::AcceptInvite {
+        invite_input: invite_url,
+    });
+    bob.handle_action(AppAction::SendMessage {
+        chat_id: alice_owner.public_key().to_hex(),
+        text: "hello from stranger".to_string(),
+    });
+    let response = pending_events_with_kind(&bob, INVITE_RESPONSE_KIND)
+        .into_iter()
+        .next()
+        .expect("invite response event");
+
+    alice.handle_relay_event(response);
+
+    assert!(
+        !alice.threads.contains_key(&bob_owner.public_key().to_hex()),
+        "blocked invite response must not create a thread for the stranger"
+    );
+    assert!(
+        !alice.private_chat_invites.is_empty(),
+        "blocked invite response must not consume the invite"
+    );
+}
+
+#[test]
 fn remote_runtime_rumor_pubkey_must_match_authenticated_sender() {
     let owner = Keys::generate();
     let device = Keys::generate();

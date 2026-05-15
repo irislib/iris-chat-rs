@@ -272,15 +272,29 @@ fn settings_menu_row(
 fn nearby_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder().title("Nearby").build();
 
-    let lan = adw::SwitchRow::builder().title("Wi-Fi").build();
-    lan.set_active(prefs.nearby_lan_enabled);
+    let master = adw::SwitchRow::builder().title("Nearby").build();
+    master.set_active(prefs.nearby_enabled);
     {
         let manager = manager.clone();
-        lan.connect_active_notify(move |row| {
-            manager.set_nearby_lan_enabled(row.is_active());
+        master.connect_active_notify(move |row| {
+            manager.dispatch(AppAction::SetNearbyEnabled {
+                enabled: row.is_active(),
+            });
         });
     }
-    group.add(&lan);
+    group.add(&master);
+
+    if prefs.nearby_enabled {
+        let lan = adw::SwitchRow::builder().title("Wi-Fi").build();
+        lan.set_active(prefs.nearby_lan_enabled);
+        {
+            let manager = manager.clone();
+            lan.connect_active_notify(move |row| {
+                manager.set_nearby_lan_enabled(row.is_active());
+            });
+        }
+        group.add(&lan);
+    }
 
     group
 }
@@ -674,6 +688,20 @@ fn present_qr_dialog(
 
 fn messaging_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder().title("Messaging").build();
+
+    let accept_requests = adw::SwitchRow::builder()
+        .title("Accept chat requests")
+        .build();
+    accept_requests.set_active(prefs.accept_unknown_direct_messages);
+    {
+        let manager = manager.clone();
+        accept_requests.connect_active_notify(move |row| {
+            manager.dispatch(AppAction::SetAcceptUnknownDirectMessages {
+                enabled: row.is_active(),
+            });
+        });
+    }
+    group.add(&accept_requests);
 
     let typing = adw::SwitchRow::builder().title("Typing indicators").build();
     typing.set_active(prefs.send_typing_indicators);

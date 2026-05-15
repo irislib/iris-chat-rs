@@ -114,6 +114,13 @@ fun NdrApp(
         container.nearbyIrisService.setLocalNetworkVisible(visible)
         container.appManager.dispatch(AppAction.SetNearbyLanEnabled(visible))
     },
+    onNearbyEnabledChange: (Boolean) -> Unit = { enabled ->
+        if (!enabled) {
+            container.nearbyIrisService.setVisible(false)
+            container.nearbyIrisService.setLocalNetworkVisible(false)
+        }
+        container.appManager.dispatch(AppAction.SetNearbyEnabled(enabled))
+    },
     onNearbyOpen: () -> Unit = {},
 ) {
     val appManager = container.appManager
@@ -329,6 +336,7 @@ fun NdrApp(
                                         networkStatus = appState.networkStatus,
                                         onNearbyBluetoothChange = onNearbyVisibilityChange,
                                         onNearbyLanChange = onNearbyLanVisibilityChange,
+                                        onNearbyEnabledChange = onNearbyEnabledChange,
                                         onLogout = { appManager.logout() },
                                         onDismiss = { appManager.navigateBack() },
                                     )

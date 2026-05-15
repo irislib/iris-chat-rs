@@ -503,6 +503,9 @@ public sealed class AppManager : INotifyPropertyChanged
     public void SetReadReceiptsEnabled(bool enabled) =>
         DispatchToRust(new AppAction.SetReadReceiptsEnabled(enabled));
 
+    public void SetAcceptUnknownDirectMessages(bool enabled) =>
+        DispatchToRust(new AppAction.SetAcceptUnknownDirectMessages(enabled));
+
     public void SetDesktopNotificationsEnabled(bool enabled) =>
         DispatchToRust(new AppAction.SetDesktopNotificationsEnabled(enabled));
 
@@ -546,6 +549,14 @@ public sealed class AppManager : INotifyPropertyChanged
             StopNearbySafely(showToastOnFailure: true);
 
         DispatchToRust(new AppAction.SetNearbyLanEnabled(enabled));
+    }
+
+    public void SetNearbyEnabled(bool enabled)
+    {
+        if (!enabled)
+            StopNearbySafely(showToastOnFailure: false);
+
+        DispatchToRust(new AppAction.SetNearbyEnabled(enabled));
     }
 
     public void AddNostrRelay(string url) =>

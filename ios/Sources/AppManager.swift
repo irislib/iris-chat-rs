@@ -2015,6 +2015,16 @@ final class AppManager: ObservableObject {
 #endif
     }
 
+    func setNearbyEnabled(_ enabled: Bool) {
+#if os(iOS) || os(macOS)
+        if !enabled {
+            nearbyIris.setVisible(false)
+            nearbyIris.setLanVisible(false)
+        }
+#endif
+        dispatchToRust(.setNearbyEnabled(enabled: enabled))
+    }
+
     func prepareNearbyForUserTap() {
 #if os(iOS) || os(macOS)
         let firstNearbyOpen = !UserDefaults.standard.bool(forKey: Self.nearbyFirstOpenAttemptedKey)

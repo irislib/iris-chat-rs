@@ -491,6 +491,7 @@ private func fallbackAppState(toast: String?) -> AppState {
             desktopNotificationsEnabled: true,
             inviteAcceptanceNotificationsEnabled: true,
             startupAtLoginEnabled: false,
+            nearbyEnabled: true,
             nearbyBluetoothEnabled: false,
             nearbyLanEnabled: false,
             nostrRelayUrls: [

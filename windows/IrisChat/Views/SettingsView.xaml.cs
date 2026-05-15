@@ -59,11 +59,14 @@ public partial class SettingsView : UserControl
 
         var prefs = App.CurrentManager.Preferences;
         _suppressToggleDispatch = true;
+        AcceptChatRequestsToggle.IsChecked = prefs.acceptUnknownDirectMessages;
         TypingToggle.IsChecked = prefs.sendTypingIndicators;
         ReceiptsToggle.IsChecked = prefs.sendReadReceipts;
         NotificationsToggle.IsChecked = prefs.desktopNotificationsEnabled;
         StartupToggle.IsChecked = prefs.startupAtLoginEnabled;
+        NearbyEnabledToggle.IsChecked = prefs.nearbyEnabled;
         NearbyLanToggle.IsChecked = prefs.nearbyLanEnabled;
+        NearbyLanToggle.Visibility = prefs.nearbyEnabled ? Visibility.Visible : Visibility.Collapsed;
         ImageProxyToggle.IsChecked = prefs.imageProxyEnabled;
         AutoCheckUpdatesToggle.IsChecked = App.CurrentManager.AutoCheckUpdates;
         AutoInstallUpdatesToggle.IsChecked = App.CurrentManager.AutoInstallUpdates;
@@ -201,6 +204,12 @@ public partial class SettingsView : UserControl
         App.CurrentManager.SetTypingIndicatorsEnabled(TypingToggle.IsChecked == true);
     }
 
+    private void OnAcceptChatRequestsChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetAcceptUnknownDirectMessages(AcceptChatRequestsToggle.IsChecked == true);
+    }
+
     private void OnReceiptsChanged(object sender, RoutedEventArgs e)
     {
         if (_suppressToggleDispatch) return;
@@ -223,6 +232,12 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetNearbyLanEnabled(NearbyLanToggle.IsChecked == true);
+    }
+
+    private void OnNearbyEnabledChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetNearbyEnabled(NearbyEnabledToggle.IsChecked == true);
     }
 
     private void OnImageProxyChanged(object sender, RoutedEventArgs e)

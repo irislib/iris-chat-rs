@@ -553,6 +553,7 @@ impl AppCore {
                 .invite_acceptance_notifications_enabled;
             self.preferences.startup_at_login_enabled =
                 persisted.preferences.startup_at_login_enabled;
+            self.preferences.nearby_enabled = persisted.preferences.nearby_enabled;
             self.preferences.nearby_bluetooth_enabled =
                 persisted.preferences.nearby_bluetooth_enabled;
             self.preferences.nearby_lan_enabled = persisted.preferences.nearby_lan_enabled;

@@ -140,6 +140,13 @@ impl AppCore {
         let owner_pubkey = response
             .owner_public_key
             .unwrap_or(response.invitee_identity);
+        if !self.should_accept_direct_runtime_message(owner_pubkey, None) {
+            self.push_debug_log(
+                "invite.private_response.unknown.skip",
+                format!("event_id={event_id} owner={}", owner_pubkey.to_hex()),
+            );
+            return false;
+        }
         let peer_device_id = response
             .device_id
             .clone()
