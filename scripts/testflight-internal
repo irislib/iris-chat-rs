@@ -347,6 +347,16 @@ def group_has_build(group_id, build):
     return False
 
 
+def group_builds(group_id):
+    return get_all(
+        f"betaGroups/{group_id}/builds",
+        {
+            "fields[builds]": "version,expired,uploadedDate,processingState",
+            "limit": "200",
+        },
+    )
+
+
 def summarize_build(build, selected_groups=None):
     attrs = build["attributes"]
     print(f"Iris Chat {VERSION_NAME} ({BUILD_NUMBER})")
@@ -590,6 +600,33 @@ def expire_older_public_review_builds(current_build):
         print("No older Beta App Review builds needed expiring.")
 
 
+def expire_older_external_group_builds(current_build, selected_groups):
+    current_id = current_build["id"]
+    expired = 0
+    seen = set()
+    for group in selected_groups:
+        group_name = group.get("attributes", {}).get("name", group["id"])
+        for build in group_builds(group["id"]):
+            if build["id"] == current_id or build["id"] in seen:
+                continue
+            seen.add(build["id"])
+            attrs = build.get("attributes", {})
+            if attrs.get("expired"):
+                continue
+            expire_build(
+                build,
+                f"replaced by public TestFlight build {BUILD_NUMBER} in {group_name}",
+            )
+            expired += 1
+    if expired == 0:
+        print("No older external TestFlight group builds needed expiring.")
+
+
+def expire_older_public_builds(current_build, selected_groups):
+    expire_older_external_group_builds(current_build, selected_groups)
+    expire_older_public_review_builds(current_build)
+
+
 def submit_beta_review(build):
     state = beta_review_state(build)
     if state not in {"not submitted", "REJECTED"}:
@@ -629,11 +666,30 @@ def submit_beta_review(build):
         for error in body.get("errors", [])
     ):
         print(
-            "Submit Beta App Review skipped: another build in the same train is "
-            "still in review. Resubmit with `./scripts/testflight-public submit` "
-            "once Apple clears it."
+            "Another build in this train is still in review; expiring older "
+            "Beta App Review builds and retrying submission."
         )
-        return
+        expire_older_public_review_builds(build)
+        status, body = request(
+            "POST",
+            "betaAppReviewSubmissions",
+            body={
+                "data": {
+                    "type": "betaAppReviewSubmissions",
+                    "relationships": {
+                        "build": {
+                            "data": {
+                                "type": "builds",
+                                "id": build["id"],
+                            }
+                        }
+                    },
+                }
+            },
+        )
+        if status == 409:
+            print("Beta App Review submission already exists")
+            return
     require_ok(status, body, "Submit Beta App Review")
     data = body.get("data", {})
     review_state = data.get("attributes", {}).get("betaReviewState") or "submitted"
@@ -661,7 +717,7 @@ if ACTION in PUBLIC_ACTIONS:
     selected_groups = select_external_groups(groups())
     ensure_public_build(build)
     if ACTION == "public-expire-older":
-        expire_older_public_review_builds(build)
+        expire_older_public_builds(build, selected_groups)
         raise SystemExit(0)
     if ACTION in {"public", "public-submit"}:
         ensure_public_metadata()
@@ -669,6 +725,8 @@ if ACTION in PUBLIC_ACTIONS:
         submit_beta_review(build)
     if ACTION in {"public", "public-attach"}:
         attach_public_build(build, selected_groups)
+    if ACTION == "public":
+        expire_older_public_builds(build, selected_groups)
     if ACTION == "public-status":
         summarize_public_build(build, selected_groups)
     raise SystemExit(0)
