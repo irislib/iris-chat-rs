@@ -341,6 +341,7 @@ class RealRelayHarnessTest {
                     ?.takeIf { it.authorizationState == expectedState }
             }
 
+        waitForRelayDrainIfRequested()
         reportStatus(
             "npub" to account.npub,
             "public_key_hex" to account.publicKeyHex,
@@ -1016,6 +1017,7 @@ class RealRelayHarnessTest {
             fail("Unexpected toast after send: $toast")
         }
 
+        waitForRelayDrainIfRequested()
         reportStatus(
             "chat_id" to chat.chatId,
             "message" to message,
@@ -1185,6 +1187,9 @@ class RealRelayHarnessTest {
         val expectedChatId = optionalArg("chat_id")?.takeIf { it.isNotBlank() }
         val direction = optionalArg("direction").orEmpty().lowercase()
         val expectedCount = optionalArg("expected_count")?.toIntOrNull()
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
         val seededChat =
             when {
                 !expectedChatId.isNullOrBlank() -> ensureChatOpenById(expectedChatId)
@@ -1192,9 +1197,20 @@ class RealRelayHarnessTest {
                 else -> null
             }
         val resolvedChatId = expectedChatId ?: seededChat?.chatId
+        var lastRelayWakeAt = 0L
+        fun wakeRelayAndChatIfNeeded() {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastRelayWakeAt < HARNESS_RELAY_WAKE_INTERVAL_MS) {
+                return
+            }
+            lastRelayWakeAt = now
+            appManager().appForegrounded()
+            resolvedChatId?.let(appManager()::openChat)
+        }
 
         val matchedChatId =
-            waitForState("incoming message", timeoutMs = 180_000) {
+            waitForState("${direction.ifBlank { "incoming" }} message", timeoutMs = timeoutMs) {
+                wakeRelayAndChatIfNeeded()
                 fun matchesResolvedChat(chatId: String): Boolean =
                     resolvedChatId?.let { expected -> chatId.equals(expected, ignoreCase = true) }
                         ?: chatMatchesExpectedChat(chatId, peerInput, expectedChatId)
@@ -1892,8 +1908,19 @@ class RealRelayHarnessTest {
         val timeoutMs =
             ((optionalArg("relay_drain_timeout_secs")?.toLongOrNull() ?: 180L) * 1_000L)
                 .coerceAtLeast(1_000L)
+        var lastRelayWakeAt = 0L
+        fun wakeRelayIfNeeded() {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastRelayWakeAt < HARNESS_RELAY_WAKE_INTERVAL_MS) {
+                return
+            }
+            lastRelayWakeAt = now
+            appManager().appForegrounded()
+        }
+        wakeRelayIfNeeded()
         val status =
             waitForState("relay publish drain", timeoutMs = timeoutMs) {
+                wakeRelayIfNeeded()
                 val pendingRuntimeOutboundCount =
                     if (runtimeOnly) {
                         pendingRelayPublishCount("runtime")
@@ -1905,8 +1932,9 @@ class RealRelayHarnessTest {
                     .value
                     .networkStatus
                     ?.takeIf { status ->
-                        (pendingRuntimeOutboundCount?.let { it == 0 } ?:
-                            (status.pendingOutboundCount == 0UL)) &&
+                        (status.relayUrls.isEmpty() || status.connectedRelayCount > 0UL) &&
+                            (pendingRuntimeOutboundCount?.let { it == 0 } ?:
+                                (status.pendingOutboundCount == 0UL)) &&
                             status.pendingGroupControlCount == 0UL
                     }
             }
@@ -2722,5 +2750,6 @@ class RealRelayHarnessTest {
         const val CORE_DB_FILENAME = "core.sqlite3"
         const val PERSISTED_STATE_FILENAME = "iris_chat_core_state.json"
         const val NEARBY_PROFILE_TIMEOUT_MS = 180_000L
+        const val HARNESS_RELAY_WAKE_INTERVAL_MS = 3_000L
     }
 }

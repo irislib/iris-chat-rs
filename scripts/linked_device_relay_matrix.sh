@@ -28,6 +28,7 @@ RELAY_PID=""
 SERIAL_A="${SERIAL_A:-}"
 SERIAL_B="${SERIAL_B:-}"
 SERIAL_C="${SERIAL_C:-}"
+RELAY_DRAIN_ARGS=(-e wait_for_relay_drain true -e relay_drain_timeout_secs 240)
 
 if [[ ! -x "${ADB}" ]]; then
   echo "adb not found at ${ADB}" >&2
@@ -335,7 +336,7 @@ for serial in "${SERIAL_A}" "${SERIAL_B}" "${SERIAL_C}"; do
 done
 
 echo "Creating owner X primary on ${SERIAL_A}"
-ACCOUNT_A="$(run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity")"
+ACCOUNT_A="$(run_instrumentation "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity" "${RELAY_DRAIN_ARGS[@]}")"
 OWNER_X_NPUB="$(printf '%s\n' "${ACCOUNT_A}" | extract_status "npub")"
 OWNER_X_HEX="$(printf '%s\n' "${ACCOUNT_A}" | extract_status "public_key_hex")"
 
@@ -346,13 +347,14 @@ IRIS_BACKGROUND_PID=""
 run_instrumentation_background "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#start_link_invite_and_wait_for_authorization_from_args" \
   "${LINK_LOG}" "${LINK_EXIT}" \
   -e owner_input "${OWNER_X_NPUB}" \
-  -e authorization_state AUTHORIZED
+  -e authorization_state AUTHORIZED \
+  "${RELAY_DRAIN_ARGS[@]}"
 LINK_PID="${IRIS_BACKGROUND_PID}"
 
 LINK_URL="$(wait_for_status_in_file "${LINK_LOG}" invite_url 120)"
 
 echo "Authorizing linked device on ${SERIAL_A}"
-run_matrix_step "authorize linked device" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#add_authorized_device_from_args" -e device_input "${LINK_URL}" >/dev/null
+run_matrix_step "authorize linked device" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#add_authorized_device_from_args" -e device_input "${LINK_URL}" "${RELAY_DRAIN_ARGS[@]}" >/dev/null
 
 wait "${LINK_PID}" || true
 LINK_STATUS="$(cat "${LINK_EXIT}")"
@@ -366,22 +368,22 @@ DEVICE_B_NPUB="$(printf '%s\n' "${LINKED_B}" | extract_status "device_npub")"
 DEVICE_B_HEX="$(printf '%s\n' "${LINKED_B}" | extract_status "device_public_key_hex")"
 
 echo "Creating owner Y peer on ${SERIAL_C}"
-ACCOUNT_C="$(run_matrix_step "create owner Y peer" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity")"
+ACCOUNT_C="$(run_matrix_step "create owner Y peer" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#create_account_and_report_identity" "${RELAY_DRAIN_ARGS[@]}")"
 OWNER_Y_NPUB="$(printf '%s\n' "${ACCOUNT_C}" | extract_status "npub")"
 OWNER_Y_HEX="$(printf '%s\n' "${ACCOUNT_C}" | extract_status "public_key_hex")"
 
 echo "A sends m1 to C"
-run_matrix_step "A send m1 to C" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m1" >/dev/null
+run_matrix_step "A send m1 to C" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m1" "${RELAY_DRAIN_ARGS[@]}" >/dev/null
 run_matrix_step "C wait for m1 from A" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m1" -e direction incoming >/dev/null
 run_matrix_step "B wait for A self-sync m1" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m1" -e direction outgoing >/dev/null
 
 echo "C replies with m2"
-run_matrix_step "C send m2 to X" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_X_NPUB}" -e message "m2" >/dev/null
+run_matrix_step "C send m2 to X" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_X_NPUB}" -e message "m2" "${RELAY_DRAIN_ARGS[@]}" >/dev/null
 run_matrix_step "A wait for m2 from C" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
 run_matrix_step "B wait for C incoming m2" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m2" -e direction incoming >/dev/null
 
 echo "B sends m3 to C"
-run_matrix_step "B send m3 to C" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m3" >/dev/null
+run_matrix_step "B send m3 to C" "${SERIAL_B}" "to.iris.chat.RealRelayHarnessTest#send_message_from_args" -e peer_input "${OWNER_Y_NPUB}" -e message "m3" "${RELAY_DRAIN_ARGS[@]}" >/dev/null
 run_matrix_step "C wait for m3 from B" "${SERIAL_C}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_X_HEX}" -e message "m3" -e direction incoming >/dev/null
 run_matrix_step "A wait for B self-sync m3" "${SERIAL_A}" "to.iris.chat.RealRelayHarnessTest#wait_for_message_from_args" -e chat_id "${OWNER_Y_HEX}" -e message "m3" -e direction outgoing >/dev/null
 
