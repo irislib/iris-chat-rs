@@ -43,6 +43,11 @@ public class MessageInfoWindow : Window
         stack.Children.Add(BuildHeader());
         stack.Children.Add(BuildSection("Status", BuildStatusRows()));
         stack.Children.Add(BuildSection("People", BuildPeopleRows()));
+        var transportRows = BuildTransportRows();
+        if (transportRows.Count > 0)
+        {
+            stack.Children.Add(BuildSection("Transport", transportRows));
+        }
         stack.Children.Add(BuildSection("IDs", BuildIdRows()));
         if (_message.attachments != null && _message.attachments.Length > 0)
         {
@@ -226,11 +231,48 @@ public class MessageInfoWindow : Window
         if (_message.isOutgoing)
         {
             rows.Add(ValueRow("You", $"{DeliveryLabel(_message.delivery)} · {FormatDateTime(_message.createdAtSecs)}"));
+            var recipients = _message.recipientDeliveries;
+            if (recipients != null && recipients.Length > 0)
+            {
+                foreach (var r in recipients)
+                {
+                    rows.Add(ValueRow(
+                        ShortNpub(r.ownerPubkeyHex),
+                        $"{DeliveryLabel(r.delivery)} · {FormatDateTime(r.updatedAtSecs)}"));
+                }
+            }
         }
         else
         {
             rows.Add(ValueRow("From", _message.author));
             rows.Add(ValueRow("Status", DeliveryLabel(_message.delivery)));
+        }
+        return rows;
+    }
+
+    private List<UIElement> BuildTransportRows()
+    {
+        var rows = new List<UIElement>();
+        var trace = _message.deliveryTrace;
+        var channels = trace?.transportChannels ?? Array.Empty<string>();
+        var queued = trace?.queuedProtocolTargets ?? Array.Empty<string>();
+        var lastError = trace?.lastTransportError;
+        if (channels.Length > 0)
+        {
+            rows.Add(ValueRow(
+                _message.isOutgoing ? "Sent over" : "Received over",
+                string.Join("\n", channels)));
+        }
+        if (queued.Length > 0)
+        {
+            rows.Add(ValueRow(
+                "Queued devices",
+                string.Join("\n", queued.Select(ShortNpub)),
+                monospace: true));
+        }
+        if (!string.IsNullOrEmpty(lastError))
+        {
+            rows.Add(ValueRow("Last error", lastError!));
         }
         return rows;
     }
@@ -244,6 +286,27 @@ public class MessageInfoWindow : Window
         if (!string.IsNullOrEmpty(_message.sourceEventId))
         {
             rows.Add(CopyRow("Received event", _message.sourceEventId!));
+        }
+        var trace = _message.deliveryTrace;
+        if (trace?.outerEventIds != null)
+        {
+            foreach (var outerId in trace.outerEventIds)
+            {
+                if (!string.IsNullOrEmpty(outerId))
+                {
+                    rows.Add(CopyRow("Network event", outerId));
+                }
+            }
+        }
+        if (trace?.targetDeviceIds != null)
+        {
+            foreach (var deviceId in trace.targetDeviceIds)
+            {
+                if (!string.IsNullOrEmpty(deviceId))
+                {
+                    rows.Add(CopyRow("Target device", deviceId));
+                }
+            }
         }
         return rows;
     }
