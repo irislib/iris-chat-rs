@@ -225,9 +225,24 @@ fun GroupDetailsScreen(
                     details.members.forEach { member ->
                         val primary = primaryDisplayName(member.displayName, member.npub)
                         val roles = member.roleLabels()
+                        val openProfileInteractionSource =
+                            remember(member.ownerPubkeyHex) { MutableInteractionSource() }
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .then(
+                                    if (member.isLocalOwner) {
+                                        Modifier
+                                    } else {
+                                        Modifier.clickable(
+                                            interactionSource = openProfileInteractionSource,
+                                            indication = null,
+                                        ) {
+                                            haptics.press()
+                                            appManager.createChat(member.ownerPubkeyHex)
+                                        }
+                                    },
+                                )
                                 .padding(16.dp),
                             verticalAlignment = Alignment.Top,
                             horizontalArrangement = Arrangement.SpaceBetween,

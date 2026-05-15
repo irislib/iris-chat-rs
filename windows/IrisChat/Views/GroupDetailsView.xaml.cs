@@ -213,7 +213,7 @@ public partial class GroupDetailsView : UserControl
         grid.Children.Add(info);
         grid.Children.Add(actions);
 
-        return new Border
+        var border = new Border
         {
             Background = Brushes.Transparent,
             Padding = new Thickness(8, 8, 8, 8),
@@ -221,6 +221,15 @@ public partial class GroupDetailsView : UserControl
             BorderThickness = new Thickness(0, 0, 0, 1),
             Child = grid,
         };
+
+        if (!m.isLocalOwner)
+        {
+            border.Cursor = System.Windows.Input.Cursors.Hand;
+            border.MouseLeftButtonUp += (_, _) =>
+                App.CurrentManager.CreateChat(m.ownerPubkeyHex);
+        }
+
+        return border;
     }
 
     private void OnSaveName(object sender, RoutedEventArgs e)

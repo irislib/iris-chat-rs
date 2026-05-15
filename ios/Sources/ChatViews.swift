@@ -1726,7 +1726,7 @@ private struct ChatMessageRow: View, Equatable {
                             if showActionDock {
                                 actionDock()
                                     .fixedSize()
-                                    .offset(x: message.isOutgoing ? -164 : 164)
+                                    .offset(x: message.isOutgoing ? -136 : 136)
                             }
                         }
 #endif
@@ -2432,8 +2432,8 @@ private struct ChatMessageActionDock: View {
             .buttonStyle(.irisPlain)
             .accessibilityIdentifier("messageReactButton")
             dockButton("arrowshape.turn.up.left", identifier: "messageReplyButton", action: onReply)
-            dockButton("arrowshape.turn.up.right", identifier: "messageForwardButton", action: onForward)
             Menu {
+                Button("Forward", action: onForward)
                 Button("Copy text", action: onCopy)
                 Button("Info", action: onInfo)
                 Button("Delete message", role: .destructive, action: onDelete)

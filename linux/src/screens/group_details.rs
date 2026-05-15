@@ -241,6 +241,16 @@ fn member_row(
         member.display_name.clone()
     };
     let row = adw::ActionRow::builder().title(title).build();
+    if !member.is_local_owner {
+        row.set_activatable(true);
+        let manager_for_open = manager.clone();
+        let peer_input = member.owner_pubkey_hex.clone();
+        row.connect_activated(move |_| {
+            manager_for_open.dispatch(AppAction::CreateChat {
+                peer_input: peer_input.clone(),
+            });
+        });
+    }
     let avatar = adw::Avatar::new(36, Some(&member.display_name), true);
     row.add_prefix(&avatar);
 

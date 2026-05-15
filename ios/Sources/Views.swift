@@ -5455,7 +5455,7 @@ struct GroupDetailsScreen: View {
                     ForEach(Array(details.members.enumerated()), id: \.element.ownerPubkeyHex) { index, member in
                         let primary = primaryDisplayName(displayName: member.displayName, fallback: member.npub)
                         VStack(alignment: .leading, spacing: 10) {
-                            HStack(alignment: .top, spacing: 12) {
+                            let memberHeader = HStack(alignment: .top, spacing: 12) {
                                 IrisAvatar(label: primary, size: 38, emphasize: member.isLocalOwner)
 
                                 VStack(alignment: .leading, spacing: 6) {
@@ -5475,6 +5475,18 @@ struct GroupDetailsScreen: View {
                                 }
 
                                 Spacer()
+                            }
+                            if member.isLocalOwner {
+                                memberHeader
+                            } else {
+                                Button {
+                                    manager.dispatch(.createChat(peerInput: member.ownerPubkeyHex))
+                                } label: {
+                                    memberHeader
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.irisPlain)
+                                .accessibilityIdentifier("groupDetailsOpenMember-\(String(member.ownerPubkeyHex.prefix(12)))")
                             }
 
                             if details.canManage && !member.isLocalOwner {
