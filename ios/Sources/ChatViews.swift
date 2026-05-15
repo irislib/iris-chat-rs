@@ -1718,7 +1718,10 @@ private struct ChatMessageRow: View, Equatable {
                         // this its appearance reflows the bubble width).
                         // iOS has no hover and phone widths self-limit.
 #if canImport(AppKit)
-                        .frame(maxWidth: IrisLayout.chatBubbleMaxWidth)
+                        .frame(
+                            maxWidth: IrisLayout.chatBubbleMaxWidth,
+                            alignment: message.isOutgoing ? .trailing : .leading
+                        )
                         .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
                             if showActionDock {
                                 actionDock()
