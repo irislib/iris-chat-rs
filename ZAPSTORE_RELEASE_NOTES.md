@@ -1,7 +1,7 @@
 # Iris Chat 2026.5.15.2
 
 - Invite and profile QR links now open through chat.iris.to so they work in the web app when the native app is not installed.
-- iOS, Android, and macOS now handle chat.iris.to links directly when installed.
+- iOS and Android now handle chat.iris.to links directly when installed.
 - The web privacy, terms, and child safety pages now open as plain pages instead of redirecting into the app.
 
 # Iris Chat 2026.5.15.1
