@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.21
+
+- Nearby ingest now tags transport channels with the relaying peer name (e.g. "bluetooth · Alice") so message-info Transport rows show who carried each event.
+- Add nearby_enabled master preference with kill-switch behavior — turning it off forces nearby_bluetooth_enabled and nearby_lan_enabled to false.
+- Extend the accept_unknown_direct_messages gate to silently drop incoming public-invite responses from senders we have no thread with.
+- Schema bumped to v16 with `nearby_enabled` column (default 1).
+- Expose `should_accept_direct_runtime_message` to sibling modules so the invite path reuses the DM gate.
+
 ## 0.1.20
 
 - Improve iOS chat list ergonomics with UIKit swipe actions, calmer navigation chrome, and a search close button that dismisses the keyboard.

@@ -1,3 +1,15 @@
+# Iris Chat 2026.5.15.3
+
+- Settings now have a single "Nearby" toggle that hides the chat-list shortcut and turns Bluetooth and Wi-Fi off in one move; turn it back on to keep using nearby messaging.
+- Settings now have an "Accept chat requests" toggle on Android, Linux, and Windows; turning it off drops messages and invite responses from people you have not chatted with before.
+- Group member rows are now tappable on every platform and open a 1:1 chat with that member.
+- macOS message bubbles hug their side of the chat instead of drifting into the middle, and the in-bubble timestamp + delivery glyph trail-align consistently for incoming and outgoing messages on iOS, macOS, and Windows.
+- macOS message hover dock is less crowded — Forward moved into the three-dot menu next to Copy, Info, and Delete.
+- Nearby modal now shows a small "Mailbag · N yours · M from others" line under each Bluetooth and Wi-Fi row so you can see what is queued for nearby relay.
+- Message info "Transport" rows now name the nearby peer that relayed the event (for example "bluetooth · Alice").
+- Windows message info now matches the other platforms: per-recipient delivery, transport channels, queued device targets, network event ids.
+- Local development builds finally show the real app version on the About screen instead of "0.1.0".
+
 # Iris Chat 2026.5.15.2
 
 - Invite and profile QR links now open through chat.iris.to so they work in the web app when the native app is not installed.
