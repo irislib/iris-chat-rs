@@ -81,7 +81,17 @@ impl AppCore {
         event_secs: u64,
         expires_at_secs: Option<u64>,
     ) {
+        // Explicit stop-typing: sender marked the rumor expired relative to
+        // its own clock (used by `stop_typing` and by the invite bootstrap).
         if expires_at_secs.is_some_and(|expires_at| expires_at <= event_secs) {
+            self.clear_typing_indicator(&chat_id, &author_owner_hex);
+            return;
+        }
+        // Already expired vs our wall clock — late delivery of a rumor whose
+        // sender-supplied expiration is in the past for us. Treat as stop so
+        // an old typing rumor (e.g., one re-delivered via backfill) doesn't
+        // show up as "is typing right now".
+        if expires_at_secs.is_some_and(|expires_at| expires_at <= unix_now().get()) {
             self.clear_typing_indicator(&chat_id, &author_owner_hex);
             return;
         }

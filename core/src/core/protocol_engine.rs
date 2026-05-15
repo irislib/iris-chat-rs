@@ -1037,18 +1037,20 @@ impl ProtocolEngine {
                 )],
             ),
         );
-        // Bootstrap the session immediately by sending an expiring typing
-        // rumor. This matches the TypeScript iris-chat (`SessionManager.acceptInvite`
-        // unconditionally publishes the invite-response and runs
-        // `sendInviteBootstrap`). Without it, the inviter never learns our
-        // session ephemeral pubkey, so the inviter's relay REQ excludes us
-        // and their replies never reach this device.
+        // Bootstrap the session by sending a typing rumor with an
+        // already-elapsed expiration. We need the inner kind-1060 publish to
+        // make the inviter create their side of the session (otherwise the
+        // inviter never learns our session ephemeral pubkey and their replies
+        // never reach this device, matching what
+        // `SessionManager.acceptInvite` does in TypeScript iris-chat).
+        // The expired expiration is the same shape as `stop_typing`, so the
+        // receiver treats this rumor as "stop typing" and does not flash a
+        // typing indicator for a chat the user hasn't started typing in.
         let now = unix_now();
-        let expires_at = now.get().saturating_add(60);
         let typing = pairwise_codec::typing_event(
             self.owner_pubkey,
             pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis())
-                .with_expiration(expires_at),
+                .with_expiration(1),
         )?;
         let bootstrap =
             self.send_direct_unsigned_event(invite_owner, &invite_owner.to_hex(), typing, now)?;

@@ -6874,14 +6874,15 @@ fn web_runtime_typing_rumors_do_not_become_chat_messages() {
         .sign_with_keys(&sender)
         .expect("outer event");
     let outer_event_id = outer_event.id.to_string();
+    let now_secs = unix_now().get();
     let (content, _) = runtime_rumor_json(
         sender.public_key(),
         TYPING_KIND,
         "typing",
-        1_777_159_483,
+        now_secs,
         vec![
-            vec!["ms".to_string(), "1777159483368".to_string()],
-            vec!["expiration".to_string(), "1777159543".to_string()],
+            vec!["ms".to_string(), format!("{}", now_secs.saturating_mul(1000))],
+            vec!["expiration".to_string(), format!("{}", now_secs + 60)],
         ],
     );
 
@@ -7150,20 +7151,21 @@ fn typing_floor_blocks_late_typing_after_message() {
     let mut core = logged_in_test_core("typing-floor-late", &owner, &device);
     let chat_id = sender.public_key().to_hex();
     let sender_hex = sender.public_key().to_hex();
+    let t0 = unix_now().get();
 
     core.apply_runtime_text_message(
         sender.public_key(),
         Some(chat_id.clone()),
         "hi".to_string(),
-        100,
+        t0,
         None,
         Some("msg-1".to_string()),
         None,
     );
 
     // Typing rumor races in after the message with the *same* wire
-    // second — the floor at 100 keeps it suppressed.
-    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), 100, None);
+    // second — the floor at t0 keeps it suppressed.
+    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), t0, None);
     assert!(!core
         .typing_indicators
         .values()
@@ -7171,11 +7173,61 @@ fn typing_floor_blocks_late_typing_after_message() {
 
     // A genuinely newer typing event (peer is typing again) does
     // arm the indicator.
-    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), 101, None);
+    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), t0 + 1, None);
     assert!(core
         .typing_indicators
         .values()
         .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex));
+}
+
+#[test]
+fn stale_typing_rumor_is_not_shown_as_current_typing_status() {
+    // A typing rumor whose expiration is in the past for our wall clock —
+    // the invite-bootstrap pattern, or a late-arriving rumor whose sender
+    // had a 60-second window that's already elapsed by the time it reaches
+    // us — must not arm the indicator.
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("typing-stale-wall-clock", &owner, &device);
+    let chat_id = sender.public_key().to_hex();
+    let sender_hex = sender.public_key().to_hex();
+    let now_secs = unix_now().get();
+
+    // Bootstrap pattern: event timestamped now, expiration already past.
+    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), now_secs, Some(1));
+    assert!(
+        !core
+            .typing_indicators
+            .values()
+            .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex),
+        "typing rumor whose expiration precedes the wire timestamp must not arm the indicator"
+    );
+
+    // Late delivery: sender-supplied expiration was in the future for them
+    // (event_secs + 60 > event_secs) but is in the past for us now.
+    core.apply_typing_event(
+        chat_id.clone(),
+        sender_hex.clone(),
+        now_secs - 600,
+        Some(now_secs - 540),
+    );
+    assert!(
+        !core
+            .typing_indicators
+            .values()
+            .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex),
+        "typing rumor expired against our wall clock must not arm the indicator"
+    );
+
+    // Sanity: a fresh typing rumor still arms.
+    core.apply_typing_event(chat_id.clone(), sender_hex.clone(), now_secs, None);
+    assert!(
+        core.typing_indicators
+            .values()
+            .any(|record| record.chat_id == chat_id && record.author_owner_hex == sender_hex),
+        "fresh typing rumor must arm the indicator"
+    );
 }
 
 #[test]
@@ -7407,7 +7459,7 @@ fn runtime_controls_settings_reactions_and_expiration_flow() {
     core.apply_typing_event(
         chat_id.clone(),
         sender.public_key().to_hex(),
-        1_777_159_484,
+        unix_now().get(),
         None,
     );
     assert!(core.typing_indicators.values().any(|record| {
