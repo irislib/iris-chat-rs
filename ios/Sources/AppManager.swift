@@ -1186,11 +1186,24 @@ final class AppManager: ObservableObject {
             restorePersistedSession()
         }
         Task {
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
-            guard bootstrapInFlight, !persistedRestoreInFlight else {
+            // Safety net: the loading overlay must never be permanently
+            // stuck. The earlier version of this guard bailed when
+            // `persistedRestoreInFlight` was true, which meant a Rust
+            // restore that never published a follow-up FullState (panic in
+            // start_session, listener thread not yet attached, etc.) left
+            // the app frozen on the splash forever. Always clear after the
+            // timeout — if Rust later catches up, the next FullState lands
+            // normally; persistedRestoreInFlight is reset here so
+            // settleBootstrapIfNeeded won't re-flip the overlay.
+            try? await Task.sleep(nanoseconds: 8_000_000_000)
+            guard bootstrapInFlight else {
                 return
             }
-            appendClientDebugLog(category: "bootstrap.timeout", detail: "cleared loading overlay")
+            appendClientDebugLog(
+                category: "bootstrap.timeout",
+                detail: "persistedRestoreInFlight=\(persistedRestoreInFlight)"
+            )
+            persistedRestoreInFlight = false
             bootstrapInFlight = false
         }
 
