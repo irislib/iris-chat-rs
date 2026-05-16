@@ -5090,7 +5090,6 @@ struct NewGroupScreen: View {
     @State private var name = ""
     @State private var memberInput = ""
     @State private var selectedOwners = Set<String>()
-    @State private var showingScanner = false
     @State private var showingGroupPicturePicker = false
     @State private var groupPhoto: StagedAttachment?
     @FocusState private var isNameFocused: Bool
@@ -5148,14 +5147,6 @@ struct NewGroupScreen: View {
                 groupDetailsStep
             }
         }
-        .sheet(isPresented: $showingScanner) {
-            QrScannerSheet { code in
-                addMember(code)
-                showingScanner = false
-            }
-            .irisModalSurface()
-            .irisDismissOnMacOutsideClick { showingScanner = false }
-        }
         .fileImporter(
             isPresented: $showingGroupPicturePicker,
             allowedContentTypes: [.image],
@@ -5165,6 +5156,9 @@ struct NewGroupScreen: View {
                 return
             }
             groupPhoto = manager.stageGroupPicture(fileURL: url)
+        }
+        .irisOnChange(of: memberInput) { _ in
+            addMemberInputIfReady()
         }
         .irisOnChange(of: step) { nextStep in
             if nextStep == .details {
@@ -5184,19 +5178,13 @@ struct NewGroupScreen: View {
 
                 CardHeader(title: "Select members")
 
+                selectedMembersChips
+
                 TextField("Search or paste user ID", text: $memberInput)
                     .irisIdentifierInputModifiers()
                     .textFieldStyle(.plain)
                     .irisInputField()
                     .accessibilityIdentifier("newGroupMemberInput")
-
-                VStack(spacing: 10) {
-                    pasteMemberButton
-                    scanMemberButton
-                    addMemberButton
-                }
-
-                selectedMembersChips
             }
 
             if !filteredKnownChats.isEmpty {
@@ -5333,39 +5321,13 @@ struct NewGroupScreen: View {
         }
     }
 
-    private var pasteMemberButton: some View {
-        Button("Paste") {
-            memberInput = normalizePeerInput(input: PlatformClipboard.string() ?? "")
-        }
-        .buttonStyle(IrisSecondaryButtonStyle())
-        .accessibilityIdentifier("newGroupPasteButton")
-    }
-
-    private var scanMemberButton: some View {
-        Group {
-            if irisSupportsQrScanning {
-                Button("Scan code") { showingScanner = true }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-                    .accessibilityIdentifier("newGroupScanQrButton")
-            }
-        }
-    }
-
-    private var addMemberButton: some View {
-        Button("Add") {
-            addMember(normalizedMemberInput)
-        }
-        .buttonStyle(IrisPrimaryButtonStyle())
-        .disabled(!isValidPeerInput(input: normalizedMemberInput))
-        .accessibilityIdentifier("newGroupAddMemberButton")
-    }
-
-    private func addMember(_ raw: String) {
-        let normalized = normalizePeerInput(input: raw)
+    private func addMemberInputIfReady() {
+        let normalized = normalizedMemberInput
         guard !normalized.isEmpty, isValidPeerInput(input: normalized) else {
             return
         }
         guard normalized != localOwnerHex else {
+            memberInput = ""
             return
         }
         selectedOwners.insert(normalized)

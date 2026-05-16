@@ -13,7 +13,6 @@ import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsNotFocused
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
-import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
@@ -423,10 +422,14 @@ class PikaLikeUiTest {
         composeRule.onNodeWithTag("newChatNewGroupButton", useUnmergedTree = true).performClick()
 
         composeRule.waitForTag("newGroupMemberStep")
+        composeRule.onAllNodesWithTag("newGroupPasteButton", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithTag("newGroupScanQrButton", useUnmergedTree = true).assertCountEquals(0)
+        composeRule.onAllNodesWithTag("newGroupAddMemberButton", useUnmergedTree = true).assertCountEquals(0)
         composeRule.onNodeWithTag("newGroupMemberInput", useUnmergedTree = true)
             .performTextInput(VALID_PEER_NPUB)
-        composeRule.onNodeWithTag("newGroupAddMemberButton", useUnmergedTree = true).performClick()
         composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).assertIsEnabled()
+        composeRule.waitForTag("memberChipRemove")
+        composeRule.onAllNodesWithTag("memberChipRemove", useUnmergedTree = true).assertCountEquals(1)
         composeRule.onNodeWithTag("newGroupNextButton", useUnmergedTree = true).performClick()
         composeRule.waitForTag("newGroupDetailsStep")
         composeRule.onNodeWithTag("newGroupNameInput", useUnmergedTree = true)

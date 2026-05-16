@@ -2,7 +2,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
-use iris_chat_core::{AppAction, AppState, ChatKind, ChatThreadSnapshot};
+use iris_chat_core::{
+    is_valid_peer_input, normalize_peer_input, AppAction, AppState, ChatKind, ChatThreadSnapshot,
+};
 
 use crate::app_manager::AppManager;
 use crate::screens::{entry, primary_button, screen_container};
@@ -21,18 +23,18 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     container.append(&members_step);
     container.append(&details_step);
 
-    let member_input = entry("Search or paste user ID");
-    members_step.append(&member_input);
-
-    let add_member_btn = gtk::Button::with_label("Add");
-    add_member_btn.add_css_class("pill");
-    members_step.append(&add_member_btn);
-
     let selected_list = gtk::Box::new(gtk::Orientation::Vertical, 6);
     members_step.append(&selected_list);
 
+    let member_input = entry("Search or paste user ID");
+    members_step.append(&member_input);
+
     let members: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(Vec::new()));
     let selected_photo: Rc<RefCell<Option<(String, String)>>> = Rc::new(RefCell::new(None));
+    let local_owner = state
+        .account
+        .as_ref()
+        .map(|account| account.public_key_hex.clone());
 
     let known_users: Vec<ChatThreadSnapshot> = state
         .chat_list
@@ -48,8 +50,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         .cloned()
         .collect();
 
-    let next = primary_button("Next (0)");
-    next.set_sensitive(false);
+    let next = primary_button("Next");
 
     let add_member = {
         let selected_list = selected_list.clone();
@@ -57,8 +58,12 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         let members = members.clone();
         let next = next.clone();
         move |raw: String| {
-            let value = raw.trim().to_string();
-            if value.is_empty() {
+            let value = normalize_peer_input(raw);
+            if value.is_empty() || !is_valid_peer_input(value.clone()) {
+                return;
+            }
+            if local_owner.as_deref() == Some(value.as_str()) {
+                input.set_text("");
                 return;
             }
             if members.borrow().iter().any(|v| v == &value) {
@@ -67,7 +72,6 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
             }
             members.borrow_mut().push(value.clone());
             input.set_text("");
-            next.set_sensitive(true);
             next.set_label(&format!("Next ({})", members.borrow().len()));
 
             let row = selected_member_row(&value, {
@@ -76,8 +80,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
                 move |owner| {
                     members.borrow_mut().retain(|v| v != owner);
                     let count = members.borrow().len();
-                    next.set_sensitive(count > 0);
-                    next.set_label(&format!("Next ({count})"));
+                    if count == 0 {
+                        next.set_label("Next");
+                    } else {
+                        next.set_label(&format!("Next ({count})"));
+                    }
                 }
             });
             selected_list.append(&row);
@@ -86,12 +93,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
 
     {
         let add_member = add_member.clone();
-        let input = member_input.clone();
-        add_member_btn.connect_clicked(move |_| add_member(input.text().to_string()));
+        member_input.connect_activate(move |entry| add_member(entry.text().to_string()));
     }
     {
         let add_member = add_member.clone();
-        member_input.connect_activate(move |entry| add_member(entry.text().to_string()));
+        member_input.connect_changed(move |entry| add_member(entry.text().to_string()));
     }
 
     if !known_users.is_empty() {
@@ -114,9 +120,15 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         }
 
         let known_users_for_filter = known_users.clone();
+        let known_label_for_filter = known_label.clone();
         member_input.connect_changed(move |entry| {
             let query = entry.text().to_lowercase();
             let trimmed = query.trim();
+            known_label_for_filter.set_label(if trimmed.is_empty() {
+                "Known users"
+            } else {
+                "Search results"
+            });
             for (chat, row) in known_users_for_filter.iter().zip(row_widgets.iter()) {
                 let matches = trimmed.is_empty()
                     || chat.display_name.to_lowercase().contains(trimmed)
@@ -192,9 +204,6 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         let members = members.clone();
         let selected_count = selected_count.clone();
         next.connect_clicked(move |_| {
-            if members.borrow().is_empty() {
-                return;
-            }
             header.set_label("Group details");
             members_step.set_visible(false);
             details_step.set_visible(true);
@@ -224,7 +233,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         let selected_photo = selected_photo.clone();
         create.connect_clicked(move |btn| {
             let group_name = name.text().trim().to_string();
-            if group_name.is_empty() || members.borrow().is_empty() {
+            if group_name.is_empty() {
                 return;
             }
             btn.set_sensitive(false);

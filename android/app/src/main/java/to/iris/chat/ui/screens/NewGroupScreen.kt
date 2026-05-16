@@ -51,7 +51,6 @@ import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.irisTextFieldColors
-import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
@@ -61,17 +60,14 @@ fun NewGroupScreen(
     appState: AppState,
 ) {
     var step by remember { mutableStateOf(NewGroupStep.MEMBERS) }
-    val clipboard = rememberIrisClipboard()
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val nameFocusRequester = remember { FocusRequester() }
     var name by remember { mutableStateOf("") }
     var memberInput by remember { mutableStateOf("") }
-    var showScanner by remember { mutableStateOf(false) }
     var selectedOwners by remember { mutableStateOf(setOf<String>()) }
     var groupPhoto by remember { mutableStateOf<PickedAttachment?>(null) }
     val localOwner = appState.account?.publicKeyHex
-    val normalizedInput = normalizePeerInput(memberInput)
     val existingDirectChats =
         appState.chatList.filter { it.kind == ChatKind.DIRECT && it.chatId != localOwner }
     val filteredKnownChats = existingDirectChats.filterByQuery(memberInput)
@@ -101,10 +97,20 @@ fun NewGroupScreen(
             return
         }
         if (normalized == localOwner) {
+            memberInput = ""
             return
         }
         selectedOwners = selectedOwners + normalized
         memberInput = ""
+    }
+
+    fun updateMemberInput(value: String) {
+        val normalized = normalizePeerInput(value)
+        if (normalized.isNotBlank() && isValidPeerInput(normalized)) {
+            addOwner(normalized)
+        } else {
+            memberInput = value
+        }
     }
 
     ScaffoldScreen(
@@ -125,9 +131,17 @@ fun NewGroupScreen(
                     modifier = Modifier.testTag("newGroupMemberStep"),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
+                    SelectedMemberChips(
+                        selectedOwners = selectedOwners,
+                        existingDirectChats = existingDirectChats,
+                        localOwner = localOwner,
+                        appState = appState,
+                        onRemove = { owner -> selectedOwners = selectedOwners - owner },
+                    )
+
                     TextField(
                         value = memberInput,
-                        onValueChange = { memberInput = it },
+                        onValueChange = ::updateMemberInput,
                         modifier =
                             Modifier
                                 .fillMaxWidth()
@@ -141,55 +155,6 @@ fun NewGroupScreen(
                         singleLine = true,
                         shape = RoundedCornerShape(10.dp),
                         colors = irisTextFieldColors(),
-                    )
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        IrisSecondaryButton(
-                            text = "Paste",
-                            onClick = {
-                                clipboard.getText { text ->
-                                    memberInput = normalizePeerInput(text)
-                                }
-                            },
-                            modifier = Modifier.testTag("newGroupPasteButton"),
-                            icon = {
-                                Icon(
-                                    imageVector = IrisIcons.Copy,
-                                    contentDescription = null,
-                                )
-                            },
-                        )
-                        IrisSecondaryButton(
-                            text = "Scan code",
-                            onClick = { showScanner = true },
-                            modifier = Modifier.testTag("newGroupScanQrButton"),
-                            icon = {
-                                Icon(
-                                    imageVector = IrisIcons.ScanQr,
-                                    contentDescription = null,
-                                )
-                            },
-                        )
-                        IrisPrimaryButton(
-                            text = "Add",
-                            onClick = { addOwner(normalizedInput) },
-                            enabled = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput),
-                            modifier = Modifier.testTag("newGroupAddMemberButton"),
-                            icon = {
-                                Icon(
-                                    imageVector = IrisIcons.NewGroup,
-                                    contentDescription = null,
-                                )
-                            },
-                        )
-                    }
-
-                    SelectedMemberChips(
-                        selectedOwners = selectedOwners,
-                        existingDirectChats = existingDirectChats,
-                        localOwner = localOwner,
-                        appState = appState,
-                        onRemove = { owner -> selectedOwners = selectedOwners - owner },
                     )
                 }
 
@@ -344,21 +309,6 @@ fun NewGroupScreen(
         }
     }
 
-    if (showScanner) {
-        QrScannerDialog(
-            onDismiss = { showScanner = false },
-            onScanned = { scanned ->
-                val normalized = normalizePeerInput(scanned)
-                if (!isValidPeerInput(normalized)) {
-                    "That code or user ID is not valid."
-                } else {
-                    addOwner(normalized)
-                    showScanner = false
-                    null
-                }
-            },
-        )
-    }
 }
 
 private enum class NewGroupStep {
