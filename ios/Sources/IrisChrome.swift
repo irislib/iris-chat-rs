@@ -1166,10 +1166,11 @@ struct IrisModalCloseButton: View {
 }
 
 /// Translucent circular SF-Symbol button matching the native glass /
-/// vibrancy look used in Signal's media viewer chrome. `.resizable()`
-/// puts the SF Symbol's bounding box (not the font baseline) at the
-/// ZStack's center, so the glyph sits visually centered inside the
-/// circle regardless of symbol-specific asymmetry.
+/// vibrancy look used in Signal's media viewer chrome. The blur is
+/// applied with `UIVisualEffectView` so the live system blur shows
+/// through over the photo behind it instead of falling back to a flat
+/// translucent gray, which happens in some contexts when you use the
+/// SwiftUI `Material` fill on a shape inside a `fullScreenCover`.
 struct IrisGlassCircleButtonLabel: View {
     enum Tone {
         case light
@@ -1184,11 +1185,10 @@ struct IrisGlassCircleButtonLabel: View {
 
     var body: some View {
         ZStack {
+            IrisGlassCircleBackground(tone: tone)
+                .clipShape(Circle())
             Circle()
-                .fill(.ultraThinMaterial)
-                .environment(\.colorScheme, tone == .dark ? .dark : .light)
-            Circle()
-                .strokeBorder(Color.white.opacity(tone == .dark ? 0.08 : 0.04), lineWidth: 0.5)
+                .strokeBorder(Color.white.opacity(tone == .dark ? 0.12 : 0.06), lineWidth: 0.5)
             Image(systemName: systemName)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
@@ -1201,6 +1201,53 @@ struct IrisGlassCircleButtonLabel: View {
         .contentShape(Circle())
     }
 }
+
+#if canImport(UIKit)
+private struct IrisGlassCircleBackground: UIViewRepresentable {
+    let tone: IrisGlassCircleButtonLabel.Tone
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: style))
+        view.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
+        uiView.effect = UIBlurEffect(style: style)
+    }
+
+    private var style: UIBlurEffect.Style {
+        tone == .dark ? .systemUltraThinMaterialDark : .systemUltraThinMaterial
+    }
+}
+#elseif canImport(AppKit)
+private struct IrisGlassCircleBackground: NSViewRepresentable {
+    let tone: IrisGlassCircleButtonLabel.Tone
+
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = tone == .dark ? .hudWindow : .menu
+        view.state = .active
+        view.blendingMode = .withinWindow
+        view.wantsLayer = true
+        view.layer?.masksToBounds = true
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        nsView.material = tone == .dark ? .hudWindow : .menu
+        let side = min(nsView.bounds.width, nsView.bounds.height)
+        nsView.layer?.cornerRadius = side / 2
+    }
+}
+#else
+private struct IrisGlassCircleBackground: View {
+    let tone: IrisGlassCircleButtonLabel.Tone
+    var body: some View {
+        Circle().fill(Color.black.opacity(tone == .dark ? 0.42 : 0.12))
+    }
+}
+#endif
 
 struct IrisModalBackButton: View {
     @Environment(\.irisPalette) private var palette
