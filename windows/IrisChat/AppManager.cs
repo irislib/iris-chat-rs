@@ -27,6 +27,7 @@ public sealed class AppManager : INotifyPropertyChanged
     private const uint RouteChatSnapshotLimit = 80;
     private static readonly TimeSpan ActiveChatSeenIdleLimit = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NavigationOverrideTtl = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan DesktopUpdatePollInterval = LoadDesktopUpdatePollInterval();
 
     private sealed record PendingNavigationOverride(Screen[] Stack, DateTimeOffset ExpiresAt);
     private sealed record ClientDebugLogEntry(long TimestampSecs, string Category, string Detail);
@@ -45,6 +46,7 @@ public sealed class AppManager : INotifyPropertyChanged
     private readonly object _toastLock = new();
     private readonly object _clientDebugLogLock = new();
     private readonly List<ClientDebugLogEntry> _clientDebugLog = new();
+    private DispatcherTimer? _updatePollTimer;
     private string? _activeToast;
     private Uri? _updateAssetUrl;
     private bool _startupUpdateCheckDone;
@@ -172,7 +174,14 @@ public sealed class AppManager : INotifyPropertyChanged
         {
             if (!SetField(ref _autoCheckUpdates, value)) return;
             UpdateService.SaveAutoCheckUpdates(value);
-            if (value) StartDesktopUpdateChecks();
+            if (value)
+            {
+                StartDesktopUpdateChecks();
+            }
+            else
+            {
+                StopDesktopUpdateChecks();
+            }
         }
     }
 
@@ -264,6 +273,7 @@ public sealed class AppManager : INotifyPropertyChanged
 
     public void Shutdown()
     {
+        StopDesktopUpdateChecks();
         try { _ffi.Shutdown(); } catch { }
     }
 
@@ -590,9 +600,35 @@ public sealed class AppManager : INotifyPropertyChanged
 
     public void StartDesktopUpdateChecks()
     {
-        if (!AutoCheckUpdates || _startupUpdateCheckDone) return;
-        _startupUpdateCheckDone = true;
-        _ = CheckForUpdatesAsync(manual: false);
+        if (!AutoCheckUpdates)
+        {
+            StopDesktopUpdateChecks();
+            return;
+        }
+        if (!_startupUpdateCheckDone)
+        {
+            _startupUpdateCheckDone = true;
+            _ = CheckForUpdatesAsync(manual: false);
+        }
+        if (_updatePollTimer is not null) return;
+
+        _updatePollTimer = new DispatcherTimer { Interval = DesktopUpdatePollInterval };
+        _updatePollTimer.Tick += (_, _) =>
+        {
+            if (!AutoCheckUpdates)
+            {
+                StopDesktopUpdateChecks();
+                return;
+            }
+            _ = CheckForUpdatesAsync(manual: false);
+        };
+        _updatePollTimer.Start();
+    }
+
+    private void StopDesktopUpdateChecks()
+    {
+        _updatePollTimer?.Stop();
+        _updatePollTimer = null;
     }
 
     public async Task CheckForUpdatesAsync(bool manual = true)
@@ -675,6 +711,14 @@ public sealed class AppManager : INotifyPropertyChanged
     public bool TrustedTestBuildEnabled() => Native.IsTrustedTestBuild();
     public string? ExportOwnerNsec() => _secretStore.Load()?.OwnerNsec;
     public string? ExportDeviceNsec() => _secretStore.Load()?.DeviceNsec;
+
+    private static TimeSpan LoadDesktopUpdatePollInterval()
+    {
+        var raw = Environment.GetEnvironmentVariable("IRIS_UPDATE_POLL_SECONDS");
+        return double.TryParse(raw, out var seconds) && seconds > 0
+            ? TimeSpan.FromSeconds(seconds)
+            : TimeSpan.FromHours(6);
+    }
 
     public void CopyToClipboard(string value)
     {
@@ -1198,7 +1242,8 @@ public sealed class AppManager : INotifyPropertyChanged
             false,
             false,
             false,
-            false
+            false,
+            null
         ),
         Array.Empty<ChatThreadSnapshot>(),
         null,
@@ -1221,6 +1266,7 @@ public sealed class AppManager : INotifyPropertyChanged
             nearbyEnabled: true,
             nearbyBluetoothEnabled: false,
             nearbyLanEnabled: false,
+            nearbyMailbagEnabled: true,
             nostrRelayUrls: new[]
             {
                 "wss://relay.damus.io",
@@ -1235,6 +1281,8 @@ public sealed class AppManager : INotifyPropertyChanged
             imageProxySaltHex: "5e608e60945dcd2a787e8465d76ba34149894765061d39287609fb9d776caa0c",
             mutedChatIds: Array.Empty<string>(),
             pinnedChatIds: Array.Empty<string>(),
+            blockedOwnerPubkeys: Array.Empty<string>(),
+            acceptedOwnerPubkeys: Array.Empty<string>(),
             debugLoggingEnabled: false,
             acceptUnknownDirectMessages: true,
             mobilePushServerUrl: ""

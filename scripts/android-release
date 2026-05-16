@@ -119,7 +119,7 @@ case "${1:-}" in
     build_variant beta bundleBeta bundle/beta aab
     ;;
   release-apk)
-    build_variant release assembleRelease apk/release apk
+    build_variant release assembleSelfHosted apk/selfHosted apk
     ;;
   release-bundle)
     build_variant release bundleRelease bundle/release aab

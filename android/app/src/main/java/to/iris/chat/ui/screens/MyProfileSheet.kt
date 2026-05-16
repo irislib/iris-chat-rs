@@ -63,6 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -169,6 +170,7 @@ fun MyProfileSheet(
     val clipboard = rememberIrisClipboard()
     val haptics = rememberIrisHapticFeedback()
     val context = LocalContext.current
+    val selfUpdateState by appManager.selfUpdateState.collectAsStateWithLifecycle()
     val canShareSupport = remember(context) { canShareText(context, "application/json") }
     val coroutineScope = rememberCoroutineScope()
     val profilePicturePicker =
@@ -671,6 +673,34 @@ fun MyProfileSheet(
                                     style = MaterialTheme.typography.bodyMedium,
                                     modifier = Modifier.testTag("myProfileVersionValue"),
                                 )
+                                if (selfUpdateState.supported) {
+                                    SettingsToggleRow(
+                                        title = "Auto check",
+                                        checked = selfUpdateState.autoCheckEnabled,
+                                        onCheckedChange = appManager::setSelfUpdateAutoCheckEnabled,
+                                        tag = "myProfileSelfUpdateAutoCheckSwitch",
+                                    )
+                                    if (selfUpdateState.status.isNotBlank()) {
+                                        Text(
+                                            text = selfUpdateState.status,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = IrisTheme.palette.muted,
+                                            modifier = Modifier.testTag("myProfileSelfUpdateStatus"),
+                                        )
+                                    }
+                                    IrisSecondaryButton(
+                                        text = selfUpdateButtonText(selfUpdateState),
+                                        onClick = {
+                                            when {
+                                                selfUpdateState.downloaded -> appManager.installSelfUpdate(context)
+                                                selfUpdateState.available -> appManager.downloadSelfUpdate()
+                                                else -> appManager.checkForSelfUpdate()
+                                            }
+                                        },
+                                        enabled = !selfUpdateState.busy,
+                                        modifier = Modifier.testTag("myProfileSelfUpdateButton"),
+                                    )
+                                }
                                 IrisInlineAction(
                                     text = "Source code",
                                     onClick = {
@@ -1549,6 +1579,15 @@ private fun settingsPageIcon(page: SettingsPage): ImageVector =
         SettingsPage.About -> IrisIcons.File
         SettingsPage.Support -> IrisIcons.Share
         SettingsPage.AccountData -> IrisIcons.DeleteForever
+    }
+
+private fun selfUpdateButtonText(state: to.iris.chat.update.AndroidSelfUpdateState): String =
+    when {
+        state.checking -> "Checking"
+        state.downloading -> "Downloading"
+        state.downloaded -> "Install"
+        state.available -> "Download"
+        else -> "Check for updates"
     }
 
 @Composable

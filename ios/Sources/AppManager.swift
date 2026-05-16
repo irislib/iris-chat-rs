@@ -782,6 +782,11 @@ final class DesktopUpdateController: ObservableObject {
     @Published var autoCheck: Bool = UserDefaults.standard.object(forKey: "updates.autoCheck") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(autoCheck, forKey: "updates.autoCheck")
+            if autoCheck {
+                startAutomaticChecks()
+            } else {
+                stopAutomaticChecks()
+            }
         }
     }
     @Published var autoInstall: Bool = UserDefaults.standard.bool(forKey: "updates.autoInstall") {
@@ -797,6 +802,7 @@ final class DesktopUpdateController: ObservableObject {
     private let currentVersion: () -> String
     private var assetUrl: URL?
     private var task: Task<Void, Never>?
+    private var automaticCheckTask: Task<Void, Never>?
     private var startupCheckDone = false
 
     init(manifestUrl: URL, currentVersion: @escaping () -> String) {
@@ -804,14 +810,45 @@ final class DesktopUpdateController: ObservableObject {
         self.currentVersion = currentVersion
     }
 
+    deinit {
+        automaticCheckTask?.cancel()
+        task?.cancel()
+    }
+
     var canInstall: Bool {
         available && assetUrl != nil && !checking && !installing
     }
 
     func runStartupCheckIfNeeded() {
-        guard autoCheck, !startupCheckDone else { return }
-        startupCheckDone = true
-        check(manual: false)
+        startAutomaticChecks()
+    }
+
+    func startAutomaticChecks() {
+        guard autoCheck else {
+            stopAutomaticChecks()
+            return
+        }
+        if !startupCheckDone {
+            startupCheckDone = true
+            check(manual: false)
+        }
+        guard automaticCheckTask == nil else { return }
+        automaticCheckTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.automaticCheckIntervalNanoseconds)
+                guard let self, !Task.isCancelled else { return }
+                guard self.autoCheck else {
+                    self.stopAutomaticChecks()
+                    return
+                }
+                self.check(manual: false)
+            }
+        }
+    }
+
+    func stopAutomaticChecks() {
+        automaticCheckTask?.cancel()
+        automaticCheckTask = nil
     }
 
     func check(manual: Bool = true) {
@@ -837,6 +874,15 @@ final class DesktopUpdateController: ObservableObject {
                 }
             }
         }
+    }
+
+    private static var automaticCheckIntervalNanoseconds: UInt64 {
+        if let raw = ProcessInfo.processInfo.environment["IRIS_UPDATE_POLL_SECONDS"],
+           let seconds = Double(raw),
+           seconds > 0 {
+            return UInt64(seconds * 1_000_000_000)
+        }
+        return 6 * 60 * 60 * 1_000_000_000
     }
 
     func install() {

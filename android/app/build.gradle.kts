@@ -109,6 +109,8 @@ val buildTimestampUtc =
         ?: gitValue("log", "-1", "--format=%ct", "HEAD")?.toLongOrNull()?.let { Instant.ofEpochSecond(it).toString() }
         ?: Instant.now().toString()
 val mobilePushServerUrl = configValue("mobilePush.serverUrl", "IRIS_MOBILE_PUSH_SERVER_URL") ?: ""
+val updateManifestUrl = configValue("update.manifestUrl", "IRIS_UPDATE_MANIFEST_URL") ?: ""
+val updatePollSeconds = configValue("update.pollSeconds", "IRIS_UPDATE_POLL_SECONDS")?.toLongOrNull() ?: 0L
 
 data class BuildRelayConfig(
     val relaySetId: String,
@@ -209,9 +211,12 @@ android {
             buildConfigField("String", "BUILD_GIT_SHA", stringLiteral(buildGitSha))
             buildConfigField("String", "BUILD_TIMESTAMP_UTC", stringLiteral(buildTimestampUtc))
             buildConfigField("String", "MOBILE_PUSH_SERVER_URL", stringLiteral(mobilePushServerUrl))
+            buildConfigField("String", "UPDATE_MANIFEST_URL", stringLiteral(updateManifestUrl))
+            buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
             buildConfigField("String", "RELAY_SET_ID", stringLiteral(debugRelayConfig.relaySetId))
             buildConfigField("String", "DEFAULT_RELAYS_CSV", stringLiteral(debugRelayConfig.relaysCsv))
             buildConfigField("boolean", "TRUSTED_TEST_BUILD", debugRelayConfig.trustedTestBuild.toString())
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "false")
         }
 
         create("beta") {
@@ -232,9 +237,12 @@ android {
             buildConfigField("String", "BUILD_GIT_SHA", stringLiteral(buildGitSha))
             buildConfigField("String", "BUILD_TIMESTAMP_UTC", stringLiteral(buildTimestampUtc))
             buildConfigField("String", "MOBILE_PUSH_SERVER_URL", stringLiteral(mobilePushServerUrl))
+            buildConfigField("String", "UPDATE_MANIFEST_URL", stringLiteral(updateManifestUrl))
+            buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
             buildConfigField("String", "RELAY_SET_ID", stringLiteral(betaRelayConfig.relaySetId))
             buildConfigField("String", "DEFAULT_RELAYS_CSV", stringLiteral(betaRelayConfig.relaysCsv))
             buildConfigField("boolean", "TRUSTED_TEST_BUILD", betaRelayConfig.trustedTestBuild.toString())
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "false")
         }
 
         release {
@@ -247,9 +255,22 @@ android {
             buildConfigField("String", "BUILD_GIT_SHA", stringLiteral(buildGitSha))
             buildConfigField("String", "BUILD_TIMESTAMP_UTC", stringLiteral(buildTimestampUtc))
             buildConfigField("String", "MOBILE_PUSH_SERVER_URL", stringLiteral(mobilePushServerUrl))
+            buildConfigField("String", "UPDATE_MANIFEST_URL", stringLiteral(updateManifestUrl))
+            buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
             buildConfigField("String", "RELAY_SET_ID", stringLiteral(releaseRelayConfig.relaySetId))
             buildConfigField("String", "DEFAULT_RELAYS_CSV", stringLiteral(releaseRelayConfig.relaysCsv))
             buildConfigField("boolean", "TRUSTED_TEST_BUILD", releaseRelayConfig.trustedTestBuild.toString())
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "false")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+
+        create("selfHosted") {
+            initWith(getByName("release"))
+            matchingFallbacks += listOf("release")
+            buildConfigField("String", "BUILD_CHANNEL", stringLiteral("release"))
+            buildConfigField("boolean", "SELF_UPDATE_ENABLED", "true")
             if (hasReleaseSigning) {
                 signingConfig = signingConfigs.getByName("release")
             }
@@ -453,6 +474,7 @@ tasks.configureEach {
         "mergeDebugJniLibFolders" -> dependsOn(buildRustAndroidDebug)
         "mergeBetaJniLibFolders" -> dependsOn(buildRustAndroidBeta)
         "mergeReleaseJniLibFolders" -> dependsOn(buildRustAndroidRelease)
+        "mergeSelfHostedJniLibFolders" -> dependsOn(buildRustAndroidRelease)
     }
 }
 

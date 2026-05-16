@@ -63,6 +63,7 @@ import to.iris.chat.rust.Screen
 import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.downloadHashtreeAttachment
 import to.iris.chat.push.AndroidMobilePushRuntime
+import to.iris.chat.update.AndroidSelfUpdateManager
 
 interface RustAppClient {
     fun state(): AppState
@@ -337,6 +338,13 @@ class AppManager(
                 produceFile = { appContext.preferencesDataStoreFile(dataStoreName) },
             )
     private val mobilePushRuntime = AndroidMobilePushRuntime(this.dataStore)
+    private val selfUpdateManager =
+        AndroidSelfUpdateManager(
+            context = appContext,
+            dataStore = this.dataStore,
+            scope = applicationScope,
+            ioDispatcher = ioDispatcher,
+        )
 
     private var rust = createRustApp()
     private var rustGeneration: Long = 0
@@ -398,6 +406,7 @@ class AppManager(
     val preferences: StateFlow<PreferencesSnapshot> =
         slice("preferences") { it.preferences }
     val toast: StateFlow<String?> = slice("toast") { it.toast }
+    val selfUpdateState = selfUpdateManager.state
     private val mutablePendingShare = MutableStateFlow<PendingShare?>(null)
     val pendingShare: StateFlow<PendingShare?> = mutablePendingShare.asStateFlow()
 
@@ -578,12 +587,14 @@ class AppManager(
         mutableAppForegrounded.value = true
         mutableForegroundedAtSecs.value = currentTimeSeconds()
         recordUserActivity()
+        selfUpdateManager.startAutomaticChecks()
         dispatchToRust(AppAction.AppForegrounded, showsToastOnFailure = false)
     }
 
     fun appBackgrounded() {
         appInForeground = false
         mutableAppForegrounded.value = false
+        selfUpdateManager.stopAutomaticChecks()
         runCatching {
             rust.prepareForSuspend()
         }.onFailure { error ->
@@ -1193,6 +1204,22 @@ class AppManager(
     fun relaySetId(): String = BuildConfig.RELAY_SET_ID
 
     fun isTrustedTestBuild(): Boolean = BuildConfig.TRUSTED_TEST_BUILD
+
+    fun checkForSelfUpdate() {
+        selfUpdateManager.check(manual = true)
+    }
+
+    fun downloadSelfUpdate() {
+        selfUpdateManager.download()
+    }
+
+    fun installSelfUpdate(context: Context) {
+        selfUpdateManager.install(context)
+    }
+
+    fun setSelfUpdateAutoCheckEnabled(enabled: Boolean) {
+        selfUpdateManager.setAutoCheckEnabled(enabled)
+    }
 
     private fun applyUpdate(update: AppUpdate) {
         when (update) {

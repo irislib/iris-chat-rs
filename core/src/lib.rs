@@ -7,6 +7,7 @@ pub mod perflog;
 mod qr;
 mod state;
 mod test_fixtures;
+pub mod update_policy;
 mod updates;
 
 use std::any::Any;
@@ -22,6 +23,7 @@ pub use actions::AppAction;
 pub use qr::*;
 pub use state::*;
 pub use test_fixtures::*;
+pub use update_policy::UpdateAutoCheckPolicy;
 pub use updates::*;
 
 use crate::core::AppCore;
