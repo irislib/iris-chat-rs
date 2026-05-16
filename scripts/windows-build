@@ -80,6 +80,15 @@ detect_shared_repo_path() {
   printf '%s\n' "${IRIS_WINDOWS_GUEST_REPO_PATH:-C:\\src\\iris-chat-rs}"
 }
 
+windows_git_remote_name() {
+  printf '%s\n' "${IRIS_WINDOWS_GIT_REMOTE:-win11-dev}"
+}
+
+git_current_branch() {
+  local repo="$1"
+  git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || printf '%s\n' "main"
+}
+
 # Run a PowerShell script on the SSH host. We base64-encode (UTF-16LE) the
 # script so it survives ssh + cmd.exe + powershell parsing without any
 # quoting headaches, regardless of size.
@@ -232,6 +241,113 @@ function Get-IrisDotnetPublishDir([string]$RepoRoot, [string]$Config) {
 PS
 }
 
+ensure_local_git_remote() {
+  local repo="$1"
+  local remote="$2"
+  local url="$3"
+
+  if git -C "$repo" remote get-url "$remote" >/dev/null 2>&1; then
+    git -C "$repo" remote set-url "$remote" "$url"
+  else
+    git -C "$repo" remote add "$remote" "$url"
+  fi
+}
+
+ensure_remote_bare_repo() {
+  local vm="$1"
+  local bare_name="$2"
+  local bare_quoted
+  bare_quoted="$(ps_quote "$bare_name")"
+
+  ps_run "$vm" "$(cat <<PS
+\$ErrorActionPreference = 'Stop'
+\$src = Join-Path \$HOME 'src'
+New-Item -ItemType Directory -Force -Path \$src | Out-Null
+\$bare = Join-Path \$src ${bare_quoted}
+if (-not (Test-Path \$bare)) {
+  git init --bare \$bare
+  if (\$LASTEXITCODE -ne 0) { throw "git init --bare failed for \$bare" }
+}
+Write-Output ("[ok] git bare repo: {0}" -f \$bare)
+PS
+)"
+}
+
+reset_remote_worktree_from_bare() {
+  local vm="$1"
+  local guest_repo="$2"
+  local bare_name="$3"
+  local branch="$4"
+  local guest_repo_quoted bare_name_quoted branch_quoted
+  guest_repo_quoted="$(ps_quote "$guest_repo")"
+  bare_name_quoted="$(ps_quote "$bare_name")"
+  branch_quoted="$(ps_quote "$branch")"
+
+  ps_run "$vm" "$(cat <<PS
+\$ErrorActionPreference = 'Stop'
+\$repoRoot = ${guest_repo_quoted}
+\$branch = ${branch_quoted}
+\$bare = Join-Path (Join-Path \$HOME 'src') ${bare_name_quoted}
+\$parent = Split-Path \$repoRoot
+New-Item -ItemType Directory -Force -Path \$parent | Out-Null
+
+\$isGitWorktree = \$false
+if (Test-Path \$repoRoot) {
+  \$gitPath = Join-Path \$repoRoot '.git'
+  if (Test-Path \$gitPath) { \$isGitWorktree = \$true }
+}
+if ((Test-Path \$repoRoot) -and -not \$isGitWorktree) {
+  Remove-Item \$repoRoot -Recurse -Force -ErrorAction SilentlyContinue
+  if (Test-Path \$repoRoot) {
+    cmd.exe /d /s /c ('rmdir /s /q "' + \$repoRoot + '"') | Out-Null
+  }
+  if (Test-Path \$repoRoot) { throw "failed to remove non-git worktree \$repoRoot" }
+}
+if (-not (Test-Path \$repoRoot)) {
+  git clone \$bare \$repoRoot
+  if (\$LASTEXITCODE -ne 0) { throw "git clone failed for \$repoRoot" }
+}
+
+Set-Location \$repoRoot
+\$syncRemote = 'build-source'
+if ((git remote) -contains \$syncRemote) {
+  git remote set-url \$syncRemote \$bare
+} else {
+  git remote add \$syncRemote \$bare
+}
+git fetch --prune \$syncRemote \$branch
+if (\$LASTEXITCODE -ne 0) { throw "git fetch failed for \$repoRoot" }
+git checkout -B \$branch FETCH_HEAD
+if (\$LASTEXITCODE -ne 0) { throw "git checkout failed for \$repoRoot" }
+git reset --hard FETCH_HEAD
+if (\$LASTEXITCODE -ne 0) { throw "git reset failed for \$repoRoot" }
+git clean -fdx -e target/ -e core/target/ -e windows/IrisChat/bin/ -e windows/IrisChat/obj/ -e windows/IrisChat/Bindings/ -e windows/IrisChat/Frameworks/ -e dist/
+if (\$LASTEXITCODE -ne 0) { throw "git clean failed for \$repoRoot" }
+Write-Output ("[ok] synced {0} to {1}" -f \$repoRoot, (git rev-parse --short=12 HEAD))
+PS
+)"
+}
+
+sync_repo_over_git() {
+  local host_repo="$1"
+  local vm="$2"
+  local guest_repo="$3"
+  local bare_name="$4"
+  local remote branch url
+
+  remote="$(windows_git_remote_name)"
+  branch="$(git_current_branch "$host_repo")"
+  url="${vm}:src/${bare_name}"
+
+  ensure_remote_bare_repo "$vm" "$bare_name"
+  ensure_local_git_remote "$host_repo" "$remote" "$url"
+  if [[ -n "$(git -C "$host_repo" status --porcelain)" ]]; then
+    echo "[warn] $host_repo has uncommitted changes; git sync will use committed HEAD only." >&2
+  fi
+  git -C "$host_repo" push --force "$remote" "HEAD:refs/heads/$branch"
+  reset_remote_worktree_from_bare "$vm" "$guest_repo" "$bare_name" "$branch"
+}
+
 run_doctor() {
   require_macos
   local vm
@@ -299,55 +415,8 @@ run_sync() {
     exit 1
   fi
 
-  # Make sure both destination dirs exist on the remote.
-  ps_run "$vm" "
-\$ErrorActionPreference = 'Stop'
-New-Item -ItemType Directory -Force -Path '$guest_repo' | Out-Null
-New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
-"
-
-  # Push iris-chat-rs working tree. Skip the other-platform directories
-  # entirely — they're not needed to build for Windows and shipping a few
-  # GB of iOS/macOS Frameworks across the SSH tunnel routinely timed out.
-  # COPYFILE_DISABLE=1 keeps macOS bsdtar from emitting AppleDouble `._*`
-  # sidecars; XAML's MSBuild compiler treats them as XML and chokes.
-  COPYFILE_DISABLE=1 tar \
-    --exclude=./target \
-    --exclude=./core/target \
-    --exclude=./dist \
-    --exclude=./build \
-    --exclude=./.git \
-    --exclude=./.claude \
-    --exclude=./.crashes \
-    --exclude=./node_modules \
-    --exclude=./.relay-venv \
-    --exclude=./.gradle \
-    --exclude=./.kotlin \
-    --exclude=./.idea \
-    --exclude=./ios \
-    --exclude=./macos \
-    --exclude=./android \
-    --exclude=./linux \
-    --exclude=./core/uniffi-bindgen \
-    --exclude=./windows/IrisChat/bin \
-    --exclude=./windows/IrisChat/obj \
-    --exclude=./windows/IrisChat/Bindings \
-    --exclude=./windows/IrisChat/Frameworks \
-    --exclude='._*' \
-    -cf - -C "$ROOT" . \
-    | ssh "$vm" tar -xf - -C "$guest_repo_unix"
-
-  # Push sibling nostr-double-ratchet repo. Two ssh calls because the
-  # remote login shell is PowerShell 5.1, which doesn't accept `&&` as a
-  # statement separator.
-  ssh "$vm" "powershell.exe -NoProfile -Command \"New-Item -ItemType Directory -Force -Path '$guest_ndr_unix' | Out-Null\""
-  COPYFILE_DISABLE=1 tar \
-    --exclude=./target \
-    --exclude=./.git \
-    --exclude=./node_modules \
-    --exclude='._*' \
-    -cf - -C "$host_ndr" . \
-    | ssh "$vm" tar -xf - -C "$guest_ndr_unix"
+  sync_repo_over_git "$ROOT" "$vm" "$guest_repo" "iris-chat-rs.git"
+  sync_repo_over_git "$host_ndr" "$vm" "$guest_ndr_unix" "nostr-double-ratchet.git"
 
   echo "Synced repo to $guest_repo and sibling to ${guest_ndr_unix//\//\\}"
 }
