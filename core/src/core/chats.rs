@@ -384,9 +384,7 @@ impl AppCore {
             return;
         };
 
-        if !is_group_chat_id(&normalized_chat_id)
-            && self.is_owner_blocked(&normalized_chat_id)
-        {
+        if !is_group_chat_id(&normalized_chat_id) && self.is_owner_blocked(&normalized_chat_id) {
             self.state.toast = Some("User is blocked.".to_string());
             self.emit_state();
             return;

@@ -254,8 +254,7 @@ impl DesktopNearbyService {
                 inner.own_outbound.insert(event_id.clone(), record.clone());
                 inner.forwarded.remove(&event_id);
                 if kind == 0 {
-                    if let Some(profile) = NearbyProfileEvent::from_event_json(&record.event_json)
-                    {
+                    if let Some(profile) = NearbyProfileEvent::from_event_json(&record.event_json) {
                         inner.own_profile_event_id = Some(event_id);
                         inner.known_profiles.insert(profile.id.clone(), profile);
                     }

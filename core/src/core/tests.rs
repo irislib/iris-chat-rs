@@ -5596,6 +5596,54 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
 }
 
 #[test]
+fn recent_protocol_filters_backfill_messages_across_offline_windows() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let message_author = Keys::generate();
+    let mut core = logged_in_test_core("protocol-backfill-offline-window", &owner, &device);
+    core.protocol_subscription_runtime.desired_plan = Some(protocol_plan_for_test(
+        vec![message_author.public_key()],
+        Vec::new(),
+    ));
+
+    let now = 1_777_159_500;
+    let message_author_hex = message_author.public_key().to_hex();
+    let filters = core.recent_protocol_filters(UnixSeconds(now));
+    let message_filter = filters
+        .iter()
+        .map(|filter| serde_json::to_value(filter).expect("filter json"))
+        .find(|filter| {
+            let has_message_kind = filter
+                .get("kinds")
+                .and_then(|kinds| kinds.as_array())
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|kind| kind.as_u64() == Some(MESSAGE_EVENT_KIND as u64))
+                });
+            let has_author = filter
+                .get("authors")
+                .and_then(|authors| authors.as_array())
+                .is_some_and(|authors| {
+                    authors
+                        .iter()
+                        .any(|author| author.as_str() == Some(message_author_hex.as_str()))
+                });
+            has_message_kind && has_author
+        })
+        .expect("message backfill filter");
+
+    assert!(
+        CATCH_UP_LOOKBACK_SECS >= 24 * 60 * 60,
+        "message catch-up must survive ordinary offline windows"
+    );
+    assert_eq!(
+        message_filter.get("since").and_then(|since| since.as_u64()),
+        Some(now - CATCH_UP_LOOKBACK_SECS)
+    );
+}
+
+#[test]
 fn recent_protocol_filters_do_not_include_unscoped_message_backfill_for_cold_tracked_peer() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -6365,11 +6413,7 @@ fn private_invite_response_from_unknown_sender_can_be_blocked() {
         .url
         .clone();
 
-    let mut bob = logged_in_test_core(
-        "private-invite-block-unknown-bob",
-        &bob_owner,
-        &bob_device,
-    );
+    let mut bob = logged_in_test_core("private-invite-block-unknown-bob", &bob_owner, &bob_device);
     bob.pending_relay_publishes.clear();
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
@@ -6479,12 +6523,7 @@ fn self_synced_outgoing_message_from_linked_device_marks_thread_accepted() {
         1_777_159_493,
         Vec::new(),
     );
-    core.apply_decrypted_runtime_message(
-        sender.public_key(),
-        None,
-        incoming,
-        Some("c".repeat(64)),
-    );
+    core.apply_decrypted_runtime_message(sender.public_key(), None, incoming, Some("c".repeat(64)));
 
     // Linked device replies — arrives as an outgoing self-sync rumor
     // authored by the local owner, conversation-owner = the peer.
@@ -6719,8 +6758,7 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
     let bob_owner = Keys::generate();
     let bob_device = Keys::generate();
 
-    let mut alice =
-        logged_in_test_core("push-filter-toggle-alice", &alice_owner, &alice_device);
+    let mut alice = logged_in_test_core("push-filter-toggle-alice", &alice_owner, &alice_device);
     alice.pending_relay_publishes.clear();
     alice.handle_action(AppAction::CreatePublicInvite);
     let invite_url = alice

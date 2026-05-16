@@ -365,7 +365,9 @@ impl AppCore {
         {
             return;
         }
-        self.preferences.accepted_owner_pubkeys.push(target_owner_hex);
+        self.preferences
+            .accepted_owner_pubkeys
+            .push(target_owner_hex);
         self.preferences.accepted_owner_pubkeys.sort();
         self.preferences.accepted_owner_pubkeys.dedup();
         // Accepting a request moves the peer into the
