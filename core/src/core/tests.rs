@@ -5596,19 +5596,72 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
 }
 
 #[test]
-fn recent_protocol_filters_backfill_messages_across_offline_windows() {
+fn recent_protocol_filters_backfill_messages_without_time_or_count_bounds() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let message_author = Keys::generate();
-    let mut core = logged_in_test_core("protocol-backfill-offline-window", &owner, &device);
+    let group_author = Keys::generate();
+    let mut core = logged_in_test_core("protocol-backfill-unbounded", &owner, &device);
+    core.protocol_subscription_runtime.desired_plan = Some(protocol_plan_for_test(
+        vec![message_author.public_key()],
+        vec![group_author.public_key()],
+    ));
+
+    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
+    let find_filter = |kind: u32, author: PublicKey| {
+        let author_hex = author.to_hex();
+        filters
+            .iter()
+            .map(|filter| serde_json::to_value(filter).expect("filter json"))
+            .find(|filter| {
+                let has_kind = filter
+                    .get("kinds")
+                    .and_then(|kinds| kinds.as_array())
+                    .is_some_and(|kinds| {
+                        kinds
+                            .iter()
+                            .any(|value| value.as_u64() == Some(kind as u64))
+                    });
+                let has_author = filter
+                    .get("authors")
+                    .and_then(|authors| authors.as_array())
+                    .is_some_and(|authors| {
+                        authors
+                            .iter()
+                            .any(|value| value.as_str() == Some(author_hex.as_str()))
+                    });
+                has_kind && has_author
+            })
+            .expect("history backfill filter")
+    };
+    let message_filter = find_filter(MESSAGE_EVENT_KIND, message_author.public_key());
+    let group_filter = find_filter(GROUP_SENDER_KEY_MESSAGE_KIND, group_author.public_key());
+
+    for filter in [message_filter, group_filter] {
+        assert!(
+            filter.get("since").is_none(),
+            "message history catch-up must not have a time bound"
+        );
+        assert!(
+            filter.get("limit").is_none(),
+            "message history catch-up must not have a count bound"
+        );
+    }
+}
+
+#[test]
+fn recent_protocol_filters_scope_message_backfill_to_known_authors() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let message_author = Keys::generate();
+    let mut core = logged_in_test_core("protocol-backfill-scoped", &owner, &device);
     core.protocol_subscription_runtime.desired_plan = Some(protocol_plan_for_test(
         vec![message_author.public_key()],
         Vec::new(),
     ));
 
-    let now = 1_777_159_500;
+    let filters = core.recent_protocol_filters(UnixSeconds(1_777_159_500));
     let message_author_hex = message_author.public_key().to_hex();
-    let filters = core.recent_protocol_filters(UnixSeconds(now));
     let message_filter = filters
         .iter()
         .map(|filter| serde_json::to_value(filter).expect("filter json"))
@@ -5634,12 +5687,8 @@ fn recent_protocol_filters_backfill_messages_across_offline_windows() {
         .expect("message backfill filter");
 
     assert!(
-        CATCH_UP_LOOKBACK_SECS >= 24 * 60 * 60,
-        "message catch-up must survive ordinary offline windows"
-    );
-    assert_eq!(
-        message_filter.get("since").and_then(|since| since.as_u64()),
-        Some(now - CATCH_UP_LOOKBACK_SECS)
+        message_filter.get("authors").is_some(),
+        "message history catch-up must remain scoped to known authors"
     );
 }
 

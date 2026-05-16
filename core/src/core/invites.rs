@@ -179,7 +179,7 @@ impl AppCore {
         if self.fetch_recent_protocol_state() {
             self.state.busy.syncing_network = true;
         }
-        self.fetch_recent_messages_for_tracked_peers(unix_now());
+        self.fetch_recent_messages_for_tracked_peers();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
 
         let chat_id = owner_pubkey.to_hex();

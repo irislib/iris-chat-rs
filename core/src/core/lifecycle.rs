@@ -521,10 +521,9 @@ impl AppCore {
                 }
                 self.protocol_subscription_runtime
                     .tracked_peer_catch_up_due_at = None;
-                let now = unix_now();
                 self.push_debug_log("protocol.catch_up.schedule", "fetch tracked peers");
                 self.fetch_recent_protocol_state();
-                self.fetch_recent_messages_for_tracked_peers(now);
+                self.fetch_recent_messages_for_tracked_peers();
                 self.retry_protocol_engine_pending_outbound("tracked_peer_catch_up");
                 if self.is_device_roster_open() {
                     self.fetch_pending_device_invites_for_local_owner();

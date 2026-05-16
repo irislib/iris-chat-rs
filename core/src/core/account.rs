@@ -45,7 +45,7 @@ impl AppCore {
         self.schedule_session_connect();
         self.request_protocol_subscription_refresh_forced_reconnect_if_offline();
         let fetching_recent_protocol_state = self.fetch_recent_protocol_state();
-        self.fetch_recent_messages_for_tracked_peers(now);
+        self.fetch_recent_messages_for_tracked_peers();
         self.retry_protocol_engine_pending_outbound("app_foreground");
         self.retry_pending_relay_publishes("app_foreground");
         self.state.busy.syncing_network = fetching_recent_protocol_state;

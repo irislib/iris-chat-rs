@@ -13,6 +13,26 @@ const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 2] = [2_500, 10_000];
 #[cfg(test)]
 const NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS: [u64; 1] = [50];
 
+fn unique_pubkeys(pubkeys: impl IntoIterator<Item = PublicKey>) -> Vec<PublicKey> {
+    let mut seen = HashSet::new();
+    pubkeys
+        .into_iter()
+        .filter(|pubkey| seen.insert(*pubkey))
+        .collect()
+}
+
+fn direct_message_history_filter(author_pubkeys: impl IntoIterator<Item = PublicKey>) -> Filter {
+    Filter::new()
+        .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
+        .authors(unique_pubkeys(author_pubkeys))
+}
+
+fn group_sender_key_history_filter(author_pubkeys: impl IntoIterator<Item = PublicKey>) -> Filter {
+    Filter::new()
+        .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
+        .authors(unique_pubkeys(author_pubkeys))
+}
+
 impl AppCore {
     fn protocol_fetch_rate_limit_delay(&self) -> Option<Duration> {
         let last_started = self
@@ -341,21 +361,11 @@ impl AppCore {
         });
     }
 
-    pub(super) fn fetch_recent_messages_for_author(
-        &self,
-        author_pubkey: PublicKey,
-        now: UnixSeconds,
-        lookback_secs: u64,
-    ) {
-        self.fetch_recent_messages_for_authors(vec![author_pubkey], now, lookback_secs);
+    pub(super) fn fetch_recent_messages_for_author(&self, author_pubkey: PublicKey) {
+        self.fetch_recent_messages_for_authors(vec![author_pubkey]);
     }
 
-    fn fetch_recent_messages_for_authors(
-        &self,
-        author_pubkeys: Vec<PublicKey>,
-        now: UnixSeconds,
-        lookback_secs: u64,
-    ) {
+    fn fetch_recent_messages_for_authors(&self, author_pubkeys: Vec<PublicKey>) {
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -367,11 +377,7 @@ impl AppCore {
             return;
         }
         for author_chunk in author_pubkeys.chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE) {
-            let filter = build_direct_message_backfill_filter(
-                author_chunk.to_vec(),
-                now.get().saturating_sub(lookback_secs),
-                DEVICE_INVITE_DISCOVERY_LIMIT,
-            );
+            let filter = direct_message_history_filter(author_chunk.to_vec());
             let tx = self.core_sender.clone();
             let client = client.clone();
             let relay_urls = relay_urls.clone();
@@ -390,11 +396,7 @@ impl AppCore {
         }
     }
 
-    fn schedule_new_message_author_backfill(
-        &self,
-        author_pubkeys: Vec<PublicKey>,
-        lookback_secs: u64,
-    ) {
+    fn schedule_new_message_author_backfill(&self, author_pubkeys: Vec<PublicKey>) {
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -412,11 +414,7 @@ impl AppCore {
             let tx = self.core_sender.clone();
             self.runtime.spawn(async move {
                 sleep(Duration::from_millis(delay_ms)).await;
-                let filter = build_direct_message_backfill_filter(
-                    authors,
-                    unix_now().get().saturating_sub(lookback_secs),
-                    DEVICE_INVITE_DISCOVERY_LIMIT,
-                );
+                let filter = direct_message_history_filter(authors);
                 ensure_session_relays_configured(&client, &relay_urls).await;
                 connect_client_with_timeout(&client, Duration::from_secs(5)).await;
                 if let Ok(events) = client.fetch_events(filter, Duration::from_secs(5)).await {
@@ -434,22 +432,11 @@ impl AppCore {
     pub(super) fn fetch_recent_group_sender_key_messages_for_author(
         &self,
         author_pubkey: PublicKey,
-        now: UnixSeconds,
-        lookback_secs: u64,
     ) {
-        self.fetch_recent_group_sender_key_messages_for_authors(
-            vec![author_pubkey],
-            now,
-            lookback_secs,
-        );
+        self.fetch_recent_group_sender_key_messages_for_authors(vec![author_pubkey]);
     }
 
-    fn fetch_recent_group_sender_key_messages_for_authors(
-        &self,
-        author_pubkeys: Vec<PublicKey>,
-        now: UnixSeconds,
-        lookback_secs: u64,
-    ) {
+    fn fetch_recent_group_sender_key_messages_for_authors(&self, author_pubkeys: Vec<PublicKey>) {
         let Some((client, relay_urls)) = self
             .logged_in
             .as_ref()
@@ -461,11 +448,7 @@ impl AppCore {
             return;
         }
         for author_chunk in author_pubkeys.chunks(PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE) {
-            let filter = Filter::new()
-                .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
-                .authors(author_chunk.to_vec())
-                .since(Timestamp::from(now.get().saturating_sub(lookback_secs)))
-                .limit(DEVICE_INVITE_DISCOVERY_LIMIT);
+            let filter = group_sender_key_history_filter(author_chunk.to_vec());
             let tx = self.core_sender.clone();
             let client = client.clone();
             let relay_urls = relay_urls.clone();
@@ -484,7 +467,7 @@ impl AppCore {
         }
     }
 
-    pub(super) fn fetch_recent_messages_for_tracked_peers(&self, now: UnixSeconds) {
+    pub(super) fn fetch_recent_messages_for_tracked_peers(&self) {
         let direct_authors = self
             .protocol_subscription_runtime
             .desired_plan
@@ -518,15 +501,11 @@ impl AppCore {
                     .unwrap_or_default()
             });
         if let [author] = direct_authors.as_slice() {
-            self.fetch_recent_messages_for_author(*author, now, CATCH_UP_LOOKBACK_SECS);
+            self.fetch_recent_messages_for_author(*author);
         } else {
-            self.fetch_recent_messages_for_authors(direct_authors, now, CATCH_UP_LOOKBACK_SECS);
+            self.fetch_recent_messages_for_authors(direct_authors);
         }
-        self.fetch_recent_group_sender_key_messages_for_authors(
-            group_authors,
-            now,
-            CATCH_UP_LOOKBACK_SECS,
-        );
+        self.fetch_recent_group_sender_key_messages_for_authors(group_authors);
     }
 
     pub(super) fn recent_protocol_filters(&self, now: UnixSeconds) -> Vec<Filter> {
@@ -573,24 +552,12 @@ impl AppCore {
         }
         let message_authors = pubkeys_from_hexes(&plan.message_authors);
         if !message_authors.is_empty() {
-            filters.push(build_direct_message_backfill_filter(
-                message_authors,
-                now.get().saturating_sub(CATCH_UP_LOOKBACK_SECS),
-                DEVICE_INVITE_DISCOVERY_LIMIT,
-            ));
+            filters.push(direct_message_history_filter(message_authors));
         }
 
         let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
         if !group_sender_key_authors.is_empty() {
-            filters.push(
-                Filter::new()
-                    .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
-                    .authors(group_sender_key_authors)
-                    .since(Timestamp::from(
-                        now.get().saturating_sub(CATCH_UP_LOOKBACK_SECS),
-                    ))
-                    .limit(DEVICE_INVITE_DISCOVERY_LIMIT),
-            );
+            filters.push(group_sender_key_history_filter(group_sender_key_authors));
         }
 
         let private_invite_response_pubkeys = plan
@@ -1177,15 +1144,8 @@ impl AppCore {
             .filter_map(|author_hex| PublicKey::parse(&author_hex).ok())
             .collect::<Vec<_>>();
         if !added_message_author_pubkeys.is_empty() {
-            self.fetch_recent_messages_for_authors(
-                added_message_author_pubkeys.clone(),
-                unix_now(),
-                NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
-            );
-            self.schedule_new_message_author_backfill(
-                added_message_author_pubkeys,
-                NEW_MESSAGE_AUTHOR_BACKFILL_LOOKBACK_SECS,
-            );
+            self.fetch_recent_messages_for_authors(added_message_author_pubkeys.clone());
+            self.schedule_new_message_author_backfill(added_message_author_pubkeys);
         }
 
         let previous_group_authors = previous
@@ -1211,11 +1171,7 @@ impl AppCore {
         added_group_authors.sort();
         for author_hex in added_group_authors {
             if let Ok(author) = PublicKey::parse(&author_hex) {
-                self.fetch_recent_group_sender_key_messages_for_author(
-                    author,
-                    unix_now(),
-                    CATCH_UP_LOOKBACK_SECS,
-                );
+                self.fetch_recent_group_sender_key_messages_for_author(author);
             }
         }
     }
@@ -1275,7 +1231,7 @@ impl AppCore {
             RelayStatus::Connected if !was_connected && is_connected => {
                 self.reconcile_protocol_subscriptions("relay_connected", false);
                 self.fetch_recent_protocol_state();
-                self.fetch_recent_messages_for_tracked_peers(unix_now());
+                self.fetch_recent_messages_for_tracked_peers();
                 self.retry_protocol_engine_pending_outbound("relay_connected");
                 self.retry_pending_relay_publishes("relay_connected");
                 self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
@@ -1431,7 +1387,7 @@ impl AppCore {
             if queued_targets.is_empty() {
                 self.fetch_recent_protocol_state();
             }
-            self.fetch_recent_messages_for_tracked_peers(unix_now());
+            self.fetch_recent_messages_for_tracked_peers();
             self.retry_protocol_engine_pending_outbound("liveness_check");
         }
         if has_pending_relay_publishes {
