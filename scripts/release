@@ -356,7 +356,21 @@ build_windows() {
     return 0
   fi
   local ssh_host="${IRIS_WINDOWS_SSH_HOST:-win11-dev}"
-  if ! ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_host" whoami >/dev/null 2>&1; then
+  local ssh_attempts="${IRIS_WINDOWS_SSH_RETRIES:-8}"
+  local ssh_delay="${IRIS_WINDOWS_SSH_RETRY_DELAY_SECS:-10}"
+  local ssh_ready=0
+  local attempt
+  for ((attempt = 1; attempt <= ssh_attempts; attempt++)); do
+    if ssh -o BatchMode=yes -o ConnectTimeout=10 "$ssh_host" whoami >/dev/null 2>&1; then
+      ssh_ready=1
+      break
+    fi
+    if [[ "$attempt" -lt "$ssh_attempts" ]]; then
+      echo "[wait] windows: ssh $ssh_host unreachable, retrying in ${ssh_delay}s ($attempt/$ssh_attempts)" >&2
+      sleep "$ssh_delay"
+    fi
+  done
+  if [[ "$ssh_ready" -ne 1 ]]; then
     note_skipped "windows: ssh $ssh_host unreachable (bring the VM up over the Nostr VPN mesh, or set IRIS_WINDOWS_SSH_HOST)"
     return 0
   fi
