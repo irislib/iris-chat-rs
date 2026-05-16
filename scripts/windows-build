@@ -182,6 +182,25 @@ PS
   printf '%s\n' "\$env:PATH = \$cargoBin + ';' + \$dotnetTools + ';' + \$shimBin + ';' + \$dotnetRoot + ';' + ${llvm_quoted} + ';' + \$env:PATH"
 }
 
+release_metadata_env_block() {
+  local channel="${IRIS_BUILD_CHANNEL:-}"
+  if [[ -z "$channel" ]]; then
+    if [[ "$PROFILE" == "release" ]]; then
+      channel="release"
+    else
+      channel="debug"
+    fi
+  fi
+
+  printf '$env:IRIS_APP_VERSION_NAME = %s\n' "$(ps_quote "${IRIS_APP_VERSION_NAME:-0.1.0}")"
+  printf '$env:IRIS_BUILD_CHANNEL = %s\n' "$(ps_quote "$channel")"
+  printf '$env:IRIS_BUILD_GIT_SHA = %s\n' "$(ps_quote "${IRIS_BUILD_GIT_SHA:-unknown}")"
+  printf '$env:IRIS_BUILD_TIMESTAMP_UTC = %s\n' "$(ps_quote "${IRIS_BUILD_TIMESTAMP_UTC:-}")"
+  [[ -n "${IRIS_DEFAULT_RELAYS:-}" ]] && printf '$env:IRIS_DEFAULT_RELAYS = %s\n' "$(ps_quote "$IRIS_DEFAULT_RELAYS")"
+  [[ -n "${IRIS_RELAY_SET_ID:-}" ]] && printf '$env:IRIS_RELAY_SET_ID = %s\n' "$(ps_quote "$IRIS_RELAY_SET_ID")"
+  [[ -n "${IRIS_TRUSTED_TEST_BUILD:-}" ]] && printf '$env:IRIS_TRUSTED_TEST_BUILD = %s\n' "$(ps_quote "$IRIS_TRUSTED_TEST_BUILD")"
+}
+
 cargo_target_dir_block() {
   cat <<'PS'
 function Get-CargoTargetDir([string]$CoreDir) {
@@ -298,6 +317,8 @@ New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
     --exclude=./dist \
     --exclude=./build \
     --exclude=./.git \
+    --exclude=./.claude \
+    --exclude=./.crashes \
     --exclude=./node_modules \
     --exclude=./.relay-venv \
     --exclude=./.gradle \
@@ -307,6 +328,7 @@ New-Item -ItemType Directory -Force -Path (Split-Path '$guest_repo') | Out-Null
     --exclude=./macos \
     --exclude=./android \
     --exclude=./linux \
+    --exclude=./core/uniffi-bindgen \
     --exclude=./windows/IrisChat/bin \
     --exclude=./windows/IrisChat/obj \
     --exclude=./windows/IrisChat/Bindings \
@@ -346,6 +368,7 @@ run_rust() {
   ps_run "$vm" "$(cat <<PS
 \$ErrorActionPreference = 'Continue'
 $(path_setup_block)
+$(release_metadata_env_block)
 \$repoRoot = $guest_repo
 \$coreDir = Join-Path \$repoRoot 'core'
 $(cargo_target_dir_block)
