@@ -1,3 +1,10 @@
+# Iris Chat 2026.5.16.3
+
+- Restoring with a secret key after Delete all local data no longer gets stuck on a storage error.
+- Logout and Delete all local data now make sure secret keys are cleared before app data is removed.
+- Old messages are no longer skipped just because they are old or far back in history.
+- Linked devices are less likely to receive messages for a stale phone session after logout or reset.
+
 # Iris Chat 2026.5.16.2
 
 - Iris can now check for updates automatically on desktop, and self-installed Android APKs can download and install updates from Settings.

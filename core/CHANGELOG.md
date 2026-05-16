@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.24
+
+- Harden logout and Delete all local data across iOS, Android, Linux, Windows, and CLI so secret key clear is verified before local app data is deleted.
+- Rebind the iOS/macOS Rust core after local reset so restoring a profile with a secret key starts from a fresh writable database.
+- Remove catch-up time and count bounds so old messages can be found after restoring or reconnecting a device.
+- Keep stale device keys from surviving logout/reset, avoiding sends to device sessions that the phone no longer has.
+
 ## 0.1.23
 
 - Add shared update policy for automatic update checks, so desktop shells can decide when to poll while core keeps the timing rules consistent.
