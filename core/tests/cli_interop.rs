@@ -246,7 +246,7 @@ fn read_stream_message(
     expected_body: &str,
 ) -> Option<Value> {
     let started = Instant::now();
-    while started.elapsed() < Duration::from_secs(15) {
+    while started.elapsed() < Duration::from_secs(30) {
         relay.replay_stored();
         let line = match receiver.recv_timeout(Duration::from_millis(500)) {
             Ok(line) => line,

@@ -1,3 +1,11 @@
+# Iris Chat 2026.5.16.2
+
+- Iris can now check for updates automatically on desktop, and self-installed Android APKs can download and install updates from Settings.
+- New Chat now uses the same clean code sheet for showing and scanning codes.
+- Group creation is simpler: paste or type a user ID and it is added to the member list automatically.
+- Nearby rows now show fresher mailbag status and open the right peer flow when tapped.
+- iOS image albums now keep the fourth tile and + count aligned when a message has more than four images.
+
 # Iris Chat 2026.5.16.1
 
 - Messages with multiple images now use Signal-style album layouts: a side-by-side pair, a 1+2 mosaic for three, a 2×2 grid for four, and a +N overlay for albums larger than four.

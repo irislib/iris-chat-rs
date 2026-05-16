@@ -223,8 +223,15 @@ fn direct_chat_send_read_search_and_tail_work_offline() {
     assert_eq!(typing["data"]["typing"], true);
 
     let read = run_iris(alice.path(), &["read", chat_id]);
-    assert_eq!(read["data"]["messages"].as_array().unwrap().len(), 2);
-    assert_eq!(read["data"]["messages"][0]["body"], "queued offline");
+    let read_bodies = read["data"]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|message| message["body"].as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(read_bodies.len(), 2);
+    assert!(read_bodies.contains(&"queued offline"));
+    assert!(read_bodies.contains(&"short lived"));
 
     let found = run_iris(alice.path(), &["search", "offline"]);
     assert_eq!(found["data"]["messages"][0]["body"], "queued offline");

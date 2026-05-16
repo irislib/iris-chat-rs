@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.23
+
+- Add shared update policy for automatic update checks, so desktop shells can decide when to poll while core keeps the timing rules consistent.
+- Add self-update support for Android APK installs, including update discovery, download, and handoff to the system installer.
+- Reuse the existing tabbed QR code sheet for New Chat show/scan actions.
+- Simplify group creation across iOS, Android, and Linux: typed or pasted user IDs are added automatically and the selected member list stays above the input.
+- Keep nearby mailbag sync status fresher and make nearby peer rows open the expected peer flow.
+- Fix iOS multi-image album tile sizing when an album has more than four images.
+
+## 0.1.22
+
+- Add Signal-style image album layouts for multiple images, including side-by-side pairs, three-image mosaics, four-image grids, and larger-album overlays.
+- Add a swipe-through image carousel with sender, date, share, and forward actions.
+- Show image thumbnails in the composer attachment row.
+- Report upload progress as chunks land on the network.
+
 ## 0.1.21
 
 - Nearby ingest now tags transport channels with the relaying peer name (e.g. "bluetooth · Alice") so message-info Transport rows show who carried each event.
