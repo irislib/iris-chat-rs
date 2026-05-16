@@ -745,8 +745,8 @@ fn handle_account_top_command(
             restore_account(cli, &secret_key)
         }
         AccountTopCommands::Logout => {
+            remove_account_bundle(data_dir)?;
             cli.dispatch_and_wait(AppAction::Logout, Duration::from_secs(2))?;
-            let _ = std::fs::remove_file(account_bundle_path(data_dir));
             Ok(json!({ "logged_out": true }))
         }
         AccountTopCommands::Whoami => Ok(account_json(&require_account(&cli.app.state())?)),
@@ -1920,6 +1920,21 @@ fn write_account_bundle(data_dir: &Path, bundle: &AccountBundle) -> Result<()> {
     let path = account_bundle_path(data_dir);
     std::fs::write(&path, serde_json::to_vec_pretty(bundle)?)
         .with_context(|| format!("write account bundle {}", path.display()))
+}
+
+fn remove_account_bundle(data_dir: &Path) -> Result<()> {
+    let path = account_bundle_path(data_dir);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error).with_context(|| format!("remove account bundle {}", path.display()));
+        }
+    }
+    if read_account_bundle(data_dir)?.is_some() {
+        anyhow::bail!("account bundle still present after delete");
+    }
+    Ok(())
 }
 
 fn default_data_dir() -> PathBuf {

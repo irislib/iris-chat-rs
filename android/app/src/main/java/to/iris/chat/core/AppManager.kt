@@ -1142,9 +1142,10 @@ class AppManager(
                 stateBeforeLogout,
                 persistedBundle?.ownerNsec,
             )
+            if (!clearNativeSecretsBeforeReset()) {
+                return@launch
+            }
             dispatchToRust(AppAction.Logout)
-            clearPersistedSecret()
-            secureSecretStore.clear()
             replaceRustCoreAfterReset()
         }
     }
@@ -1193,9 +1194,9 @@ class AppManager(
                 stateBeforeReset,
                 persistedBundle?.ownerNsec,
             )
-            clearPersistedSecret()
-            secureSecretStore.clear()
-            replaceRustCoreAfterReset()
+            if (clearNativeSecretsBeforeReset(showToast = false)) {
+                replaceRustCoreAfterReset()
+            }
         }
     }
 
@@ -1611,6 +1612,35 @@ class AppManager(
         }
         cachedAccountBundle = null
         lastMobilePushSyncInput = null
+    }
+
+    private suspend fun clearNativeSecretsBeforeReset(showToast: Boolean = true): Boolean {
+        val keyCleared =
+            runCatching { secureSecretStore.clear() }
+                .onFailure { error -> Log.w(TAG, "failed to clear Android secure key", error) }
+                .getOrDefault(false)
+        if (!keyCleared) {
+            if (showToast) {
+                publishShellToast("Could not clear secret key.")
+            }
+            return false
+        }
+
+        val persistedCleared =
+            runCatching { clearPersistedSecret() }
+                .onFailure { error -> Log.w(TAG, "failed to clear stored account bundle", error) }
+                .isSuccess
+        val persistedSecretGone =
+            runCatching { loadPersistedSecret() == null }
+                .onFailure { error -> Log.w(TAG, "failed to verify stored account bundle clear", error) }
+                .getOrDefault(false)
+        if (!persistedCleared || !persistedSecretGone) {
+            if (showToast) {
+                publishShellToast("Could not clear secret key.")
+            }
+            return false
+        }
+        return true
     }
 
     private fun scheduleMobilePushSyncIfNeeded(

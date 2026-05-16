@@ -444,6 +444,7 @@ protocol RustAppClient: AnyObject {
     func exportSupportBundleJson() -> String
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot?
     func prepareForSuspend()
+    func shutdown()
     func listenForUpdates(reconciler: AppReconciler)
 }
 
@@ -535,6 +536,10 @@ final class LiveRustAppClient: RustAppClient {
 
     func prepareForSuspend() {
         ffi.prepareForSuspendSafely()
+    }
+
+    func shutdown() {
+        ffi.shutdownSafely()
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
@@ -1064,7 +1069,8 @@ final class AppManager: ObservableObject {
     let updates: DesktopUpdateController
 #endif
 
-    private let rust: RustAppClient
+    private var rust: RustAppClient
+    private let makeRustClient: () -> RustAppClient
     private let secretStore: AccountSecretStore
     private let desktopNotifications: DesktopNotificationPosting
     private let dataDir: URL
@@ -1124,7 +1130,8 @@ final class AppManager: ObservableObject {
         dataDir: URL? = nil,
         fileManager: FileManager = .default,
         environment: [String: String] = ProcessInfo.processInfo.environment,
-        appVersion: String = AppPaths.appVersion()
+        appVersion: String = AppPaths.appVersion(),
+        rustFactory: (() -> RustAppClient)? = nil
     ) {
         self.fileManager = fileManager
         self.sharedContainerOverride = environment["IRIS_SHARE_CONTAINER_DIR"]
@@ -1157,10 +1164,21 @@ final class AppManager: ObservableObject {
         AppPaths.prepareDataDirForBackgroundNotificationReads(resolvedDataDir, fileManager: fileManager)
 
         LaunchRecoveryDefaults.clear(userDefaults: .standard)
-        let resolvedRust = rust ?? LiveRustAppClient(dataDir: resolvedDataDir.path, appVersion: appVersion)
+        let resolvedRustFactory: () -> RustAppClient
+        if let rustFactory {
+            resolvedRustFactory = rustFactory
+        } else if let rust {
+            resolvedRustFactory = { rust }
+        } else {
+            resolvedRustFactory = {
+                LiveRustAppClient(dataDir: resolvedDataDir.path, appVersion: appVersion)
+            }
+        }
+        let resolvedRust = rust ?? resolvedRustFactory()
         let initialState = resolvedRust.state()
 
         self.rust = resolvedRust
+        self.makeRustClient = resolvedRustFactory
         self.secretStore = resolvedSecretStore
 #if os(iOS)
         self.isUiTestRun = AppPaths.testRunId(environment: environment) != nil
@@ -2715,9 +2733,28 @@ final class AppManager: ObservableObject {
         }
         dispatchToRust(.logout)
         storedAccountBundle = nil
+        replaceRustCoreAfterLocalReset()
+    }
+
+    private func replaceRustCoreAfterLocalReset() {
+        let previousRust = rust
+        previousRust.shutdown()
         try? fileManager.removeItem(at: dataDir)
         try? fileManager.createDirectory(at: dataDir, withIntermediateDirectories: true)
-        apply(update: .fullState(rust.state()))
+        AppPaths.prepareDataDirForBackgroundNotificationReads(dataDir, fileManager: fileManager)
+        pendingNavigationOverride = nil
+        olderChatPageLoads.removeAll()
+        exhaustedOlderChatPages.removeAll()
+        aroundChatPageLoads.removeAll()
+        initialChatPageLoads.removeAll()
+        chatSnapshotCache.removeAll()
+        chatSnapshotCacheOrder.removeAll()
+        persistedRestoreInFlight = false
+        bootstrapInFlight = false
+        let nextRust = makeRustClient()
+        rust = nextRust
+        nextRust.listenForUpdates(reconciler: reconciler)
+        applyFullState(nextRust.state(), force: true)
     }
 
 #if os(iOS)
@@ -2780,40 +2817,45 @@ final class AppManager: ObservableObject {
             _ = eventJson
 #endif
         case .fullState(let nextState):
-            // Rust owns authoritative state. The shell only accepts the newest full snapshot.
-            guard nextState.rev > lastRevApplied else {
-                return
-            }
-            let oldState = state
-            var reconciledState = stateByPreservingVisibleChatPage(
-                from: oldState,
-                into: stateByReconcilingPendingNavigation(nextState)
-            )
-#if os(iOS)
-            reconciledState = stateByApplyingUiTestSeedDaySplit(reconciledState)
-            reconciledState = stateByApplyingScreenshotFixture(reconciledState)
-#endif
-            lastRevApplied = nextState.rev
-            postDesktopNotifications(from: oldState, to: reconciledState)
-            state = reconciledState
-            rememberCurrentChatIfPresent()
-            irisSetDebugLoggingEnabled(reconciledState.preferences.debugLoggingEnabled)
-#if os(iOS) || os(macOS)
-            syncNearbyBluetoothPreference(from: oldState, to: reconciledState)
-            syncNearbyLanPreference(from: oldState, to: reconciledState)
-#endif
-#if os(iOS)
-            syncIosStateSideEffects(for: reconciledState)
-#endif
-            settleBootstrapIfNeeded(with: reconciledState)
-            if let toast = reconciledState.toast, !toast.isEmpty {
-                showToast(toast)
-            }
-            runPendingTestSeedIfNeeded()
-#if os(iOS)
-            processPendingShareFilesIfNeeded()
-#endif
+            applyFullState(nextState)
         }
+    }
+
+    private func applyFullState(_ nextState: AppState, force: Bool = false) {
+        // Rust owns authoritative state. The shell only accepts the newest full snapshot,
+        // except after a local reset where a freshly-bound core legitimately starts at rev 0.
+        guard force || nextState.rev > lastRevApplied else {
+            return
+        }
+        let oldState = state
+        var reconciledState = stateByPreservingVisibleChatPage(
+            from: oldState,
+            into: stateByReconcilingPendingNavigation(nextState)
+        )
+#if os(iOS)
+        reconciledState = stateByApplyingUiTestSeedDaySplit(reconciledState)
+        reconciledState = stateByApplyingScreenshotFixture(reconciledState)
+#endif
+        lastRevApplied = nextState.rev
+        postDesktopNotifications(from: oldState, to: reconciledState)
+        state = reconciledState
+        rememberCurrentChatIfPresent()
+        irisSetDebugLoggingEnabled(reconciledState.preferences.debugLoggingEnabled)
+#if os(iOS) || os(macOS)
+        syncNearbyBluetoothPreference(from: oldState, to: reconciledState)
+        syncNearbyLanPreference(from: oldState, to: reconciledState)
+#endif
+#if os(iOS)
+        syncIosStateSideEffects(for: reconciledState)
+#endif
+        settleBootstrapIfNeeded(with: reconciledState)
+        if let toast = reconciledState.toast, !toast.isEmpty {
+            showToast(toast)
+        }
+        runPendingTestSeedIfNeeded()
+#if os(iOS)
+        processPendingShareFilesIfNeeded()
+#endif
     }
 
     private func runPendingTestSeedIfNeeded() {

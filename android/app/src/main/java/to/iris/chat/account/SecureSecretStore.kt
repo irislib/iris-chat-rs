@@ -5,5 +5,5 @@ interface SecureSecretStore {
 
     fun decrypt(encryptedSecret: EncryptedSecret): ByteArray
 
-    fun clear()
+    fun clear(): Boolean
 }

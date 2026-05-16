@@ -83,13 +83,17 @@ public sealed class WindowsCredentialStore
         }
     }
 
-    public void Clear()
+    public bool Clear()
     {
-        CredDelete(_targetName, CRED_TYPE_GENERIC, 0);
+        var deleted = CredDelete(_targetName, CRED_TYPE_GENERIC, 0);
+        var error = deleted ? 0 : Marshal.GetLastWin32Error();
+        if (!deleted && error != ERROR_NOT_FOUND) return false;
+        return Load() == null;
     }
 
     private const uint CRED_TYPE_GENERIC = 1;
     private const uint CRED_PERSIST_LOCAL_MACHINE = 2;
+    private const int ERROR_NOT_FOUND = 1168;
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct CREDENTIAL

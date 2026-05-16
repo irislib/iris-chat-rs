@@ -15,7 +15,7 @@ pub struct StoredAccountBundle {
 pub trait SecretStore: Send + Sync {
     fn load(&self) -> Option<StoredAccountBundle>;
     fn save(&self, bundle: &StoredAccountBundle);
-    fn clear(&self);
+    fn clear(&self) -> bool;
 }
 
 // File-backed store with mode 0600. Placeholder until libsecret/oo7 is wired.
@@ -59,7 +59,45 @@ impl SecretStore for FileSecretStore {
         let _ = fs::rename(&tmp, &self.path);
     }
 
-    fn clear(&self) {
-        let _ = fs::remove_file(&self.path);
+    fn clear(&self) -> bool {
+        match fs::remove_file(&self.path) {
+            Ok(()) => self.load().is_none(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(error) => {
+                eprintln!("Iris Chat file secret clear failed: {error}");
+                false
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("iris-chat-secret-store-{nanos}"))
+    }
+
+    #[test]
+    fn file_secret_store_clear_removes_owner_and_device_bundle() {
+        let dir = temp_dir();
+        let store = FileSecretStore::new(&dir);
+        store.save(&StoredAccountBundle {
+            owner_nsec: Some("nsec1owner".to_string()),
+            owner_pubkey_hex: "owner-hex".to_string(),
+            device_nsec: "nsec1device".to_string(),
+        });
+
+        assert!(store.load().is_some());
+        assert!(store.clear());
+        assert!(store.load().is_none());
+
+        let _ = fs::remove_dir_all(dir);
     }
 }

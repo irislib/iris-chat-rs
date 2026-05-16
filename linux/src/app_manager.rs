@@ -14,6 +14,7 @@ use serde::Serialize;
 use crate::secure_storage::{FileSecretStore, SecretStore, StoredAccountBundle};
 
 const ACTIVE_CHAT_SEEN_IDLE_LIMIT: Duration = Duration::from_secs(5 * 60);
+const SECRET_CLEAR_FAILURE_TOAST: &str = "Could not clear secret key.";
 const DISPATCH_FAILURE_TOAST: &str = "Action failed. Copy support bundle in Settings.";
 const MAX_CLIENT_DEBUG_LOG_DETAIL_CHARS: usize = 1_000;
 const MAX_CLIENT_DEBUG_LOG_ENTRIES: usize = 50;
@@ -602,8 +603,11 @@ impl AppManager {
 
     #[allow(dead_code)]
     pub fn logout(&self) {
+        if !self.secret_store.clear() {
+            self.show_toast(SECRET_CLEAR_FAILURE_TOAST);
+            return;
+        }
         self.dispatch_to_rust(AppAction::Logout, false);
-        self.secret_store.clear();
         let _ = std::fs::remove_dir_all(&self.data_dir);
         let _ = std::fs::create_dir_all(&self.data_dir);
     }

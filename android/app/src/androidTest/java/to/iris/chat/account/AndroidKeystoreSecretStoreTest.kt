@@ -2,6 +2,7 @@ package to.iris.chat.account
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -16,5 +17,17 @@ class AndroidKeystoreSecretStoreTest {
         val decrypted = store.decrypt(encrypted)
 
         assertArrayEquals(input, decrypted)
+    }
+
+    @Test
+    fun clear_removes_key_material() {
+        val store = AndroidKeystoreSecretStore()
+        val input = ByteArray(32) { index -> index.toByte() }
+        val encrypted = store.encrypt(input)
+
+        assertTrue(store.clear())
+
+        val decryptAfterClear = runCatching { store.decrypt(encrypted) }
+        assertTrue(decryptAfterClear.isFailure)
     }
 }

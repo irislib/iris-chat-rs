@@ -557,6 +557,38 @@ class AppManagerContractTest {
     }
 
     @Test
+    fun logout_does_not_delete_local_data_when_secure_secret_clear_fails() {
+        rustFactory.initialStates += makeLoggedInState(rev = 5u)
+        val appManager = createManager()
+        val firstRust = rustFactory.instances.single()
+        secureSecretStore.clearSucceeds = false
+        persistStoredSecret(
+            StoredAccountBundle(
+                ownerNsec = "nsec1owner",
+                ownerPubkeyHex = "owner-hex",
+                deviceNsec = "nsec1device",
+            ).toJson(),
+        )
+        val staleFile = appContext.filesDir.resolve("contract-logout-failed-${UUID.randomUUID()}.txt")
+        staleFile.writeText("stale")
+
+        appManager.logout()
+
+        waitFor("secure clear failure") {
+            secureSecretStore.clearCount == 1 &&
+                appManager.state.value.toast == "Could not clear secret key."
+        }
+
+        assertFalse(firstRust.dispatchedActions.contains(AppAction.Logout))
+        assertEquals(1, rustFactory.instances.size)
+        assertEquals(0, firstRust.shutdownCount)
+        assertTrue(staleFile.exists())
+        assertEquals("nsec1device", loadPersistedBundle()?.deviceNsec)
+        assertEquals(makeLoggedInState(rev = 5u).account, appManager.state.value.account)
+        secureSecretStore.clearSucceeds = true
+    }
+
+    @Test
     fun reset_for_ui_tests_rebinds_fresh_rust_core_and_clears_shell_state() {
         rustFactory.initialStates += makeLoggedInState(rev = 3u)
         rustFactory.initialStates += makeAppState(rev = 0u)
@@ -818,14 +850,16 @@ class AppManagerContractTest {
 
 private class RecordingSecureSecretStore : SecureSecretStore {
     var clearCount = 0
+    var clearSucceeds = true
 
     override fun encrypt(secret: ByteArray): EncryptedSecret =
         EncryptedSecret(cipherText = secret, iv = byteArrayOf(1, 2, 3, 4))
 
     override fun decrypt(encryptedSecret: EncryptedSecret): ByteArray = encryptedSecret.cipherText
 
-    override fun clear() {
+    override fun clear(): Boolean {
         clearCount += 1
+        return clearSucceeds
     }
 }
 

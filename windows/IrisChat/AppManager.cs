@@ -265,8 +265,12 @@ public sealed class AppManager : INotifyPropertyChanged
 
     public void Logout()
     {
+        if (!_secretStore.Clear())
+        {
+            ShowToast("Could not clear secret key.");
+            return;
+        }
         DispatchToRust(new AppAction.Logout());
-        _secretStore.Clear();
         try { Directory.Delete(_dataDir, recursive: true); } catch { }
         Directory.CreateDirectory(_dataDir);
     }

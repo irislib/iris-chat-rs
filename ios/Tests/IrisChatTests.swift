@@ -55,6 +55,8 @@ private final class MockRustApp: RustAppClient {
     private let chatSnapshotCallCountLock = NSLock()
     private var prepareForSuspendCalls = 0
     private let prepareForSuspendLock = NSLock()
+    private var shutdownCalls = 0
+    private let shutdownLock = NSLock()
     private var reconciler: AppReconciler?
 
     var dispatchedActions: [AppAction] {
@@ -73,6 +75,12 @@ private final class MockRustApp: RustAppClient {
         prepareForSuspendLock.lock()
         defer { prepareForSuspendLock.unlock() }
         return prepareForSuspendCalls
+    }
+
+    var shutdownCallCount: Int {
+        shutdownLock.lock()
+        defer { shutdownLock.unlock() }
+        return shutdownCalls
     }
 
     init(state: AppState = AppState(
@@ -248,6 +256,12 @@ private final class MockRustApp: RustAppClient {
         prepareForSuspendLock.lock()
         prepareForSuspendCalls += 1
         prepareForSuspendLock.unlock()
+    }
+
+    func shutdown() {
+        shutdownLock.lock()
+        shutdownCalls += 1
+        shutdownLock.unlock()
     }
 
     func listenForUpdates(reconciler: AppReconciler) {
@@ -1642,11 +1656,50 @@ final class IrisChatTests: XCTestCase {
         manager.logout()
 
         XCTAssertTrue(rust.dispatchedActions.contains(.logout))
+        XCTAssertEqual(rust.shutdownCallCount, 1)
         XCTAssertNil(store.load())
         XCTAssertTrue(FileManager.default.fileExists(atPath: tempDir.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: staleFile.path))
         XCTAssertEqual(manager.state.router.defaultScreen, .welcome)
         XCTAssertEqual(manager.state.rev, 2)
+    }
+
+    @MainActor
+    func testLogoutRebindsFreshRustCoreBeforeFutureRestore() async {
+        let firstRust = MockRustApp(state: makeLargeFixtureState(rev: 7))
+        firstRust.onDispatch = { action in
+            if action == .logout {
+                firstRust.currentState = makeAppState(rev: 8)
+            }
+        }
+        let freshRust = MockRustApp(state: makeAppState(rev: 0))
+        let store = InMemorySecretStore(
+            bundle: StoredAccountBundle(
+                ownerNsec: "nsec1owner",
+                ownerPubkeyHex: "owner-hex",
+                deviceNsec: "nsec1device"
+            )
+        )
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: firstRust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:],
+            rustFactory: { freshRust }
+        )
+
+        await Task.yield()
+        manager.logout()
+        manager.restoreSession(ownerNsec: "nsec1restored")
+
+        XCTAssertTrue(firstRust.dispatchedActions.contains(.logout))
+        XCTAssertEqual(firstRust.shutdownCallCount, 1)
+        XCTAssertEqual(manager.state.rev, 0)
+        XCTAssertTrue(freshRust.dispatchedActions.contains(.restoreSession(ownerNsec: "nsec1restored")))
+        XCTAssertFalse(firstRust.dispatchedActions.contains(.restoreSession(ownerNsec: "nsec1restored")))
     }
 
     @MainActor
