@@ -1,3 +1,10 @@
+# Iris Chat 2026.5.16.1
+
+- Messages with multiple images now use Signal-style album layouts: a side-by-side pair, a 1+2 mosaic for three, a 2×2 grid for four, and a +N overlay for albums larger than four.
+- Tapping any image opens a swipe-through carousel with the sender name, date, share, and forward actions; swipe down or up to dismiss, and adjacent images preload so navigation stays smooth.
+- The composer's staged attachment row now shows a small thumbnail for image attachments instead of a generic filename chip.
+- The "Uploading attachment" bar now fills in real time as chunks land on the network instead of running as an indeterminate stripe.
+
 # Iris Chat 2026.5.15.3
 
 - Settings now have a single "Nearby" toggle that hides the chat-list shortcut and turns Bluetooth and Wi-Fi off in one move; turn it back on to keep using nearby messaging.
