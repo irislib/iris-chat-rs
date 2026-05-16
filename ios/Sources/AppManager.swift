@@ -274,7 +274,8 @@ private struct ClientDebugLogEntry: Sendable {
 protocol AccountSecretStore {
     func load() -> StoredAccountBundle?
     func save(_ bundle: StoredAccountBundle)
-    func clear()
+    @discardableResult
+    func clear() -> Bool
 }
 
 final class KeychainSecretStore: AccountSecretStore {
@@ -350,8 +351,29 @@ final class KeychainSecretStore: AccountSecretStore {
         SecItemAdd(insert as CFDictionary, nil)
     }
 
-    func clear() {
-        SecItemDelete(baseQuery() as CFDictionary)
+    private func deletionQueries() -> [[CFString: Any]] {
+        var queries = [baseQuery()]
+        var synchronized = baseQuery()
+        synchronized[kSecAttrSynchronizable] = kSecAttrSynchronizableAny
+        queries.append(synchronized)
+        return queries
+    }
+
+    @discardableResult
+    func clear() -> Bool {
+        var deletedAll = true
+        for query in deletionQueries() {
+            let status = SecItemDelete(query as CFDictionary)
+            if status != errSecSuccess && status != errSecItemNotFound {
+                deletedAll = false
+                NSLog("Iris Chat keychain secret clear failed: status=%d service=%@ account=%@", status, service, account)
+            }
+        }
+        if load() != nil {
+            NSLog("Iris Chat keychain secret clear failed: item still readable service=%@ account=%@", service, account)
+            return false
+        }
+        return deletedAll
     }
 }
 
@@ -390,8 +412,17 @@ final class FileAccountSecretStore: AccountSecretStore {
         }
     }
 
-    func clear() {
-        try? fileManager.removeItem(at: url)
+    @discardableResult
+    func clear() -> Bool {
+        do {
+            try fileManager.removeItem(at: url)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            return true
+        } catch {
+            NSLog("Iris Chat file secret clear failed: %@", "\(error)")
+            return false
+        }
+        return load() == nil
     }
 }
 
@@ -2678,8 +2709,11 @@ final class AppManager: ObservableObject {
 #if os(iOS)
         mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: storedAccountBundle?.ownerNsec ?? secretStore.load()?.ownerNsec)
 #endif
+        guard secretStore.clear() else {
+            showToast("Could not clear secret key.")
+            return
+        }
         dispatchToRust(.logout)
-        secretStore.clear()
         storedAccountBundle = nil
         try? fileManager.removeItem(at: dataDir)
         try? fileManager.createDirectory(at: dataDir, withIntermediateDirectories: true)

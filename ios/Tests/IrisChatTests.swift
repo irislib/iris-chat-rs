@@ -7,6 +7,7 @@ import XCTest
 
 private final class InMemorySecretStore: AccountSecretStore {
     var bundle: StoredAccountBundle?
+    var clearSucceeds = true
 
     init(bundle: StoredAccountBundle? = nil) {
         self.bundle = bundle
@@ -20,8 +21,13 @@ private final class InMemorySecretStore: AccountSecretStore {
         self.bundle = bundle
     }
 
-    func clear() {
+    @discardableResult
+    func clear() -> Bool {
+        guard clearSucceeds else {
+            return false
+        }
         bundle = nil
+        return true
     }
 }
 
@@ -1369,7 +1375,7 @@ final class IrisChatTests: XCTestCase {
             kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
         )
 
-        store.clear()
+        XCTAssertTrue(store.clear())
         XCTAssertNil(store.load())
 #endif
     }
@@ -1420,7 +1426,7 @@ final class IrisChatTests: XCTestCase {
 
         store.save(expected)
         XCTAssertEqual(store.load(), expected)
-        store.clear()
+        XCTAssertTrue(store.clear())
         XCTAssertNil(store.load())
     }
 
@@ -1641,6 +1647,39 @@ final class IrisChatTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: staleFile.path))
         XCTAssertEqual(manager.state.router.defaultScreen, .welcome)
         XCTAssertEqual(manager.state.rev, 2)
+    }
+
+    @MainActor
+    func testLogoutDoesNotDeleteLocalDataWhenSecretClearFails() async {
+        let account = makeAccount()
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: account))
+        let store = InMemorySecretStore(
+            bundle: StoredAccountBundle(
+                ownerNsec: "nsec1owner",
+                ownerPubkeyHex: account.publicKeyHex,
+                deviceNsec: "nsec1device"
+            )
+        )
+        store.clearSucceeds = false
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let sessionFile = tempDir.appendingPathComponent("session.json")
+        FileManager.default.createFile(atPath: sessionFile.path, contents: Data("session".utf8))
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        manager.logout()
+
+        XCTAssertFalse(rust.dispatchedActions.contains(.logout))
+        XCTAssertNotNil(store.load())
+        XCTAssertTrue(FileManager.default.fileExists(atPath: sessionFile.path))
+        XCTAssertEqual(manager.toasts.message, "Could not clear secret key.")
     }
 
     @MainActor
