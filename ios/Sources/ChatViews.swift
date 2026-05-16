@@ -3820,24 +3820,26 @@ private struct ChatImageAlbumView: View {
 
     @ViewBuilder
     private func overflowCell(at index: Int, width: CGFloat, height: CGFloat) -> some View {
-        ZStack {
-            ChatAlbumImageCell(
-                attachment: attachments[index],
-                isOutgoing: isOutgoing,
-                width: width,
-                height: height,
-                downloadAttachment: downloadAttachment,
-                onOpenImage: onOpenImage,
-                onForward: { onForward(attachments[index]) }
-            )
+        ChatAlbumImageCell(
+            attachment: attachments[index],
+            isOutgoing: isOutgoing,
+            width: width,
+            height: height,
+            downloadAttachment: downloadAttachment,
+            onOpenImage: onOpenImage,
+            onForward: { onForward(attachments[index]) }
+        )
+        .overlay {
             if attachments.count > 4 {
-                RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(Color.black.opacity(0.45))
-                    .allowsHitTesting(false)
-                Text("+\(attachments.count - 4)")
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .allowsHitTesting(false)
+                ZStack {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(Color.black.opacity(0.45))
+                    Text("+\(attachments.count - 4)")
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundStyle(.white)
+                }
+                .frame(width: width, height: height)
+                .allowsHitTesting(false)
             }
         }
     }
