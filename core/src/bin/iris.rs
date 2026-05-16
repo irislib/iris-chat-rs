@@ -1313,7 +1313,7 @@ fn search_messages(data_dir: &Path, query: &str, limit: usize) -> Result<Value> 
         "SELECT chat_id, id, body, is_outgoing, created_at_secs, delivery
          FROM messages
          WHERE body LIKE ?1
-         ORDER BY created_at_secs DESC, id DESC
+         ORDER BY created_at_secs DESC, rowid DESC
          LIMIT ?2",
     )?;
     let rows = stmt.query_map((&pattern, limit as i64), |row| {
@@ -1340,13 +1340,13 @@ fn tail_messages(data_dir: &Path, limit: usize, chat: Option<&str>) -> Result<Va
             "SELECT chat_id, id, body, is_outgoing, created_at_secs, delivery
              FROM messages
              WHERE chat_id = ?1
-             ORDER BY created_at_secs DESC, id DESC
+             ORDER BY created_at_secs DESC, rowid DESC
              LIMIT ?2"
         }
         None => {
             "SELECT chat_id, id, body, is_outgoing, created_at_secs, delivery
              FROM messages
-             ORDER BY created_at_secs DESC, id DESC
+             ORDER BY created_at_secs DESC, rowid DESC
              LIMIT ?1"
         }
     };
