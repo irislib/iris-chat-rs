@@ -10,7 +10,9 @@ use hashtree_core::{
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::Duration;
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
@@ -127,15 +129,50 @@ impl AppCore {
         self.screen_stack = vec![Screen::Chat {
             chat_id: normalized_chat_id,
         }];
+        let total_bytes: u64 = prepared
+            .iter()
+            .filter_map(|attachment| std::fs::metadata(&attachment.file_path).ok())
+            .map(|meta| meta.len())
+            .sum();
         self.state.busy.uploading_attachment = true;
+        self.state.busy.upload_progress = Some(crate::state::UploadProgress {
+            bytes_uploaded: 0,
+            total_bytes,
+        });
         self.rebuild_state();
         self.emit_state();
 
         self.runtime.spawn(async move {
-            let result = upload_files_to_hashtree(&secret_hex, &upload_attachments)
-                .await
-                .map(|uploaded| format_attachment_links_message(&caption, &uploaded))
-                .map_err(|error| error.to_string());
+            let bytes_uploaded = Arc::new(AtomicU64::new(0));
+            let progress_sender = sender.clone();
+            let progress_counter = bytes_uploaded.clone();
+            let progress_total = total_bytes;
+            let progress_handle = tokio::spawn(async move {
+                let mut last_reported: u64 = u64::MAX;
+                loop {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    let current = progress_counter.load(Ordering::Relaxed);
+                    if current == last_reported {
+                        continue;
+                    }
+                    last_reported = current;
+                    let _ = progress_sender.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::AttachmentUploadProgress {
+                            bytes_uploaded: current,
+                            total_bytes: progress_total,
+                        },
+                    )));
+                }
+            });
+            let result = upload_files_to_hashtree(
+                &secret_hex,
+                &upload_attachments,
+                Some(bytes_uploaded.clone()),
+            )
+            .await
+            .map(|uploaded| format_attachment_links_message(&caption, &uploaded))
+            .map_err(|error| error.to_string());
+            progress_handle.abort();
             let _ = sender.send(CoreMsg::Internal(Box::new(
                 InternalEvent::AttachmentUploadFinished {
                     chat_id: upload_chat_id,
@@ -145,12 +182,33 @@ impl AppCore {
         });
     }
 
+    pub(super) fn handle_attachment_upload_progress(
+        &mut self,
+        bytes_uploaded: u64,
+        total_bytes: u64,
+    ) {
+        if !self.state.busy.uploading_attachment {
+            return;
+        }
+        let clamped = if total_bytes == 0 {
+            bytes_uploaded
+        } else {
+            bytes_uploaded.min(total_bytes)
+        };
+        self.state.busy.upload_progress = Some(crate::state::UploadProgress {
+            bytes_uploaded: clamped,
+            total_bytes,
+        });
+        self.emit_state();
+    }
+
     pub(super) fn handle_attachment_upload_finished(
         &mut self,
         chat_id: String,
         result: Result<String, String>,
     ) {
         self.state.busy.uploading_attachment = false;
+        self.state.busy.upload_progress = None;
         match result {
             Ok(message_text) => {
                 self.push_debug_log(
@@ -230,10 +288,12 @@ pub(super) fn display_filename(filename: &str, file_path: &Path) -> String {
 async fn upload_files_to_hashtree(
     secret_hex: &str,
     attachments: &[PreparedOutgoingAttachment],
+    progress: Option<Arc<AtomicU64>>,
 ) -> anyhow::Result<Vec<(String, String)>> {
     let mut uploaded = Vec::with_capacity(attachments.len());
     for attachment in attachments {
-        let nhash = upload_file_to_hashtree(secret_hex, &attachment.file_path).await?;
+        let nhash =
+            upload_file_to_hashtree(secret_hex, &attachment.file_path, progress.clone()).await?;
         uploaded.push((nhash, attachment.filename.clone()));
     }
     Ok(uploaded)
@@ -242,6 +302,7 @@ async fn upload_files_to_hashtree(
 pub(super) async fn upload_file_to_hashtree(
     secret_hex: &str,
     path: &Path,
+    progress: Option<Arc<AtomicU64>>,
 ) -> anyhow::Result<String> {
     let secret_key = nostr35::SecretKey::from_hex(secret_hex)
         .map_err(|error| anyhow::anyhow!("invalid upload key: {error}"))?;
@@ -255,6 +316,7 @@ pub(super) async fn upload_file_to_hashtree(
         keys,
         read_servers,
         write_servers,
+        progress,
     ));
     let tree = HashTree::new(HashTreeConfig::new(store));
     let file = tokio::fs::File::open(path).await?;
@@ -284,7 +346,7 @@ pub(super) async fn upload_profile_picture_to_hashtree(
     if !looks_like_image(path, &data) {
         anyhow::bail!("profile picture must be an image");
     }
-    let nhash = upload_file_to_hashtree(secret_hex, path).await?;
+    let nhash = upload_file_to_hashtree(secret_hex, path, None).await?;
     Ok(format!("htree://{nhash}"))
 }
 
@@ -327,6 +389,7 @@ pub(super) async fn download_hashtree_attachment_base64(nhash: &str) -> anyhow::
         keys,
         merge_read_servers(read_servers, &write_servers),
         Vec::new(),
+        None,
     ));
     let tree = HashTree::new(HashTreeConfig::new(store));
     let bytes = tree
@@ -391,16 +454,23 @@ fn is_local_server_url(value: &str) -> bool {
 struct UploadingBlossomStore {
     client: BlossomClient,
     uploaded: AsyncRwLock<HashSet<String>>,
+    progress: Option<Arc<AtomicU64>>,
 }
 
 impl UploadingBlossomStore {
-    fn new(keys: nostr35::Keys, read_servers: Vec<String>, write_servers: Vec<String>) -> Self {
+    fn new(
+        keys: nostr35::Keys,
+        read_servers: Vec<String>,
+        write_servers: Vec<String>,
+        progress: Option<Arc<AtomicU64>>,
+    ) -> Self {
         let client = BlossomClient::new_empty(keys)
             .with_read_servers(read_servers)
             .with_write_servers(write_servers);
         Self {
             client,
             uploaded: AsyncRwLock::new(HashSet::new()),
+            progress,
         }
     }
 }
@@ -431,6 +501,7 @@ impl Store for UploadingBlossomStore {
             }
         }
 
+        let chunk_size = data.len() as u64;
         let upload_result = self.client.upload_if_missing(&data).await;
         match upload_result {
             Ok((remote_hash, was_uploaded)) => {
@@ -441,6 +512,9 @@ impl Store for UploadingBlossomStore {
                 }
                 let mut uploaded = self.uploaded.write().await;
                 uploaded.insert(hash_hex);
+                if let Some(progress) = &self.progress {
+                    progress.fetch_add(chunk_size, Ordering::Relaxed);
+                }
                 Ok(was_uploaded)
             }
             Err(error) => {
@@ -449,6 +523,9 @@ impl Store for UploadingBlossomStore {
                 // so HashTree::put_stream completes; a future re-upload pass
                 // can push the cached chunks once the network recovers.
                 eprintln!("blossom upload failed for {hash_hex} ({error}); kept in local cache");
+                if let Some(progress) = &self.progress {
+                    progress.fetch_add(chunk_size, Ordering::Relaxed);
+                }
                 Ok(true)
             }
         }

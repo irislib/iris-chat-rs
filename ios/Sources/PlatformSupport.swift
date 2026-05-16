@@ -374,6 +374,24 @@ extension View {
     }
 
     @ViewBuilder
+    func irisOnLeftArrowKey(_ action: @escaping () -> Void) -> some View {
+        #if canImport(AppKit)
+        self.background(IrisArrowKeyHandler(keyCode: 123, action: action).frame(width: 0, height: 0))
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
+    func irisOnRightArrowKey(_ action: @escaping () -> Void) -> some View {
+        #if canImport(AppKit)
+        self.background(IrisArrowKeyHandler(keyCode: 124, action: action).frame(width: 0, height: 0))
+        #else
+        self
+        #endif
+    }
+
+    @ViewBuilder
     func irisDismissOnMacOutsideClick(_ action: @escaping () -> Void) -> some View {
         #if canImport(AppKit)
         self.background(IrisOutsideClickDismissHandler(action: action).allowsHitTesting(false))
@@ -413,6 +431,46 @@ private final class IrisEscapeKeyView: NSView {
 
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
+            action?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+}
+
+private struct IrisArrowKeyHandler: NSViewRepresentable {
+    let keyCode: UInt16
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> IrisArrowKeyView {
+        let view = IrisArrowKeyView()
+        view.keyCode = keyCode
+        view.action = action
+        DispatchQueue.main.async {
+            view.window?.makeFirstResponder(view)
+        }
+        return view
+    }
+
+    func updateNSView(_ view: IrisArrowKeyView, context: Context) {
+        view.keyCode = keyCode
+        view.action = action
+        DispatchQueue.main.async {
+            view.window?.makeFirstResponder(view)
+        }
+    }
+}
+
+private final class IrisArrowKeyView: NSView {
+    var keyCode: UInt16 = 0
+    var action: (() -> Void)?
+
+    override var acceptsFirstResponder: Bool {
+        true
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == keyCode {
             action?()
         } else {
             super.keyDown(with: event)

@@ -169,7 +169,7 @@ fun ChatScreen(
     var initialScrollPending by remember(chatId) { mutableStateOf(true) }
     var observedMessageCount by remember(chatId) { mutableStateOf(0) }
     var replyTarget by remember(chatId) { mutableStateOf<ChatMessageSnapshot?>(null) }
-    var imageViewerItem by remember(chatId) { mutableStateOf<DownloadedImageAttachment?>(null) }
+    var imageViewerItem by remember(chatId) { mutableStateOf<ImageViewerItem?>(null) }
     var lastTypingSentMs by remember(chatId) { mutableStateOf(0L) }
     var hasSentTyping by remember(chatId) { mutableStateOf(false) }
     val latestDraft by rememberUpdatedState(draft)
@@ -610,8 +610,18 @@ fun ChatScreen(
                                 downloadAttachment = { attachment ->
                                     appManager.downloadAttachment(attachment)
                                 },
-                                onOpenImage = { data, filename ->
-                                    imageViewerItem = DownloadedImageAttachment(data = data, filename = filename)
+                                onOpenImage = { data, attachment ->
+                                    val imageAttachments = message.attachments.filter { it.isImage }
+                                    val initialIndex = imageAttachments
+                                        .indexOfFirst { it.htreeUrl == attachment.htreeUrl }
+                                        .coerceAtLeast(0)
+                                    imageViewerItem = ImageViewerItem(
+                                        attachments = imageAttachments,
+                                        initialIndex = initialIndex,
+                                        initialData = data,
+                                        senderName = if (message.isOutgoing) "You" else message.author,
+                                        createdAtSecs = message.createdAtSecs.toLong(),
+                                    )
                                 },
                                 chat = chat,
                                 appManager = appManager,
@@ -656,6 +666,15 @@ fun ChatScreen(
                     selectedAttachments = selectedAttachments,
                     isSending = busy.sendingMessage,
                     isUploading = busy.uploadingAttachment,
+                    uploadFraction = busy.uploadProgress?.let { progress ->
+                        if (progress.totalBytes > 0u) {
+                            (progress.bytesUploaded.toDouble() / progress.totalBytes.toDouble())
+                                .toFloat()
+                                .coerceIn(0f, 1f)
+                        } else {
+                            null
+                        }
+                    },
                     focusRequester = composerFocusRequester,
                     modifier = Modifier.onGloballyPositioned { coordinates ->
                         composerBounds = coordinates.boundsInParent()
@@ -757,6 +776,10 @@ fun ChatScreen(
             imageViewerItem?.let { item ->
                 ImageViewerDialog(
                     item = item,
+                    downloadAttachment = { attachment -> appManager.downloadAttachment(attachment) },
+                    onForward = { attachment ->
+                        appManager.startForward(forwardableAttachmentText(attachment))
+                    },
                     onDismiss = { imageViewerItem = null },
                 )
             }

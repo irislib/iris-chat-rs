@@ -1122,8 +1122,8 @@ struct IrisModalCloseButton: View {
         accessibilityLabel: String = "Close",
         accessibilityIdentifier: String? = nil,
         tone: Tone = .standard,
-        iconSize: CGFloat = 14,
-        hitSize: CGFloat = 44,
+        iconSize: CGFloat = 15,
+        hitSize: CGFloat = 36,
         action: @escaping () -> Void
     ) {
         self.accessibilityLabel = accessibilityLabel
@@ -1137,13 +1137,13 @@ struct IrisModalCloseButton: View {
     @ViewBuilder
     var body: some View {
         let closeButton = Button(action: action) {
-            Image(systemName: "xmark")
-                .font(.system(size: iconSize, weight: .bold))
-                .foregroundStyle(foregroundColor)
-                .frame(width: buttonSize, height: buttonSize)
-                .background(Circle().fill(backgroundColor))
-                .frame(width: hitSize, height: hitSize)
-                .contentShape(Circle())
+            IrisGlassCircleButtonLabel(
+                systemName: "xmark",
+                iconSize: iconSize,
+                hitSize: hitSize,
+                tone: tone == .light ? .dark : .light,
+                glyphColor: glyphColor
+            )
         }
         .buttonStyle(.irisPlain)
         .accessibilityLabel(accessibilityLabel)
@@ -1155,31 +1155,50 @@ struct IrisModalCloseButton: View {
         }
     }
 
-    private var buttonSize: CGFloat {
-        switch tone {
-        case .standard:
-            return min(40, hitSize)
-        case .light:
-            return min(max(iconSize + 18, 40), hitSize)
-        }
-    }
-
-    private var foregroundColor: Color {
+    private var glyphColor: Color {
         switch tone {
         case .standard:
             return palette.textPrimary
         case .light:
-            return Color.white.opacity(0.9)
+            return Color.white
         }
     }
+}
 
-    private var backgroundColor: Color {
-        switch tone {
-        case .standard:
-            return palette.panelAlt.opacity(0.95)
-        case .light:
-            return Color.black.opacity(0.48)
+/// Translucent circular SF-Symbol button matching the native glass /
+/// vibrancy look used in Signal's media viewer chrome. `.resizable()`
+/// puts the SF Symbol's bounding box (not the font baseline) at the
+/// ZStack's center, so the glyph sits visually centered inside the
+/// circle regardless of symbol-specific asymmetry.
+struct IrisGlassCircleButtonLabel: View {
+    enum Tone {
+        case light
+        case dark
+    }
+
+    let systemName: String
+    let iconSize: CGFloat
+    let hitSize: CGFloat
+    let tone: Tone
+    let glyphColor: Color
+
+    var body: some View {
+        ZStack {
+            Circle()
+                .fill(.ultraThinMaterial)
+                .environment(\.colorScheme, tone == .dark ? .dark : .light)
+            Circle()
+                .strokeBorder(Color.white.opacity(tone == .dark ? 0.08 : 0.04), lineWidth: 0.5)
+            Image(systemName: systemName)
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .fontWeight(.semibold)
+                .foregroundStyle(glyphColor)
+                .frame(width: iconSize, height: iconSize)
         }
+        .frame(width: hitSize, height: hitSize)
+        .shadow(color: Color.black.opacity(tone == .dark ? 0.28 : 0.12), radius: 6, x: 0, y: 2)
+        .contentShape(Circle())
     }
 }
 

@@ -198,6 +198,7 @@ internal fun ComposerBar(
     selectedAttachments: List<PickedAttachment>,
     isSending: Boolean,
     isUploading: Boolean,
+    uploadFraction: Float?,
     modifier: Modifier = Modifier,
     focusRequester: FocusRequester? = null,
     onDraftChange: (String) -> Unit,
@@ -278,11 +279,20 @@ internal fun ComposerBar(
                         style = MaterialTheme.typography.labelMedium,
                         color = IrisTheme.palette.muted,
                     )
-                    LinearProgressIndicator(
-                        modifier = Modifier.fillMaxWidth(),
-                        color = IrisTheme.palette.accent,
-                        trackColor = IrisTheme.palette.muted.copy(alpha = 0.18f),
-                    )
+                    if (uploadFraction != null) {
+                        LinearProgressIndicator(
+                            progress = { uploadFraction.coerceIn(0f, 1f) },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = IrisTheme.palette.accent,
+                            trackColor = IrisTheme.palette.muted.copy(alpha = 0.18f),
+                        )
+                    } else {
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = IrisTheme.palette.accent,
+                            trackColor = IrisTheme.palette.muted.copy(alpha = 0.18f),
+                        )
+                    }
                 }
             }
 

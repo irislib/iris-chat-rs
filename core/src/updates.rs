@@ -124,6 +124,10 @@ pub(crate) enum InternalEvent {
         chat_id: String,
         result: Result<String, String>,
     },
+    AttachmentUploadProgress {
+        bytes_uploaded: u64,
+        total_bytes: u64,
+    },
     ProfilePictureUploadFinished {
         result: Result<String, String>,
     },

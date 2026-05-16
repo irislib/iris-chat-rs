@@ -128,7 +128,7 @@ internal fun MessageBubble(
     onDelete: () -> Unit,
     onScrollToQuote: () -> Unit,
     downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
-    onOpenImage: (ByteArray, String) -> Unit,
+    onOpenImage: (ByteArray, MessageAttachmentSnapshot) -> Unit,
     chat: CurrentChatSnapshot? = null,
     appManager: AppManager? = null,
 ) {
@@ -416,7 +416,18 @@ internal fun MessageBubble(
                                     }).copy(alpha = 0.85f),
                             )
                         }
-                        message.attachments.forEach { attachment ->
+                        val imageAttachments = message.attachments.filter { it.isImage }
+                        val nonImageAttachments = message.attachments.filter { !it.isImage }
+                        if (imageAttachments.isNotEmpty()) {
+                            ChatImageAlbumView(
+                                attachments = imageAttachments,
+                                isOutgoing = message.isOutgoing,
+                                downloadAttachment = downloadAttachment,
+                                onOpenImage = onOpenImage,
+                                onForward = { attachment -> onForwardAttachment(attachment, appManager) },
+                            )
+                        }
+                        nonImageAttachments.forEach { attachment ->
                             AttachmentChip(
                                 attachment = attachment,
                                 isOutgoing = message.isOutgoing,

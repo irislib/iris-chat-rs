@@ -35,6 +35,19 @@ pub fn fetch_into_picture(picture: &gtk::Picture, url: &str) {
     });
 }
 
+pub fn prefetch(url: &str) {
+    if cached_texture(url).is_some() {
+        return;
+    }
+    let url_owned = url.to_string();
+    fetch_bytes(url, move |bytes| {
+        let glib_bytes = glib::Bytes::from(bytes);
+        if let Ok(texture) = gdk::Texture::from_bytes(&glib_bytes) {
+            cache_texture(&url_owned, &texture);
+        }
+    });
+}
+
 pub fn fetch_into_avatar(avatar: &adw::Avatar, url: &str) {
     if let Some(texture) = cached_texture(url) {
         avatar.set_custom_image(Some(&texture));

@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Mutex, OnceLock};
 
@@ -712,13 +713,17 @@ fn render_message(
         gtk::Align::Start
     });
 
-    let image_attachments: Vec<&MessageAttachmentSnapshot> =
-        message.attachments.iter().filter(|a| a.is_image).collect();
+    let image_attachments: Vec<MessageAttachmentSnapshot> = message
+        .attachments
+        .iter()
+        .filter(|a| a.is_image)
+        .cloned()
+        .collect();
     let other_attachments: Vec<&MessageAttachmentSnapshot> =
         message.attachments.iter().filter(|a| !a.is_image).collect();
 
-    for attachment in &image_attachments {
-        bubble.append(&image_bubble(attachment, prefs, manager));
+    if !image_attachments.is_empty() {
+        bubble.append(&image_album(&image_attachments, prefs, manager));
     }
 
     if !message.body.is_empty() {
@@ -1722,22 +1727,133 @@ fn present_forward_dialog(parent: Option<&gtk::Window>, text: &str, manager: &Rc
     dialog.present(parent);
 }
 
-fn image_bubble(
-    attachment: &MessageAttachmentSnapshot,
+fn image_album(
+    attachments: &[MessageAttachmentSnapshot],
     prefs: &PreferencesSnapshot,
     manager: &Rc<AppManager>,
 ) -> gtk::Widget {
+    const ALBUM_WIDTH: i32 = 232;
+    const GAP: i32 = 2;
+    let container = gtk::Box::new(gtk::Orientation::Vertical, GAP);
+
+    fn cell(
+        attachment: &MessageAttachmentSnapshot,
+        prefs: &PreferencesSnapshot,
+        manager: &Rc<AppManager>,
+        album: &[MessageAttachmentSnapshot],
+        index: usize,
+        width: i32,
+        height: i32,
+        overflow: Option<usize>,
+    ) -> gtk::Widget {
+        let widget = image_bubble_sized(attachment, prefs, manager, album, index, width, height);
+        if let Some(extra) = overflow.filter(|n| *n > 0) {
+            let overlay = gtk::Overlay::new();
+            overlay.set_child(Some(&widget));
+            let shade = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            shade.set_hexpand(false);
+            shade.set_vexpand(false);
+            shade.set_halign(gtk::Align::Fill);
+            shade.set_valign(gtk::Align::Fill);
+            shade.add_css_class("iris-album-overflow");
+            let css = gtk::CssProvider::new();
+            css.load_from_string(
+                "box.iris-album-overflow { background-color: rgba(0,0,0,0.45); border-radius: 4px; }
+                 label.iris-album-overflow-label { color: #fff; font-weight: 700; font-size: 18pt; }",
+            );
+            if let Some(display) = shade.display().into() {
+                gtk::style_context_add_provider_for_display(
+                    &display,
+                    &css,
+                    gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+                );
+            }
+            let label = gtk::Label::new(Some(&format!("+{extra}")));
+            label.add_css_class("iris-album-overflow-label");
+            label.set_halign(gtk::Align::Center);
+            label.set_valign(gtk::Align::Center);
+            shade.append(&label);
+            shade.set_can_target(false);
+            overlay.add_overlay(&shade);
+            overlay.upcast()
+        } else {
+            widget
+        }
+    }
+
+    match attachments.len() {
+        0 => {}
+        1 => container.append(&cell(
+            &attachments[0],
+            prefs,
+            manager,
+            attachments,
+            0,
+            220,
+            220,
+            None,
+        )),
+        2 => {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
+            let cell_w = (ALBUM_WIDTH - GAP) / 2;
+            row.append(&cell(&attachments[0], prefs, manager, attachments, 0, cell_w, 150, None));
+            row.append(&cell(&attachments[1], prefs, manager, attachments, 1, cell_w, 150, None));
+            container.append(&row);
+        }
+        3 => {
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
+            let left_w = (ALBUM_WIDTH as f32 * 0.58) as i32 - GAP / 2;
+            let right_w = (ALBUM_WIDTH as f32 * 0.42) as i32 - GAP / 2;
+            let tall = (ALBUM_WIDTH as f32 * 0.86) as i32;
+            let small = (tall - GAP) / 2;
+            row.append(&cell(&attachments[0], prefs, manager, attachments, 0, left_w, tall, None));
+            let stack = gtk::Box::new(gtk::Orientation::Vertical, GAP);
+            stack.append(&cell(&attachments[1], prefs, manager, attachments, 1, right_w, small, None));
+            stack.append(&cell(&attachments[2], prefs, manager, attachments, 2, right_w, small, None));
+            row.append(&stack);
+            container.append(&row);
+        }
+        _ => {
+            let cell_size = (ALBUM_WIDTH - GAP) / 2;
+            let row1 = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
+            row1.append(&cell(&attachments[0], prefs, manager, attachments, 0, cell_size, cell_size, None));
+            row1.append(&cell(&attachments[1], prefs, manager, attachments, 1, cell_size, cell_size, None));
+            let row2 = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
+            row2.append(&cell(&attachments[2], prefs, manager, attachments, 2, cell_size, cell_size, None));
+            let overflow = if attachments.len() > 4 {
+                Some(attachments.len() - 4)
+            } else {
+                None
+            };
+            row2.append(&cell(&attachments[3], prefs, manager, attachments, 3, cell_size, cell_size, overflow));
+            container.append(&row1);
+            container.append(&row2);
+        }
+    }
+    container.upcast()
+}
+
+fn image_bubble_sized(
+    attachment: &MessageAttachmentSnapshot,
+    prefs: &PreferencesSnapshot,
+    manager: &Rc<AppManager>,
+    album: &[MessageAttachmentSnapshot],
+    index: usize,
+    width: i32,
+    height: i32,
+) -> gtk::Widget {
     let picture = gtk::Picture::new();
     picture.set_can_shrink(true);
-    picture.set_size_request(220, 220);
+    picture.set_size_request(width, height);
     picture.set_content_fit(gtk::ContentFit::Cover);
     picture.add_css_class("card");
+    picture.set_cursor_from_name(Some("pointer"));
 
     let url = proxied_image_url(
         attachment.htree_url.clone(),
         prefs.clone(),
-        Some(440),
-        Some(440),
+        Some(((width * 2).max(220)) as u32),
+        Some(((height * 2).max(220)) as u32),
         false,
     );
     image_cache::fetch_into_picture(&picture, &url);
@@ -1745,14 +1861,14 @@ fn image_bubble(
     let popover = build_attachment_popover(attachment, manager);
     popover.set_parent(&picture);
     let popover_for_click = popover.clone();
-    let gesture = gtk::GestureClick::new();
-    gesture.set_button(3);
-    gesture.connect_pressed(move |_, _, x, y| {
+    let right_click = gtk::GestureClick::new();
+    right_click.set_button(3);
+    right_click.connect_pressed(move |_, _, x, y| {
         popover_for_click
             .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
         popover_for_click.popup();
     });
-    picture.add_controller(gesture);
+    picture.add_controller(right_click);
 
     let popover_for_long = popover.clone();
     let long_press = gtk::GestureLongPress::new();
@@ -1762,7 +1878,220 @@ fn image_bubble(
     });
     picture.add_controller(long_press);
 
+    let album_for_click = album.to_vec();
+    let prefs_for_click = prefs.clone();
+    let picture_for_click = picture.clone();
+    let left_click = gtk::GestureClick::new();
+    left_click.set_button(1);
+    left_click.connect_released(move |gesture, _, _, _| {
+        gesture.set_state(gtk::EventSequenceState::Claimed);
+        if let Some(window) = picture_for_click
+            .root()
+            .and_then(|r| r.downcast::<gtk::Window>().ok())
+        {
+            present_image_viewer(&window, &album_for_click, index, &prefs_for_click);
+        }
+    });
+    picture.add_controller(left_click);
+
     picture.upcast()
+}
+
+fn present_image_viewer(
+    parent: &gtk::Window,
+    album: &[MessageAttachmentSnapshot],
+    initial_index: usize,
+    prefs: &PreferencesSnapshot,
+) {
+    if album.is_empty() {
+        return;
+    }
+    let dialog = gtk::Window::new();
+    dialog.set_transient_for(Some(parent));
+    dialog.set_modal(true);
+    dialog.set_decorated(false);
+    dialog.set_default_size(900, 700);
+    dialog.add_css_class("iris-image-viewer");
+
+    let overlay = gtk::Overlay::new();
+    let stage = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    stage.set_hexpand(true);
+    stage.set_vexpand(true);
+    stage.add_css_class("iris-image-viewer-stage");
+    let backdrop_css = gtk::CssProvider::new();
+    backdrop_css.load_from_string("box.iris-image-viewer-stage { background-color: #000; }");
+    if let Some(display) = stage.display().into() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &backdrop_css,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+
+    let picture = gtk::Picture::new();
+    picture.set_can_shrink(true);
+    picture.set_content_fit(gtk::ContentFit::Contain);
+    picture.set_hexpand(true);
+    picture.set_vexpand(true);
+    stage.append(&picture);
+    overlay.set_child(Some(&stage));
+
+    let close_btn = gtk::Button::from_icon_name("window-close-symbolic");
+    close_btn.add_css_class("circular");
+    close_btn.add_css_class("osd");
+    close_btn.set_halign(gtk::Align::End);
+    close_btn.set_valign(gtk::Align::Start);
+    close_btn.set_margin_top(10);
+    close_btn.set_margin_end(10);
+    let dialog_for_close = dialog.clone();
+    close_btn.connect_clicked(move |_| {
+        dialog_for_close.close();
+    });
+    overlay.add_overlay(&close_btn);
+
+    let current_index = Rc::new(RefCell::new(initial_index.min(album.len() - 1)));
+    let album_for_state = album.to_vec();
+    let prefs_for_state = prefs.clone();
+    let picture_for_state = picture.clone();
+
+    let load_current = Rc::new(move |idx: usize| {
+        if let Some(attachment) = album_for_state.get(idx) {
+            let url = proxied_image_url(
+                attachment.htree_url.clone(),
+                prefs_for_state.clone(),
+                None,
+                None,
+                false,
+            );
+            image_cache::fetch_into_picture(&picture_for_state, &url);
+        }
+        if idx > 0 {
+            if let Some(neighbor) = album_for_state.get(idx - 1) {
+                let url = proxied_image_url(
+                    neighbor.htree_url.clone(),
+                    prefs_for_state.clone(),
+                    None,
+                    None,
+                    false,
+                );
+                image_cache::prefetch(&url);
+            }
+        }
+        if let Some(neighbor) = album_for_state.get(idx + 1) {
+            let url = proxied_image_url(
+                neighbor.htree_url.clone(),
+                prefs_for_state.clone(),
+                None,
+                None,
+                false,
+            );
+            image_cache::prefetch(&url);
+        }
+    });
+
+    load_current(*current_index.borrow());
+
+    let prev_btn = gtk::Button::from_icon_name("go-previous-symbolic");
+    let next_btn = gtk::Button::from_icon_name("go-next-symbolic");
+    for btn in [&prev_btn, &next_btn] {
+        btn.add_css_class("circular");
+        btn.add_css_class("osd");
+        btn.set_valign(gtk::Align::Center);
+    }
+    prev_btn.set_halign(gtk::Align::Start);
+    prev_btn.set_margin_start(12);
+    next_btn.set_halign(gtk::Align::End);
+    next_btn.set_margin_end(12);
+
+    let update_nav = {
+        let prev_btn = prev_btn.clone();
+        let next_btn = next_btn.clone();
+        let album_len = album.len();
+        Rc::new(move |idx: usize| {
+            prev_btn.set_sensitive(idx > 0);
+            next_btn.set_sensitive(idx + 1 < album_len);
+            let multi = album_len > 1;
+            prev_btn.set_visible(multi);
+            next_btn.set_visible(multi);
+        })
+    };
+    update_nav(*current_index.borrow());
+
+    {
+        let current_index = current_index.clone();
+        let load_current = load_current.clone();
+        let update_nav = update_nav.clone();
+        prev_btn.connect_clicked(move |_| {
+            let mut idx = current_index.borrow_mut();
+            if *idx > 0 {
+                *idx -= 1;
+                load_current(*idx);
+                update_nav(*idx);
+            }
+        });
+    }
+    {
+        let current_index = current_index.clone();
+        let load_current = load_current.clone();
+        let update_nav = update_nav.clone();
+        let album_len = album.len();
+        next_btn.connect_clicked(move |_| {
+            let mut idx = current_index.borrow_mut();
+            if *idx + 1 < album_len {
+                *idx += 1;
+                load_current(*idx);
+                update_nav(*idx);
+            }
+        });
+    }
+    overlay.add_overlay(&prev_btn);
+    overlay.add_overlay(&next_btn);
+
+    let dialog_for_keys = dialog.clone();
+    let key_controller = gtk::EventControllerKey::new();
+    let current_index_for_keys = current_index.clone();
+    let load_current_for_keys = load_current.clone();
+    let update_nav_for_keys = update_nav.clone();
+    let album_len_for_keys = album.len();
+    key_controller.connect_key_pressed(move |_, keyval, _, _| {
+        match keyval {
+            gtk::gdk::Key::Escape => {
+                dialog_for_keys.close();
+                glib::Propagation::Stop
+            }
+            gtk::gdk::Key::Left => {
+                let mut idx = current_index_for_keys.borrow_mut();
+                if *idx > 0 {
+                    *idx -= 1;
+                    load_current_for_keys(*idx);
+                    update_nav_for_keys(*idx);
+                }
+                glib::Propagation::Stop
+            }
+            gtk::gdk::Key::Right => {
+                let mut idx = current_index_for_keys.borrow_mut();
+                if *idx + 1 < album_len_for_keys {
+                    *idx += 1;
+                    load_current_for_keys(*idx);
+                    update_nav_for_keys(*idx);
+                }
+                glib::Propagation::Stop
+            }
+            _ => glib::Propagation::Proceed,
+        }
+    });
+    dialog.add_controller(key_controller);
+
+    let dialog_for_backdrop = dialog.clone();
+    let backdrop_click = gtk::GestureClick::new();
+    backdrop_click.set_button(1);
+    backdrop_click.connect_released(move |_, _, _, _| {
+        dialog_for_backdrop.close();
+    });
+    stage.add_controller(backdrop_click);
+
+    dialog.set_child(Some(&overlay));
+    dialog.present();
 }
 
 fn build_attachment_popover(
@@ -1827,6 +2156,23 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     outer.append(&preview_scroll);
     rebuild_attachment_previews(&preview_row, manager, &chat.chat_id);
     preview_scroll.set_visible(preview_row.first_child().is_some());
+
+    if state.busy.uploading_attachment {
+        let progress = gtk::ProgressBar::new();
+        progress.set_show_text(false);
+        progress.add_css_class("osd");
+        if let Some(upload) = state.busy.upload_progress.as_ref() {
+            if upload.total_bytes > 0 {
+                let fraction = (upload.bytes_uploaded as f64 / upload.total_bytes as f64).clamp(0.0, 1.0);
+                progress.set_fraction(fraction);
+            } else {
+                progress.pulse();
+            }
+        } else {
+            progress.pulse();
+        }
+        outer.append(&progress);
+    }
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
 
@@ -2004,6 +2350,12 @@ fn attachment_chip(
     attachment: &OutgoingAttachment,
     row: &gtk::Box,
 ) -> gtk::Widget {
+    if is_image_filename(&attachment.filename) {
+        if let Some(widget) = image_attachment_chip(manager, chat_id, attachment, row) {
+            return widget;
+        }
+    }
+
     let chip = gtk::Box::new(gtk::Orientation::Horizontal, 6);
     chip.add_css_class("card");
     chip.set_margin_top(2);
@@ -2047,6 +2399,62 @@ fn attachment_chip(
 
     chip.append(&inner);
     chip.upcast()
+}
+
+fn image_attachment_chip(
+    manager: &Rc<AppManager>,
+    chat_id: &str,
+    attachment: &OutgoingAttachment,
+    row: &gtk::Box,
+) -> Option<gtk::Widget> {
+    let texture = gtk::gdk::Texture::from_filename(&attachment.file_path).ok()?;
+
+    let overlay = gtk::Overlay::new();
+    overlay.set_margin_top(2);
+    overlay.set_margin_bottom(2);
+    overlay.set_tooltip_text(Some(&attachment.filename));
+
+    let picture = gtk::Picture::for_paintable(&texture);
+    picture.set_can_shrink(true);
+    picture.set_size_request(56, 56);
+    picture.set_content_fit(gtk::ContentFit::Cover);
+    picture.add_css_class("card");
+    overlay.set_child(Some(&picture));
+
+    let remove = gtk::Button::from_icon_name("window-close-symbolic");
+    remove.add_css_class("circular");
+    remove.add_css_class("osd");
+    remove.set_tooltip_text(Some("Remove attachment"));
+    remove.set_halign(gtk::Align::End);
+    remove.set_valign(gtk::Align::Start);
+    remove.set_margin_top(2);
+    remove.set_margin_end(2);
+    let manager_for_remove = manager.clone();
+    let chat_id_for_remove = chat_id.to_string();
+    let file_path = attachment.file_path.clone();
+    let row_for_remove = row.clone();
+    remove.connect_clicked(move |_| {
+        manager_for_remove.unstage_attachment(&chat_id_for_remove, &file_path);
+        rebuild_attachment_previews(&row_for_remove, &manager_for_remove, &chat_id_for_remove);
+        if let Some(scroll) = row_for_remove
+            .parent()
+            .and_then(|p| p.downcast::<gtk::ScrolledWindow>().ok())
+        {
+            scroll.set_visible(row_for_remove.first_child().is_some());
+        }
+    });
+    overlay.add_overlay(&remove);
+
+    Some(overlay.upcast())
+}
+
+fn is_image_filename(filename: &str) -> bool {
+    let lower = filename.to_ascii_lowercase();
+    let ext = lower.rsplit_once('.').map(|(_, e)| e).unwrap_or("");
+    matches!(
+        ext,
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "bmp" | "heic" | "heif" | "avif" | "tif" | "tiff"
+    )
 }
 
 fn attachment_icon_name(filename: &str) -> &'static str {

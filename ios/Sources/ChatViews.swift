@@ -657,7 +657,6 @@ struct ChatScreen: View {
         }
         .modifier(EscDismissesReply(replyTarget: $replyTarget))
         .modifier(ChatImageViewerPresenter(item: $imageViewerItem) { text in
-            imageViewerItem = nil
             manager.startForward(text: text)
         })
         .sheet(item: $messageInfoSelection) { selection in
@@ -826,6 +825,8 @@ struct ChatScreen: View {
                     attachments: imageAttachments,
                     initialIndex: initialIndex,
                     initialData: data,
+                    senderName: message.isOutgoing ? "You" : message.author,
+                    createdAtSecs: message.createdAtSecs,
                     downloadAttachment: { att in
                         await manager.downloadAttachment(att)
                     },
@@ -4086,6 +4087,8 @@ private struct ImageViewerItem: Identifiable, Equatable {
     let attachments: [MessageAttachmentSnapshot]
     let initialIndex: Int
     let initialData: Data
+    let senderName: String
+    let createdAtSecs: UInt64
     let downloadAttachment: (MessageAttachmentSnapshot) async -> Data?
     let forwardableTextFor: (MessageAttachmentSnapshot) -> String
 
@@ -4120,16 +4123,15 @@ private struct ChatImageViewerPresenter: ViewModifier {
 }
 
 private struct IrisImageViewer: View {
-    #if os(iOS)
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
-    #endif
     let item: ImageViewerItem
     let onForwardText: (String) -> Void
     let onClose: () -> Void
 
     @State private var currentIndex: Int
     @State private var loadedData: [String: Data]
+    @State private var loadedImages: [String: PlatformImage]
     @State private var sharedFileURL: URL?
+    @State private var dragTranslation: CGFloat = 0
 
     init(item: ImageViewerItem, onForwardText: @escaping (String) -> Void, onClose: @escaping () -> Void) {
         self.item = item
@@ -4137,10 +4139,17 @@ private struct IrisImageViewer: View {
         self.onClose = onClose
         _currentIndex = State(initialValue: item.initialIndex)
         var initial: [String: Data] = [:]
+        var initialImages: [String: PlatformImage] = [:]
         if item.attachments.indices.contains(item.initialIndex) {
-            initial[item.attachments[item.initialIndex].htreeUrl] = item.initialData
+            let attachment = item.attachments[item.initialIndex]
+            initial[attachment.htreeUrl] = item.initialData
+            if !isAnimatedImage(data: item.initialData, filename: attachment.filename),
+               let image = PlatformImage(data: item.initialData) {
+                initialImages[attachment.htreeUrl] = image
+            }
         }
         _loadedData = State(initialValue: initial)
+        _loadedImages = State(initialValue: initialImages)
     }
 
     private var currentAttachment: MessageAttachmentSnapshot? {
@@ -4155,26 +4164,28 @@ private struct IrisImageViewer: View {
         GeometryReader { geometry in
             ZStack {
                 Color.black
+                    .opacity(backdropOpacity)
                     .ignoresSafeArea()
                     .onTapGesture(perform: onClose)
 
                 carouselContent
-                    .padding(.top, geometry.safeAreaInsets.top + 68)
-                    .padding(.bottom, geometry.safeAreaInsets.bottom + (usesCompactTopActions ? 40 : 94))
+                    .padding(.top, geometry.safeAreaInsets.top + 64)
+                    .padding(.bottom, geometry.safeAreaInsets.bottom + 92)
+                    .offset(y: dragTranslation)
+                    #if os(iOS)
+                    .simultaneousGesture(dismissDragGesture)
+                    #endif
 
                 VStack(spacing: 0) {
                     topChrome(topInset: geometry.safeAreaInsets.top)
                     Spacer(minLength: 0)
-                    if !usesCompactTopActions {
-                        bottomChrome(bottomInset: geometry.safeAreaInsets.bottom)
-                    } else {
-                        compactPageIndicator(bottomInset: geometry.safeAreaInsets.bottom)
-                    }
+                    bottomChrome(bottomInset: geometry.safeAreaInsets.bottom)
                 }
                 .ignoresSafeArea()
+                .opacity(chromeOpacity)
             }
         }
-        .background(Color.black.ignoresSafeArea())
+        .background(Color.black.opacity(backdropOpacity).ignoresSafeArea())
         .environment(\.colorScheme, .dark)
         .irisOnExitCommand(onClose)
         .irisOnEscapeKey(onClose)
@@ -4182,15 +4193,49 @@ private struct IrisImageViewer: View {
         .task(id: item.id) {
             await ensureLoaded(index: currentIndex)
             updateSharedFile()
-            await preloadAllExcept(index: currentIndex)
+            await preloadAdjacent(index: currentIndex)
         }
         .onChange(of: currentIndex) { newValue in
             Task {
                 await ensureLoaded(index: newValue)
                 updateSharedFile()
+                await preloadAdjacent(index: newValue)
             }
         }
     }
+
+    private var backdropOpacity: Double {
+        let fade = min(abs(dragTranslation) / 600, 0.55)
+        return 1 - fade
+    }
+
+    private var chromeOpacity: Double {
+        let fade = min(abs(dragTranslation) / 220, 1)
+        return 1 - fade
+    }
+
+    #if os(iOS)
+    private var dismissDragGesture: some Gesture {
+        DragGesture(minimumDistance: 12)
+            .onChanged { value in
+                let translation = value.translation
+                if abs(translation.height) > abs(translation.width) * 1.3 {
+                    dragTranslation = translation.height
+                }
+            }
+            .onEnded { value in
+                let translation = value.translation.height
+                let predicted = value.predictedEndTranslation.height
+                if abs(translation) > 140 || abs(predicted) > 360 {
+                    onClose()
+                } else {
+                    withAnimation(.interactiveSpring(response: 0.32, dampingFraction: 0.85)) {
+                        dragTranslation = 0
+                    }
+                }
+            }
+    }
+    #endif
 
     @ViewBuilder
     private var carouselContent: some View {
@@ -4199,6 +4244,7 @@ private struct IrisImageViewer: View {
             ForEach(Array(item.attachments.enumerated()), id: \.offset) { idx, attachment in
                 IrisImageViewerPage(
                     data: loadedData[attachment.htreeUrl],
+                    image: loadedImages[attachment.htreeUrl],
                     filename: attachment.filename
                 )
                 .tag(idx)
@@ -4210,6 +4256,7 @@ private struct IrisImageViewer: View {
             if let attachment = currentAttachment {
                 IrisImageViewerPage(
                     data: loadedData[attachment.htreeUrl],
+                    image: loadedImages[attachment.htreeUrl],
                     filename: attachment.filename
                 )
             }
@@ -4237,12 +4284,14 @@ private struct IrisImageViewer: View {
 
     private func chevronButton(systemName: String, disabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(disabled ? 0.32 : 0.92))
-                .frame(width: 46, height: 46)
-                .background(Circle().fill(Color.black.opacity(disabled ? 0.24 : 0.5)))
-                .contentShape(Circle())
+            IrisGlassCircleButtonLabel(
+                systemName: systemName,
+                iconSize: 18,
+                hitSize: 44,
+                tone: .dark,
+                glyphColor: Color.white.opacity(disabled ? 0.4 : 1)
+            )
+            .opacity(disabled ? 0.55 : 1)
         }
         .buttonStyle(.irisPlain)
         .disabled(disabled)
@@ -4255,12 +4304,22 @@ private struct IrisImageViewer: View {
         if loadedData[attachment.htreeUrl] != nil { return }
         guard let data = await item.downloadAttachment(attachment) else { return }
         loadedData[attachment.htreeUrl] = data
+        let isAnimated = isAnimatedImage(data: data, filename: attachment.filename)
+        if !isAnimated, loadedImages[attachment.htreeUrl] == nil {
+            let bytes = data
+            let image = await Task.detached(priority: .userInitiated) {
+                PlatformImage(data: bytes)
+            }.value
+            if let image {
+                loadedImages[attachment.htreeUrl] = image
+            }
+        }
     }
 
     @MainActor
-    private func preloadAllExcept(index: Int) async {
-        for (idx, _) in item.attachments.enumerated() where idx != index {
-            await ensureLoaded(index: idx)
+    private func preloadAdjacent(index: Int) async {
+        for neighbor in [index - 1, index + 1] where item.attachments.indices.contains(neighbor) {
+            await ensureLoaded(index: neighbor)
         }
     }
 
@@ -4273,42 +4332,58 @@ private struct IrisImageViewer: View {
         sharedFileURL = writeTempImage(data: data, filename: attachment.filename)
     }
 
-    private var usesCompactTopActions: Bool {
-        #if os(iOS)
-        verticalSizeClass == .compact
-        #else
-        false
-        #endif
-    }
-
     private func topChrome(topInset: CGFloat) -> some View {
-        HStack(spacing: 10) {
-            if usesCompactTopActions {
-                forwardButton
-                shareButton
+        ZStack {
+            HStack {
+                backButton
+                Spacer(minLength: 0)
             }
-            Spacer(minLength: 0)
-            IrisModalCloseButton(
-                accessibilityLabel: "Close image",
-                accessibilityIdentifier: "imageViewerCloseButton",
-                tone: .light,
-                iconSize: 18,
-                hitSize: 56,
-                action: onClose
-            )
+            senderHeader
         }
         .padding(.top, topInset + 4)
+        .padding(.horizontal, 12)
+    }
+
+    private var backButton: some View {
+        Button(action: onClose) {
+            IrisGlassCircleButtonLabel(
+                systemName: "chevron.left",
+                iconSize: 16,
+                hitSize: 40,
+                tone: .dark,
+                glyphColor: .white
+            )
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityLabel("Close image")
+        .accessibilityIdentifier("imageViewerCloseButton")
+    }
+
+    private var senderHeader: some View {
+        VStack(spacing: 2) {
+            Text(item.senderName)
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .lineLimit(1)
+            Text(imageViewerDate(item.createdAtSecs))
+                .font(.system(.caption, design: .rounded, weight: .medium))
+                .foregroundStyle(Color.white.opacity(0.72))
+                .lineLimit(1)
+        }
         .padding(.horizontal, 12)
     }
 
     private func bottomChrome(bottomInset: CGFloat) -> some View {
         VStack(spacing: 12) {
             pageIndicator
-            HStack(spacing: 0) {
-                forwardButton
-                Spacer(minLength: 12)
+            HStack(alignment: .center, spacing: 0) {
                 shareButton
+                    .frame(width: 40, height: 40)
+                Spacer(minLength: 12)
+                forwardButton
+                    .frame(width: 40, height: 40)
             }
+            .frame(height: 40)
         }
         .padding(.horizontal, 20)
         .padding(.top, 10)
@@ -4324,14 +4399,6 @@ private struct IrisImageViewer: View {
                 endPoint: .bottom
             )
             .allowsHitTesting(false)
-        }
-    }
-
-    @ViewBuilder
-    private func compactPageIndicator(bottomInset: CGFloat) -> some View {
-        if item.attachments.count > 1 {
-            pageIndicator
-                .padding(.bottom, bottomInset + 14)
         }
     }
 
@@ -4423,36 +4490,23 @@ private struct IrisImageViewerForwardButton: View {
 
 private struct IrisImageViewerPage: View {
     let data: Data?
+    let image: PlatformImage?
     let filename: String
-
-    @State private var decoded: PlatformImage?
-    @State private var decodedKey: Int = 0
 
     var body: some View {
         Group {
-            if let data {
-                if isAnimatedImage(data: data, filename: filename) {
-                    IrisAnimatedImageDataView(data: data)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(false)
-                } else if let image = decoded {
-                    Image(platformImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    ProgressView()
-                        .tint(.white)
-                        .task(id: data.count) {
-                            let bytes = data
-                            let image = await Task.detached(priority: .userInitiated) {
-                                PlatformImage(data: bytes)
-                            }.value
-                            await MainActor.run {
-                                decoded = image
-                            }
-                        }
-                }
+            if let data, isAnimatedImage(data: data, filename: filename) {
+                IrisAnimatedImageDataView(data: data)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .allowsHitTesting(false)
+            } else if let image {
+                Image(platformImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if data == nil {
+                ProgressView()
+                    .tint(.white)
             } else {
                 ProgressView()
                     .tint(.white)
@@ -4466,14 +4520,27 @@ private struct IrisImageViewerIconButtonLabel: View {
     var isEnabled = true
 
     var body: some View {
-        Image(systemName: systemName)
-            .font(.system(size: 23, weight: .semibold))
-            .foregroundStyle(Color.white.opacity(isEnabled ? 0.92 : 0.38))
-            .frame(width: 46, height: 46)
-            .background(Circle().fill(Color.black.opacity(0.48)))
-            .contentShape(Circle())
+        IrisGlassCircleButtonLabel(
+            systemName: systemName,
+            iconSize: 18,
+            hitSize: 40,
+            tone: .dark,
+            glyphColor: Color.white.opacity(isEnabled ? 1 : 0.38)
+        )
     }
 }
+
+private func imageViewerDate(_ secs: UInt64) -> String {
+    imageViewerDateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(secs)))
+}
+
+private let imageViewerDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.doesRelativeDateFormatting = true
+    formatter.dateStyle = .medium
+    formatter.timeStyle = .short
+    return formatter
+}()
 
 private func uploadFraction(_ progress: UploadProgress?) -> Double? {
     guard let progress, progress.totalBytes > 0 else { return nil }

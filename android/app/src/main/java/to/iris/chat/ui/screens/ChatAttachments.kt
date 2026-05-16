@@ -11,21 +11,33 @@ import android.util.Log
 import android.util.LruCache
 import android.webkit.MimeTypeMap
 import android.webkit.WebView
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.snap
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Archive
@@ -46,12 +58,15 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -63,12 +78,16 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -93,6 +112,18 @@ internal fun SelectedAttachmentChip(
 ) {
     val selectedAttachmentType = attachmentType(attachment)
     val haptics = rememberIrisHapticFeedback()
+
+    if (selectedAttachmentType == ChatAttachmentType.IMAGE) {
+        SelectedImageAttachmentChip(
+            attachment = attachment,
+            enabled = enabled,
+            onRemove = {
+                haptics.press()
+                onRemove()
+            },
+        )
+        return
+    }
 
     Surface(
         color = IrisTheme.palette.panel,
@@ -151,6 +182,119 @@ internal fun SelectedAttachmentChip(
             }
         }
     }
+}
+
+@Composable
+private fun SelectedImageAttachmentChip(
+    attachment: PickedAttachment,
+    enabled: Boolean,
+    onRemove: () -> Unit,
+) {
+    var bitmap by remember(attachment.path) {
+        mutableStateOf(SelectedImageThumbnailCache.get(attachment.path))
+    }
+    LaunchedEffect(attachment.path) {
+        if (bitmap == null) {
+            val decoded = withContext(Dispatchers.IO) {
+                decodeStagedImageThumbnail(attachment.path)
+            }
+            if (decoded != null) {
+                SelectedImageThumbnailCache.put(attachment.path, decoded)
+                bitmap = decoded
+            }
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .size(56.dp)
+            .semantics { contentDescription = "Image, ${attachment.filename}" },
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(12.dp))
+                .background(IrisTheme.palette.panel),
+            contentAlignment = Alignment.Center,
+        ) {
+            val current = bitmap
+            if (current != null) {
+                Image(
+                    bitmap = current.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop,
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Image,
+                    contentDescription = null,
+                    tint = IrisTheme.palette.muted,
+                    modifier = Modifier.size(22.dp),
+                )
+            }
+        }
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 3.dp, end = 3.dp)
+                .size(20.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.6f))
+                .clickable(enabled = enabled, onClick = onRemove)
+                .testTag("chatSelectedAttachmentRemove"),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = IrisIcons.Close,
+                contentDescription = "Remove attachment",
+                tint = Color.White,
+                modifier = Modifier.size(12.dp),
+            )
+        }
+    }
+}
+
+private object SelectedImageThumbnailCache {
+    private const val MaxCacheKb = 8 * 1024
+
+    private val cache =
+        object : LruCache<String, Bitmap>(MaxCacheKb) {
+            override fun sizeOf(
+                key: String,
+                value: Bitmap,
+            ): Int = (value.byteCount / 1024).coerceAtLeast(1)
+        }
+
+    fun get(key: String): Bitmap? = cache.get(key)
+
+    fun put(
+        key: String,
+        bitmap: Bitmap,
+    ) {
+        cache.put(key, bitmap)
+    }
+}
+
+private fun decodeStagedImageThumbnail(path: String): Bitmap? {
+    val file = File(path)
+    if (!file.exists()) {
+        return null
+    }
+    val bounds =
+        BitmapFactory.Options().apply {
+            inJustDecodeBounds = true
+        }
+    BitmapFactory.decodeFile(path, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+        return null
+    }
+    val options =
+        BitmapFactory.Options().apply {
+            inSampleSize = chatAttachmentPreviewSampleSize(bounds.outWidth, bounds.outHeight)
+        }
+    return BitmapFactory.decodeFile(path, options)
 }
 
 internal data class PickedAttachment(
@@ -260,13 +404,211 @@ private fun safeAttachmentName(value: String): String {
     return basename.ifEmpty { "attachment" }
 }
 
+@Composable
+internal fun ChatImageAlbumView(
+    attachments: List<MessageAttachmentSnapshot>,
+    isOutgoing: Boolean,
+    downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
+    onOpenImage: (ByteArray, MessageAttachmentSnapshot) -> Unit,
+    onForward: (MessageAttachmentSnapshot) -> Unit,
+) {
+    val albumWidth = 232.dp
+    val gap = 2.dp
+    when (attachments.size) {
+        0 -> Unit
+        1 -> AlbumCell(
+            attachment = attachments[0],
+            isOutgoing = isOutgoing,
+            width = 220.dp,
+            height = 150.dp,
+            downloadAttachment = downloadAttachment,
+            onOpenImage = onOpenImage,
+            onForward = onForward,
+        )
+        2 -> Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+            val cell = (albumWidth - gap) / 2
+            AlbumCell(attachments[0], isOutgoing, cell, 150.dp, downloadAttachment, onOpenImage, onForward)
+            AlbumCell(attachments[1], isOutgoing, cell, 150.dp, downloadAttachment, onOpenImage, onForward)
+        }
+        3 -> Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+            val left = albumWidth * 0.58f - gap / 2
+            val right = albumWidth * 0.42f - gap / 2
+            val tall = albumWidth * 0.86f
+            val small = (tall - gap) / 2
+            AlbumCell(attachments[0], isOutgoing, left, tall, downloadAttachment, onOpenImage, onForward)
+            Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                AlbumCell(attachments[1], isOutgoing, right, small, downloadAttachment, onOpenImage, onForward)
+                AlbumCell(attachments[2], isOutgoing, right, small, downloadAttachment, onOpenImage, onForward)
+            }
+        }
+        else -> {
+            val cell = (albumWidth - gap) / 2
+            Column(verticalArrangement = Arrangement.spacedBy(gap)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    AlbumCell(attachments[0], isOutgoing, cell, cell, downloadAttachment, onOpenImage, onForward)
+                    AlbumCell(attachments[1], isOutgoing, cell, cell, downloadAttachment, onOpenImage, onForward)
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    AlbumCell(attachments[2], isOutgoing, cell, cell, downloadAttachment, onOpenImage, onForward)
+                    Box {
+                        AlbumCell(attachments[3], isOutgoing, cell, cell, downloadAttachment, onOpenImage, onForward)
+                        if (attachments.size > 4) {
+                            Box(
+                                modifier = Modifier
+                                    .size(cell)
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color.Black.copy(alpha = 0.45f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(
+                                    text = "+${attachments.size - 4}",
+                                    style = MaterialTheme.typography.headlineSmall,
+                                    color = Color.White,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AlbumCell(
+    attachment: MessageAttachmentSnapshot,
+    isOutgoing: Boolean,
+    width: androidx.compose.ui.unit.Dp,
+    height: androidx.compose.ui.unit.Dp,
+    downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
+    onOpenImage: (ByteArray, MessageAttachmentSnapshot) -> Unit,
+    onForward: (MessageAttachmentSnapshot) -> Unit,
+) {
+    val scope = rememberCoroutineScope()
+    val haptics = rememberIrisHapticFeedback()
+    val clipboard = rememberIrisClipboard()
+    var localImageData by remember(attachment.htreeUrl) { mutableStateOf<ByteArray?>(null) }
+    var localPreviewBitmap by remember(attachment.htreeUrl) {
+        mutableStateOf(ChatAttachmentPreviewBitmapCache.get(attachment.htreeUrl))
+    }
+    var imageLoadFailed by remember(attachment.htreeUrl) { mutableStateOf(false) }
+    var imageLoading by remember(attachment.htreeUrl) { mutableStateOf(false) }
+    var actionsOpen by remember(attachment.htreeUrl) { mutableStateOf(false) }
+    val interactionSource = remember(attachment.htreeUrl) { MutableInteractionSource() }
+    val foreground = if (isOutgoing) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+
+    suspend fun loadImageIfNeeded(): ByteArray? {
+        localImageData?.let { return it }
+        if (imageLoading) return null
+        imageLoading = true
+        imageLoadFailed = false
+        if (localPreviewBitmap == null) {
+            localPreviewBitmap = ChatAttachmentPreviewBitmapCache.get(attachment.htreeUrl)
+        }
+        val data = downloadAttachment(attachment)
+        imageLoading = false
+        if (data == null) {
+            imageLoadFailed = true
+            return null
+        }
+        if (!isAnimatedImage(data, attachment.filename) && localPreviewBitmap == null) {
+            val preview = decodeChatAttachmentPreviewBitmap(data)
+            if (preview == null) {
+                imageLoadFailed = true
+                return null
+            }
+            ChatAttachmentPreviewBitmapCache.put(attachment.htreeUrl, preview)
+            localPreviewBitmap = preview
+        }
+        localImageData = data
+        return data
+    }
+
+    LaunchedEffect(attachment.htreeUrl) {
+        loadImageIfNeeded()
+    }
+
+    if (actionsOpen) {
+        AttachmentActionsSheet(
+            attachment = attachment,
+            onDismiss = { actionsOpen = false },
+            onForward = {
+                actionsOpen = false
+                onForward(attachment)
+            },
+            onCopy = {
+                actionsOpen = false
+                clipboard.setText(attachment.filename, attachment.htreeUrl)
+            },
+        )
+    }
+
+    val isAnimated = remember(localImageData, attachment.filename) {
+        localImageData?.let { isAnimatedImage(it, attachment.filename) } ?: isLikelyGif(attachment.filename)
+    }
+
+    Box(
+        modifier = Modifier
+            .size(width = width, height = height)
+            .clip(RoundedCornerShape(4.dp))
+            .background(foreground.copy(alpha = 0.12f))
+            .combinedClickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onLongClick = {
+                    haptics.press()
+                    actionsOpen = true
+                },
+            ) {
+                haptics.press()
+                val data = localImageData
+                if (data != null) {
+                    onOpenImage(data, attachment)
+                } else {
+                    scope.launch {
+                        loadImageIfNeeded()?.let { loadedData ->
+                            onOpenImage(loadedData, attachment)
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        val preview = localPreviewBitmap
+        when {
+            preview != null -> Image(
+                bitmap = preview.asImageBitmap(),
+                contentDescription = attachment.filename,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+            )
+            isAnimated && localImageData != null -> AnimatedImageDataView(
+                data = localImageData!!,
+                modifier = Modifier.fillMaxSize(),
+            )
+            imageLoading -> CircularProgressIndicator(
+                modifier = Modifier.size(22.dp),
+                strokeWidth = 2.dp,
+                color = foreground,
+            )
+            else -> Icon(
+                imageVector = if (imageLoadFailed) Icons.Rounded.Warning else IrisIcons.Image,
+                contentDescription = null,
+                tint = foreground.copy(alpha = 0.72f),
+                modifier = Modifier.size(26.dp),
+            )
+        }
+    }
+}
+
 @OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class)
 @Composable
 internal fun AttachmentChip(
     attachment: MessageAttachmentSnapshot,
     isOutgoing: Boolean,
     downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
-    onOpenImage: (ByteArray, String) -> Unit,
+    onOpenImage: (ByteArray, MessageAttachmentSnapshot) -> Unit,
     onForward: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -359,11 +701,11 @@ internal fun AttachmentChip(
                         haptics.press()
                         val data = localImageData
                         if (data != null) {
-                            onOpenImage(data, attachment.filename)
+                            onOpenImage(data, attachment)
                         } else {
                             scope.launch {
                                 loadImageIfNeeded()?.let { loadedData ->
-                                    onOpenImage(loadedData, attachment.filename)
+                                    onOpenImage(loadedData, attachment)
                                 }
                             }
                         }
@@ -648,25 +990,76 @@ internal data class DownloadedImageAttachment(
     val filename: String,
 )
 
+internal data class ImageViewerItem(
+    val attachments: List<MessageAttachmentSnapshot>,
+    val initialIndex: Int,
+    val initialData: ByteArray,
+    val senderName: String,
+    val createdAtSecs: Long,
+)
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 internal fun ImageViewerDialog(
-    item: DownloadedImageAttachment,
+    item: ImageViewerItem,
+    downloadAttachment: suspend (MessageAttachmentSnapshot) -> ByteArray?,
+    onForward: (MessageAttachmentSnapshot) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val focusRequester = remember { FocusRequester() }
     val haptics = rememberIrisHapticFeedback()
-    val dismissInteractionSource = remember { MutableInteractionSource() }
-    val bitmap = remember(item.data) {
-        item.data
-            .takeUnless { data -> isAnimatedImage(data, item.filename) }
-            ?.let { data -> BitmapFactory.decodeByteArray(data, 0, data.size) }
+    val scope = rememberCoroutineScope()
+    val pagerState = rememberPagerState(
+        initialPage = item.initialIndex.coerceIn(0, (item.attachments.size - 1).coerceAtLeast(0)),
+    ) { item.attachments.size }
+
+    val loadedData = remember { mutableStateMapOf<String, ByteArray>() }
+    val decodedBitmaps = remember { mutableStateMapOf<String, Bitmap>() }
+    val density = LocalDensity.current
+    val configuration = LocalConfiguration.current
+    val screenHeightPx = with(density) { configuration.screenHeightDp.dp.toPx() }
+    val dismissThresholdPx = with(density) { 140.dp.toPx() }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+
+    LaunchedEffect(item.attachments) {
+        item.attachments.getOrNull(item.initialIndex)?.let { initial ->
+            loadedData[initial.htreeUrl] = item.initialData
+            if (!isAnimatedImage(item.initialData, initial.filename)) {
+                BitmapFactory.decodeByteArray(item.initialData, 0, item.initialData.size)?.let { bmp ->
+                    decodedBitmaps[initial.htreeUrl] = bmp
+                }
+            }
+        }
     }
-    val isAnimated = remember(item.data, item.filename) {
-        isAnimatedImage(item.data, item.filename)
+    LaunchedEffect(pagerState.currentPage, item.attachments) {
+        for (offset in listOf(0, -1, 1)) {
+            val idx = pagerState.currentPage + offset
+            val attachment = item.attachments.getOrNull(idx) ?: continue
+            if (loadedData[attachment.htreeUrl] != null) continue
+            val data = withContext(Dispatchers.IO) { downloadAttachment(attachment) } ?: continue
+            loadedData[attachment.htreeUrl] = data
+            if (!isAnimatedImage(data, attachment.filename) && decodedBitmaps[attachment.htreeUrl] == null) {
+                withContext(Dispatchers.Default) {
+                    BitmapFactory.decodeByteArray(data, 0, data.size)
+                }?.let { bmp ->
+                    decodedBitmaps[attachment.htreeUrl] = bmp
+                }
+            }
+        }
     }
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
+
+    val fadeFraction = (kotlin.math.abs(dragOffsetY) / screenHeightPx).coerceIn(0f, 1f)
+    val backdropAlpha = 0.94f * (1f - fadeFraction * 0.55f)
+    val chromeAlpha = (1f - fadeFraction * 2.2f).coerceIn(0f, 1f)
+    val animatedOffset by animateFloatAsState(
+        targetValue = dragOffsetY,
+        animationSpec = if (dragOffsetY == 0f) tween(durationMillis = 220) else snap(),
+        label = "viewerDragOffset",
+    )
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
@@ -675,68 +1068,274 @@ internal fun ImageViewerDialog(
             modifier =
                 Modifier
                     .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.92f))
-                    .clickable(
-                        interactionSource = dismissInteractionSource,
-                        indication = null,
-                    ) {
-                        haptics.press()
-                        onDismiss()
-                    }
+                    .background(Color.Black.copy(alpha = backdropAlpha))
                     .focusRequester(focusRequester)
                     .focusable()
                     .onPreviewKeyEvent { event ->
-                        if (event.key == Key.Escape && event.type == KeyEventType.KeyUp) {
-                            onDismiss()
-                            true
-                        } else {
-                            false
+                        if (event.type != KeyEventType.KeyUp) {
+                            return@onPreviewKeyEvent false
+                        }
+                        when (event.key) {
+                            Key.Escape -> {
+                                onDismiss()
+                                true
+                            }
+                            Key.DirectionLeft -> {
+                                if (pagerState.currentPage > 0) {
+                                    scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                                }
+                                true
+                            }
+                            Key.DirectionRight -> {
+                                if (pagerState.currentPage < item.attachments.lastIndex) {
+                                    scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                                }
+                                true
+                            }
+                            else -> false
                         }
                     },
-            contentAlignment = Alignment.Center,
         ) {
-            if (isAnimated) {
-                AnimatedImageDataView(
-                    data = item.data,
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .padding(18.dp),
-                )
-            } else if (bitmap != null) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = item.filename,
-                    modifier =
-                        Modifier
-                            .fillMaxSize()
-                            .padding(18.dp),
-                    contentScale = ContentScale.Fit,
-                )
-            } else {
-                CircularProgressIndicator(color = Color.White)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .offset { IntOffset(0, animatedOffset.toInt()) }
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures(
+                            onDragEnd = {
+                                if (kotlin.math.abs(dragOffsetY) > dismissThresholdPx) {
+                                    onDismiss()
+                                } else {
+                                    dragOffsetY = 0f
+                                }
+                            },
+                            onDragCancel = {
+                                dragOffsetY = 0f
+                            },
+                            onVerticalDrag = { _, delta ->
+                                dragOffsetY += delta
+                            },
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                ) { page ->
+                    val attachment = item.attachments[page]
+                    val data = loadedData[attachment.htreeUrl]
+                    val bitmap = decodedBitmaps[attachment.htreeUrl]
+                    ImageViewerPage(
+                        data = data,
+                        bitmap = bitmap,
+                        filename = attachment.filename,
+                        onTap = {
+                            haptics.press()
+                            onDismiss()
+                        },
+                    )
+                }
             }
+
+            ImageViewerTopChrome(
+                senderName = item.senderName,
+                createdAtSecs = item.createdAtSecs,
+                onClose = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .alpha(chromeAlpha),
+            )
+
             val shareContext = LocalContext.current
-            IconButton(
-                onClick = { shareImageAttachment(shareContext, item) },
-                modifier = Modifier.align(Alignment.TopStart),
-            ) {
-                Icon(
-                    imageVector = IrisIcons.Share,
-                    contentDescription = "Share image",
-                    tint = Color.White,
-                )
-            }
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier.align(Alignment.TopEnd),
-            ) {
-                Icon(
-                    imageVector = IrisIcons.Close,
-                    contentDescription = "Close image",
-                    tint = Color.White,
-                )
-            }
+            ImageViewerBottomChrome(
+                attachmentCount = item.attachments.size,
+                currentIndex = pagerState.currentPage,
+                onShare = {
+                    val attachment = item.attachments.getOrNull(pagerState.currentPage) ?: return@ImageViewerBottomChrome
+                    val data = loadedData[attachment.htreeUrl] ?: return@ImageViewerBottomChrome
+                    shareImageAttachment(
+                        shareContext,
+                        DownloadedImageAttachment(data = data, filename = attachment.filename),
+                    )
+                },
+                onForward = {
+                    val attachment = item.attachments.getOrNull(pagerState.currentPage) ?: return@ImageViewerBottomChrome
+                    onForward(attachment)
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .alpha(chromeAlpha),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ImageViewerTopChrome(
+    senderName: String,
+    createdAtSecs: Long,
+    onClose: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .statusBarsPadding()
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+    ) {
+        GlassCircleIconButton(
+            icon = IrisIcons.ChevronLeft,
+            contentDescription = "Close image",
+            onClick = onClose,
+            modifier = Modifier.align(Alignment.CenterStart),
+        )
+        Column(
+            modifier = Modifier.align(Alignment.Center),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = senderName,
+                style = MaterialTheme.typography.labelLarge,
+                color = Color.White,
+                maxLines = 1,
+            )
+            Text(
+                text = formatImageViewerDate(createdAtSecs),
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.White.copy(alpha = 0.72f),
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun ImageViewerBottomChrome(
+    attachmentCount: Int,
+    currentIndex: Int,
+    onShare: () -> Unit,
+    onForward: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        if (attachmentCount > 1) {
+            PageIndicator(count = attachmentCount, current = currentIndex)
+        }
+        Row(modifier = Modifier.fillMaxWidth()) {
+            GlassCircleIconButton(
+                icon = IrisIcons.Share,
+                contentDescription = "Share image",
+                onClick = onShare,
+            )
+            Spacer(modifier = Modifier.weight(1f))
+            GlassCircleIconButton(
+                icon = IrisIcons.Forward,
+                contentDescription = "Forward image",
+                onClick = onForward,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PageIndicator(count: Int, current: Int) {
+    Row(
+        modifier = Modifier
+            .clip(RoundedCornerShape(percent = 50))
+            .background(Color.Black.copy(alpha = 0.42f))
+            .padding(horizontal = 10.dp, vertical = 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        repeat(count) { idx ->
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(androidx.compose.foundation.shape.CircleShape)
+                    .background(
+                        if (idx == current) Color.White.copy(alpha = 0.95f)
+                        else Color.White.copy(alpha = 0.38f)
+                    ),
+            )
+        }
+    }
+}
+
+@Composable
+private fun GlassCircleIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier = modifier
+            .size(44.dp)
+            .clip(androidx.compose.foundation.shape.CircleShape)
+            .background(Color.White.copy(alpha = 0.18f))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = contentDescription,
+            tint = Color.White,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+private val imageViewerDateFormatter = java.text.SimpleDateFormat("MMM d, h:mm a", java.util.Locale.getDefault())
+
+private fun formatImageViewerDate(secs: Long): String =
+    imageViewerDateFormatter.format(java.util.Date(secs * 1000L))
+
+@Composable
+private fun ImageViewerPage(
+    data: ByteArray?,
+    bitmap: Bitmap?,
+    filename: String,
+    onTap: () -> Unit,
+) {
+    val interactionSource = remember(filename) { MutableInteractionSource() }
+    val isAnimated = remember(data, filename) {
+        data?.let { isAnimatedImage(it, filename) } ?: false
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onTap,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            data == null -> CircularProgressIndicator(color = Color.White)
+            isAnimated -> AnimatedImageDataView(
+                data = data,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(18.dp),
+            )
+            bitmap != null -> Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = filename,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(18.dp),
+                contentScale = ContentScale.Fit,
+            )
+            else -> CircularProgressIndicator(color = Color.White)
         }
     }
 }
