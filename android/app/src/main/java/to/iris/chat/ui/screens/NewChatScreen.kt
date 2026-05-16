@@ -21,10 +21,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
-import androidx.compose.ui.window.Dialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,11 +31,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -52,7 +48,6 @@ import to.iris.chat.rust.normalizePeerInput
 import to.iris.chat.ui.components.IrisIcons
 import to.iris.chat.ui.components.IrisListSection
 import to.iris.chat.ui.components.IrisMenuRow
-import to.iris.chat.ui.components.IrisPrimaryButton
 import to.iris.chat.ui.components.IrisSecondaryButton
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.irisTextFieldColors
@@ -69,8 +64,7 @@ fun NewChatScreen(
     val focusManager = LocalFocusManager.current
     var peerInput by remember { mutableStateOf("") }
     var submittedInput by remember { mutableStateOf<String?>(null) }
-    var showScanner by remember { mutableStateOf(false) }
-    var showInviteQr by remember { mutableStateOf(false) }
+    var qrDialogTab by remember { mutableStateOf<ProfileQrDialogTab?>(null) }
     val trimmedInput = peerInput.trim()
     val normalizedInput = normalizePeerInput(peerInput)
     val isValidPeer = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput)
@@ -166,7 +160,7 @@ fun NewChatScreen(
                         }
                         NewChatInviteActionButton(
                             text = "Show",
-                            onClick = { showInviteQr = true },
+                            onClick = { qrDialogTab = ProfileQrDialogTab.Code },
                             modifier = Modifier.weight(1f).testTag("newChatInviteQrButton"),
                             icon = { Icon(imageVector = IrisIcons.ScanQr, contentDescription = null) },
                         )
@@ -218,7 +212,7 @@ fun NewChatScreen(
 
                 IrisSecondaryButton(
                     text = "Scan code",
-                    onClick = { showScanner = true },
+                    onClick = { qrDialogTab = ProfileQrDialogTab.Scan },
                     modifier = Modifier.fillMaxWidth().testTag("newChatScanQrButton"),
                     icon = {
                         Icon(imageVector = IrisIcons.ScanQr, contentDescription = null)
@@ -237,58 +231,30 @@ fun NewChatScreen(
         }
     }
 
-    if (showScanner) {
-        QrScannerDialog(
-            onDismiss = { showScanner = false },
+    qrDialogTab?.let { initialTab ->
+        ProfileQrDialog(
+            qrBitmap = qrBitmap,
+            displayName = "Invite code",
+            canShare = canShareInvite && inviteUrl != null,
+            initialTab = initialTab,
+            qrTag = "newChatInviteQrCode",
+            qrContentDescription = "Invite code",
+            scanTag = "newChatQrScanner",
+            copyContentDescription = "Copy invite",
+            shareContentDescription = "Share invite",
+            onDismiss = { qrDialogTab = null },
+            onCopy = { inviteUrl?.let { clipboard.setText("Invite", it) } },
+            onShare = { inviteUrl?.let { shareText(context, it, "Share invite") } },
             onScanned = { scanned ->
                 if (scanned.isNotBlank()) {
                     handleNewChatInput(scanned)
-                    showScanner = false
+                    qrDialogTab = null
                     null
                 } else {
                     "That code was empty."
                 }
             },
         )
-    }
-
-    if (showInviteQr && qrBitmap != null && inviteUrl != null) {
-        Dialog(onDismissRequest = { showInviteQr = false }) {
-            Surface(
-                color = IrisTheme.palette.panel,
-                shape = RoundedCornerShape(20.dp),
-                border = BorderStroke(1.dp, IrisTheme.palette.border),
-            ) {
-                Column(
-                    modifier = Modifier.padding(20.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(14.dp),
-                ) {
-                    Text(
-                        text = "Invite code",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    IrisQrCodeImage(
-                        bitmap = qrBitmap,
-                        contentDescription = "Invite code",
-                        tag = "newChatInviteQrCode",
-                    )
-                    Text(
-                        text = "Scan this code to start a chat",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = IrisTheme.palette.muted,
-                    )
-                    IrisSecondaryButton(
-                        text = "Copy",
-                        onClick = { clipboard.setText("Invite", inviteUrl) },
-                        icon = {
-                            Icon(imageVector = IrisIcons.Copy, contentDescription = null)
-                        },
-                    )
-                }
-            }
-        }
     }
 }
 

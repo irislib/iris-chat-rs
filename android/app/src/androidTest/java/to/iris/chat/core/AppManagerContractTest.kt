@@ -675,6 +675,7 @@ class AppManagerContractTest {
                     acceptingInvite = false,
                     syncingNetwork = false,
                     uploadingAttachment = false,
+                    uploadProgress = null,
                 ),
             chatList = emptyList(),
             currentChat = currentChat,
@@ -757,6 +758,7 @@ class AppManagerContractTest {
             messages = messages,
             typingIndicators = emptyList(),
             draft = "",
+            isRequest = false,
         )
 
     private fun makeMessage(
@@ -893,6 +895,7 @@ private class MockRustAppClient(
             messages = emptyList(),
             typingIndicators = emptyList(),
             draft = thread?.draft.orEmpty(),
+            isRequest = thread?.isRequest ?: false,
         )
     }
 
@@ -973,6 +976,7 @@ private object AppManagerContractDefaults {
                     acceptingInvite = false,
                     syncingNetwork = false,
                     uploadingAttachment = false,
+                    uploadProgress = null,
                 ),
             chatList = emptyList(),
             currentChat = null,

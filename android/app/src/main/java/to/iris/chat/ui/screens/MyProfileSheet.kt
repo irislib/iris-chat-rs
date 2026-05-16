@@ -199,7 +199,6 @@ fun MyProfileSheet(
     var editingRelayDraft by remember { mutableStateOf("") }
     var selectedPage by remember { mutableStateOf<SettingsPage?>(null) }
     var showProfileQr by remember { mutableStateOf(false) }
-    var showProfileQrScanner by remember { mutableStateOf(false) }
     val trimmedPictureUrl = pictureUrl?.trim().orEmpty()
     val isHttpPictureUrl =
         trimmedPictureUrl.startsWith("http://") || trimmedPictureUrl.startsWith("https://")
@@ -238,7 +237,6 @@ fun MyProfileSheet(
     fun handleProfileQrScan(raw: String): String? {
         val normalized = normalizePeerInput(raw)
         if (normalized.isNotBlank() && isValidPeerInput(normalized)) {
-            showProfileQrScanner = false
             showProfileQr = false
             appManager.createChat(normalized)
             return null
@@ -246,7 +244,6 @@ fun MyProfileSheet(
 
         val trimmed = raw.trim()
         if (trimmed.isNotBlank()) {
-            showProfileQrScanner = false
             showProfileQr = false
             appManager.dispatch(AppAction.AcceptInvite(trimmed))
             return null
@@ -859,13 +856,6 @@ fun MyProfileSheet(
             onDismiss = { showProfileQr = false },
             onCopy = { clipboard.setText("Profile link", profileShareUrl) },
             onShare = { shareText(context, profileShareUrl, "Share profile") },
-            onScan = { showProfileQrScanner = true },
-        )
-    }
-
-    if (showProfileQrScanner) {
-        QrScannerDialog(
-            onDismiss = { showProfileQrScanner = false },
             onScanned = ::handleProfileQrScan,
         )
     }
@@ -1224,16 +1214,29 @@ private fun ProfileActionRow(
     }
 }
 
+internal enum class ProfileQrDialogTab {
+    Code,
+    Scan,
+}
+
 @Composable
-private fun ProfileQrDialog(
-    qrBitmap: Bitmap,
+internal fun ProfileQrDialog(
+    qrBitmap: Bitmap?,
     displayName: String,
     canShare: Boolean,
+    initialTab: ProfileQrDialogTab = ProfileQrDialogTab.Code,
+    qrTag: String = "settingsProfileQrCode",
+    qrContentDescription: String = "User ID code",
+    scanTag: String = "settingsProfileQrScanner",
+    copyContentDescription: String = "Copy profile link",
+    shareContentDescription: String = "Share profile",
     onDismiss: () -> Unit,
     onCopy: () -> Unit,
     onShare: () -> Unit,
-    onScan: () -> Unit,
+    onScanned: (String) -> String?,
 ) {
+    var selectedTab by remember(initialTab) { mutableStateOf(initialTab) }
+
     Dialog(onDismissRequest = onDismiss) {
         Surface(
             color = IrisTheme.palette.panel,
@@ -1251,46 +1254,56 @@ private fun ProfileQrDialog(
                 ) {
                     ProfileQrTabButton(
                         text = "Code",
-                        selected = true,
-                        onClick = {},
+                        selected = selectedTab == ProfileQrDialogTab.Code,
+                        onClick = { selectedTab = ProfileQrDialogTab.Code },
                     )
                     ProfileQrTabButton(
                         text = "Scan",
-                        selected = false,
-                        onClick = onScan,
+                        selected = selectedTab == ProfileQrDialogTab.Scan,
+                        onClick = { selectedTab = ProfileQrDialogTab.Scan },
                     )
                 }
 
-                ProfileQrBadge(
-                    qrBitmap = qrBitmap,
-                    label = displayName.ifBlank { "User ID" },
-                )
-
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    ProfileQrIconAction(
-                        icon = IrisIcons.Copy,
-                        contentDescription = "Copy profile link",
-                        onClick = onCopy,
-                        modifier = Modifier.testTag("settingsProfileQrCopyButton"),
-                    )
-                    if (canShare) {
-                        ProfileQrIconAction(
-                            icon = IrisIcons.Share,
-                            contentDescription = "Share profile",
-                            onClick = onShare,
-                            modifier = Modifier.testTag("settingsProfileQrShareButton"),
+                if (selectedTab == ProfileQrDialogTab.Code) {
+                    if (qrBitmap != null) {
+                        ProfileQrBadge(
+                            qrBitmap = qrBitmap,
+                            label = displayName.ifBlank { "User ID" },
+                            qrTag = qrTag,
+                            contentDescription = qrContentDescription,
                         )
+                    } else {
+                        CircularProgressIndicator(modifier = Modifier.padding(vertical = 96.dp))
                     }
-                    IrisSecondaryButton(
-                        text = "Scan",
-                        onClick = onScan,
-                        modifier = Modifier.testTag("settingsProfileQrScanButton"),
-                        icon = {
-                            Icon(imageVector = IrisIcons.ScanQr, contentDescription = null)
-                        },
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        ProfileQrIconAction(
+                            icon = IrisIcons.Copy,
+                            contentDescription = copyContentDescription,
+                            onClick = onCopy,
+                            modifier = Modifier.testTag("settingsProfileQrCopyButton"),
+                        )
+                        if (canShare) {
+                            ProfileQrIconAction(
+                                icon = IrisIcons.Share,
+                                contentDescription = shareContentDescription,
+                                onClick = onShare,
+                                modifier = Modifier.testTag("settingsProfileQrShareButton"),
+                            )
+                        }
+                    }
+                } else {
+                    QrScannerPane(
+                        onDismiss = onDismiss,
+                        onScanned = onScanned,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 360.dp, max = 420.dp)
+                                .testTag(scanTag),
                     )
                 }
             }
@@ -1340,6 +1353,8 @@ private fun ProfileQrTabButton(
 private fun ProfileQrBadge(
     qrBitmap: Bitmap,
     label: String,
+    qrTag: String,
+    contentDescription: String,
 ) {
     Surface(
         color = IrisTheme.palette.panelAlt,
@@ -1357,9 +1372,9 @@ private fun ProfileQrBadge(
         ) {
             IrisQrCodeImage(
                 bitmap = qrBitmap,
-                contentDescription = "User ID code",
+                contentDescription = contentDescription,
                 size = 216.dp,
-                tag = "settingsProfileQrCode",
+                tag = qrTag,
             )
 
             Row(

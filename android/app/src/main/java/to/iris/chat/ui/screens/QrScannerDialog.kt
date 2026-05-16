@@ -75,6 +75,53 @@ fun QrScannerDialog(
     onDismiss: () -> Unit,
     onScanned: (String) -> String?,
 ) {
+    QrScannerHost(
+        onDismiss = onDismiss,
+        onScanned = onScanned,
+    ) { previewView, error ->
+        Dialog(
+            onDismissRequest = onDismiss,
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            QrScannerCamera(
+                previewView = previewView,
+                error = error,
+                onDismiss = onDismiss,
+                showHeader = true,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+    }
+}
+
+@androidx.annotation.OptIn(ExperimentalGetImage::class)
+@Composable
+internal fun QrScannerPane(
+    onDismiss: () -> Unit,
+    onScanned: (String) -> String?,
+    modifier: Modifier = Modifier,
+) {
+    QrScannerHost(
+        onDismiss = onDismiss,
+        onScanned = onScanned,
+    ) { previewView, error ->
+        QrScannerCamera(
+            previewView = previewView,
+            error = error,
+            onDismiss = onDismiss,
+            showHeader = false,
+            modifier = modifier,
+        )
+    }
+}
+
+@androidx.annotation.OptIn(ExperimentalGetImage::class)
+@Composable
+private fun QrScannerHost(
+    onDismiss: () -> Unit,
+    onScanned: (String) -> String?,
+    content: @Composable (PreviewView, String?) -> Unit,
+) {
     val injectedScan = remember { QrScannerTestOverrides.consume() }
     LaunchedEffect(injectedScan) {
         if (!injectedScan.isNullOrBlank()) {
@@ -231,21 +278,28 @@ fun QrScannerDialog(
         )
     }
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false),
+    content(previewView, error)
+}
+
+@Composable
+private fun QrScannerCamera(
+    previewView: PreviewView,
+    error: String?,
+    onDismiss: () -> Unit,
+    showHeader: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Box(
+        modifier =
+            modifier
+                .background(Color.Black),
     ) {
-        Box(
-            modifier =
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black),
-        ) {
-            AndroidView(
-                factory = { previewView },
-                modifier = Modifier.fillMaxSize(),
-            )
-            QrScannerCrosshair(modifier = Modifier.fillMaxSize())
+        AndroidView(
+            factory = { previewView },
+            modifier = Modifier.fillMaxSize(),
+        )
+        QrScannerCrosshair(modifier = Modifier.fillMaxSize())
+        if (showHeader) {
             Row(
                 modifier =
                     Modifier
@@ -267,20 +321,20 @@ fun QrScannerDialog(
                     color = Color.White,
                 )
             }
-            error?.let { message ->
-                Text(
-                    text = message,
-                    modifier =
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .navigationBarsPadding()
-                            .padding(horizontal = 24.dp, vertical = 28.dp)
-                            .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(18.dp))
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White,
-                )
-            }
+        }
+        error?.let { message ->
+            Text(
+                text = message,
+                modifier =
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .navigationBarsPadding()
+                        .padding(horizontal = 24.dp, vertical = 28.dp)
+                        .background(Color.Black.copy(alpha = 0.62f), RoundedCornerShape(18.dp))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White,
+            )
         }
     }
 }

@@ -4745,8 +4745,7 @@ struct NewChatScreen: View {
     @ObservedObject var manager: AppManager
     @State private var peerInput = ""
     @State private var submittedInput: String?
-    @State private var showingScanner = false
-    @State private var showingInviteQr = false
+    @State private var qrModalTab: ProfileQrTab?
 
     private var trimmedInput: String {
         peerInput.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -4777,22 +4776,25 @@ struct NewChatScreen: View {
                 newGroupRow
             }
         }
-        .sheet(isPresented: $showingScanner) {
-            QrScannerSheet { code in
-                handleNewChatInput(code)
-                showingScanner = false
-            }
-            .irisModalSurface()
-            .irisDismissOnMacOutsideClick { showingScanner = false }
-        }
-        #if os(macOS)
-        .overlay { inviteQrOverlay }
-        #else
-        .sheet(isPresented: $showingInviteQr) {
-            inviteQrSheet
+        .sheet(item: $qrModalTab) { tab in
+            if let account = manager.state.account {
+                ProfileQrModal(
+                    manager: manager,
+                    account: account,
+                    initialTab: tab,
+                    codeContent: newChatQrContent,
+                    closeSettings: nil
+                )
                 .irisModalSurface()
+#if os(iOS)
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+#elseif os(macOS)
+                .frame(minWidth: 420, minHeight: 560)
+#endif
+                .irisDismissOnMacOutsideClick { qrModalTab = nil }
+            }
         }
-        #endif
         .irisOnChange(of: peerInput) { _ in
             autoProceedIfReady()
         }
@@ -4802,33 +4804,6 @@ struct NewChatScreen: View {
             }
         }
     }
-
-    #if os(macOS)
-    @ViewBuilder
-    private var inviteQrOverlay: some View {
-        if showingInviteQr {
-            ZStack {
-                Color.black.opacity(0.45)
-                    .ignoresSafeArea()
-                    .contentShape(Rectangle())
-                    .onTapGesture { showingInviteQr = false }
-                inviteQrSheet
-                    .background(palette.background)
-                    .clipShape(RoundedRectangle(cornerRadius: 16))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16)
-                            .strokeBorder(palette.border, lineWidth: 1)
-                    )
-                    .shadow(radius: 22)
-                    .frame(maxWidth: 420)
-                    .padding(40)
-                    .contentShape(Rectangle())
-                    .onTapGesture {}
-                    .irisOnEscapeKey { showingInviteQr = false }
-            }
-        }
-    }
-    #endif
 
     private var newChatCard: some View {
         IrisSectionCard {
@@ -4860,7 +4835,7 @@ struct NewChatScreen: View {
                     .buttonStyle(IrisSecondaryButtonStyle(compact: true))
                     .accessibilityIdentifier("newChatInviteShareButton")
 
-                    Button(action: { showingInviteQr = true }) {
+                    Button(action: { qrModalTab = .code }) {
                         NewChatInviteActionLabel(systemImage: "qrcode", title: "Show")
                     }
                     .frame(maxWidth: .infinity)
@@ -4889,7 +4864,7 @@ struct NewChatScreen: View {
                 .accessibilityIdentifier("newChatPeerInput")
 
             if irisSupportsQrScanning {
-                Button(action: { showingScanner = true }) {
+                Button(action: { qrModalTab = .scan }) {
                     HStack(spacing: 8) {
                         Image(systemName: "qrcode.viewfinder")
                         Text("Scan code")
@@ -4932,41 +4907,14 @@ struct NewChatScreen: View {
         .accessibilityIdentifier("newChatNewGroupButton")
     }
 
-    @ViewBuilder
-    private var inviteQrSheet: some View {
-        if let invite = manager.state.publicInvite {
-            VStack(spacing: 18) {
-                ZStack {
-                    Text("Invite code")
-                        .font(.system(.title3, design: .rounded, weight: .bold))
-                        .foregroundStyle(palette.textPrimary)
-                        .frame(maxWidth: .infinity)
-                    HStack {
-                        Spacer()
-                        IrisModalCloseButton {
-                            showingInviteQr = false
-                        }
-                        .accessibilityIdentifier("newChatInviteQrCloseButton")
-                    }
-                }
-
-                QrCodeImage(text: invite.url)
-                    .frame(maxWidth: 320)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .accessibilityIdentifier("newChatInviteQrCode")
-
-                Text("Scan this code to start a chat")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(palette.muted)
-
-                Button("Copy") { manager.copyToClipboard(invite.url) }
-                    .buttonStyle(IrisSecondaryButtonStyle())
-            }
-            .padding(24)
-        } else {
-            ProgressView()
-                .padding(40)
-        }
+    private var newChatQrContent: QrModalCodeContent? {
+        guard let invite = manager.state.publicInvite else { return nil }
+        return QrModalCodeContent(
+            value: invite.url,
+            label: "Invite code",
+            helperText: "Scan to start a chat with me.",
+            codeAccessibilityIdentifier: "newChatInviteQrCode"
+        )
     }
 
     private func autoProceedIfReady() {
@@ -4981,22 +4929,6 @@ struct NewChatScreen: View {
         }
     }
 
-    private func handleNewChatInput(_ raw: String) {
-        let normalized = normalizePeerInput(input: raw)
-        if !normalized.isEmpty, isValidPeerInput(input: normalized) {
-            peerInput = normalized
-            submittedInput = normalized
-            manager.dispatch(.createChat(peerInput: normalized))
-            return
-        }
-
-        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            peerInput = trimmed
-            submittedInput = trimmed
-            manager.dispatch(.acceptInvite(inviteInput: trimmed))
-        }
-    }
 }
 
 private struct NewChatInviteActionLabel: View {
@@ -6744,13 +6676,42 @@ private enum ProfileQrTab: String, CaseIterable, Identifiable {
     }
 }
 
+private struct QrModalCodeContent {
+    let value: String
+    let label: String
+    let helperText: String
+    let codeAccessibilityIdentifier: String
+
+    static func profile(account: AccountSnapshot) -> QrModalCodeContent {
+        QrModalCodeContent(
+            value: irisChatProfileURL(npub: account.npub).absoluteString,
+            label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+            helperText: "Scan to start a chat with me.",
+            codeAccessibilityIdentifier: "myProfileQrCode"
+        )
+    }
+}
+
 private struct ProfileQrModal: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
-    let account: AccountSnapshot
+    let codeContent: QrModalCodeContent
     let closeSettings: (() -> Void)?
-    @State private var selectedTab: ProfileQrTab = .code
+    @State private var selectedTab: ProfileQrTab
+
+    init(
+        manager: AppManager,
+        account: AccountSnapshot,
+        initialTab: ProfileQrTab = .code,
+        codeContent: QrModalCodeContent? = nil,
+        closeSettings: (() -> Void)? = nil
+    ) {
+        self.manager = manager
+        self.codeContent = codeContent ?? .profile(account: account)
+        self.closeSettings = closeSettings
+        _selectedTab = State(initialValue: initialTab)
+    }
 
     var body: some View {
         ZStack {
@@ -6760,7 +6721,7 @@ private struct ProfileQrModal: View {
                 header
 
                 if selectedTab == .code {
-                    ProfileQrCodePane(manager: manager, account: account)
+                    ProfileQrCodePane(manager: manager, codeContent: codeContent)
                 } else {
                     ProfileQrScanPane { code in
                         handleScannedCode(code)
@@ -6835,17 +6796,9 @@ private struct ProfileQrModal: View {
 private struct ProfileQrCodePane: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
-    let account: AccountSnapshot
+    let codeContent: QrModalCodeContent
     @State private var copiedUserID = false
     @State private var copyResetTask: Task<Void, Never>?
-
-    private var displayName: String {
-        account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName
-    }
-
-    private var profileURL: URL {
-        irisChatProfileURL(npub: account.npub)
-    }
 
     var body: some View {
         ScrollView {
@@ -6862,14 +6815,14 @@ private struct ProfileQrCodePane: View {
                     }
                     .accessibilityIdentifier("profileQrCopyButton")
 
-                    ShareLink(item: profileURL) {
+                    ShareLink(item: codeContent.value) {
                         ProfileQrActionLabel(systemImage: "square.and.arrow.up", title: "Share")
                     }
                     .buttonStyle(.irisPlain)
                     .accessibilityIdentifier("profileQrShareButton")
                 }
 
-                Text("Scan to start a chat with me.")
+                Text(codeContent.helperText)
                     .font(.system(.footnote, design: .rounded))
                     .foregroundStyle(palette.muted)
                     .multilineTextAlignment(.center)
@@ -6889,16 +6842,16 @@ private struct ProfileQrCodePane: View {
 
     private var qrCard: some View {
         VStack(spacing: 16) {
-            QrCodeImage(text: profileURL.absoluteString, size: 214)
+            QrCodeImage(text: codeContent.value, size: 214)
                 .padding(14)
                 .background(
                     RoundedRectangle(cornerRadius: 18, style: .continuous)
                         .fill(Color.white)
                 )
-                .accessibilityIdentifier("myProfileQrCode")
+                .accessibilityIdentifier(codeContent.codeAccessibilityIdentifier)
 
             VStack(spacing: 4) {
-                Text(displayName)
+                Text(codeContent.label)
                     .font(.system(.title3, design: .rounded, weight: .bold))
                     .foregroundStyle(Color(red: 0.04, green: 0.11, blue: 0.22))
                     .lineLimit(1)
@@ -6914,7 +6867,7 @@ private struct ProfileQrCodePane: View {
     }
 
     private func copyUserID() {
-        manager.copyToClipboard(profileURL.absoluteString)
+        manager.copyToClipboard(codeContent.value)
         copyResetTask?.cancel()
         withAnimation(.spring(response: 0.24, dampingFraction: 0.78)) {
             copiedUserID = true
