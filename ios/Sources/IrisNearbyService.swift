@@ -22,6 +22,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
     @Published private(set) var lanPermissionNeedsSettings = false
     @Published private(set) var bluetoothAuthorization: CBManagerAuthorization = CBManager.authorization
     @Published private(set) var peers: [IrisNearbyPeer] = []
+    /// Wall-clock time of the most recent mailbag-eligible event we
+    /// sent to or received from a peer. Used by the Nearby Mailbag row
+    /// to show a "Last synced N ago" hint.
+    @Published private(set) var lastMailbagExchangeAt: Date?
 
     private static let serviceUUID = CBUUID(string: "8A0DAE01-D8E5-4F27-9F20-A616F1FBA6D0")
     private static let characteristicUUID = CBUUID(string: "8A0DAE02-D8E5-4F27-9F20-A616F1FBA6D0")
@@ -245,14 +249,39 @@ final class IrisNearbyService: NSObject, ObservableObject {
         return peers.filter { peerIDs.contains($0.id) }
     }
 
-    /// Concise one-liner for the Nearby UI: "N yours · M from others"
-    /// when the mailbag has anything queued. Reads in-memory dictionaries
-    /// already maintained by the ingest path; no extra storage or polling.
+    /// Concise one-liner for the Nearby UI: "N yours · M from others
+    /// · synced 3m ago" when the mailbag has anything queued or we
+    /// have a recent peer sync to report. Reads in-memory state
+    /// already maintained by the ingest path; no extra storage or
+    /// polling.
     var mailbagSummary: String? {
         let mine = ownOutbound.count
         let others = forwarded.count
-        guard mine + others > 0 else { return nil }
-        return "\(mine) yours · \(others) from others"
+        let synced = lastMailbagSyncLabel
+        var parts: [String] = []
+        if mine + others > 0 {
+            parts.append("\(mine) yours · \(others) from others")
+        }
+        if let synced {
+            parts.append(synced)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    private var lastMailbagSyncLabel: String? {
+        guard let lastMailbagExchangeAt else { return nil }
+        let elapsed = max(0, Date().timeIntervalSince(lastMailbagExchangeAt))
+        let unit: String
+        if elapsed < 60 {
+            unit = "just now"
+        } else if elapsed < 60 * 60 {
+            unit = "\(Int(elapsed / 60))m ago"
+        } else if elapsed < 24 * 60 * 60 {
+            unit = "\(Int(elapsed / (60 * 60)))h ago"
+        } else {
+            unit = "\(Int(elapsed / (24 * 60 * 60)))d ago"
+        }
+        return unit == "just now" ? "synced just now" : "synced \(unit)"
     }
 
     var lanPeers: [IrisNearbyPeer] {
@@ -902,6 +931,12 @@ final class IrisNearbyService: NSObject, ObservableObject {
         onlyPeerID: String?,
         allowBluetoothWhenLanPeer: Bool = false
     ) {
+        let storableKind: Bool
+        if let record = IrisNearbyStoredEvent.fromEventJson(eventJson) {
+            storableKind = Self.shouldStoreInMailbag(kind: record.kind)
+        } else {
+            storableKind = false
+        }
         let eventID = IrisNearbyStoredEvent.fromEventJson(eventJson)?.id
         let envelope: [String: Any] = [
             "v": 1,
@@ -923,6 +958,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
             }
             if let eventID, let onlyPeerID {
                 self.markPeerSeenEvent(eventID, peerID: onlyPeerID)
+            }
+            if storableKind, onlyPeerID != nil {
+                self.recordMailbagExchange()
             }
         }
     }
@@ -1469,8 +1507,13 @@ final class IrisNearbyService: NSObject, ObservableObject {
         if let remotePeerID {
             markPeerSeenEvent(record.id, peerID: remotePeerID)
         }
+        recordMailbagExchange()
         sendInventoryRecord(record, excludingPeerID: remotePeerID, onlyPeerID: nil)
         irisDebugLog("Iris nearby: accepted event kind %u %@", record.kind, record.id)
+    }
+
+    private func recordMailbagExchange() {
+        lastMailbagExchangeAt = Date()
     }
 
     private func handlePresenceEvent(_ eventJson: String, remotePeerID: String?, sourceKey: String?) -> Bool {

@@ -4629,10 +4629,11 @@ private struct NearbyIrisScreen: View {
                     .foregroundStyle(palette.muted)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.bottom, 12)
+                    .padding(.top, 2)
             }
         }
         .padding(.horizontal, 18)
+        .padding(.bottom, 14)
         .accessibilityIdentifier("nearbyMailbagSection")
     }
 

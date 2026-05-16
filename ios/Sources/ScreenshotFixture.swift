@@ -370,13 +370,16 @@ extension ScreenshotFixture {
     }
 
     /// IrisNearbyPeer values for the synthetic nearby fixture peers.
-    func nearbyPeerSnapshots() -> [IrisNearbyPeer] {
+    /// `firstPeerOwnerHex` lets the nearby→chat e2e test wire the first
+    /// peer's tap target to a fixture chat id without disturbing the
+    /// screenshot-test output (where peers stay disabled).
+    func nearbyPeerSnapshots(firstPeerOwnerHex: String? = nil) -> [IrisNearbyPeer] {
         let now = Date()
-        return nearbyPeers.map { peer in
+        return nearbyPeers.enumerated().map { index, peer in
             IrisNearbyPeer(
                 id: peer.id,
                 name: peer.name,
-                ownerPubkeyHex: nil,
+                ownerPubkeyHex: index == 0 ? firstPeerOwnerHex : nil,
                 pictureURL: nil,
                 profileEventID: nil,
                 lastSeen: now

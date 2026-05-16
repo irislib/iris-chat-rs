@@ -86,7 +86,8 @@ private final class MockRustApp: RustAppClient {
             creatingInvite: false,
             acceptingInvite: false,
             syncingNetwork: false,
-            uploadingAttachment: false
+            uploadingAttachment: false,
+            uploadProgress: nil
         ),
         chatList: [],
         currentChat: nil,
@@ -299,7 +300,8 @@ private func makeBusyState() -> BusyState {
         creatingInvite: false,
         acceptingInvite: false,
         syncingNetwork: false,
-        uploadingAttachment: false
+        uploadingAttachment: false,
+        uploadProgress: nil
     )
 }
 

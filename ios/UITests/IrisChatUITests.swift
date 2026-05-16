@@ -687,6 +687,64 @@ final class IrisChatUITests: XCTestCase {
 #endif
     }
 
+    /// Regression: tapping a nearby peer must navigate into a chat with
+    /// them, not just create a chat-list row. The previous implementation
+    /// dispatched `.createChat`, which has no optimistic-navigation path,
+    /// so the sheet's `onClose()` ran sync while the Rust round-trip to
+    /// flip `screen_stack = [.chat]` was still in flight, and the user
+    /// landed back on the chat list. The fix uses `.openChat`, which is
+    /// wired into `handleOptimisticNavigation`.
+    func testTappingNearbyPeerOpensChat() throws {
+#if os(macOS)
+        throw XCTSkip("Nearby modal on macOS isn't a sheet; covered by other tests")
+#else
+        let app = launchNearbyFixtureApp(firstPeerOwnerHex: "fx-chat-1")
+        XCTAssertTrue(waitForChatList(app, timeout: 30), "chat list never appeared after fixture launch")
+
+        let nearbyRow = element(app, "nearbyChatRow")
+        XCTAssertTrue(nearbyRow.waitForExistence(timeout: 10), "nearby chat row missing")
+        nearbyRow.tap()
+
+        let firstPeer = element(app, "nearbyPeer-fx-near-1")
+        XCTAssertTrue(firstPeer.waitForExistence(timeout: 10), "first nearby peer never appeared")
+        XCTAssertTrue(firstPeer.isHittable, "first nearby peer should be tappable when ownerPubkeyHex is set")
+        firstPeer.tap()
+
+        XCTAssertTrue(
+            element(app, "chatMessageInput").waitForExistence(timeout: 10),
+            "tapping a nearby peer should navigate into a chat — composer never appeared"
+        )
+        assertNoDispatchFailureToast(app)
+#endif
+    }
+
+    private func launchNearbyFixtureApp(firstPeerOwnerHex: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "nearby-tap-\(UUID().uuidString)"
+        app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
+        app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_SCREENSHOT_FIXTURE"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_NEARBY_TAPPABLE_FIRST_PEER_HEX"] = firstPeerOwnerHex
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 30))
+
+        // Mirrors ScreenshotTests.createAccount(in:): no keyboard-focus
+        // assertion and no inner waitForChatList — fixture mode triggers
+        // a longer round-trip than the regular create flow, so we wait
+        // for the chat list back in the caller with a generous timeout.
+        let create = app.descendants(matching: .any)["welcomeCreateAction"]
+        XCTAssertTrue(create.waitForExistence(timeout: 15))
+        create.tap()
+        XCTAssertTrue(element(app, "createAccountScreen").waitForExistence(timeout: 15))
+        let nameField = element(app, "signupNameField")
+        XCTAssertTrue(nameField.waitForExistence(timeout: 15))
+        nameField.tap()
+        nameField.typeText("Alex Rivera")
+        element(app, "generateKeyButton").tap()
+        return app
+    }
+
     private func openChatWithPeer(_ app: XCUIApplication) {
         tapNewChat(app)
         XCTAssertTrue(element(app, "newChatPeerInput").waitForExistence(timeout: 10))
