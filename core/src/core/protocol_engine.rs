@@ -584,11 +584,19 @@ impl ProtocolEngine {
         reason: &'static str,
     ) -> (Vec<String>, Vec<ProtocolEffect>) {
         let mut targets = self.queued_message_diagnostics(None);
-        targets.extend(self.queued_owner_claim_targets());
-        targets.extend(self.queued_group_targets());
+        let mut generic_targets = self.queued_owner_claim_targets();
+        generic_targets.extend(self.queued_group_targets());
+        targets.extend(generic_targets.clone());
         targets.sort();
         targets.dedup();
-        let effects = self.protocol_backfill_effects_for_targets(&targets, now, reason);
+        let mut effects = self
+            .pending_outbound
+            .iter()
+            .flat_map(|pending| {
+                self.protocol_backfill_effects_for_pending_outbound(pending, now, reason)
+            })
+            .collect::<Vec<_>>();
+        effects.extend(self.protocol_backfill_effects_for_targets(&generic_targets, now, reason));
         (targets, effects)
     }
 
@@ -1372,8 +1380,10 @@ impl ProtocolEngine {
             .chain(local.relay_gaps.iter())
             .cloned()
             .collect::<Vec<_>>();
+        let mut queued_targets = Vec::new();
+        let mut queued_effects = Vec::new();
         if !gaps.is_empty() || probe_local_sibling_roster || has_undelivered_local_siblings {
-            self.upsert_pending_outbound(ProtocolPendingOutbound {
+            let pending = ProtocolPendingOutbound {
                 message_id: message_id.clone(),
                 chat_id: chat_id.to_string(),
                 recipient_owner_hex: peer_pubkey.to_hex(),
@@ -1386,16 +1396,17 @@ impl ProtocolEngine {
                 created_at_secs: now.get(),
                 next_retry_at_secs: now.get().saturating_add(PENDING_RETRY_DELAY_SECS),
                 reason: pending_reason_from_gaps(&gaps),
-            });
+            };
+            queued_targets = self.pending_target_hexes(&pending);
+            queued_effects = self.protocol_backfill_effects_for_pending_outbound(
+                &pending,
+                NdrUnixSeconds(now.get()),
+                "direct_send",
+            );
+            self.upsert_pending_outbound(pending);
         }
         self.persist()?;
-        let queued_targets = self.queued_message_diagnostics(Some(&message_id));
-        self.append_queued_protocol_backfill(
-            &mut effects,
-            &queued_targets,
-            NdrUnixSeconds(now.get()),
-            "direct_send",
-        );
+        effects.extend(queued_effects);
         Ok(ProtocolDirectSendResult {
             message_id,
             event_ids,
@@ -1598,7 +1609,7 @@ impl ProtocolEngine {
                     pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
                     still_pending.push(pending.clone());
                     let effects =
-                        self.protocol_backfill_effects_for_targets(&queued_targets, now, "retry");
+                        self.protocol_backfill_effects_for_pending_outbound(&pending, now, "retry");
                     results.push(ProtocolRetryResult {
                         message_id: pending.message_id.clone(),
                         chat_id: pending.chat_id.clone(),
@@ -1667,7 +1678,9 @@ impl ProtocolEngine {
                 still_pending.push(pending.clone());
             }
             if !event_ids.is_empty() || !effects.is_empty() || !queued_targets.is_empty() {
-                self.append_queued_protocol_backfill(&mut effects, &queued_targets, now, "retry");
+                effects.extend(
+                    self.protocol_backfill_effects_for_pending_outbound(&pending, now, "retry"),
+                );
                 results.push(ProtocolRetryResult {
                     message_id: pending.message_id.clone(),
                     chat_id: pending.chat_id.clone(),
@@ -2609,6 +2622,61 @@ impl ProtocolEngine {
         }
     }
 
+    fn protocol_backfill_effects_for_pending_outbound(
+        &self,
+        pending: &ProtocolPendingOutbound,
+        now: NdrUnixSeconds,
+        reason: &'static str,
+    ) -> Vec<ProtocolEffect> {
+        let filters = self.pending_outbound_protocol_filters(pending, now);
+        if filters.is_empty() {
+            Vec::new()
+        } else {
+            vec![ProtocolEffect::FetchProtocolState { filters, reason }]
+        }
+    }
+
+    fn pending_outbound_protocol_filters(
+        &self,
+        pending: &ProtocolPendingOutbound,
+        now: NdrUnixSeconds,
+    ) -> Vec<Filter> {
+        let mut owner_authors = Vec::new();
+        let mut invite_authors = Vec::new();
+
+        if let Ok(owner) = PublicKey::parse(&pending.recipient_owner_hex) {
+            let ndr_owner = ndr_owner(owner);
+            let remote_targets =
+                self.remaining_remote_targets(ndr_owner, &pending.delivered_remote_device_hexes);
+            if !remote_targets.is_empty()
+                || (matches!(pending.reason, ProtocolPendingReason::MissingRoster)
+                    && !self.has_roster_for_owner(ndr_owner))
+            {
+                owner_authors.push(owner);
+            }
+            invite_authors.extend(
+                remote_targets
+                    .into_iter()
+                    .filter_map(|target| public_device(target).ok()),
+            );
+        }
+
+        let local_targets =
+            self.remaining_local_sibling_targets(&pending.delivered_local_device_hexes);
+        if !local_targets.is_empty() || pending.probe_local_sibling_roster {
+            if let Ok(owner) = public_owner(self.local_owner) {
+                owner_authors.push(owner);
+            }
+        }
+        invite_authors.extend(
+            local_targets
+                .into_iter()
+                .filter_map(|target| public_device(target).ok()),
+        );
+
+        self.protocol_backfill_filters(owner_authors, invite_authors, now)
+    }
+
     fn queued_protocol_filters(
         &self,
         queued_targets: &[String],
@@ -2628,6 +2696,15 @@ impl ProtocolEngine {
                 invite_authors.push(pubkey);
             }
         }
+        self.protocol_backfill_filters(owner_authors, invite_authors, now)
+    }
+
+    fn protocol_backfill_filters(
+        &self,
+        mut owner_authors: Vec<PublicKey>,
+        mut invite_authors: Vec<PublicKey>,
+        now: NdrUnixSeconds,
+    ) -> Vec<Filter> {
         sort_dedup_protocol_pubkeys(&mut owner_authors);
         sort_dedup_protocol_pubkeys(&mut invite_authors);
 

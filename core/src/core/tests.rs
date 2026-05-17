@@ -2120,6 +2120,83 @@ fn appcore_direct_send_keeps_local_sibling_probe_until_local_appkeys_and_invite_
 }
 
 #[test]
+fn self_direct_send_retries_to_restored_sibling_after_invite_arrives() {
+    let owner = Keys::generate();
+    let phone_device = Keys::generate();
+    let desktop_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &phone_device);
+
+    engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            AppKeys::new(vec![
+                DeviceEntry::new(phone_device.public_key(), 1),
+                DeviceEntry::new(desktop_device.public_key(), 1),
+            ]),
+            1,
+        )
+        .expect("local AppKeys");
+
+    let send = engine
+        .send_direct_text(
+            owner.public_key(),
+            &owner.public_key().to_hex(),
+            "self message should reach the restored sibling",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("self direct send");
+    assert!(
+        send.queued_targets
+            .contains(&desktop_device.public_key().to_hex()),
+        "sibling device should stay queued until its invite is observed"
+    );
+
+    let mut rng = OsRng;
+    let mut ctx = ProtocolContext::new(NdrUnixSeconds(5), &mut rng);
+    let desktop_invite = Invite::create_new_with_context(
+        &mut ctx,
+        NdrDevicePubkey::from_bytes(desktop_device.public_key().to_bytes()),
+        Some(NdrOwnerPubkey::from_bytes(owner.public_key().to_bytes())),
+        None,
+    )
+    .expect("desktop invite");
+    let desktop_invite_event = nostr_double_ratchet_nostr::invite_unsigned_event(&desktop_invite)
+        .expect("invite event")
+        .sign_with_keys(&desktop_device)
+        .expect("signed invite");
+
+    let invite_batch = engine
+        .observe_invite_event(&desktop_invite_event)
+        .expect("observe desktop invite");
+    assert!(
+        invite_batch.direct_results.iter().any(|result| {
+            result.message_id == send.message_id
+                && !result.queued_targets.contains(&desktop_device.public_key().to_hex())
+                && (result.effects.iter().any(|effect| matches!(
+                    effect,
+                    ProtocolEffect::PublishStagedFirstContact { payload, .. }
+                        if payload.iter().any(|publish| publish.target_owner_pubkey_hex.as_deref()
+                            == Some(owner.public_key().to_hex().as_str())
+                            && publish.target_device_id.as_deref()
+                                == Some(desktop_device.public_key().to_hex().as_str()))
+                )) || result.effects.iter().any(|effect| matches!(
+                    effect,
+                    ProtocolEffect::PublishSignedForInnerEvent {
+                        target_owner_pubkey_hex,
+                        target_device_id,
+                        ..
+                    } if target_owner_pubkey_hex.as_deref()
+                        == Some(owner.public_key().to_hex().as_str())
+                        && target_device_id.as_deref()
+                            == Some(desktop_device.public_key().to_hex().as_str())
+                )))
+        }),
+        "observing the sibling invite should retry the queued self-send to that device"
+    );
+}
+
+#[test]
 fn appcore_local_appkeys_backfill_replaces_seeded_single_device_roster() {
     let owner = Keys::generate();
     let fresh_device = Keys::generate();
@@ -2547,6 +2624,56 @@ fn queued_protocol_filters_are_narrow_for_missing_owner_roster() {
         !has_bootstrap_message_filter(&filters),
         "queued owner discovery must not depend on an unscoped message bootstrap filter"
     );
+}
+
+#[test]
+fn queued_self_send_fetches_owner_appkeys_for_concrete_sibling_target() {
+    let owner = Keys::generate();
+    let phone_device = Keys::generate();
+    let desktop_device = Keys::generate();
+    let mut engine = test_protocol_engine(&owner, &phone_device);
+    engine
+        .ingest_app_keys_snapshot(
+            owner.public_key(),
+            AppKeys::new(vec![
+                DeviceEntry::new(phone_device.public_key(), 1),
+                DeviceEntry::new(desktop_device.public_key(), 1),
+            ]),
+            1,
+        )
+        .expect("local AppKeys");
+
+    let result = engine
+        .send_direct_text(
+            owner.public_key(),
+            &owner.public_key().to_hex(),
+            "queued until sibling invite",
+            None,
+            UnixSeconds(1_777_159_500),
+        )
+        .expect("self direct send");
+    let filters = result
+        .effects
+        .iter()
+        .filter_map(|effect| match effect {
+            ProtocolEffect::FetchProtocolState { filters, .. } => Some(filters.clone()),
+            _ => None,
+        })
+        .flatten()
+        .collect::<Vec<_>>();
+
+    assert!(has_filter_with_kind_author(
+        &filters,
+        APP_KEYS_EVENT_KIND,
+        owner.public_key()
+    ));
+    assert!(has_filter_with_kind_author_tag(
+        &filters,
+        INVITE_EVENT_KIND,
+        desktop_device.public_key(),
+        "#l",
+        NDR_INVITES_L_TAG,
+    ));
 }
 
 #[test]
