@@ -755,6 +755,7 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
         &["group", "send", group_id, alice_body],
     );
     assert_eq!(sent["data"]["body"], alice_body);
+    run_iris(alice_linked.path(), &["sync", "--wait-ms", "5000"]);
 
     let bob_message = read_stream_message(&relay, &bob_receiver, alice_body);
     let charlie_message = read_stream_message(&relay, &charlie_receiver, alice_body);
@@ -790,6 +791,7 @@ fn sender_key_cli_group_interop_three_members_restart_and_restored_owner_device(
     let charlie_body = "charlie sender-key cli group after restart";
     let charlie_sent = run_iris(charlie.path(), &["group", "send", group_id, charlie_body]);
     assert_eq!(charlie_sent["data"]["body"], charlie_body);
+    run_iris(charlie.path(), &["sync", "--wait-ms", "5000"]);
     if read_stream_message(&relay, &bob_receiver, charlie_body).is_none() {
         let _ = bob_child.kill();
         let _ = bob_child.wait();

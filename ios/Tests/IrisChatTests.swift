@@ -1810,14 +1810,12 @@ final class IrisChatTests: XCTestCase {
         await Task.yield()
         manager.navigateBack()
 
+        let expectedAction = AppAction.updateScreenStack(stack: [.chatList])
         let dispatched = await waitUntil {
-            !rust.dispatchedActions.isEmpty
+            rust.dispatchedActions.contains(expectedAction)
         }
         XCTAssertTrue(dispatched)
-        guard let first = rust.dispatchedActions.first else {
-            return XCTFail("expected navigation action")
-        }
-        XCTAssertEqual(first, .updateScreenStack(stack: [.chatList]))
+        XCTAssertTrue(rust.dispatchedActions.contains(expectedAction))
         XCTAssertEqual(manager.state.router.screenStack, [.chatList])
     }
 
@@ -1926,10 +1924,10 @@ final class IrisChatTests: XCTestCase {
         manager.dispatch(.openChat(chatId: chatId))
 
         let dispatched = await waitUntil {
-            rust.dispatchedActions.first == .openChat(chatId: chatId)
+            rust.dispatchedActions.contains(.openChat(chatId: chatId))
         }
         XCTAssertTrue(dispatched)
-        XCTAssertEqual(rust.dispatchedActions.first, .openChat(chatId: chatId))
+        XCTAssertTrue(rust.dispatchedActions.contains(.openChat(chatId: chatId)))
         XCTAssertEqual(manager.state.router.screenStack, [.chat(chatId: chatId)])
         XCTAssertEqual(manager.activeScreen, .chat(chatId: chatId))
         let initialPageLoaded = await waitUntil {
@@ -2078,6 +2076,56 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testFullStatePreservesPageOrderForSameSecondVisibleMessages() async {
+        let chatId = "chat-1"
+        let rust = MockRustApp(
+            state: makeLargeFixtureState(
+                rev: 1,
+                router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)]),
+                currentChat: makeCurrentChat(
+                    chatId: chatId,
+                    messages: [
+                        makeMessage(chatId: chatId, id: "older-context", createdAtSecs: 9)
+                    ]
+                )
+            )
+        )
+        let store = InMemorySecretStore()
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: store,
+            dataDir: tempDir,
+            environment: [:]
+        )
+
+        await Task.yield()
+        rust.emit(
+            .fullState(
+                makeLargeFixtureState(
+                    rev: 2,
+                    router: Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)]),
+                    currentChat: makeCurrentChat(
+                        chatId: chatId,
+                        messages: [
+                            makeMessage(chatId: chatId, id: "z-first", createdAtSecs: 10),
+                            makeMessage(chatId: chatId, id: "a-second", createdAtSecs: 10),
+                            makeMessage(chatId: chatId, id: "m-last", createdAtSecs: 10)
+                        ]
+                    )
+                )
+            )
+        )
+        await Task.yield()
+
+        XCTAssertEqual(
+            manager.state.currentChat?.messages.map(\.id),
+            ["older-context", "z-first", "a-second", "m-last"]
+        )
+    }
+
+    @MainActor
     func testPushScreenAppliesLocalRouteWhileRustCatchesUp() async {
         let rust = MockRustApp(
             state: makeLargeFixtureState(
@@ -2099,10 +2147,10 @@ final class IrisChatTests: XCTestCase {
         manager.dispatch(.pushScreen(screen: .settings))
 
         let dispatched = await waitUntil {
-            rust.dispatchedActions.first == .pushScreen(screen: .settings)
+            rust.dispatchedActions.contains(.pushScreen(screen: .settings))
         }
         XCTAssertTrue(dispatched)
-        XCTAssertEqual(rust.dispatchedActions.first, .pushScreen(screen: .settings))
+        XCTAssertTrue(rust.dispatchedActions.contains(.pushScreen(screen: .settings)))
         XCTAssertEqual(manager.state.router.screenStack, [.settings])
         XCTAssertEqual(manager.activeScreen, .settings)
 

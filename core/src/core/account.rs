@@ -876,7 +876,9 @@ impl AppCore {
             let Some(labels) = labels else {
                 return false;
             };
-            let existing = &mut entry.devices[existing];
+            let Some(existing) = entry.devices.get_mut(existing) else {
+                return false;
+            };
             if existing.device_label == labels.device_label
                 && existing.client_label == labels.client_label
             {

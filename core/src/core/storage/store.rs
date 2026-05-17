@@ -1223,32 +1223,25 @@ fn load_threads(
     }
 
     let mut messages_stmt = conn.prepare(
-        "WITH ranked AS (
-	             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
-	                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-	                    recipient_deliveries_json, delivery_trace_json,
-                    CASE
-                        WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
-                        ELSE 9223372036854775807
-                    END AS numeric_id,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY chat_id
-                        ORDER BY created_at_secs DESC,
-                                 CASE
-                                     WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
-                                     ELSE 9223372036854775807
-                                 END DESC,
-                                 id DESC
-                    ) AS row_number
-             FROM messages
-         )
-	         SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
-	                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-	                recipient_deliveries_json, delivery_trace_json
-         FROM ranked
-         WHERE row_number <= CASE WHEN chat_id = ?1 THEN ?2 ELSE 1 END
-         ORDER BY chat_id ASC, created_at_secs ASC, numeric_id ASC, id ASC",
-    )?;
+	        "WITH ranked AS (
+		             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+		                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+		                    recipient_deliveries_json, delivery_trace_json,
+		                    rowid AS storage_order,
+	                    ROW_NUMBER() OVER (
+	                        PARTITION BY chat_id
+	                        ORDER BY created_at_secs DESC,
+	                                 rowid DESC
+	                    ) AS row_number
+	             FROM messages
+	         )
+		         SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+		                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+		                recipient_deliveries_json, delivery_trace_json
+	         FROM ranked
+	         WHERE row_number <= CASE WHEN chat_id = ?1 THEN ?2 ELSE 1 END
+	         ORDER BY chat_id ASC, created_at_secs ASC, storage_order ASC",
+	    )?;
     let rows = messages_stmt.query_map(
         params![
             active_chat_id.unwrap_or_default(),
@@ -1377,22 +1370,19 @@ pub(crate) fn load_recent_messages(
 ) -> anyhow::Result<Vec<PersistedMessage>> {
     let mut stmt = conn.prepare(
         "SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
-                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-                recipient_deliveries_json, delivery_trace_json
-         FROM (
-             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
-                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
-                    recipient_deliveries_json, delivery_trace_json,
-                    CASE
-                        WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
-                        ELSE 9223372036854775807
-                    END AS numeric_id
-             FROM messages
-             WHERE chat_id = ?1
-             ORDER BY created_at_secs DESC, numeric_id DESC, id DESC
-             LIMIT ?2
-         )
-         ORDER BY created_at_secs ASC, numeric_id ASC, id ASC",
+	                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+	                recipient_deliveries_json, delivery_trace_json
+	         FROM (
+	             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+	                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
+	                    recipient_deliveries_json, delivery_trace_json,
+	                    rowid AS storage_order
+	             FROM messages
+	             WHERE chat_id = ?1
+	             ORDER BY created_at_secs DESC, storage_order DESC
+	             LIMIT ?2
+	         )
+	         ORDER BY created_at_secs ASC, storage_order ASC",
     )?;
     let rows = stmt.query_map(params![chat_id, limit as i64], persisted_message_from_row)?;
     let mut messages = Vec::new();
@@ -1413,53 +1403,34 @@ pub(crate) fn load_messages_before(
     }
     let mut stmt = conn.prepare(
         "WITH anchor AS (
-             SELECT created_at_secs AS anchor_created,
-                    CASE
-                        WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
-                        ELSE 9223372036854775807
-                    END AS anchor_numeric,
-                    id AS anchor_id
-             FROM messages
-             WHERE chat_id = ?1 AND id = ?2
-             LIMIT 1
-         )
+	             SELECT created_at_secs AS anchor_created,
+	                    rowid AS anchor_storage_order
+	             FROM messages
+	             WHERE chat_id = ?1 AND id = ?2
+	             LIMIT 1
+	         )
          SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
                 delivery, attachments_json, reactions_json, reactors_json, source_event_id,
                 recipient_deliveries_json, delivery_trace_json
          FROM (
              SELECT m.chat_id, m.id, m.kind, m.author, m.body, m.is_outgoing,
-                    m.created_at_secs, m.expires_at_secs, m.delivery, m.attachments_json,
-                    m.reactions_json, m.reactors_json, m.source_event_id,
-                    m.recipient_deliveries_json, m.delivery_trace_json,
-                    CASE
-                        WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
-                        ELSE 9223372036854775807
-                    END AS numeric_id
-             FROM messages m, anchor
-             WHERE m.chat_id = ?1
-               AND (
-                    m.created_at_secs < anchor.anchor_created
-                    OR (
-                        m.created_at_secs = anchor.anchor_created
-                        AND (
-                            CASE
-                                WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
-                                ELSE 9223372036854775807
-                            END < anchor.anchor_numeric
-                            OR (
-                                CASE
-                                    WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
-                                    ELSE 9223372036854775807
-                                END = anchor.anchor_numeric
-                                AND m.id < anchor.anchor_id
-                            )
-                        )
-                    )
-               )
-             ORDER BY m.created_at_secs DESC, numeric_id DESC, m.id DESC
-             LIMIT ?3
-         )
-         ORDER BY created_at_secs ASC, numeric_id ASC, id ASC",
+	                    m.created_at_secs, m.expires_at_secs, m.delivery, m.attachments_json,
+	                    m.reactions_json, m.reactors_json, m.source_event_id,
+	                    m.recipient_deliveries_json, m.delivery_trace_json,
+	                    m.rowid AS storage_order
+	             FROM messages m, anchor
+	             WHERE m.chat_id = ?1
+	               AND (
+	                    m.created_at_secs < anchor.anchor_created
+	                    OR (
+	                        m.created_at_secs = anchor.anchor_created
+	                        AND m.rowid < anchor.anchor_storage_order
+	                    )
+	               )
+	             ORDER BY m.created_at_secs DESC, storage_order DESC
+	             LIMIT ?3
+	         )
+	         ORDER BY created_at_secs ASC, storage_order ASC",
     )?;
     let rows = stmt.query_map(
         params![chat_id, before_message_id, limit as i64],
@@ -1482,16 +1453,12 @@ pub(crate) fn load_messages_around(
     let before = load_messages_before(conn, chat_id, message_id, before_limit)?;
     let mut stmt = conn.prepare(
         "WITH anchor AS (
-             SELECT created_at_secs AS anchor_created,
-                    CASE
-                        WHEN id != '' AND id NOT GLOB '*[^0-9]*' THEN CAST(id AS INTEGER)
-                        ELSE 9223372036854775807
-                    END AS anchor_numeric,
-                    id AS anchor_id
-             FROM messages
-             WHERE chat_id = ?1 AND id = ?2
-             LIMIT 1
-         )
+	             SELECT created_at_secs AS anchor_created,
+	                    rowid AS anchor_storage_order
+	             FROM messages
+	             WHERE chat_id = ?1 AND id = ?2
+	             LIMIT 1
+	         )
          SELECT m.chat_id, m.id, m.kind, m.author, m.body, m.is_outgoing, m.created_at_secs,
                 m.expires_at_secs, m.delivery, m.attachments_json, m.reactions_json,
                 m.reactors_json, m.source_event_id, m.recipient_deliveries_json,
@@ -1499,31 +1466,15 @@ pub(crate) fn load_messages_around(
          FROM messages m, anchor
          WHERE m.chat_id = ?1
            AND (
-                m.created_at_secs > anchor.anchor_created
-                OR (
-                    m.created_at_secs = anchor.anchor_created
-                    AND (
-                        CASE
-                            WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
-                            ELSE 9223372036854775807
-                        END > anchor.anchor_numeric
-                        OR (
-                            CASE
-                                WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
-                                ELSE 9223372036854775807
-                            END = anchor.anchor_numeric
-                            AND m.id >= anchor.anchor_id
-                        )
-                    )
-                )
-           )
-         ORDER BY m.created_at_secs ASC,
-                  CASE
-                      WHEN m.id != '' AND m.id NOT GLOB '*[^0-9]*' THEN CAST(m.id AS INTEGER)
-                      ELSE 9223372036854775807
-                  END ASC,
-                  m.id ASC
-         LIMIT ?3",
+	                m.created_at_secs > anchor.anchor_created
+	                OR (
+	                    m.created_at_secs = anchor.anchor_created
+	                    AND m.rowid >= anchor.anchor_storage_order
+	                )
+	           )
+	         ORDER BY m.created_at_secs ASC,
+	                  m.rowid ASC
+	         LIMIT ?3",
     )?;
     let rows = stmt.query_map(
         params![chat_id, message_id, after_limit.saturating_add(1) as i64],
@@ -2024,6 +1975,43 @@ mod tests {
         assert_eq!(page.len(), RESTORED_MESSAGES_PER_THREAD);
         assert_eq!(page.first().unwrap().body, "message 11");
         assert_eq!(page.last().unwrap().body, "message 90");
+    }
+
+    #[test]
+    fn load_state_uses_insert_order_for_same_second_message_preview() {
+        let (tmp, mut store) = fresh_store();
+        let preferences = PreferencesSnapshot::default();
+        let owner_profiles = BTreeMap::new();
+        let chat_ttls = BTreeMap::new();
+        let app_keys = BTreeMap::new();
+        let groups = BTreeMap::new();
+        let seen_events = VecDeque::new();
+        let messages = vec![
+            sample_message("z-local-random-id", "queued offline", 1_777_159_000),
+            sample_message("a-local-random-id", "short lived", 1_777_159_000),
+        ];
+        let mut threads = BTreeMap::new();
+        threads.insert("chat".to_string(), thread_from_messages("chat", messages));
+        let snapshot = empty_snapshot(
+            None,
+            3,
+            &preferences,
+            &owner_profiles,
+            &chat_ttls,
+            &app_keys,
+            &groups,
+            &threads,
+            &seen_events,
+        );
+        store.save_state(&snapshot).unwrap();
+
+        drop(store);
+        let conn = open_database(tmp.path()).unwrap();
+        let mut store = AppStore::new(conn);
+        let loaded = store.load_state().unwrap().expect("state present");
+        let loaded_messages = &loaded.threads[0].messages;
+        assert_eq!(loaded_messages.len(), 1);
+        assert_eq!(loaded_messages[0].body, "short lived");
     }
 
     #[test]

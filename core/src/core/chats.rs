@@ -1774,10 +1774,6 @@ fn push_unique(values: &mut Vec<String>, value: &str) {
     values.push(value.to_string());
 }
 
-pub(super) fn message_order(message: &ChatMessageSnapshot) -> (u64, u64, &str) {
-    (
-        message.created_at_secs,
-        message.id.parse::<u64>().unwrap_or(u64::MAX),
-        message.id.as_str(),
-    )
+pub(super) fn message_order(message: &ChatMessageSnapshot) -> u64 {
+    message.created_at_secs
 }

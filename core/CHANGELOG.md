@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.25
+
+- Publish clearer linked-device labels from every native platform so device lists show the app, OS, and device family where available.
+- Keep direct messages to a newly restored linked device queued until its AppKeys invite arrives, then retry delivery automatically.
+
 ## 0.1.24
 
 - Harden logout and Delete all local data across iOS, Android, Linux, Windows, and CLI so secret key clear is verified before local app data is deleted.

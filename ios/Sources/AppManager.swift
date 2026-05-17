@@ -3065,15 +3065,7 @@ final class AppManager: ObservableObject {
             return page
         }
         var merged = page
-        var byID: [String: ChatMessageSnapshot] = [:]
-        byID.reserveCapacity(existing.messages.count + page.messages.count)
-        for message in existing.messages {
-            byID[message.id] = message
-        }
-        for message in page.messages {
-            byID[message.id] = message
-        }
-        merged.messages = byID.values.sorted(by: chatMessagePrecedes)
+        merged.messages = mergedChatMessages(existing: existing.messages, page: page.messages)
         if merged.typingIndicators.isEmpty {
             merged.typingIndicators = existing.typingIndicators
         }
@@ -3081,6 +3073,42 @@ final class AppManager: ObservableObject {
             merged.draft = existing.draft
         }
         return merged
+    }
+
+    private func mergedChatMessages(
+        existing: [ChatMessageSnapshot],
+        page: [ChatMessageSnapshot]
+    ) -> [ChatMessageSnapshot] {
+        var byID: [String: ChatMessageSnapshot] = [:]
+        var orderByID: [String: Int] = [:]
+        byID.reserveCapacity(existing.count + page.count)
+        orderByID.reserveCapacity(existing.count + page.count)
+
+        let pageIDs = Set(page.map(\.id))
+
+        func rememberOrder(_ id: String) {
+            if orderByID[id] == nil {
+                orderByID[id] = orderByID.count
+            }
+        }
+
+        for message in existing where !pageIDs.contains(message.id) {
+            byID[message.id] = message
+            rememberOrder(message.id)
+        }
+        // Rust page order is authoritative for equal-timestamp messages;
+        // sorting by event id here makes same-second local sends jump around.
+        for message in page {
+            byID[message.id] = message
+            rememberOrder(message.id)
+        }
+
+        return byID.values.sorted { lhs, rhs in
+            if lhs.createdAtSecs != rhs.createdAtSecs {
+                return lhs.createdAtSecs < rhs.createdAtSecs
+            }
+            return (orderByID[lhs.id] ?? .max) < (orderByID[rhs.id] ?? .max)
+        }
     }
 
     private func chatMessagePrecedes(_ lhs: ChatMessageSnapshot, _ rhs: ChatMessageSnapshot) -> Bool {

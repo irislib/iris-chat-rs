@@ -39,12 +39,8 @@ impl ThreadRecord {
     }
 }
 
-fn message_order_key(message: &ChatMessageSnapshot) -> (u64, u64, &str) {
-    (
-        message.created_at_secs,
-        message.id.parse::<u64>().unwrap_or(u64::MAX),
-        message.id.as_str(),
-    )
+fn message_order_key(message: &ChatMessageSnapshot) -> u64 {
+    message.created_at_secs
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]

@@ -7574,6 +7574,44 @@ fn open_chat_populates_current_chat_for_preview_only_thread() {
     ));
 }
 
+#[test]
+fn open_chat_preserves_same_second_message_insert_order() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("open-chat-same-second-order", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let created_at_secs = 1_777_159_500;
+    core.threads.insert(
+        chat_id.clone(),
+        ThreadRecord {
+            chat_id: chat_id.clone(),
+            unread_count: 0,
+            updated_at_secs: created_at_secs,
+            messages: vec![
+                test_chat_message(&chat_id, "z-first-random-event-id", "first", created_at_secs, true),
+                test_chat_message(&chat_id, "a-second-random-event-id", "second", created_at_secs, true),
+                test_chat_message(&chat_id, "m-last-random-event-id", "last", created_at_secs, true),
+            ],
+            draft: String::new(),
+        },
+    );
+    core.persist_best_effort();
+    core.threads.remove(&chat_id);
+
+    core.open_chat(&chat_id);
+
+    let current = core.state.current_chat.as_ref().expect("current chat");
+    assert_eq!(
+        current
+            .messages
+            .iter()
+            .map(|message| message.body.as_str())
+            .collect::<Vec<_>>(),
+        vec!["first", "second", "last"]
+    );
+}
+
 /// Draft persistence (Signal-iOS parity): SetChatDraft saves the
 /// composer's unsent text on the thread record, send_message clears
 /// it. Both states survive a reload by way of the regular persist

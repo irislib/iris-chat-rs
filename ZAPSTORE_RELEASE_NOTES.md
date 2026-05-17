@@ -1,3 +1,8 @@
+# Iris Chat 2026.5.17.1
+
+- Linked devices now show clearer app, OS, and device labels where available.
+- Messages to a newly restored linked device now wait for its device keys and retry automatically.
+
 # Iris Chat 2026.5.16.3
 
 - Restoring with a secret key after Delete all local data no longer gets stuck on a storage error.
