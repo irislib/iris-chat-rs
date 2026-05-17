@@ -4709,6 +4709,88 @@ fn app_keys_device_projection_is_deterministic() {
 }
 
 #[test]
+fn app_keys_device_labels_roundtrip_through_known_snapshot() {
+    let owner = Keys::generate().public_key();
+    let device = Keys::generate().public_key();
+    let mut app_keys = AppKeys::new(vec![DeviceEntry::new(device, 10)]);
+    app_keys.set_device_labels(
+        device,
+        Some("virus.exe - iPhone 16 Pro - iOS 18.5".to_string()),
+        Some("Iris Chat iOS".to_string()),
+        Some(20),
+    );
+
+    let known = known_app_keys_from_ndr(owner, &app_keys, 30);
+    let known_device = known.devices.first().expect("known device");
+    assert_eq!(
+        known_device.device_label.as_deref(),
+        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
+    );
+    assert_eq!(known_device.client_label.as_deref(), Some("Iris Chat iOS"));
+    assert_eq!(known_device.label_updated_at_secs, 20);
+
+    let roundtrip = known_app_keys_to_ndr(&known).expect("convert back");
+    let labels = roundtrip.get_device_labels(&device).expect("device labels");
+    assert_eq!(
+        labels.device_label.as_deref(),
+        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
+    );
+    assert_eq!(labels.client_label.as_deref(), Some("Iris Chat iOS"));
+    assert_eq!(labels.updated_at, 20);
+}
+
+#[test]
+fn current_device_labels_update_app_keys_and_roster_snapshot() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("device-labels", &owner, &device);
+
+    core.handle_action(AppAction::SetCurrentDeviceLabels {
+        device_label: "virus.exe - iPhone 16 Pro - iOS 18.5".to_string(),
+        client_label: "Iris Chat iOS".to_string(),
+    });
+
+    let owner_hex = owner.public_key().to_hex();
+    let device_hex = device.public_key().to_hex();
+    let app_keys = core.app_keys.get(&owner_hex).expect("local AppKeys");
+    let known_device = app_keys
+        .devices
+        .iter()
+        .find(|candidate| candidate.identity_pubkey_hex == device_hex)
+        .expect("current device");
+    assert_eq!(
+        known_device.device_label.as_deref(),
+        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
+    );
+    assert_eq!(known_device.client_label.as_deref(), Some("Iris Chat iOS"));
+
+    let ndr_app_keys = known_app_keys_to_ndr(app_keys).expect("NDR AppKeys");
+    let labels = ndr_app_keys
+        .get_device_labels(&device.public_key())
+        .expect("NDR labels");
+    assert_eq!(
+        labels.device_label.as_deref(),
+        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
+    );
+    assert_eq!(labels.client_label.as_deref(), Some("Iris Chat iOS"));
+
+    let roster_device = core
+        .state
+        .device_roster
+        .as_ref()
+        .expect("device roster")
+        .devices
+        .iter()
+        .find(|candidate| candidate.device_pubkey_hex == device_hex)
+        .expect("roster device");
+    assert_eq!(
+        roster_device.device_label.as_deref(),
+        Some("virus.exe - iPhone 16 Pro - iOS 18.5")
+    );
+    assert_eq!(roster_device.client_label.as_deref(), Some("Iris Chat iOS"));
+}
+
+#[test]
 fn peer_profile_debug_reports_known_user_context() {
     let owner = Keys::generate();
     let device = Keys::generate();

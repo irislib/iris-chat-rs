@@ -54,6 +54,26 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn set_current_device_labels(&mut self, device_label: &str, client_label: &str) {
+        let labels = CurrentDeviceLabels {
+            device_label: normalize_device_label(device_label),
+            client_label: normalize_device_label(client_label),
+        };
+        if labels.device_label.is_none() && labels.client_label.is_none() {
+            return;
+        }
+        self.current_device_labels = Some(labels);
+
+        let changed =
+            self.apply_current_device_labels_to_local_app_keys(!self.defer_owner_app_keys_publish);
+        if changed && !self.defer_owner_app_keys_publish {
+            self.publish_local_app_keys();
+        }
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn restore_primary_session(&mut self, owner_nsec: &str) {
         self.state.busy.restoring_session = true;
         self.emit_state();
@@ -685,7 +705,13 @@ impl AppCore {
         let should_defer_owner_app_keys_publish =
             owner_keys.is_some() && allow_restore && !allow_protocol_restore;
         if owner_keys.is_some() && !should_defer_owner_app_keys_publish {
-            self.upsert_local_app_key_device(owner_pubkey, device_pubkey);
+            let current_device_labels = self.current_device_labels.clone();
+            self.upsert_local_app_key_device_with_labels(
+                owner_pubkey,
+                device_pubkey,
+                current_device_labels.as_ref(),
+                true,
+            );
         }
         self.defer_owner_app_keys_publish = should_defer_owner_app_keys_publish;
 
@@ -813,9 +839,26 @@ impl AppCore {
         Ok(())
     }
 
-    pub(super) fn upsert_local_app_key_device(&mut self, owner: PublicKey, device: PublicKey) {
+    pub(super) fn upsert_local_app_key_device(
+        &mut self,
+        owner: PublicKey,
+        device: PublicKey,
+    ) -> bool {
+        self.upsert_local_app_key_device_with_labels(owner, device, None, true)
+    }
+
+    fn upsert_local_app_key_device_with_labels(
+        &mut self,
+        owner: PublicKey,
+        device: PublicKey,
+        labels: Option<&CurrentDeviceLabels>,
+        create_if_missing: bool,
+    ) -> bool {
         let owner_hex = owner.to_hex();
         let now = unix_now().get();
+        if !self.app_keys.contains_key(&owner_hex) && !create_if_missing {
+            return false;
+        }
         let entry = self
             .app_keys
             .entry(owner_hex.clone())
@@ -825,26 +868,86 @@ impl AppCore {
                 devices: Vec::new(),
             });
         let device_hex = device.to_hex();
-        if entry
+        if let Some(existing) = entry
             .devices
             .iter()
-            .any(|existing| existing.identity_pubkey_hex == device_hex)
+            .position(|existing| existing.identity_pubkey_hex == device_hex)
         {
-            return;
+            let Some(labels) = labels else {
+                return false;
+            };
+            let existing = &mut entry.devices[existing];
+            if existing.device_label == labels.device_label
+                && existing.client_label == labels.client_label
+            {
+                return false;
+            }
+            let next_created_at = next_app_keys_created_at(now, entry.created_at_secs);
+            existing.device_label = labels.device_label.clone();
+            existing.client_label = labels.client_label.clone();
+            existing.label_updated_at_secs = next_created_at;
+            entry.created_at_secs = next_created_at;
+            return true;
         }
-        let next_created_at = if now <= entry.created_at_secs {
-            entry.created_at_secs.saturating_add(1)
-        } else {
-            now
-        };
+        let next_created_at = next_app_keys_created_at(now, entry.created_at_secs);
         entry.devices.push(KnownAppKeyDevice {
             identity_pubkey_hex: device_hex,
             created_at_secs: next_created_at,
+            device_label: labels.and_then(|labels| labels.device_label.clone()),
+            client_label: labels.and_then(|labels| labels.client_label.clone()),
+            label_updated_at_secs: labels.map(|_| next_created_at).unwrap_or_default(),
         });
         entry.created_at_secs = next_created_at;
         entry
             .devices
             .sort_by(|left, right| left.identity_pubkey_hex.cmp(&right.identity_pubkey_hex));
+        true
+    }
+
+    fn apply_current_device_labels_to_local_app_keys(&mut self, create_if_missing: bool) -> bool {
+        let Some(labels) = self.current_device_labels.clone() else {
+            return false;
+        };
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            return false;
+        };
+        if logged_in.owner_keys.is_none() {
+            return false;
+        }
+        self.upsert_local_app_key_device_with_labels(
+            logged_in.owner_pubkey,
+            logged_in.device_keys.public_key(),
+            Some(&labels),
+            create_if_missing,
+        )
+    }
+
+    pub(super) fn apply_current_device_labels_to_known_app_keys(
+        &self,
+        known: &mut KnownAppKeys,
+        device_pubkey: PublicKey,
+    ) -> bool {
+        let Some(labels) = self.current_device_labels.as_ref() else {
+            return false;
+        };
+        let device_hex = device_pubkey.to_hex();
+        let Some(device) = known
+            .devices
+            .iter_mut()
+            .find(|device| device.identity_pubkey_hex == device_hex)
+        else {
+            return false;
+        };
+        if device.device_label == labels.device_label && device.client_label == labels.client_label
+        {
+            return false;
+        }
+        let next_created_at = next_app_keys_created_at(unix_now().get(), known.created_at_secs);
+        device.device_label = labels.device_label.clone();
+        device.client_label = labels.client_label.clone();
+        device.label_updated_at_secs = next_created_at;
+        known.created_at_secs = next_created_at;
+        true
     }
 
     pub(super) fn remove_local_app_key_device(&mut self, owner: PublicKey, device: PublicKey) {
@@ -1035,8 +1138,39 @@ fn parse_link_device_invite_input(input: &str, owner_pubkey: PublicKey) -> anyho
     Ok(invite)
 }
 
+fn next_app_keys_created_at(now: u64, current: u64) -> u64 {
+    if now <= current {
+        current.saturating_add(1)
+    } else {
+        now
+    }
+}
+
+fn normalize_device_label(label: &str) -> Option<String> {
+    let normalized = label
+        .chars()
+        .map(|ch| if ch.is_control() { ' ' } else { ch })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let trimmed = normalized.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(truncate_chars(trimmed, 160))
+}
+
+fn truncate_chars(value: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for ch in value.chars().take(max_chars) {
+        out.push(ch);
+    }
+    out
+}
+
 pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> Option<AppKeys> {
-    Some(AppKeys::new(
+    let mut app_keys = AppKeys::new(
         known
             .devices
             .iter()
@@ -1046,7 +1180,22 @@ pub(super) fn known_app_keys_to_ndr(known: &KnownAppKeys) -> Option<AppKeys> {
                     .map(|pubkey| DeviceEntry::new(pubkey, device.created_at_secs))
             })
             .collect(),
-    ))
+    );
+    for device in &known.devices {
+        if device.device_label.is_none() && device.client_label.is_none() {
+            continue;
+        }
+        let Ok(pubkey) = PublicKey::parse(&device.identity_pubkey_hex) else {
+            continue;
+        };
+        app_keys.set_device_labels(
+            pubkey,
+            device.device_label.clone(),
+            device.client_label.clone(),
+            Some(device.label_updated_at_secs),
+        );
+    }
+    Some(app_keys)
 }
 
 pub(super) fn known_app_keys_from_ndr(
@@ -1060,6 +1209,16 @@ pub(super) fn known_app_keys_from_ndr(
         .map(|device| KnownAppKeyDevice {
             identity_pubkey_hex: device.identity_pubkey.to_hex(),
             created_at_secs: device.created_at,
+            device_label: app_keys
+                .get_device_labels(&device.identity_pubkey)
+                .and_then(|labels| labels.device_label.clone()),
+            client_label: app_keys
+                .get_device_labels(&device.identity_pubkey)
+                .and_then(|labels| labels.client_label.clone()),
+            label_updated_at_secs: app_keys
+                .get_device_labels(&device.identity_pubkey)
+                .map(|labels| labels.updated_at)
+                .unwrap_or_default(),
         })
         .collect::<Vec<_>>();
     devices.sort_by(|left, right| left.identity_pubkey_hex.cmp(&right.identity_pubkey_hex));

@@ -58,6 +58,18 @@ pub(super) struct KnownAppKeys {
 pub(super) struct KnownAppKeyDevice {
     pub(super) identity_pubkey_hex: String,
     pub(super) created_at_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) device_label: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) client_label: Option<String>,
+    #[serde(default)]
+    pub(super) label_updated_at_secs: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct CurrentDeviceLabels {
+    pub(super) device_label: Option<String>,
+    pub(super) client_label: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]

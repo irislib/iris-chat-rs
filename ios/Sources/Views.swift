@@ -5850,12 +5850,24 @@ private struct DeviceRosterRow: View {
     @State private var showingRemoveConfirmation = false
 
     private var displayTitle: String {
-        device.isCurrentDevice ? "This device" : "Linked device"
+        if device.isCurrentDevice {
+            return "This device"
+        }
+        return nonEmpty(device.deviceLabel) ?? "Linked device"
     }
 
     private var displaySubtitle: String {
-        let client = device.isCurrentDevice ? PlatformDeviceLabels.currentClientLabel : "Iris Chat"
+        let client = nonEmpty(device.clientLabel)
+            ?? (device.isCurrentDevice ? PlatformDeviceLabels.currentClientLabel : "Iris Chat")
+        if device.isCurrentDevice, let deviceLabel = nonEmpty(device.deviceLabel) {
+            return "\(deviceLabel) - \(client)"
+        }
         return client
+    }
+
+    private func nonEmpty(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
     var body: some View {

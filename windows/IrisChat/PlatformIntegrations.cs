@@ -97,11 +97,13 @@ public static class PlatformDeviceLabels
         get
         {
             var name = Environment.MachineName?.Trim();
-            return string.IsNullOrEmpty(name) ? "Windows PC" : name!;
+            var device = string.IsNullOrEmpty(name) ? "Windows PC" : name!;
+            var os = RuntimeInformation.OSDescription.Trim();
+            return string.IsNullOrEmpty(os) ? device : $"{device} - {os}";
         }
     }
 
-    public static string CurrentClientLabel => "Iris Chat Desktop";
+    public static string CurrentClientLabel => "Iris Chat Windows";
 }
 
 public static class PlatformStartupAtLogin

@@ -615,8 +615,18 @@ impl AppCore {
             ProtocolRetryBatch::default()
         };
 
-        let known =
+        let mut known =
             known_app_keys_from_ndr(event.pubkey, &effective_app_keys, effective_created_at);
+        if should_publish_backfilled_owner_app_keys {
+            if let Some(device_pubkey) = self
+                .logged_in
+                .as_ref()
+                .filter(|logged_in| logged_in.owner_pubkey == event.pubkey)
+                .map(|logged_in| logged_in.device_keys.public_key())
+            {
+                self.apply_current_device_labels_to_known_app_keys(&mut known, device_pubkey);
+            }
+        }
         if current.as_ref() != Some(&known) {
             self.app_keys.insert(owner_hex, known);
         }

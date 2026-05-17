@@ -346,6 +346,7 @@ pub struct AppCore {
     message_expiry_token: u64,
     protocol_reconnect_token: u64,
     defer_owner_app_keys_publish: bool,
+    current_device_labels: Option<CurrentDeviceLabels>,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     relay_transport_runtime: RelayTransportRuntime,
     relay_status_watch_urls: HashSet<String>,

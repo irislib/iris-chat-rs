@@ -226,10 +226,18 @@ enum PlatformDeviceLabels {
     static var currentDeviceLabel: String {
         #if os(iOS)
         let name = UIDevice.current.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        return name.isEmpty ? "iPhone" : name
+        let model = UIDevice.current.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        return joinedLabel([
+            name.isEmpty ? "iPhone" : name,
+            model.isEmpty ? nil : model,
+            "\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)"
+        ])
         #elseif os(macOS)
         let name = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (name?.isEmpty == false) ? name! : "Mac"
+        return joinedLabel([
+            (name?.isEmpty == false) ? name! : "Mac",
+            "macOS \(operatingSystemVersion)"
+        ])
         #else
         return "This device"
         #endif
@@ -237,12 +245,33 @@ enum PlatformDeviceLabels {
 
     static var currentClientLabel: String {
         #if os(iOS)
-        return "Iris Chat Mobile"
+        return "Iris Chat iOS"
         #elseif os(macOS)
-        return "Iris Chat Desktop"
+        return "Iris Chat macOS"
         #else
         return "Iris Chat"
         #endif
+    }
+
+    private static var operatingSystemVersion: String {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        if version.patchVersion > 0 {
+            return "\(version.majorVersion).\(version.minorVersion).\(version.patchVersion)"
+        }
+        return "\(version.majorVersion).\(version.minorVersion)"
+    }
+
+    private static func joinedLabel(_ parts: [String?]) -> String {
+        var seen = Set<String>()
+        let values = parts.compactMap { part -> String? in
+            let value = part?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let value, !value.isEmpty else { return nil }
+            let key = value.lowercased()
+            guard !seen.contains(key) else { return nil }
+            seen.insert(key)
+            return value
+        }
+        return values.joined(separator: " - ")
     }
 }
 

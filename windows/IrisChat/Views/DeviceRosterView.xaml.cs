@@ -66,7 +66,7 @@ public partial class DeviceRosterView : UserControl
         var info = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         var primary = new TextBlock
         {
-            Text = d.isCurrentDevice ? "This device" : "Linked device",
+            Text = TitleText(d),
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
             FontWeight = FontWeights.SemiBold,
         };
@@ -119,6 +119,10 @@ public partial class DeviceRosterView : UserControl
     private static string StatusText(DeviceEntrySnapshot d)
     {
         var status = d.isAuthorized ? (d.isStale ? "needs attention" : "linked") : "removed";
+        if (!string.IsNullOrWhiteSpace(d.clientLabel))
+        {
+            status = $"{d.clientLabel!.Trim()} · {status}";
+        }
         if (d.addedAtSecs is { } secs && secs > 0)
         {
             var t = DateTimeOffset.FromUnixTimeSeconds((long)secs).LocalDateTime;
@@ -130,6 +134,14 @@ public partial class DeviceRosterView : UserControl
             return $"{status} · added {when}";
         }
         return status;
+    }
+
+    private static string TitleText(DeviceEntrySnapshot d)
+    {
+        var label = d.deviceLabel?.Trim();
+        if (!string.IsNullOrEmpty(label) && !d.isCurrentDevice) return label!;
+        if (!string.IsNullOrEmpty(label) && d.isCurrentDevice) return $"This device · {label}";
+        return d.isCurrentDevice ? "This device" : "Linked device";
     }
 
     private void OnDeviceInputChanged(object sender, TextChangedEventArgs e) => UpdateAddButton();

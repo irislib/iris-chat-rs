@@ -157,6 +157,8 @@ pub struct DeviceEntrySnapshot {
     pub is_authorized: bool,
     pub is_stale: bool,
     pub added_at_secs: Option<u64>,
+    pub device_label: Option<String>,
+    pub client_label: Option<String>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]

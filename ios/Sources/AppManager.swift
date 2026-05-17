@@ -1054,6 +1054,7 @@ final class AppManager: ObservableObject {
     private var initialChatPageLoads = Set<String>()
     private var chatSnapshotCache: [String: CurrentChatSnapshot] = [:]
     private var chatSnapshotCacheOrder: [String] = []
+    private var lastSyncedDeviceLabelsKey: String?
 
     // Keeps user-driven navigation stable while queued Rust snapshots catch up.
     private struct PendingNavigationOverride {
@@ -1211,6 +1212,7 @@ final class AppManager: ObservableObject {
 #endif
 
         resolvedRust.listenForUpdates(reconciler: reconciler)
+        syncCurrentDeviceLabelsIfNeeded(state: initialState)
         if AppPaths.testRunId(environment: environment) == nil {
             syncStartupAtLoginPreference(initialState.preferences.startupAtLoginEnabled)
         }
@@ -2757,6 +2759,24 @@ final class AppManager: ObservableObject {
         applyFullState(nextRust.state(), force: true)
     }
 
+    private func syncCurrentDeviceLabelsIfNeeded(state: AppState) {
+        guard state.account != nil else {
+            lastSyncedDeviceLabelsKey = nil
+            return
+        }
+        let deviceLabel = PlatformDeviceLabels.currentDeviceLabel
+        let clientLabel = PlatformDeviceLabels.currentClientLabel
+        let key = "\(deviceLabel)\u{1F}\(clientLabel)"
+        guard key != lastSyncedDeviceLabelsKey else { return }
+        lastSyncedDeviceLabelsKey = key
+        if !dispatchToRust(
+            .setCurrentDeviceLabels(deviceLabel: deviceLabel, clientLabel: clientLabel),
+            showsToastOnFailure: false
+        ) {
+            lastSyncedDeviceLabelsKey = nil
+        }
+    }
+
 #if os(iOS)
     private func syncShareSuggestionsIfNeeded(chatList: [ChatThreadSnapshot]) {
         guard iosSideEffectGate.shouldSyncShareSuggestions(chatList: chatList) else {
@@ -2839,6 +2859,7 @@ final class AppManager: ObservableObject {
         lastRevApplied = nextState.rev
         postDesktopNotifications(from: oldState, to: reconciledState)
         state = reconciledState
+        syncCurrentDeviceLabelsIfNeeded(state: reconciledState)
         rememberCurrentChatIfPresent()
         irisSetDebugLoggingEnabled(reconciledState.preferences.debugLoggingEnabled)
 #if os(iOS) || os(macOS)

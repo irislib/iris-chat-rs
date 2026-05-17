@@ -63,6 +63,7 @@ impl AppCore {
             message_expiry_token: 0,
             protocol_reconnect_token: 0,
             defer_owner_app_keys_publish: false,
+            current_device_labels: None,
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             relay_transport_runtime: RelayTransportRuntime::default(),
             relay_status_watch_urls: HashSet::new(),
@@ -325,6 +326,10 @@ impl AppCore {
                 device_nsec,
             } => self.restore_account_bundle(owner_nsec, &owner_pubkey_hex, &device_nsec),
             AppAction::StartLinkedDevice { owner_input } => self.start_linked_device(&owner_input),
+            AppAction::SetCurrentDeviceLabels {
+                device_label,
+                client_label,
+            } => self.set_current_device_labels(&device_label, &client_label),
             AppAction::AppForegrounded => self.handle_app_foregrounded(),
             AppAction::Logout => self.logout(),
             AppAction::CreateChat { peer_input } => self.create_chat(&peer_input),

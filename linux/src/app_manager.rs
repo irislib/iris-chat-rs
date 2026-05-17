@@ -71,6 +71,7 @@ pub struct AppManager {
     client_debug_log: RefCell<Vec<ClientDebugLogEntry>>,
     window_active: Cell<bool>,
     last_user_activity: RefCell<Instant>,
+    last_synced_device_labels_key: RefCell<Option<String>>,
 }
 
 struct Reconciler {
@@ -158,7 +159,7 @@ impl AppManager {
             });
         }
 
-        Self {
+        let manager = Self {
             ffi,
             update_rx: rx,
             update_tx_ui,
@@ -179,7 +180,10 @@ impl AppManager {
             client_debug_log: RefCell::new(Vec::new()),
             window_active: Cell::new(false),
             last_user_activity: RefCell::new(Instant::now()),
-        }
+            last_synced_device_labels_key: RefCell::new(None),
+        };
+        manager.sync_current_device_labels_if_needed(&manager.current_state());
+        manager
     }
 
     pub fn search_ui(&self) -> SearchUiState {
@@ -299,6 +303,27 @@ impl AppManager {
         self.dispatch_to_rust(action, false);
     }
 
+    fn sync_current_device_labels_if_needed(&self, state: &AppState) {
+        if state.account.is_none() {
+            *self.last_synced_device_labels_key.borrow_mut() = None;
+            return;
+        }
+        let device_label = local_device_label();
+        let client_label = "Iris Chat Linux".to_string();
+        let key = format!("{device_label}\x1F{client_label}");
+        if self.last_synced_device_labels_key.borrow().as_deref() == Some(key.as_str()) {
+            return;
+        }
+        *self.last_synced_device_labels_key.borrow_mut() = Some(key);
+        self.dispatch_to_rust(
+            AppAction::SetCurrentDeviceLabels {
+                device_label,
+                client_label,
+            },
+            false,
+        );
+    }
+
     pub fn apply_update(&self, update: AppUpdate) -> Option<AppUpdate> {
         match update {
             AppUpdate::FullState(state) => {
@@ -314,6 +339,7 @@ impl AppManager {
                 self.last_rev_applied.set(rev);
                 *self.local_state.borrow_mut() = reconciled.clone();
                 self.settle_bootstrap_if_needed(&reconciled);
+                self.sync_current_device_labels_if_needed(&reconciled);
                 Some(AppUpdate::FullState(reconciled))
             }
             other => Some(other),
@@ -725,6 +751,30 @@ fn local_device_name() -> String {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "Iris".to_string())
+}
+
+fn local_device_label() -> String {
+    let os = linux_pretty_name().unwrap_or_else(|| "Linux".to_string());
+    let name = local_device_name();
+    if name.eq_ignore_ascii_case(&os) {
+        name
+    } else {
+        format!("{name} - {os}")
+    }
+}
+
+fn linux_pretty_name() -> Option<String> {
+    let os_release = std::fs::read_to_string("/etc/os-release").ok()?;
+    for line in os_release.lines() {
+        let Some(value) = line.strip_prefix("PRETTY_NAME=") else {
+            continue;
+        };
+        let trimmed = value.trim().trim_matches('"').to_string();
+        if !trimmed.is_empty() {
+            return Some(trimmed);
+        }
+    }
+    None
 }
 
 fn app_state_restart_required() -> AppState {

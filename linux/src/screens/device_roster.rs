@@ -214,14 +214,26 @@ fn device_row(
     let title = if device.is_current_device {
         "This device".to_string()
     } else {
-        "Linked device".to_string()
+        non_empty(device.device_label.as_deref()).unwrap_or("Linked device").to_string()
     };
     let row = adw::ActionRow::builder().title(title).build();
+    let mut subtitles = Vec::new();
+    if device.is_current_device {
+        if let Some(label) = non_empty(device.device_label.as_deref()) {
+            subtitles.push(label.to_string());
+        }
+    }
+    if let Some(client) = non_empty(device.client_label.as_deref()) {
+        subtitles.push(client.to_string());
+    }
     if let Some(secs) = device.added_at_secs {
         let ago = relative_time(secs, unix_now());
         if !ago.is_empty() {
-            row.set_subtitle(&format!("Added {} ago", ago));
+            subtitles.push(format!("Added {} ago", ago));
         }
+    }
+    if !subtitles.is_empty() {
+        row.set_subtitle(&subtitles.join(" - "));
     }
 
     let status = gtk::Label::new(Some(if device.is_authorized {
@@ -270,4 +282,8 @@ fn device_row(
     }
 
     row
+}
+
+fn non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }

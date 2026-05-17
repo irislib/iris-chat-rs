@@ -453,16 +453,21 @@ private fun deviceDisplayTitle(device: DeviceEntrySnapshot): String =
     if (device.isCurrentDevice) {
         "This device"
     } else {
-        "Linked device"
+        device.deviceLabel?.trim()?.takeIf { it.isNotEmpty() } ?: "Linked device"
     }
 
 private fun deviceDisplaySubtitle(device: DeviceEntrySnapshot): String {
     val clientLabel =
-        if (device.isCurrentDevice) {
-            "Iris Chat Mobile"
-        } else {
-            "Iris Chat"
-        }
+        device.clientLabel?.trim()?.takeIf { it.isNotEmpty() }
+            ?: if (device.isCurrentDevice) {
+                "Iris Chat Android"
+            } else {
+                "Iris Chat"
+            }
+    val deviceLabel = device.deviceLabel?.trim()?.takeIf { it.isNotEmpty() }
+    if (device.isCurrentDevice && deviceLabel != null) {
+        return "$deviceLabel - $clientLabel"
+    }
     return clientLabel
 }
 

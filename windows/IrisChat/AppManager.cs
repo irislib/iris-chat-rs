@@ -64,6 +64,7 @@ public sealed class AppManager : INotifyPropertyChanged
     private ulong _lastRevApplied;
     private bool _persistedRestoreInFlight;
     private PendingNavigationOverride? _pendingNavigationOverride;
+    private string? _lastSyncedDeviceLabelsKey;
 
     public AppManager(string dataDir, IDesktopNotificationPoster? notifier = null)
     {
@@ -82,6 +83,7 @@ public sealed class AppManager : INotifyPropertyChanged
         _nearbySnapshot = SafeNearbySnapshot();
 
         ListenForUpdatesSafely();
+        SyncCurrentDeviceLabels(_state);
         SyncStartupAtLoginPreference();
 
         TryRestorePersistedSession();
@@ -776,6 +778,7 @@ public sealed class AppManager : INotifyPropertyChanged
                 _state = next;
                 _lastRevApplied = f.v1.rev;
                 SettleBootstrapIfNeeded(next);
+                SyncCurrentDeviceLabels(next);
 
                 SyncNearbyPreference(prev, next);
                 PostDesktopNotifications(prev, next);
@@ -808,6 +811,26 @@ public sealed class AppManager : INotifyPropertyChanged
         }
         _persistedRestoreInFlight = false;
         BootstrapInFlight = false;
+    }
+
+    private void SyncCurrentDeviceLabels(AppState state)
+    {
+        if (state.account == null)
+        {
+            _lastSyncedDeviceLabelsKey = null;
+            return;
+        }
+
+        var deviceLabel = PlatformDeviceLabels.CurrentDeviceLabel;
+        var clientLabel = PlatformDeviceLabels.CurrentClientLabel;
+        var key = $"{deviceLabel}\u001F{clientLabel}";
+        if (key == _lastSyncedDeviceLabelsKey) return;
+        _lastSyncedDeviceLabelsKey = key;
+
+        DispatchToRust(
+            new AppAction.SetCurrentDeviceLabels(deviceLabel, clientLabel),
+            showToastOnFailure: false
+        );
     }
 
     private void ApplyNearbySnapshot(DesktopNearbySnapshot snapshot)

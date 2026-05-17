@@ -1,7 +1,9 @@
 package to.iris.chat.core
 
 import android.content.Context
+import android.os.Build
 import android.os.SystemClock
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import androidx.datastore.core.DataStore
@@ -358,6 +360,7 @@ class AppManager(
     private var persistedRestoreInFlight = false
     private var cachedAccountBundle: StoredAccountBundle? = null
     private var lastMobilePushSyncInput: AndroidMobilePushSyncInput? = null
+    private var lastSyncedDeviceLabelsKey: String? = null
     private var pendingNavigationOverride: PendingNavigationOverride? = null
     private val olderChatPageLoads = Collections.synchronizedSet(mutableSetOf<String>())
     private val exhaustedOlderChatPages = Collections.synchronizedSet(mutableSetOf<String>())
@@ -1764,9 +1767,56 @@ class AppManager(
             }
     }
 
+    private fun syncCurrentDeviceLabelsIfNeeded(snapshot: AppState) {
+        if (snapshot.account == null) {
+            lastSyncedDeviceLabelsKey = null
+            return
+        }
+        val deviceLabel = currentDeviceLabel()
+        val clientLabel = "Iris Chat Android"
+        val key = "$deviceLabel\u001F$clientLabel"
+        if (key == lastSyncedDeviceLabelsKey) {
+            return
+        }
+        lastSyncedDeviceLabelsKey = key
+        if (
+            !dispatchToRust(
+                AppAction.SetCurrentDeviceLabels(deviceLabel, clientLabel),
+                showsToastOnFailure = false,
+            )
+        ) {
+            lastSyncedDeviceLabelsKey = null
+        }
+    }
+
+    private fun currentDeviceLabel(): String {
+        val configuredName =
+            runCatching {
+                Settings.Global.getString(appContext.contentResolver, Settings.Global.DEVICE_NAME)
+            }.getOrNull()?.trim().orEmpty()
+        val manufacturer = Build.MANUFACTURER.cleanDeviceLabelPart()
+        val model = Build.MODEL.cleanDeviceLabelPart()
+        val hardware =
+            when {
+                model.isEmpty() -> manufacturer
+                manufacturer.isEmpty() -> model
+                model.lowercase(Locale.ROOT).startsWith(manufacturer.lowercase(Locale.ROOT)) -> model
+                else -> "$manufacturer $model"
+            }
+        return listOfNotNull(
+            configuredName.ifEmpty { null },
+            hardware.ifEmpty { null },
+            "Android ${Build.VERSION.RELEASE}".trim(),
+        ).distinctBy { it.lowercase(Locale.ROOT) }.joinToString(" - ")
+    }
+
+    private fun String.cleanDeviceLabelPart(): String =
+        trim().replace(Regex("\\s+"), " ")
+
     private fun publishState(snapshot: AppState) {
         IrisDebugLog.enabled = snapshot.preferences.debugLoggingEnabled
         mutableState.value = snapshot
+        syncCurrentDeviceLabelsIfNeeded(snapshot)
         if (!restoreCheckComplete) {
             mutableBootstrapState.value = AccountBootstrapState.Loading
             return

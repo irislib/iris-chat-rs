@@ -20,6 +20,10 @@ pub enum AppAction {
     StartLinkedDevice {
         owner_input: String,
     },
+    SetCurrentDeviceLabels {
+        device_label: String,
+        client_label: String,
+    },
     AppForegrounded,
     Logout,
     CreateChat {

@@ -425,11 +425,24 @@ impl AppCore {
                         is_authorized: true,
                         is_stale: false,
                         added_at_secs: Some(device.created_at_secs),
+                        device_label: device.device_label.clone(),
+                        client_label: device.client_label.clone(),
                     },
                 );
             }
         }
 
+        let current_labels = self.current_device_labels.as_ref();
+        if let Some(entry) = entries.get_mut(&current_device_pubkey_hex) {
+            if let Some(labels) = current_labels {
+                if labels.device_label.is_some() {
+                    entry.device_label = labels.device_label.clone();
+                }
+                if labels.client_label.is_some() {
+                    entry.client_label = labels.client_label.clone();
+                }
+            }
+        }
         entries
             .entry(current_device_pubkey_hex.clone())
             .or_insert(DeviceEntrySnapshot {
@@ -445,6 +458,8 @@ impl AppCore {
                     LocalAuthorizationState::Revoked
                 ),
                 added_at_secs: None,
+                device_label: current_labels.and_then(|labels| labels.device_label.clone()),
+                client_label: current_labels.and_then(|labels| labels.client_label.clone()),
             });
 
         let mut devices = entries.into_values().collect::<Vec<_>>();
