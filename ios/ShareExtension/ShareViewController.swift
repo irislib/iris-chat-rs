@@ -657,7 +657,7 @@ final class ShareViewController: UIViewController {
         }
         let suggestedName = provider.suggestedName
         let fallbackExtension = UTType(type)?.preferredFilenameExtension
-        return await withCheckedContinuation { continuation in
+        let copiedFile = await withCheckedContinuation { continuation in
             provider.loadFileRepresentation(forTypeIdentifier: type) { sourceURL, _ in
                 if let sourceURL {
                     continuation.resume(
@@ -670,19 +670,25 @@ final class ShareViewController: UIViewController {
                     )
                     return
                 }
-                provider.loadItem(forTypeIdentifier: type, options: nil) { item, _ in
-                    if let sourceURL = item as? URL, sourceURL.isFileURL {
-                        continuation.resume(
-                            returning: copySharedAttachment(
-                                from: sourceURL,
-                                to: filesDir,
-                                suggestedName: suggestedName,
-                                fallbackExtension: fallbackExtension
-                            )
+                continuation.resume(returning: nil)
+            }
+        }
+        if let copiedFile {
+            return copiedFile
+        }
+        return await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: type, options: nil) { item, _ in
+                if let sourceURL = item as? URL, sourceURL.isFileURL {
+                    continuation.resume(
+                        returning: copySharedAttachment(
+                            from: sourceURL,
+                            to: filesDir,
+                            suggestedName: suggestedName,
+                            fallbackExtension: fallbackExtension
                         )
-                    } else {
-                        continuation.resume(returning: nil)
-                    }
+                    )
+                } else {
+                    continuation.resume(returning: nil)
                 }
             }
         }
