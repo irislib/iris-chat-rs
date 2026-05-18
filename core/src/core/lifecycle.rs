@@ -426,6 +426,9 @@ impl AppCore {
             AppAction::SetNearbyMailbagEnabled { enabled } => {
                 self.set_nearby_mailbag_enabled(enabled)
             }
+            AppAction::SetNearbyShowInChatList { enabled } => {
+                self.set_nearby_show_in_chat_list(enabled)
+            }
             AppAction::AddNostrRelay { relay_url } => self.add_nostr_relay(&relay_url),
             AppAction::UpdateNostrRelay {
                 old_relay_url,

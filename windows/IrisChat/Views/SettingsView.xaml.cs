@@ -68,6 +68,7 @@ public partial class SettingsView : UserControl
         StartupToggle.IsChecked = prefs.startupAtLoginEnabled;
         NearbyEnabledToggle.IsChecked = prefs.nearbyEnabled;
         NearbyLanToggle.IsChecked = prefs.nearbyLanEnabled;
+        NearbyShowInChatListToggle.IsChecked = prefs.nearbyShowInChatList;
         NearbyLanToggle.Visibility = Visibility.Visible;
         NearbyLanToggle.IsEnabled = prefs.nearbyEnabled;
         ImageProxyToggle.IsChecked = prefs.imageProxyEnabled;
@@ -241,6 +242,12 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetNearbyEnabled(NearbyEnabledToggle.IsChecked == true);
+    }
+
+    private void OnNearbyShowInChatListChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetNearbyShowInChatList(NearbyShowInChatListToggle.IsChecked == true);
     }
 
     private void OnImageProxyChanged(object sender, RoutedEventArgs e)

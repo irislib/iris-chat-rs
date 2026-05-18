@@ -147,6 +147,9 @@ pub enum AppAction {
     SetNearbyMailbagEnabled {
         enabled: bool,
     },
+    SetNearbyShowInChatList {
+        enabled: bool,
+    },
     AddNostrRelay {
         relay_url: String,
     },

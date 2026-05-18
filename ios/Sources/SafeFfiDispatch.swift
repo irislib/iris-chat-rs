@@ -495,6 +495,7 @@ private func fallbackAppState(toast: String?) -> AppState {
             nearbyEnabled: true,
             nearbyBluetoothEnabled: false,
             nearbyLanEnabled: false,
+            nearbyShowInChatList: true,
             nearbyMailbagEnabled: true,
             nostrRelayUrls: [
                 "wss://relay.damus.io",

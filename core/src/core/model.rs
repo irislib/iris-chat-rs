@@ -368,6 +368,8 @@ pub(super) struct PersistedPreferences {
     #[serde(default)]
     pub(super) nearby_lan_enabled: bool,
     #[serde(default = "default_true")]
+    pub(super) nearby_show_in_chat_list: bool,
+    #[serde(default = "default_true")]
     pub(super) nearby_mailbag_enabled: bool,
     #[serde(default = "default_nostr_relay_urls")]
     pub(super) nostr_relay_urls: Vec<String>,
@@ -408,6 +410,7 @@ impl Default for PersistedPreferences {
             nearby_enabled: defaults.nearby_enabled,
             nearby_bluetooth_enabled: defaults.nearby_bluetooth_enabled,
             nearby_lan_enabled: defaults.nearby_lan_enabled,
+            nearby_show_in_chat_list: defaults.nearby_show_in_chat_list,
             nearby_mailbag_enabled: defaults.nearby_mailbag_enabled,
             nostr_relay_urls: defaults.nostr_relay_urls,
             image_proxy_enabled: defaults.image_proxy_enabled,

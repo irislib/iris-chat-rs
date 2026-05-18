@@ -302,6 +302,16 @@ fn nearby_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::P
     }
     group.add(&lan);
 
+    let show_in_chat_list = adw::SwitchRow::builder().title("Show in chat list").build();
+    show_in_chat_list.set_active(prefs.nearby_show_in_chat_list);
+    {
+        let manager = manager.clone();
+        show_in_chat_list.connect_active_notify(move |row| {
+            manager.set_nearby_show_in_chat_list(row.is_active());
+        });
+    }
+    group.add(&show_in_chat_list);
+
     group
 }
 

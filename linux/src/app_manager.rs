@@ -610,6 +610,10 @@ impl AppManager {
         self.dispatch_to_rust(AppAction::SetNearbyEnabled { enabled }, false);
     }
 
+    pub fn set_nearby_show_in_chat_list(&self, enabled: bool) {
+        self.dispatch_to_rust(AppAction::SetNearbyShowInChatList { enabled }, false);
+    }
+
     pub fn sync_nearby_preference(&self, state: &AppState) {
         if state.preferences.nearby_enabled && state.preferences.nearby_lan_enabled {
             self.start_nearby_safely(false);

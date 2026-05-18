@@ -334,7 +334,7 @@ fun ChatListScreen(
                     }
                 }
             } else {
-                val nearby = nearbyService
+                val nearby = nearbyService.takeIf { appState.preferences.nearbyShowInChatList }
                 val showNearby = nearby != null
                 val pinnedChats = appState.chatList.filter { it.isPinned }
                 val unpinnedChats = appState.chatList.filter { !it.isPinned }

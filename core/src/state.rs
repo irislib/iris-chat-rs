@@ -58,6 +58,7 @@ pub struct PreferencesSnapshot {
     pub nearby_enabled: bool,
     pub nearby_bluetooth_enabled: bool,
     pub nearby_lan_enabled: bool,
+    pub nearby_show_in_chat_list: bool,
     /// Whether the on-device nearby mailbag actively reads and writes
     /// store-and-forward records. When off, the local bag is left
     /// alone (so contents survive a toggle off → on cycle) but no new
@@ -101,6 +102,7 @@ impl Default for PreferencesSnapshot {
             nearby_enabled: true,
             nearby_bluetooth_enabled: false,
             nearby_lan_enabled: false,
+            nearby_show_in_chat_list: true,
             nearby_mailbag_enabled: true,
             nostr_relay_urls: crate::core::configured_relays(),
             image_proxy_enabled: true,

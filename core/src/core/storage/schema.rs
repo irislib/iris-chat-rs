@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 21;
+const SCHEMA_VERSION: u32 = 22;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS preferences (
     nearby_enabled INTEGER NOT NULL DEFAULT 1,
     blocked_owner_pubkeys_json TEXT NOT NULL DEFAULT '[]',
     accepted_owner_pubkeys_json TEXT NOT NULL DEFAULT '[]',
-    nearby_mailbag_enabled INTEGER NOT NULL DEFAULT 1
+    nearby_mailbag_enabled INTEGER NOT NULL DEFAULT 1,
+    nearby_show_in_chat_list INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE TABLE IF NOT EXISTS owner_profiles (
@@ -413,6 +414,12 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         tx.execute_batch(
             "ALTER TABLE owner_profiles
              ADD COLUMN nickname TEXT;",
+        )?;
+    }
+    if current < 22 && !column_exists(&tx, "preferences", "nearby_show_in_chat_list")? {
+        tx.execute_batch(
+            "ALTER TABLE preferences
+             ADD COLUMN nearby_show_in_chat_list INTEGER NOT NULL DEFAULT 1;",
         )?;
     }
     if current < 21 && !column_exists(&tx, "owner_profiles", "about")? {

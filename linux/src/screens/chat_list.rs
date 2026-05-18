@@ -35,7 +35,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         body.set_margin_end(12);
 
         let now = unix_now();
-        let show_nearby = true;
+        let show_nearby = state.preferences.nearby_show_in_chat_list;
         let pinned: Vec<&ChatThreadSnapshot> = state
             .chat_list
             .iter()

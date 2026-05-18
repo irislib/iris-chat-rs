@@ -253,6 +253,16 @@ impl AppCore {
         self.emit_state();
     }
 
+    pub(super) fn set_nearby_show_in_chat_list(&mut self, enabled: bool) {
+        if self.preferences.nearby_show_in_chat_list == enabled {
+            return;
+        }
+        self.preferences.nearby_show_in_chat_list = enabled;
+        self.rebuild_state();
+        self.persist_best_effort();
+        self.emit_state();
+    }
+
     pub(super) fn set_nearby_bluetooth_enabled(&mut self, enabled: bool) {
         if self.preferences.nearby_bluetooth_enabled == enabled {
             return;

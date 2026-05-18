@@ -100,7 +100,7 @@ public partial class DesktopShell : UserControl
 
         if (query.Length == 0)
         {
-            var showNearby = true;
+            var showNearby = _manager.Preferences.nearbyShowInChatList;
             var pinned = chats.Where(chat => chat.isPinned).ToArray();
             var unpinned = chats.Where(chat => !chat.isPinned).ToArray();
             var sectionCount = (showNearby ? 1 : 0)

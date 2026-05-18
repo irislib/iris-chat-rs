@@ -3364,12 +3364,14 @@ struct ChatListScreen: View {
                     }
                 } else {
 #if os(iOS) || os(macOS)
-                    NearbyChatListRow(
-                        manager: manager,
-                        service: manager.nearbyIris,
-                        onOpen: onOpenNearby,
-                        onOpenPeerProfile: onOpenNearbyPeerProfile
-                    )
+                    if manager.state.preferences.nearbyShowInChatList {
+                        NearbyChatListRow(
+                            manager: manager,
+                            service: manager.nearbyIris,
+                            onOpen: onOpenNearby,
+                            onOpenPeerProfile: onOpenNearbyPeerProfile
+                        )
+                    }
 #endif
 
                     if manager.state.chatList.isEmpty {
@@ -4289,7 +4291,9 @@ private struct ChatListTableView: UIViewRepresentable {
         }
 
         var sections: [Section] = []
-        sections.append(Section(title: "Nearby", items: [.nearby]))
+        if preferences.nearbyShowInChatList {
+            sections.append(Section(title: "Nearby", items: [.nearby]))
+        }
         let pinnedChats = chats.filter(\.isPinned)
         let unpinnedChats = chats.filter { !$0.isPinned }
         if !pinnedChats.isEmpty {
@@ -4310,7 +4314,7 @@ private struct ChatListTableView: UIViewRepresentable {
         let expanded = expandedSearchSections.map(\.rawValue).sorted().joined(separator: ",")
         var values = [
             "search:\(isSearchActive):\(searchText):\(messageLimit):\(expanded)",
-            "nearby:\(preferences.nearbyEnabled):\(manager.nearbyIris.sidebarSubtitle):" +
+            "nearby:\(preferences.nearbyShowInChatList):\(preferences.nearbyEnabled):\(manager.nearbyIris.sidebarSubtitle):" +
                 "\(manager.nearbyIris.isVisible):\(manager.nearbyIris.isLanVisible):" +
                 manager.nearbyIris.peers.map {
                     "\($0.id):\($0.name):\($0.pictureURL ?? ""):\($0.ownerPubkeyHex ?? "")"
@@ -8264,6 +8268,17 @@ private struct NearbySettingsRows: View {
                     accessibilityID: "myProfileNearbyLanSwitch"
                 )
             }
+
+            settingsToggle(
+                title: "Show in chat list",
+                isOn: Binding(
+                    get: { manager.state.preferences.nearbyShowInChatList },
+                    set: { enabled in
+                        manager.dispatch(.setNearbyShowInChatList(enabled: enabled))
+                    }
+                ),
+                accessibilityID: "myProfileNearbyShowInChatListSwitch"
+            )
         }
         .onAppear {
             service.startBluetoothStateMonitoring()

@@ -589,6 +589,9 @@ public sealed class AppManager : INotifyPropertyChanged
     public void SetNearbyMailbagEnabled(bool enabled) =>
         DispatchToRust(new AppAction.SetNearbyMailbagEnabled(enabled));
 
+    public void SetNearbyShowInChatList(bool enabled) =>
+        DispatchToRust(new AppAction.SetNearbyShowInChatList(enabled));
+
     public void AddNostrRelay(string url) =>
         DispatchToRust(new AppAction.AddNostrRelay(url.Trim()));
 
@@ -1312,6 +1315,7 @@ public sealed class AppManager : INotifyPropertyChanged
             nearbyEnabled: true,
             nearbyBluetoothEnabled: false,
             nearbyLanEnabled: false,
+            nearbyShowInChatList: true,
             nearbyMailbagEnabled: true,
             nostrRelayUrls: new[]
             {

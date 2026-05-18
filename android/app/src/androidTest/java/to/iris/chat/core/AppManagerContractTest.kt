@@ -769,6 +769,7 @@ class AppManagerContractTest {
                     nearbyEnabled = true,
                     nearbyBluetoothEnabled = false,
                     nearbyLanEnabled = false,
+                    nearbyShowInChatList = true,
                     nearbyMailbagEnabled = true,
                     nostrRelayUrls =
                         listOf(
@@ -1085,6 +1086,7 @@ private object AppManagerContractDefaults {
                     nearbyEnabled = true,
                     nearbyBluetoothEnabled = false,
                     nearbyLanEnabled = false,
+                    nearbyShowInChatList = true,
                     nearbyMailbagEnabled = true,
                     nostrRelayUrls =
                         listOf(

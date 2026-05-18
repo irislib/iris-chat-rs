@@ -729,6 +729,7 @@ fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.blocked_owner_pubkeys.hash(&mut hasher);
     preferences.accepted_owner_pubkeys.hash(&mut hasher);
     preferences.nearby_mailbag_enabled.hash(&mut hasher);
+    preferences.nearby_show_in_chat_list.hash(&mut hasher);
     hasher.finish()
 }
 
@@ -962,7 +963,7 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     debug_logging_enabled, accept_unknown_direct_messages,
                     nearby_enabled,
                     blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-                    nearby_mailbag_enabled
+                    nearby_mailbag_enabled, nearby_show_in_chat_list
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -993,6 +994,7 @@ fn load_preferences(conn: &rusqlite::Connection) -> anyhow::Result<Option<Persis
                     accepted_owner_pubkeys: serde_json::from_str(&row.get::<_, String>(19)?)
                         .unwrap_or_default(),
                     nearby_mailbag_enabled: row.get::<_, i64>(20)? != 0,
+                    nearby_show_in_chat_list: row.get::<_, i64>(21)? != 0,
                 })
             },
         )
@@ -1011,8 +1013,8 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
             debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled,
             blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-            nearby_mailbag_enabled
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)
+            nearby_mailbag_enabled, nearby_show_in_chat_list
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)
          ON CONFLICT(id) DO UPDATE SET
             send_typing_indicators = excluded.send_typing_indicators,
             send_read_receipts = excluded.send_read_receipts,
@@ -1034,7 +1036,8 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             nearby_enabled = excluded.nearby_enabled,
             blocked_owner_pubkeys_json = excluded.blocked_owner_pubkeys_json,
             accepted_owner_pubkeys_json = excluded.accepted_owner_pubkeys_json,
-            nearby_mailbag_enabled = excluded.nearby_mailbag_enabled",
+            nearby_mailbag_enabled = excluded.nearby_mailbag_enabled,
+            nearby_show_in_chat_list = excluded.nearby_show_in_chat_list",
         params![
             preferences.send_typing_indicators as i64,
             preferences.send_read_receipts as i64,
@@ -1057,6 +1060,7 @@ fn write_preferences(tx: &Transaction, preferences: &PreferencesSnapshot) -> any
             serde_json::to_string(&preferences.blocked_owner_pubkeys)?,
             serde_json::to_string(&preferences.accepted_owner_pubkeys)?,
             preferences.nearby_mailbag_enabled as i64,
+            preferences.nearby_show_in_chat_list as i64,
         ],
     )?;
     Ok(())

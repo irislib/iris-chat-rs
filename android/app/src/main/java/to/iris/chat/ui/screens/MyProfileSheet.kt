@@ -525,6 +525,14 @@ fun MyProfileSheet(
                                         modifier = Modifier.testTag("myProfileEmptyMailbagButton"),
                                     )
                                 }
+                                SettingsToggleRow(
+                                    title = "Show in chat list",
+                                    checked = preferences.nearbyShowInChatList,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetNearbyShowInChatList(enabled))
+                                    },
+                                    tag = "myProfileNearbyShowInChatListSwitch",
+                                )
                             }
                         }
 

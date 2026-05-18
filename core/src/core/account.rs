@@ -577,6 +577,8 @@ impl AppCore {
             self.preferences.nearby_bluetooth_enabled =
                 persisted.preferences.nearby_bluetooth_enabled;
             self.preferences.nearby_lan_enabled = persisted.preferences.nearby_lan_enabled;
+            self.preferences.nearby_show_in_chat_list =
+                persisted.preferences.nearby_show_in_chat_list;
             self.preferences.nearby_mailbag_enabled = persisted.preferences.nearby_mailbag_enabled;
             self.preferences.nostr_relay_urls =
                 normalize_nostr_relay_urls(&persisted.preferences.nostr_relay_urls);
