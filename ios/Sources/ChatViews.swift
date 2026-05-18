@@ -1253,7 +1253,6 @@ private enum SignalConversationLayout {
     static let reactionPillOverlap: CGFloat = 7
     static let reactionPillHorizontalInset: CGFloat = 6
     static let reactionPillProtrusion: CGFloat = reactionPillHeight - reactionPillOverlap
-    static let messageActionDockSpacing: CGFloat = 8
 }
 
 func irisGroupSenderNameColorHex(for senderKey: String, isDarkMode: Bool) -> UInt32 {
@@ -1734,6 +1733,10 @@ private struct ChatMessageRow: View, Equatable {
                             groupSenderAvatar
                         }
 
+                        if message.isOutgoing {
+                            desktopActionDockSlot
+                        }
+
                         VStack(alignment: message.isOutgoing ? .trailing : .leading, spacing: 4) {
                             if showsGroupSenderName {
                                 Text(message.author)
@@ -1919,13 +1922,6 @@ private struct ChatMessageRow: View, Equatable {
                             }
                         }
 #if canImport(AppKit)
-                        // Keep the dock anchored to the drawn bubble, not
-                        // the invisible max-width frame that only caps long
-                        // messages. Alignment guides put the dock just
-                        // outside the bubble without hard-coding its width.
-                        .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
-                            actionDockOverlay(isOutgoing: message.isOutgoing)
-                        }
                         // Cap bubble width on macOS; iOS has no hover and
                         // phone widths self-limit.
                         .frame(
@@ -1937,6 +1933,10 @@ private struct ChatMessageRow: View, Equatable {
                         // This modifier only renders the offset/reveal state,
                         // keeping vertical flicks on bubbles in the scroll path.
                         .applyMessageBubbleSwipe(offset: swipeOffset)
+
+                        if !message.isOutgoing {
+                            desktopActionDockSlot
+                        }
 
                         if !message.isOutgoing {
                             Spacer(minLength: SignalConversationLayout.messageDirectionSpacing)
@@ -1960,22 +1960,15 @@ private struct ChatMessageRow: View, Equatable {
     }
 
     @ViewBuilder
-    private func actionDockOverlay(isOutgoing: Bool) -> some View {
-        if showActionDock {
-            if isOutgoing {
-                actionDock()
-                    .fixedSize()
-                    .alignmentGuide(.leading) { dimensions in
-                        dimensions.width + SignalConversationLayout.messageActionDockSpacing
-                    }
-            } else {
-                actionDock()
-                    .fixedSize()
-                    .alignmentGuide(.trailing) { _ in
-                        -SignalConversationLayout.messageActionDockSpacing
-                    }
-            }
-        }
+    private var desktopActionDockSlot: some View {
+#if canImport(AppKit)
+        actionDock()
+            .fixedSize()
+            .opacity(showActionDock ? 1 : 0)
+            .allowsHitTesting(showActionDock)
+#else
+        EmptyView()
+#endif
     }
 
     @ViewBuilder
