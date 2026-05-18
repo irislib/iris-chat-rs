@@ -1712,6 +1712,7 @@ private struct ChatMessageRow: View, Equatable {
                         .font(.system(.caption, design: .rounded, weight: .semibold))
                         .foregroundStyle(palette.muted)
                         .multilineTextAlignment(.center)
+                        .irisDesktopTextSelection()
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
                         .background(Capsule(style: .continuous).fill(palette.panel.opacity(0.74)))
@@ -2014,6 +2015,7 @@ private struct TruncatableMessageBody: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(isExpanded ? nil : collapsedLineLimit)
                 .fixedSize(horizontal: false, vertical: true)
+                .irisDesktopTextSelection()
             if needsTruncation {
                 toggleButton(label: isExpanded ? "Show less" : "Show more")
             }
@@ -2039,6 +2041,17 @@ private struct TruncatableMessageBody: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("chatMessageBodyToggle")
+    }
+}
+
+private extension View {
+    @ViewBuilder
+    func irisDesktopTextSelection() -> some View {
+#if canImport(AppKit)
+        textSelection(.enabled)
+#else
+        self
+#endif
     }
 }
 

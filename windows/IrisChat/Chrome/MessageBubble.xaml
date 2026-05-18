@@ -18,10 +18,17 @@
                        FontSize="11"
                        Margin="0,0,0,2"
                        Visibility="Collapsed" />
-            <TextBlock x:Name="BodyText"
-                       Foreground="White"
-                       FontSize="14"
-                       TextWrapping="Wrap" />
+            <TextBox x:Name="BodyText"
+                     Foreground="White"
+                     FontSize="14"
+                     TextWrapping="Wrap"
+                     IsReadOnly="True"
+                     IsTabStop="False"
+                     BorderThickness="0"
+                     Padding="0"
+                     Background="Transparent"
+                     HorizontalScrollBarVisibility="Disabled"
+                     VerticalScrollBarVisibility="Disabled" />
             <!-- Foreground is plain white (not Accent purple) — text and
                  icons are never the brand purple. Opacity matches the
                  timestamp/meta row so the toggle reads as a subtle

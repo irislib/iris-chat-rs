@@ -828,6 +828,7 @@ fn render_message(
         label.add_css_class("caption");
         label.set_halign(gtk::Align::Center);
         label.set_wrap(true);
+        label.set_selectable(true);
         label.set_margin_top(8);
         label.set_margin_bottom(8);
         return label.upcast();

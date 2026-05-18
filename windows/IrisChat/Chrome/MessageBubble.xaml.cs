@@ -436,7 +436,6 @@ public partial class MessageBubble : UserControl
             5 => 32,
             _ => 14,
         };
-        BodyText.LineHeight = BodyText.FontSize > 14 ? BodyText.FontSize * 1.05 : double.NaN;
     }
 
     private static int JumbomojiCount(string text)
