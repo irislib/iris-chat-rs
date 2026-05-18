@@ -83,7 +83,6 @@ class MainActivity : ComponentActivity() {
                     container = container,
                     onNearbyVisibilityChange = ::setNearbyVisible,
                     onNearbyLanVisibilityChange = ::setNearbyLanVisible,
-                    onNearbyOpen = ::prepareNearbyFromTap,
                 )
             }
         }
@@ -138,7 +137,6 @@ class MainActivity : ComponentActivity() {
         const val PERMISSION_PREFS = "iris_runtime_permissions"
         const val BLUETOOTH_PERMISSION_KEY = "nearby_bluetooth"
         const val LOCAL_NETWORK_PERMISSION_KEY = "nearby_local_network"
-        const val NEARBY_FIRST_OPEN_KEY = "nearby_first_open"
     }
 
     private fun handleLaunchIntent(intent: Intent?) {
@@ -350,58 +348,6 @@ class MainActivity : ComponentActivity() {
         )
     }
 
-    private fun prepareNearbyFromTap() {
-        val preferences = container.appManager.state.value.preferences
-        val firstNearbyOpen = !permissionWasRequested(NEARBY_FIRST_OPEN_KEY)
-        val startBluetooth =
-            preferences.nearbyBluetoothEnabled ||
-                firstNearbyOpen ||
-                shouldRequestOnFirstNearbyTap(nearbyPermissions().toList(), BLUETOOTH_PERMISSION_KEY)
-        val startLocalNetwork =
-            preferences.nearbyLanEnabled ||
-                firstNearbyOpen ||
-                shouldRequestOnFirstNearbyTap(localNetworkPermissions().toList(), LOCAL_NETWORK_PERMISSION_KEY)
-        if (!startBluetooth && !startLocalNetwork) {
-            return
-        }
-        if (firstNearbyOpen) {
-            markPermissionRequested(NEARBY_FIRST_OPEN_KEY)
-        }
-        val permissions =
-            buildList {
-                if (startBluetooth) addAll(nearbyPermissions().asList())
-                if (startLocalNetwork) addAll(localNetworkPermissions().asList())
-            }.distinct()
-        requestRuntimePermissionsIfNeeded(
-            permissions = permissions,
-            preferenceKeys =
-                buildList {
-                    if (startBluetooth) add(BLUETOOTH_PERMISSION_KEY)
-                    if (startLocalNetwork) add(LOCAL_NETWORK_PERMISSION_KEY)
-                },
-            onGranted = {
-                if (startBluetooth) {
-                    container.nearbyIrisService.setVisible(true)
-                    container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(true))
-                }
-                if (startLocalNetwork) {
-                    container.nearbyIrisService.setLocalNetworkVisible(true)
-                    container.appManager.dispatch(AppAction.SetNearbyLanEnabled(true))
-                }
-            },
-            onDenied = {
-                if (startBluetooth) {
-                    container.nearbyIrisService.setVisible(false)
-                    container.appManager.dispatch(AppAction.SetNearbyBluetoothEnabled(false))
-                }
-                if (startLocalNetwork) {
-                    container.nearbyIrisService.setLocalNetworkVisible(false)
-                    container.appManager.dispatch(AppAction.SetNearbyLanEnabled(false))
-                }
-            },
-        )
-    }
-
     private fun nearbyPermissions(): Array<String> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             arrayOf(
@@ -419,14 +365,6 @@ class MainActivity : ComponentActivity() {
         } else {
             emptyArray()
         }
-
-    private fun shouldRequestOnFirstNearbyTap(
-        permissions: List<String>,
-        preferenceKey: String,
-    ): Boolean =
-        permissions.any {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        } && !permissionWasRequested(preferenceKey)
 
     private fun requestRuntimePermissionsIfNeeded(
         permissions: List<String>,
@@ -480,6 +418,11 @@ class MainActivity : ComponentActivity() {
 
     private fun restoreNearbyVisibilityPreference() {
         val preferences = container.appManager.state.value.preferences
+        if (!preferences.nearbyEnabled) {
+            container.nearbyIrisService.setVisible(false)
+            container.nearbyIrisService.setLocalNetworkVisible(false)
+            return
+        }
         if (preferences.nearbyBluetoothEnabled) {
             if (container.nearbyIrisService.hasBluetoothPermission()) {
                 container.nearbyIrisService.setVisible(true)

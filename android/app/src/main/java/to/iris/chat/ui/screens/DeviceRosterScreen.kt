@@ -134,12 +134,6 @@ fun DeviceRosterContent(
                     onClick = { clipboard.setText("User ID", roster.ownerNpub) },
                     modifier = Modifier.testTag("deviceRosterOwnerNpub"),
                 )
-                IrisMenuRow(
-                    title = "Copy this device code",
-                    icon = IrisIcons.Copy,
-                    onClick = { clipboard.setText("Link code", roster.currentDeviceNpub) },
-                    modifier = Modifier.testTag("deviceRosterCurrentDeviceNpub"),
-                )
             }
         }
 

@@ -550,11 +550,30 @@ fn profile_group(
 
     let name_row = adw::EntryRow::builder().title("Display name").build();
     name_row.set_text(&account.display_name);
+    let about_row = adw::PreferencesRow::new();
+    let about_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
+    about_box.set_margin_top(10);
+    about_box.set_margin_bottom(10);
+    about_box.set_margin_start(12);
+    about_box.set_margin_end(12);
+    let about_label = gtk::Label::new(Some("About"));
+    about_label.add_css_class("caption-heading");
+    about_label.set_halign(gtk::Align::Start);
+    about_box.append(&about_label);
+    let about_view = gtk::TextView::new();
+    about_view.set_wrap_mode(gtk::WrapMode::WordChar);
+    about_view.set_size_request(-1, 88);
+    about_view
+        .buffer()
+        .set_text(account.about.as_deref().unwrap_or(""));
+    about_box.append(&about_view);
+    about_row.set_child(Some(&about_box));
     let save = gtk::Button::with_label("Save");
     save.add_css_class("suggested-action");
     save.set_valign(gtk::Align::Center);
     let manager_for_save = manager.clone();
     let row_for_save = name_row.clone();
+    let about_buffer_for_save = about_view.buffer();
     let picture_url = account.picture_url.clone();
     save.connect_clicked(move |_| {
         let value = row_for_save.text().trim().to_string();
@@ -564,12 +583,14 @@ fn profile_group(
         manager_for_save.dispatch(AppAction::UpdateProfileMetadata {
             name: value,
             picture_url: picture_url.clone(),
+            about: normalize_text_buffer(&about_buffer_for_save),
         });
     });
     name_row.add_suffix(&save);
 
     let manager_for_apply = manager.clone();
     let picture_url = account.picture_url.clone();
+    let about_buffer_for_apply = about_view.buffer();
     name_row.connect_apply(move |row| {
         let value = row.text().trim().to_string();
         if value.is_empty() {
@@ -578,9 +599,11 @@ fn profile_group(
         manager_for_apply.dispatch(AppAction::UpdateProfileMetadata {
             name: value,
             picture_url: picture_url.clone(),
+            about: normalize_text_buffer(&about_buffer_for_apply),
         });
     });
     group.add(&name_row);
+    group.add(&about_row);
 
     let qr_row = adw::ActionRow::builder()
         .title("Show code")
@@ -607,6 +630,14 @@ fn profile_group(
     group.add(&qr_row);
 
     group
+}
+
+fn normalize_text_buffer(buffer: &gtk::TextBuffer) -> Option<String> {
+    let start = buffer.start_iter();
+    let end = buffer.end_iter();
+    let text = buffer.text(&start, &end, true);
+    let trimmed = text.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn present_qr_dialog(

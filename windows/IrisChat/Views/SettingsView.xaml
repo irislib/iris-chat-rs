@@ -211,12 +211,21 @@
                             </StackPanel>
                         </Grid>
 
+                        <TextBlock Text="About"
+                                   Style="{StaticResource MutedText}"
+                                   Margin="0,16,0,6" />
+                        <TextBox x:Name="ProfileAboutInput"
+                                 AcceptsReturn="True"
+                                 TextWrapping="Wrap"
+                                 MinHeight="76"
+                                 VerticalScrollBarVisibility="Auto" />
+
                         <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
                             <Button Style="{StaticResource SecondaryButton}"
                                     Click="OnCopyUserId"
                                     HorizontalAlignment="Left"
                                     Margin="0,0,8,0">
-                                <TextBlock Text="Copy profile link" />
+                                <TextBlock Text="Copy user ID" />
                             </Button>
                             <Button Style="{StaticResource SecondaryButton}"
                                     Click="OnToggleProfileQr"
@@ -238,7 +247,7 @@
                                                    Width="216"
                                                    Height="216" />
                                 <Button Style="{StaticResource GhostButton}"
-                                        Click="OnCopyUserId"
+                                        Click="OnCopyProfileLink"
                                         Margin="0,8,0,0"
                                         HorizontalAlignment="Center">
                                     <StackPanel Orientation="Horizontal">

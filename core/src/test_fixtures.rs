@@ -46,6 +46,7 @@ pub fn build_large_test_app_state(
         profile_name: current_thread.profile_name.clone(),
         subtitle: current_thread.subtitle.clone(),
         picture_url: current_thread.picture_url.clone(),
+        about: current_thread.about.clone(),
         group_id: match &current_thread.kind {
             ChatKind::Direct => None,
             ChatKind::Group => Some(current_thread.chat_id.clone()),
@@ -144,6 +145,7 @@ fn fixture_account() -> AccountSnapshot {
         npub: "npub1fixtureowner".to_string(),
         display_name: "Fixture User".to_string(),
         picture_url: None,
+        about: None,
         device_public_key_hex: fixture_hex(2),
         device_npub: "npub1fixturedevice".to_string(),
         has_owner_signing_authority: true,
@@ -173,6 +175,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
             format!("user {}", index + 1)
         }),
         picture_url: None,
+        about: None,
         member_count,
         last_message_preview: Some(format!(
             "Fixture preview {} with searchable token needle",

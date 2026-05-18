@@ -63,6 +63,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
@@ -72,9 +73,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -85,6 +91,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.core.AppManager
+import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageSnapshot
@@ -142,6 +149,9 @@ private fun disappearingLabel(seconds: ULong): String {
 fun ChatScreen(
     appManager: AppManager,
     chatId: String,
+    nearbyService: IrisNearbyService? = null,
+    openInfoOnStart: Boolean = false,
+    onInfoOpenConsumed: () -> Unit = {},
 ) {
     // Subscribe to per-slice flows so this screen only recomposes when
     // *its* state slice changed. Tapping into the consolidated
@@ -221,6 +231,13 @@ fun ChatScreen(
         forceScrollToLatest = false
         initialScrollPending = true
         observedMessageCount = 0
+    }
+
+    LaunchedEffect(chatId, openInfoOnStart) {
+        if (openInfoOnStart) {
+            directChatInfoOpen = true
+            onInfoOpenConsumed()
+        }
     }
 
     // Keep the composer aligned with the persisted thread draft without
@@ -485,6 +502,7 @@ fun ChatScreen(
             DirectChatInfoScreen(
                 appManager = appManager,
                 chatId = chatId,
+                nearbyService = nearbyService,
                 onBack = { directChatInfoOpen = false },
             )
             return@Scaffold
@@ -841,11 +859,14 @@ private fun TimelineDaySeparator(
 private fun DirectChatInfoScreen(
     appManager: AppManager,
     chatId: String,
+    nearbyService: IrisNearbyService?,
     onBack: () -> Unit,
 ) {
     val currentChat by appManager.currentChat.collectAsStateWithLifecycle()
     val preferences by appManager.preferences.collectAsStateWithLifecycle()
     val chat = currentChat?.takeIf { it.chatId == chatId } ?: return
+    val nearbySnapshot = nearbyService?.let { rememberNearbySnapshotState(it).value }
+    val nearbyStatus = nearbyProfileStatus(preferences.nearbyEnabled, nearbySnapshot, chat.chatId)
     val avatarBytes by rememberNhashImageData(appManager, chat.pictureUrl)
     var advancedOpen by remember(chatId) { mutableStateOf(false) }
     var profileDebug by remember(chatId) { mutableStateOf<PeerProfileDebugSnapshot?>(null) }
@@ -946,6 +967,14 @@ private fun DirectChatInfoScreen(
                         }
                     }
                     val clipboard = rememberIrisClipboard()
+                    ProfileAboutCard(
+                        about = chat.about,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    NearbyProfileStatusCard(
+                        status = nearbyStatus,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     ContactNicknameCard(
                         chat = chat,
                         nicknameDraft = nicknameDraft,
@@ -1022,6 +1051,126 @@ private fun DirectChatInfoScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ProfileAboutCard(
+    about: String?,
+    modifier: Modifier = Modifier,
+) {
+    val text = about?.trim()?.takeIf { it.isNotEmpty() } ?: return
+    val linkColor = MaterialTheme.colorScheme.primary
+    IrisSectionCard(modifier = modifier.testTag("directChatAboutCard")) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Icon(
+                imageVector = IrisIcons.Edit,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier =
+                    Modifier
+                        .padding(top = 2.dp)
+                        .size(22.dp),
+            )
+            Text(
+                text = remember(text, linkColor) { linkHighlightedText(text, linkColor) },
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+private val UrlTextRegex = Regex("""\b(?:https?://|www\.)\S+""")
+
+private fun linkHighlightedText(
+    text: String,
+    linkColor: Color,
+): AnnotatedString =
+    buildAnnotatedString {
+        var cursor = 0
+        for (match in UrlTextRegex.findAll(text)) {
+            val range = match.range
+            if (range.first > cursor) {
+                append(text.substring(cursor, range.first))
+            }
+            withStyle(
+                SpanStyle(
+                    color = linkColor,
+                    textDecoration = TextDecoration.Underline,
+                ),
+            ) {
+                append(match.value)
+            }
+            cursor = range.last + 1
+        }
+        if (cursor < text.length) {
+            append(text.substring(cursor))
+        }
+    }
+
+@Composable
+private fun NearbyProfileStatusCard(
+    status: String?,
+    modifier: Modifier = Modifier,
+) {
+    val text = status ?: return
+    IrisSectionCard(modifier = modifier.testTag("directChatNearbyStatusCard")) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = IrisIcons.Nearby,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp),
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = "Nearby now",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = text,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = IrisTheme.palette.muted,
+                )
+            }
+        }
+    }
+}
+
+private fun nearbyProfileStatus(
+    nearbyEnabled: Boolean,
+    snapshot: IrisNearbyService.Snapshot?,
+    ownerPubkeyHex: String,
+): String? {
+    if (!nearbyEnabled || snapshot == null) {
+        return null
+    }
+    val onBluetooth =
+        snapshot.bluetoothPeers.any { peer ->
+            peer.ownerPubkeyHex?.equals(ownerPubkeyHex, ignoreCase = true) == true
+        }
+    val onWifi =
+        snapshot.localNetworkPeers.any { peer ->
+            peer.ownerPubkeyHex?.equals(ownerPubkeyHex, ignoreCase = true) == true
+        }
+    return when {
+        onBluetooth && onWifi -> "Bluetooth and Wi-Fi"
+        onBluetooth -> "Bluetooth"
+        onWifi -> "Wi-Fi"
+        else -> null
     }
 }
 

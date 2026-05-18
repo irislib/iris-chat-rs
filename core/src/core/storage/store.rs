@@ -1066,7 +1066,7 @@ fn load_owner_profiles(
     conn: &rusqlite::Connection,
 ) -> anyhow::Result<BTreeMap<String, OwnerProfileRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT owner_pubkey_hex, nickname, name, display_name, picture, updated_at_secs
+        "SELECT owner_pubkey_hex, nickname, name, display_name, picture, about, updated_at_secs
          FROM owner_profiles",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -1076,7 +1076,8 @@ fn load_owner_profiles(
             name: row.get(2)?,
             display_name: row.get(3)?,
             picture: row.get(4)?,
-            updated_at_secs: row.get::<_, i64>(5)? as u64,
+            about: row.get(5)?,
+            updated_at_secs: row.get::<_, i64>(6)? as u64,
         };
         Ok((owner_pubkey_hex, record))
     })?;
@@ -1095,8 +1096,8 @@ fn write_owner_profiles(
     tx.execute("DELETE FROM owner_profiles", [])?;
     let mut stmt = tx.prepare_cached(
         "INSERT INTO owner_profiles
-            (owner_pubkey_hex, nickname, name, display_name, picture, updated_at_secs)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            (owner_pubkey_hex, nickname, name, display_name, picture, about, updated_at_secs)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
     )?;
     for (owner_pubkey_hex, profile) in profiles {
         stmt.execute(params![
@@ -1105,6 +1106,7 @@ fn write_owner_profiles(
             profile.name,
             profile.display_name,
             profile.picture,
+            profile.about,
             profile.updated_at_secs as i64,
         ])?;
     }

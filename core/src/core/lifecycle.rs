@@ -317,9 +317,11 @@ impl AppCore {
         self.state.toast = None;
         match action {
             AppAction::CreateAccount { name } => self.create_account(&name),
-            AppAction::UpdateProfileMetadata { name, picture_url } => {
-                self.update_profile_metadata(&name, picture_url.as_deref())
-            }
+            AppAction::UpdateProfileMetadata {
+                name,
+                picture_url,
+                about,
+            } => self.update_profile_metadata(&name, picture_url.as_deref(), about.as_deref()),
             AppAction::SetContactNickname {
                 owner_pubkey_hex,
                 nickname,

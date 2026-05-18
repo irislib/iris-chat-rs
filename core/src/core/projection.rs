@@ -316,6 +316,11 @@ impl AppCore {
                 } else {
                     None
                 };
+                let direct_about = if group_snapshot.is_none() {
+                    self.owner_about(&thread.chat_id)
+                } else {
+                    None
+                };
                 let group_creator_hex = group_snapshot
                     .as_ref()
                     .map(|group| group.created_by.to_string());
@@ -337,6 +342,7 @@ impl AppCore {
                         .as_ref()
                         .and_then(|group| self.group_pictures.get(&group.group_id).cloned())
                         .or(direct_picture),
+                    about: direct_about,
                     member_count,
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
@@ -374,6 +380,11 @@ impl AppCore {
                 } else {
                     None
                 };
+                let direct_about = if group_snapshot.is_none() {
+                    self.owner_about(&thread.chat_id)
+                } else {
+                    None
+                };
                 let current_chat_kind = chat_kind_for_id(&thread.chat_id);
                 let current_group_creator_hex = group_snapshot
                     .as_ref()
@@ -402,6 +413,7 @@ impl AppCore {
                         .as_ref()
                         .and_then(|group| self.group_pictures.get(&group.group_id).cloned())
                         .or(direct_picture),
+                    about: direct_about,
                     group_id: group_snapshot.as_ref().map(|group| group.group_id.clone()),
                     member_count: group_snapshot
                         .as_ref()
@@ -521,6 +533,7 @@ impl AppCore {
             .unwrap_or_else(|| owner_public_key_hex.clone());
         let display_name = self.owner_display_label(&owner_public_key_hex);
         let picture_url = self.owner_picture_url(&owner_public_key_hex);
+        let about = self.owner_about(&owner_public_key_hex);
         let device_public_key_hex = logged_in.device_keys.public_key().to_hex();
         let device_npub = logged_in
             .device_keys
@@ -533,6 +546,7 @@ impl AppCore {
             npub: owner_npub,
             display_name,
             picture_url,
+            about,
             device_public_key_hex,
             device_npub,
             has_owner_signing_authority: logged_in.owner_keys.is_some(),
@@ -748,6 +762,7 @@ impl AppCore {
                     profile_name: None,
                     subtitle: None,
                     picture_url: None,
+                    about: None,
                     member_count: group.members.len() as u64,
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),

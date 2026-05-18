@@ -43,6 +43,8 @@ public partial class SettingsView : UserControl
             ProfileAvatar.PictureUrl = account.pictureUrl;
             if (!ProfileNameInput.IsKeyboardFocused)
                 ProfileNameInput.Text = account.displayName;
+            if (!ProfileAboutInput.IsKeyboardFocused)
+                ProfileAboutInput.Text = account.about ?? string.Empty;
             NpubText.Text = "Signed in";
             ProfileQrName.Text = string.IsNullOrEmpty(account.displayName) ? "User ID" : account.displayName;
             ProfileQr.Text = _profileQrVisible ? IrisChatProfileUrl(account.npub) : null;
@@ -299,7 +301,7 @@ public partial class SettingsView : UserControl
     {
         var name = ProfileNameInput.Text?.Trim();
         if (string.IsNullOrEmpty(name)) return;
-        App.CurrentManager.UpdateProfileMetadata(name, App.CurrentManager.Account?.pictureUrl);
+        App.CurrentManager.UpdateProfileMetadata(name, App.CurrentManager.Account?.pictureUrl, ProfileAboutInput.Text);
     }
 
     private void OnPickPicture(object sender, RoutedEventArgs e)
@@ -321,6 +323,12 @@ public partial class SettingsView : UserControl
         App.CurrentManager.ResetNostrRelays();
 
     private void OnCopyUserId(object sender, RoutedEventArgs e)
+    {
+        var npub = App.CurrentManager.Account?.npub;
+        if (!string.IsNullOrEmpty(npub)) App.CurrentManager.CopyToClipboard(npub);
+    }
+
+    private void OnCopyProfileLink(object sender, RoutedEventArgs e)
     {
         var npub = App.CurrentManager.Account?.npub;
         if (!string.IsNullOrEmpty(npub)) App.CurrentManager.CopyToClipboard(IrisChatProfileUrl(npub));

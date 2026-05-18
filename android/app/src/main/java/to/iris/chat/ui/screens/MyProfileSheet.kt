@@ -155,7 +155,7 @@ fun MyProfileSheet(
     npub: String,
     displayName: String,
     pictureUrl: String?,
-    deviceNpub: String,
+    about: String?,
     canManageDevices: Boolean,
     sendTypingIndicators: Boolean,
     sendReadReceipts: Boolean,
@@ -199,6 +199,7 @@ fun MyProfileSheet(
     var showLogoutConfirmation by remember { mutableStateOf(false) }
     var showDeleteAllConfirmation by remember { mutableStateOf(false) }
     var profileName by remember(displayName) { mutableStateOf(displayName) }
+    var profileAbout by remember(about) { mutableStateOf(about.orEmpty()) }
     var showProfilePicture by remember { mutableStateOf(false) }
     var newRelayUrl by remember { mutableStateOf("") }
     var editingRelayUrl by remember { mutableStateOf<String?>(null) }
@@ -319,6 +320,9 @@ fun MyProfileSheet(
                                 displayName = displayName,
                                 profileName = profileName,
                                 onProfileNameChange = { profileName = it },
+                                profileAbout = profileAbout,
+                                onProfileAboutChange = { profileAbout = it },
+                                savedAbout = about.orEmpty(),
                                 canManageDevices = canManageDevices,
                                 imageUrl = proxiedAvatarUrl,
                                 imageData = avatarBytes,
@@ -333,11 +337,11 @@ fun MyProfileSheet(
                                     appManager.updateProfileMetadata(
                                         name = profileName,
                                         pictureUrl = pictureUrl,
+                                        about = profileAbout,
                                     )
                                 },
                                 onShowQr = { showProfileQr = true },
                                 onCopyUserId = { clipboard.setText("User ID", npub) },
-                                onCopyDeviceCode = { clipboard.setText("Link code", deviceNpub) },
                             )
                         }
 
@@ -969,6 +973,9 @@ private fun ProfileSettingsPage(
     displayName: String,
     profileName: String,
     onProfileNameChange: (String) -> Unit,
+    profileAbout: String,
+    onProfileAboutChange: (String) -> Unit,
+    savedAbout: String,
     canManageDevices: Boolean,
     imageUrl: String?,
     imageData: ByteArray?,
@@ -979,12 +986,14 @@ private fun ProfileSettingsPage(
     onSaveProfile: () -> Unit,
     onShowQr: () -> Unit,
     onCopyUserId: () -> Unit,
-    onCopyDeviceCode: () -> Unit,
 ) {
     val canSaveProfile =
         canManageDevices &&
             profileName.trim().isNotEmpty() &&
-            profileName.trim() != displayName.trim()
+            (
+                profileName.trim() != displayName.trim() ||
+                    profileAbout.trim() != savedAbout.trim()
+            )
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -1005,6 +1014,11 @@ private fun ProfileSettingsPage(
             ProfileNameRow(
                 value = profileName,
                 onValueChange = onProfileNameChange,
+                enabled = canManageDevices,
+            )
+            ProfileAboutRow(
+                value = profileAbout,
+                onValueChange = onProfileAboutChange,
                 enabled = canManageDevices,
             )
             if (canSaveProfile) {
@@ -1028,11 +1042,6 @@ private fun ProfileSettingsPage(
                 title = "Copy user ID",
                 icon = IrisIcons.Copy,
                 onClick = onCopyUserId,
-            )
-            ProfileActionRow(
-                title = "Copy this device code",
-                icon = IrisIcons.Copy,
-                onClick = onCopyDeviceCode,
             )
         }
     }
@@ -1177,6 +1186,46 @@ private fun ProfileNameRow(
                     innerTextField()
                 }
             },
+        )
+    }
+}
+
+@Composable
+private fun ProfileAboutRow(
+    value: String,
+    onValueChange: (String) -> Unit,
+    enabled: Boolean,
+) {
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 92.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+        horizontalArrangement = Arrangement.spacedBy(24.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Icon(
+            imageVector = IrisIcons.Edit,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurface,
+            modifier =
+                Modifier
+                    .padding(top = 4.dp)
+                    .size(24.dp),
+        )
+        TextField(
+            value = value,
+            onValueChange = onValueChange,
+            enabled = enabled,
+            minLines = 2,
+            maxLines = 5,
+            modifier =
+                Modifier
+                    .weight(1f)
+                    .testTag("myProfileAboutInput"),
+            label = { Text("About") },
+            colors = irisTextFieldColors(),
         )
     }
 }

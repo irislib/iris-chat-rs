@@ -89,7 +89,7 @@ final class InteropHarnessTests: XCTestCase {
         case "update_profile_metadata_from_args":
             _ = try await ensureLoggedIn(manager: manager, env: env)
             let displayName = try requiredEnv("IRIS_IOS_HARNESS_DISPLAY_NAME", env: env)
-            manager.updateProfileMetadata(name: displayName, pictureURL: env["IRIS_IOS_HARNESS_PICTURE_URL"])
+            manager.updateProfileMetadata(name: displayName, pictureURL: env["IRIS_IOS_HARNESS_PICTURE_URL"], about: nil)
             let updated = try await waitFor(label: "profile metadata applied", timeout: 60) {
                 manager.state.account?.displayName == displayName ? manager.state.account : nil
             }

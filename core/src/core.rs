@@ -251,6 +251,7 @@ fn build_chat_snapshot_with_messages(
             .and_then(|thread| thread.subtitle.clone())
             .or_else(|| group_id.as_ref().map(|_| "Group".to_string())),
         picture_url: thread.and_then(|thread| thread.picture_url.clone()),
+        about: thread.and_then(|thread| thread.about.clone()),
         group_id,
         member_count: thread.map(|thread| thread.member_count).unwrap_or(0),
         message_ttl_seconds: None,

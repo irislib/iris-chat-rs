@@ -460,6 +460,7 @@ class AppManager(
     fun updateProfileMetadata(
         name: String,
         pictureUrl: String?,
+        about: String?,
     ) {
         val trimmed = name.trim()
         if (trimmed.isEmpty()) {
@@ -469,6 +470,7 @@ class AppManager(
             AppAction.UpdateProfileMetadata(
                 name = trimmed,
                 pictureUrl = pictureUrl?.trim()?.ifEmpty { null },
+                about = about?.trim()?.ifEmpty { null },
             ),
         )
     }

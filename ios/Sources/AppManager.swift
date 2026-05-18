@@ -2422,15 +2422,17 @@ final class AppManager: ObservableObject {
         dispatchToRust(.createAccount(name: trimmed))
     }
 
-    func updateProfileMetadata(name: String, pictureURL: String?) {
+    func updateProfileMetadata(name: String, pictureURL: String?, about: String?) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             return
         }
         let trimmedPictureURL = pictureURL?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAbout = about?.trimmingCharacters(in: .whitespacesAndNewlines)
         dispatchToRust(.updateProfileMetadata(
             name: trimmed,
-            pictureUrl: trimmedPictureURL?.isEmpty == false ? trimmedPictureURL : nil
+            pictureUrl: trimmedPictureURL?.isEmpty == false ? trimmedPictureURL : nil,
+            about: trimmedAbout?.isEmpty == false ? trimmedAbout : nil
         ))
     }
 

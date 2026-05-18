@@ -1315,7 +1315,7 @@ class RealRelayHarnessTest {
     fun update_profile_metadata_from_args() {
         ensureLoggedIn()
         val displayName = requiredArg("display_name")
-        appManager().updateProfileMetadata(name = displayName, pictureUrl = null)
+        appManager().updateProfileMetadata(name = displayName, pictureUrl = null, about = null)
         val updated =
             waitForState("profile metadata applied", timeoutMs = 60_000) {
                 appManager()

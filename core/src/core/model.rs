@@ -79,6 +79,8 @@ pub(super) struct OwnerProfileRecord {
     #[serde(default)]
     pub(super) picture: Option<String>,
     #[serde(default)]
+    pub(super) about: Option<String>,
+    #[serde(default)]
     pub(super) updated_at_secs: u64,
 }
 
@@ -90,6 +92,8 @@ pub(super) struct NostrProfileMetadata {
     pub(super) display_name: Option<String>,
     #[serde(default)]
     pub(super) picture: Option<String>,
+    #[serde(default)]
+    pub(super) about: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

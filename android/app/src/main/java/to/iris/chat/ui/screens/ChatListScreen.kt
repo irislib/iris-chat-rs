@@ -3,8 +3,10 @@ package to.iris.chat.ui.screens
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
@@ -91,13 +93,15 @@ import to.iris.chat.ui.components.irisTextFieldColors
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ChatListScreen(
     appManager: AppManager,
     appState: AppState,
     nearbyService: IrisNearbyService? = null,
     onNearbyClick: () -> Unit = {},
+    onNearbyLongClick: () -> Unit = {},
+    onNearbyPeerLongClick: (String) -> Unit = {},
 ) {
     var pendingDeleteChat by remember { mutableStateOf<ChatThreadSnapshot?>(null) }
     val account = appState.account
@@ -330,7 +334,7 @@ fun ChatListScreen(
                     }
                 }
             } else {
-                val nearby = nearbyService?.takeIf { appState.preferences.nearbyEnabled }
+                val nearby = nearbyService
                 val showNearby = nearby != null
                 val pinnedChats = appState.chatList.filter { it.isPinned }
                 val unpinnedChats = appState.chatList.filter { !it.isPinned }
@@ -346,8 +350,11 @@ fun ChatListScreen(
                     item(key = "nearby") {
                         NearbyChatListItem(
                             appManager = appManager,
+                            nearbyEnabled = appState.preferences.nearbyEnabled,
                             service = nearby,
                             onClick = onNearbyClick,
+                            onLongClick = onNearbyLongClick,
+                            onPeerLongClick = onNearbyPeerLongClick,
                         )
                     }
                 }
@@ -640,32 +647,46 @@ private fun ChatSwipeActionButton(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun NearbyChatListItem(
     appManager: AppManager,
+    nearbyEnabled: Boolean,
     service: IrisNearbyService,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
+    onPeerLongClick: (String) -> Unit,
 ) {
     val snapshot by rememberNearbySnapshotState(service)
-    val nearbyEnabled = snapshot.visible || snapshot.localNetworkVisible
+    val nearbyActive = nearbyEnabled && (snapshot.visible || snapshot.localNetworkVisible)
+    val visiblePeers = if (nearbyEnabled) snapshot.peers else emptyList()
+    val haptics = rememberIrisHapticFeedback()
     val interactionSource = remember { MutableInteractionSource() }
     Row(
         modifier =
             Modifier
                 .fillMaxWidth()
                 .height(NearbyChatRowHeight)
-                .clickable(
+                .combinedClickable(
                     interactionSource = interactionSource,
                     indication = null,
-                    onClick = onClick,
+                    hapticFeedbackEnabled = false,
+                    onClick = {
+                        haptics.press()
+                        onClick()
+                    },
+                    onLongClick = {
+                        haptics.longPress()
+                        onLongClick()
+                    },
                 )
                 .padding(horizontal = 16.dp, vertical = 10.dp)
                 .testTag("nearbyChatRow"),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
         verticalAlignment = Alignment.Top,
     ) {
-        NearbyChatIcon(enabled = nearbyEnabled)
+        NearbyChatIcon(enabled = nearbyActive)
 
-        if (snapshot.peers.isEmpty()) {
+        if (visiblePeers.isEmpty()) {
             Box(
                 modifier =
                     Modifier
@@ -674,7 +695,11 @@ private fun NearbyChatListItem(
                 contentAlignment = Alignment.CenterStart,
             ) {
                 Text(
-                    text = if (nearbyEnabled) "No users nearby" else "Tap to enable",
+                    text =
+                        when {
+                            nearbyActive -> "No users nearby"
+                            else -> "Tap to enable"
+                        },
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
                     maxLines = 1,
@@ -690,11 +715,15 @@ private fun NearbyChatListItem(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.Top,
             ) {
-                snapshot.peers.forEach { peer ->
+                visiblePeers.forEach { peer ->
                     NearbyPeerAvatar(
                         peer = peer,
                         onClick = {
                             peer.ownerPubkeyHex?.let(appManager::openChat)
+                        },
+                        onLongClick = { ownerPubkeyHex ->
+                            haptics.longPress()
+                            onPeerLongClick(ownerPubkeyHex)
                         },
                     )
                 }
@@ -771,22 +800,29 @@ private fun ChatListConversationRow(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun NearbyPeerAvatar(
     peer: IrisNearbyService.Peer,
     onClick: () -> Unit,
+    onLongClick: (String) -> Unit,
 ) {
     val name = nearbyPeerDisplayName(peer.name)
     val interactionSource = remember(peer.id) { MutableInteractionSource() }
+    val ownerPubkeyHex = peer.ownerPubkeyHex?.takeIf { it.isNotBlank() }
     Column(
         modifier =
             Modifier
                 .width(64.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .clickable(
-                    enabled = !peer.ownerPubkeyHex.isNullOrBlank(),
+                .combinedClickable(
+                    enabled = ownerPubkeyHex != null,
                     interactionSource = interactionSource,
                     indication = null,
+                    hapticFeedbackEnabled = false,
                     onClick = onClick,
+                    onLongClick = ownerPubkeyHex?.let { owner ->
+                        { onLongClick(owner) }
+                    },
                 ),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),

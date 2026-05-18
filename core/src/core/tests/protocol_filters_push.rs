@@ -1267,22 +1267,43 @@ fn local_identity_artifacts_offer_profile_metadata_to_nearby() {
             name: None,
             display_name: None,
             picture: Some("htree://profile-picture".to_string()),
+            about: Some("Building with friends.\nhttps://iris.to".to_string()),
             updated_at_secs: 1,
         },
     );
 
     core.publish_local_identity_artifacts();
 
-    let nearby_kinds = update_rx
+    let nearby_events = update_rx
         .try_iter()
         .filter_map(|update| match update {
-            AppUpdate::NearbyPublishedEvent { kind, .. } => Some(kind),
+            AppUpdate::NearbyPublishedEvent {
+                kind, event_json, ..
+            } => Some((kind, event_json)),
             _ => None,
         })
+        .collect::<Vec<_>>();
+    let nearby_kinds = nearby_events
+        .iter()
+        .map(|(kind, _)| *kind)
         .collect::<Vec<_>>();
     assert!(
         nearby_kinds.contains(&0),
         "profile metadata should be included in nearby inventory; got {nearby_kinds:?}"
+    );
+    let profile_event = nearby_events
+        .iter()
+        .find_map(|(kind, event_json)| (*kind == 0).then_some(event_json))
+        .expect("profile event");
+    let event_value = serde_json::from_str::<serde_json::Value>(profile_event).expect("event json");
+    let content = event_value
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .expect("profile content");
+    let metadata = serde_json::from_str::<serde_json::Value>(content).expect("metadata json");
+    assert_eq!(
+        metadata.get("about").and_then(serde_json::Value::as_str),
+        Some("Building with friends.\nhttps://iris.to")
     );
 }
 
@@ -1357,6 +1378,7 @@ fn delete_profile_metadata_publishes_blank_profile_and_clears_local_record() {
             name: Some("Alice".to_string()),
             display_name: Some("Alice".to_string()),
             picture: Some("https://example.com/alice.jpg".to_string()),
+            about: None,
             updated_at_secs: 1,
         },
     );
@@ -1822,6 +1844,7 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
             name: Some("alice".to_string()),
             display_name: Some("Alice from work".to_string()),
             picture: None,
+            about: None,
             updated_at_secs: 1,
         },
     );
@@ -2315,6 +2338,27 @@ fn nearby_bluetooth_defaults_to_disabled() {
 fn nearby_lan_defaults_to_disabled() {
     assert!(!PersistedPreferences::default().nearby_lan_enabled);
     assert!(!AppState::empty().preferences.nearby_lan_enabled);
+}
+
+#[test]
+fn nearby_master_toggle_preserves_transport_preferences() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("nearby-master-preserves-transports", &owner, &device);
+
+    core.handle_action(AppAction::SetNearbyBluetoothEnabled { enabled: true });
+    core.handle_action(AppAction::SetNearbyLanEnabled { enabled: true });
+    core.handle_action(AppAction::SetNearbyEnabled { enabled: false });
+
+    assert!(!core.state.preferences.nearby_enabled);
+    assert!(core.state.preferences.nearby_bluetooth_enabled);
+    assert!(core.state.preferences.nearby_lan_enabled);
+
+    core.handle_action(AppAction::SetNearbyEnabled { enabled: true });
+
+    assert!(core.state.preferences.nearby_enabled);
+    assert!(core.state.preferences.nearby_bluetooth_enabled);
+    assert!(core.state.preferences.nearby_lan_enabled);
 }
 
 #[test]

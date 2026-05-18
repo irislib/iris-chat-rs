@@ -9,9 +9,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -760,6 +762,7 @@ fun IrisTextButton(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 fun IrisChatListRow(
     title: String,
     modifier: Modifier = Modifier,
@@ -775,6 +778,7 @@ fun IrisChatListRow(
     lastMessageMine: Boolean,
     lastDelivery: DeliveryState?,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val palette = IrisTheme.palette
     val haptics = rememberIrisHapticFeedback()
@@ -788,12 +792,19 @@ fun IrisChatListRow(
             modifier
                 .fillMaxWidth()
                 .heightIn(min = 84.dp)
-                .clickable(
+                .combinedClickable(
                     interactionSource = interactionSource,
                     indication = null,
+                    hapticFeedbackEnabled = false,
                     onClick = {
                         haptics.press()
                         onClick()
+                    },
+                    onLongClick = onLongClick?.let { action ->
+                        {
+                            haptics.longPress()
+                            action()
+                        }
                     },
                 )
                 .padding(horizontal = 16.dp, vertical = 10.dp),

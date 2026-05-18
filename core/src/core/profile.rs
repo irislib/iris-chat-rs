@@ -11,10 +11,24 @@ impl AppCore {
                     .and_then(|profile| profile.picture.as_deref())
             })
             .map(str::to_string);
-        self.set_local_profile_metadata(name, picture_url.as_deref());
+        let about = self
+            .logged_in
+            .as_ref()
+            .and_then(|logged_in| {
+                self.owner_profiles
+                    .get(&logged_in.owner_pubkey.to_string())
+                    .and_then(|profile| profile.about.as_deref())
+            })
+            .map(str::to_string);
+        self.set_local_profile_metadata(name, picture_url.as_deref(), about.as_deref());
     }
 
-    pub(super) fn set_local_profile_metadata(&mut self, name: &str, picture_url: Option<&str>) {
+    pub(super) fn set_local_profile_metadata(
+        &mut self,
+        name: &str,
+        picture_url: Option<&str>,
+        about: Option<&str>,
+    ) {
         let Some(local_owner_hex) = self
             .logged_in
             .as_ref()
@@ -23,7 +37,7 @@ impl AppCore {
             return;
         };
 
-        let Some(record) = build_owner_profile_record(name, picture_url) else {
+        let Some(record) = build_owner_profile_record(name, picture_url, about) else {
             return;
         };
 
@@ -116,7 +130,12 @@ impl AppCore {
         self.emit_state();
     }
 
-    pub(super) fn update_profile_metadata(&mut self, name: &str, picture_url: Option<&str>) {
+    pub(super) fn update_profile_metadata(
+        &mut self,
+        name: &str,
+        picture_url: Option<&str>,
+        about: Option<&str>,
+    ) {
         let trimmed = name.trim();
         if trimmed.is_empty() {
             self.state.toast = Some("Display name is required.".to_string());
@@ -144,7 +163,7 @@ impl AppCore {
             value => value,
         };
 
-        self.set_local_profile_metadata(trimmed, normalized_picture_url.as_deref());
+        self.set_local_profile_metadata(trimmed, normalized_picture_url.as_deref(), about);
         self.republish_local_identity_artifacts();
         self.rebuild_state();
         self.emit_state();
@@ -235,7 +254,12 @@ impl AppCore {
                     .as_ref()
                     .map(|account| account.display_name.clone())
                     .unwrap_or_else(|| "Iris".to_string());
-                self.update_profile_metadata(&name, Some(&picture_url));
+                let about = self
+                    .state
+                    .account
+                    .as_ref()
+                    .and_then(|account| account.about.clone());
+                self.update_profile_metadata(&name, Some(&picture_url), about.as_deref());
             }
             Err(error) => {
                 self.push_debug_log("profile.picture.upload.error", error.clone());
@@ -294,6 +318,12 @@ impl AppCore {
         self.owner_profiles
             .get(owner_hex)
             .and_then(|profile| profile.picture.clone())
+    }
+
+    pub(super) fn owner_about(&self, owner_hex: &str) -> Option<String> {
+        self.owner_profiles
+            .get(owner_hex)
+            .and_then(|profile| profile.about.clone())
     }
 
     pub(super) fn owner_secondary_identifier(&self, owner_hex: &str) -> Option<String> {

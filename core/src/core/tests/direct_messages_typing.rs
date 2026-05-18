@@ -968,6 +968,7 @@ fn contact_nickname_overrides_direct_chat_title_and_persists() {
             name: Some("alice".to_string()),
             display_name: Some("Alice Actual".to_string()),
             picture: None,
+            about: None,
             updated_at_secs: 1,
         },
     );

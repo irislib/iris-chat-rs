@@ -2325,6 +2325,10 @@ private struct DirectChatInfoScreen: View {
                     .frame(maxWidth: .infinity)
                     .padding(.top, 22)
 
+                    if let about = trimmedText(chat.about) {
+                        profileAboutRow(about)
+                    }
+
                     nicknameCard(chat)
 
                     if !commonGroups.isEmpty {
@@ -2623,6 +2627,26 @@ private struct DirectChatInfoScreen: View {
         commonGroups = manager.mutualGroups(ownerInput: chatId)
     }
 
+    private func profileAboutRow(_ about: String) -> some View {
+        IrisSectionCard {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: "square.and.pencil")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .frame(width: 24, height: 24)
+                    .padding(.top, 1)
+
+                highlightedProfileAboutText(about, linkColor: palette.accent)
+                    .font(.system(.body, design: .rounded))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineLimit(3)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .accessibilityIdentifier("directChatAboutCard")
+    }
+
     @ViewBuilder
     private func nicknameCard(_ chat: CurrentChatSnapshot) -> some View {
         let storedNickname = trimmedText(chat.nickname) ?? ""
@@ -2814,6 +2838,32 @@ private func trimmedText(_ value: String?) -> String? {
     guard let value else { return nil }
     let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
     return trimmed.isEmpty ? nil : trimmed
+}
+
+private func highlightedProfileAboutText(_ text: String, linkColor: Color) -> Text {
+    guard let regex = try? NSRegularExpression(pattern: #"\b(?:https?://|www\.)\S+"#) else {
+        return Text(text)
+    }
+    let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
+    let matches = regex.matches(in: text, range: nsRange)
+    guard !matches.isEmpty else {
+        return Text(text)
+    }
+
+    var result = Text("")
+    var cursor = text.startIndex
+    for match in matches {
+        guard let range = Range(match.range, in: text) else { continue }
+        if cursor < range.lowerBound {
+            result = result + Text(String(text[cursor..<range.lowerBound]))
+        }
+        result = result + Text(String(text[range])).foregroundColor(linkColor).underline()
+        cursor = range.upperBound
+    }
+    if cursor < text.endIndex {
+        result = result + Text(String(text[cursor..<text.endIndex]))
+    }
+    return result
 }
 
 private func primaryDisplayName(displayName: String, fallback: String) -> String {
@@ -5181,7 +5231,7 @@ struct NewChatScreen: View {
 
     private var newChatCard: some View {
         IrisSectionCard {
-            Text("New Chat")
+            Text("Create chat")
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(palette.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .center)
@@ -5193,14 +5243,7 @@ struct NewChatScreen: View {
                     .frame(maxWidth: .infinity, alignment: .center)
 
                 HStack(spacing: 10) {
-                    Button {
-                        manager.copyToClipboard(invite.url)
-                    } label: {
-                        NewChatInviteActionLabel(systemImage: "doc.on.doc", title: "Copy")
-                    }
-                    .frame(maxWidth: .infinity)
-                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-                    .accessibilityIdentifier("newChatInviteCopyButton")
+                    NewChatInviteCopyButton(value: invite.url, manager: manager)
 
                     ShareLink(item: invite.url) {
                         NewChatInviteActionLabel(systemImage: "square.and.arrow.up", title: "Share")
@@ -5231,7 +5274,7 @@ struct NewChatScreen: View {
                 .foregroundStyle(palette.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
-            TextField("Paste invite or user id", text: $peerInput)
+            TextField("Paste invite or user ID", text: $peerInput)
                 .irisIdentifierInputModifiers()
                 .textFieldStyle(.plain)
                 .irisInputField()
@@ -5285,8 +5328,8 @@ struct NewChatScreen: View {
         guard let invite = manager.state.publicInvite else { return nil }
         return QrModalCodeContent(
             value: invite.url,
-            label: "Invite code",
-            helperText: "Scan to start a chat with me.",
+            label: "chat with me on iris",
+            helperText: "",
             codeAccessibilityIdentifier: "newChatInviteQrCode"
         )
     }
@@ -5320,6 +5363,50 @@ private struct NewChatInviteActionLabel: View {
                 .allowsTightening(true)
         }
         .frame(maxWidth: .infinity, minHeight: 38)
+    }
+}
+
+private struct NewChatInviteCopyButton: View {
+    let value: String
+    @ObservedObject var manager: AppManager
+    @State private var copied = false
+    @State private var resetTask: Task<Void, Never>?
+
+    var body: some View {
+        Button(action: copy) {
+            ZStack {
+                NewChatInviteActionLabel(systemImage: "doc.on.doc", title: "Copy")
+                    .opacity(copied ? 0 : 1)
+                NewChatInviteActionLabel(systemImage: "checkmark", title: "Copied")
+                    .opacity(copied ? 1 : 0)
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+        .accessibilityLabel(copied ? "Copied" : "Copy")
+        .accessibilityIdentifier("newChatInviteCopyButton")
+        .onDisappear {
+            resetTask?.cancel()
+            resetTask = nil
+        }
+    }
+
+    private func copy() {
+        manager.copyToClipboard(value)
+        resetTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.15)) {
+            copied = true
+        }
+        resetTask = Task {
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    copied = false
+                }
+            }
+        }
     }
 }
 
@@ -6364,13 +6451,6 @@ private struct DeviceRosterContent: View {
                     style: .menuRow
                 )
                 .accessibilityIdentifier("deviceRosterOwnerNpub")
-
-                IrisCopyButton(
-                    label: "Copy this device code",
-                    value: roster.currentDeviceNpub,
-                    style: .menuRow
-                )
-                .accessibilityIdentifier("deviceRosterCurrentDeviceNpub")
             }
 
             IrisSectionCard {
@@ -6618,6 +6698,7 @@ struct SettingsScreen: View {
     @State private var showingDeleteLocalDataConfirmation = false
     @State private var showingProfileQr = false
     @State private var profileName = ""
+    @State private var profileAbout = ""
     @State private var profilePictureViewerItem: IrisProfilePictureViewerItem?
     @State private var newRelayURL = ""
     @State private var editingRelayURL: String?
@@ -6885,6 +6966,7 @@ struct SettingsScreen: View {
                     manager: manager,
                     account: account,
                     profileName: $profileName,
+                    profileAbout: $profileAbout,
                     openProfilePicture: { profilePictureViewerItem = $0 },
                     showQrCode: { showingProfileQr = true }
                 )
@@ -7296,8 +7378,8 @@ private struct QrModalCodeContent {
     static func profile(account: AccountSnapshot) -> QrModalCodeContent {
         QrModalCodeContent(
             value: irisChatProfileURL(npub: account.npub).absoluteString,
-            label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
-            helperText: "Scan to start a chat with me.",
+            label: "",
+            helperText: "",
             codeAccessibilityIdentifier: "myProfileQrCode"
         )
     }
@@ -7307,6 +7389,7 @@ private struct ProfileQrModal: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
+    let account: AccountSnapshot
     let codeContent: QrModalCodeContent
     let closeSettings: (() -> Void)?
     @State private var selectedTab: ProfileQrTab
@@ -7319,6 +7402,7 @@ private struct ProfileQrModal: View {
         closeSettings: (() -> Void)? = nil
     ) {
         self.manager = manager
+        self.account = account
         self.codeContent = codeContent ?? .profile(account: account)
         self.closeSettings = closeSettings
         _selectedTab = State(initialValue: initialTab)
@@ -7332,7 +7416,7 @@ private struct ProfileQrModal: View {
                 header
 
                 if selectedTab == .code {
-                    ProfileQrCodePane(manager: manager, codeContent: codeContent)
+                    ProfileQrCodePane(manager: manager, account: account, codeContent: codeContent)
                 } else {
                     ProfileQrScanPane { code in
                         handleScannedCode(code)
@@ -7407,9 +7491,14 @@ private struct ProfileQrModal: View {
 private struct ProfileQrCodePane: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
+    let account: AccountSnapshot
     let codeContent: QrModalCodeContent
     @State private var copiedUserID = false
     @State private var copyResetTask: Task<Void, Never>?
+
+    private var username: String {
+        account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName
+    }
 
     var body: some View {
         ScrollView {
@@ -7432,11 +7521,6 @@ private struct ProfileQrCodePane: View {
                     .buttonStyle(.irisPlain)
                     .accessibilityIdentifier("profileQrShareButton")
                 }
-
-                Text(codeContent.helperText)
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(palette.muted)
-                    .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 24)
@@ -7452,24 +7536,46 @@ private struct ProfileQrCodePane: View {
     }
 
     private var qrCard: some View {
-        VStack(spacing: 16) {
-            QrCodeImage(text: codeContent.value, size: 214)
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 18, style: .continuous)
-                        .fill(Color.white)
+        VStack(spacing: 18) {
+            VStack(spacing: 8) {
+                IrisAvatar(
+                    label: username,
+                    size: 72,
+                    emphasize: true,
+                    pictureUrl: account.pictureUrl,
+                    preferences: manager.state.preferences,
+                    manager: manager,
+                    loadedImageIdentifier: "profileQrAvatarImage"
                 )
-                .accessibilityIdentifier(codeContent.codeAccessibilityIdentifier)
-
-            VStack(spacing: 4) {
-                Text(codeContent.label)
+                Text(username)
                     .font(.system(.title3, design: .rounded, weight: .bold))
                     .foregroundStyle(Color(red: 0.04, green: 0.11, blue: 0.22))
                     .lineLimit(1)
+                    .multilineTextAlignment(.center)
+            }
+
+            GeometryReader { proxy in
+                let side = max(proxy.size.width, 0)
+                QrCodeImage(text: codeContent.value, size: side)
+                    .accessibilityIdentifier(codeContent.codeAccessibilityIdentifier)
+            }
+            .aspectRatio(1, contentMode: .fit)
+            .padding(10)
+            .background(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(Color.white)
+            )
+
+            if !codeContent.label.isEmpty {
+                Text(codeContent.label)
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(Color(red: 0.04, green: 0.11, blue: 0.22))
+                    .lineLimit(1)
+                    .multilineTextAlignment(.center)
             }
         }
-        .padding(.horizontal, 32)
-        .padding(.vertical, 34)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 22)
         .frame(maxWidth: .infinity)
         .background(
             RoundedRectangle(cornerRadius: 26, style: .continuous)
@@ -8215,6 +8321,7 @@ private struct ProfileEditorCard: View {
     @ObservedObject var manager: AppManager
     let account: AccountSnapshot
     @Binding var profileName: String
+    @Binding var profileAbout: String
     let openProfilePicture: (IrisProfilePictureViewerItem) -> Void
     let showQrCode: () -> Void
     @State private var showingProfilePicturePicker = false
@@ -8240,15 +8347,25 @@ private struct ProfileEditorCard: View {
             .frame(maxWidth: .infinity)
             .onAppear {
                 profileName = account.displayName
+                profileAbout = account.about ?? ""
             }
             .irisOnChange(of: account.displayName) { value in
                 profileName = value
+            }
+            .irisOnChange(of: account.about) { value in
+                profileAbout = value ?? ""
             }
 
             TextField("Display name", text: $profileName)
                 .textFieldStyle(.roundedBorder)
                 .disabled(!account.hasOwnerSigningAuthority)
                 .accessibilityIdentifier("myProfileDisplayNameInput")
+
+            TextField("About", text: $profileAbout, axis: .vertical)
+                .lineLimit(2...5)
+                .textFieldStyle(.roundedBorder)
+                .disabled(!account.hasOwnerSigningAuthority)
+                .accessibilityIdentifier("myProfileAboutInput")
 
             Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Upload profile photo") {
                 presentProfilePictureSource()
@@ -8258,7 +8375,7 @@ private struct ProfileEditorCard: View {
             .accessibilityIdentifier("myProfileUploadPictureButton")
 
             Button("Save profile") {
-                manager.updateProfileMetadata(name: profileName, pictureURL: account.pictureUrl)
+                manager.updateProfileMetadata(name: profileName, pictureURL: account.pictureUrl, about: profileAbout)
             }
             .buttonStyle(IrisSecondaryButtonStyle())
             .disabled(!account.hasOwnerSigningAuthority || normalizedProfileName.isEmpty || !profileMetadataChanged)
@@ -8276,11 +8393,6 @@ private struct ProfileEditorCard: View {
                 IrisCopyButton(
                     label: "Copy user ID",
                     value: account.npub,
-                    style: .menuRow
-                )
-                IrisCopyButton(
-                    label: "Copy this device code",
-                    value: account.deviceNpub,
                     style: .menuRow
                 )
             }
@@ -8396,10 +8508,15 @@ private struct ProfileEditorCard: View {
 
     private var profileMetadataChanged: Bool {
         normalizedProfileName != account.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            || normalizedProfileAbout != (account.about ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private var normalizedProfileName: String {
         profileName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var normalizedProfileAbout: String {
+        profileAbout.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

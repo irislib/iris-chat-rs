@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using IrisChat.Bindings;
@@ -254,6 +256,10 @@ public partial class ChatView : UserControl
         };
         var stack = new StackPanel { Orientation = Orientation.Vertical };
         stack.Children.Add(BuildDirectInfoHeader(chat));
+        if (!string.IsNullOrWhiteSpace(chat.about))
+        {
+            stack.Children.Add(BuildAboutSection(chat.about!));
+        }
 
         var commonGroups = App.CurrentManager.MutualGroups(chat.chatId);
         if (commonGroups.Length > 0)
@@ -324,6 +330,65 @@ public partial class ChatView : UserControl
         Grid.SetColumn(text, 1);
         row.Children.Add(text);
         return row;
+    }
+
+    private static FrameworkElement BuildAboutSection(string about)
+    {
+        var border = new Border
+        {
+            Background = ResourceBrush("Panel"),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14, 12, 14, 12),
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        row.Children.Add(new TextBlock
+        {
+            Text = "✎",
+            FontSize = 18,
+            Foreground = ResourceBrush("TextPrimary"),
+            Margin = new Thickness(0, 0, 12, 0),
+            VerticalAlignment = VerticalAlignment.Top,
+        });
+
+        var text = new TextBlock
+        {
+            TextWrapping = TextWrapping.Wrap,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            MaxHeight = 66,
+            Foreground = ResourceBrush("TextPrimary"),
+        };
+        AddLinkHighlightedRuns(text, about.Trim());
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+
+        border.Child = row;
+        return border;
+    }
+
+    private static void AddLinkHighlightedRuns(TextBlock block, string text)
+    {
+        var cursor = 0;
+        foreach (Match match in Regex.Matches(text, @"\b(?:https?://|www\.)\S+"))
+        {
+            if (match.Index > cursor)
+            {
+                block.Inlines.Add(new Run(text[cursor..match.Index]));
+            }
+            block.Inlines.Add(new Run(match.Value)
+            {
+                Foreground = ResourceBrush("Accent"),
+                TextDecorations = TextDecorations.Underline,
+            });
+            cursor = match.Index + match.Length;
+        }
+        if (cursor < text.Length)
+        {
+            block.Inlines.Add(new Run(text[cursor..]));
+        }
     }
 
     private static FrameworkElement BuildNicknameSection(CurrentChatSnapshot chat)

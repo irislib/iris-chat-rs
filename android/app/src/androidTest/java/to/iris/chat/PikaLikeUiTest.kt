@@ -70,6 +70,7 @@ class PikaLikeUiTest {
         composeRule.openSettingsPage("settingsProfileRow")
         composeRule.onNodeWithTag("myProfileShowQrButton", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithTag("myProfileDisplayNameInput", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("myProfileAboutInput", useUnmergedTree = true).assertIsDisplayed()
     }
 
     @Test
@@ -80,8 +81,6 @@ class PikaLikeUiTest {
         composeRule.openSettingsPage("settingsDevicesRow")
 
         composeRule.waitForTag("deviceRosterOwnerNpub")
-        composeRule.onNodeWithTag("deviceRosterCurrentDeviceNpub", useUnmergedTree = true)
-            .assertIsDisplayed()
         composeRule.onNodeWithTag("deviceRosterAddInput", useUnmergedTree = true).assertIsDisplayed()
     }
 
@@ -122,12 +121,23 @@ class PikaLikeUiTest {
 
         composeRule.waitForDisplayedTag("nearbyIrisSheet")
         composeRule.waitForDisplayedTag("nearbyCloseButton")
+        composeRule.waitForDisplayedTag("nearbyEnabledSwitch")
         composeRule.waitForDisplayedTag("nearbyVisibilitySwitch")
         composeRule.waitForDisplayedTag("nearbyLanSwitch")
+        composeRule.onNodeWithTag("nearbyEnabledSwitch", useUnmergedTree = true)
+            .assertIsOn()
         composeRule.onNodeWithTag("nearbyVisibilitySwitch", useUnmergedTree = true)
-            .assertIsOn()
+            .assertIsOff()
+            .assertIsEnabled()
         composeRule.onNodeWithTag("nearbyLanSwitch", useUnmergedTree = true)
-            .assertIsOn()
+            .assertIsOff()
+            .assertIsEnabled()
+
+        composeRule.onNodeWithTag("nearbyEnabledSwitch", useUnmergedTree = true).performClick()
+        composeRule.onNodeWithTag("nearbyVisibilitySwitch", useUnmergedTree = true)
+            .assertIsNotEnabled()
+        composeRule.onNodeWithTag("nearbyLanSwitch", useUnmergedTree = true)
+            .assertIsNotEnabled()
 
         composeRule.onNodeWithTag("nearbyCloseButton", useUnmergedTree = true).performClick()
         composeRule.waitUntil(10_000) {

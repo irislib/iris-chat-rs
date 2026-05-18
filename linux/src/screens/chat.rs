@@ -21,6 +21,7 @@ pub struct ChatInfoSnapshot {
     pub profile_name: Option<String>,
     pub subtitle: Option<String>,
     pub picture_url: Option<String>,
+    pub about: Option<String>,
     pub is_muted: bool,
     pub preferences: PreferencesSnapshot,
 }
@@ -108,6 +109,15 @@ pub fn present_chat_info(
     header_row.append(&text_column);
     content.append(&header_row);
 
+    if let Some(about) = info
+        .about
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        content.append(&profile_about_card(about));
+    }
+
     let common_groups = manager.mutual_groups(&info.chat_id);
     if !common_groups.is_empty() {
         content.append(&common_groups_card(common_groups, &dialog, manager.clone()));
@@ -148,6 +158,59 @@ pub fn present_chat_info(
 
     dialog.set_child(Some(&content));
     dialog.present(parent);
+}
+
+fn profile_about_card(about: &str) -> gtk::Widget {
+    let group = adw::PreferencesGroup::new();
+    let row = adw::PreferencesRow::new();
+    let body = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    body.set_margin_top(12);
+    body.set_margin_bottom(12);
+    body.set_margin_start(12);
+    body.set_margin_end(12);
+    let icon = gtk::Image::from_icon_name("document-edit-symbolic");
+    icon.set_valign(gtk::Align::Start);
+    body.append(&icon);
+
+    let label = gtk::Label::new(None);
+    label.set_markup(&linkified_about_markup(about));
+    label.set_wrap(true);
+    label.set_lines(3);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_xalign(0.0);
+    label.set_hexpand(true);
+    label.set_selectable(true);
+    body.append(&label);
+    row.set_child(Some(&body));
+    group.add(&row);
+    group.upcast()
+}
+
+fn linkified_about_markup(text: &str) -> String {
+    let mut markup = String::new();
+    for part in text.split_inclusive(char::is_whitespace) {
+        let token = part.trim_end();
+        let whitespace = &part[token.len()..];
+        if token.starts_with("https://")
+            || token.starts_with("http://")
+            || token.starts_with("www.")
+        {
+            let href = if token.starts_with("www.") {
+                format!("https://{token}")
+            } else {
+                token.to_string()
+            };
+            markup.push_str(&format!(
+                "<a href=\"{}\">{}</a>",
+                glib::markup_escape_text(&href),
+                glib::markup_escape_text(token)
+            ));
+        } else {
+            markup.push_str(&glib::markup_escape_text(token));
+        }
+        markup.push_str(&glib::markup_escape_text(whitespace));
+    }
+    markup
 }
 
 fn nickname_card(info: &ChatInfoSnapshot, manager: Rc<AppManager>) -> gtk::Widget {

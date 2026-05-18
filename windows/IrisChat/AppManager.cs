@@ -257,12 +257,16 @@ public sealed class AppManager : INotifyPropertyChanged
         DispatchToRust(new AppAction.RestoreSession(t));
     }
 
-    public void UpdateProfileMetadata(string name, string? pictureUrl)
+    public void UpdateProfileMetadata(string name, string? pictureUrl, string? about)
     {
         var t = name.Trim();
         if (string.IsNullOrEmpty(t)) return;
         var p = pictureUrl?.Trim();
-        DispatchToRust(new AppAction.UpdateProfileMetadata(t, string.IsNullOrEmpty(p) ? null : p));
+        var a = about?.Trim();
+        DispatchToRust(new AppAction.UpdateProfileMetadata(
+            t,
+            string.IsNullOrEmpty(p) ? null : p,
+            string.IsNullOrEmpty(a) ? null : a));
     }
 
     public void UploadProfilePicture(string sourceFilePath)

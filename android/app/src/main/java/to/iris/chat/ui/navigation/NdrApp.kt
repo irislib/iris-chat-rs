@@ -122,7 +122,6 @@ fun NdrApp(
         }
         container.appManager.dispatch(AppAction.SetNearbyEnabled(enabled))
     },
-    onNearbyOpen: () -> Unit = {},
 ) {
     val appManager = container.appManager
     val splashViewModel = remember { SplashViewModel(appManager) }
@@ -135,6 +134,7 @@ fun NdrApp(
     val pendingShare by appManager.pendingShare.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showingNearbyIris by remember { mutableStateOf(false) }
+    var pendingDirectChatInfoOwner by remember { mutableStateOf<String?>(null) }
     var offlineNowSecs by remember { mutableStateOf(System.currentTimeMillis() / 1_000L) }
     val shareNearbySnapshot by rememberNearbySnapshotState(container.nearbyIrisService)
     val nearbySnapshotProvider =
@@ -142,12 +142,17 @@ fun NdrApp(
             { container.nearbyIrisService.snapshot }
         }
     val openNearbyIris = {
-        onNearbyOpen()
         showingNearbyIris = true
     }
+    val openNearbyProfile = { ownerPubkeyHex: String ->
+        pendingDirectChatInfoOwner = ownerPubkeyHex
+        showingNearbyIris = false
+        appManager.openChat(ownerPubkeyHex)
+    }
 
-    LaunchedEffect(preferences.nearbyBluetoothEnabled) {
+    LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyBluetoothEnabled) {
         if (
+            preferences.nearbyEnabled &&
             preferences.nearbyBluetoothEnabled &&
                 container.nearbyIrisService.hasBluetoothPermission()
         ) {
@@ -157,8 +162,10 @@ fun NdrApp(
         }
     }
 
-    LaunchedEffect(preferences.nearbyLanEnabled) {
-        container.nearbyIrisService.setLocalNetworkVisible(preferences.nearbyLanEnabled)
+    LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyLanEnabled) {
+        container.nearbyIrisService.setLocalNetworkVisible(
+            preferences.nearbyEnabled && preferences.nearbyLanEnabled,
+        )
     }
 
     LaunchedEffect(toast) {
@@ -285,6 +292,10 @@ fun NdrApp(
                                     appState = appState,
                                     nearbyService = container.nearbyIrisService,
                                     onNearbyClick = openNearbyIris,
+                                    onNearbyLongClick = {
+                                        onNearbyEnabledChange(!appState.preferences.nearbyEnabled)
+                                    },
+                                    onNearbyPeerLongClick = openNearbyProfile,
                                 )
                             }
 
@@ -317,6 +328,10 @@ fun NdrApp(
                                         appState = appState,
                                         nearbyService = container.nearbyIrisService,
                                         onNearbyClick = openNearbyIris,
+                                        onNearbyLongClick = {
+                                            onNearbyEnabledChange(!appState.preferences.nearbyEnabled)
+                                        },
+                                        onNearbyPeerLongClick = openNearbyProfile,
                                     )
                                 } else {
                                     MyProfileSheet(
@@ -325,7 +340,7 @@ fun NdrApp(
                                         npub = account.npub,
                                         displayName = account.displayName,
                                         pictureUrl = account.pictureUrl,
-                                        deviceNpub = account.deviceNpub,
+                                        about = account.about,
                                         canManageDevices = account.hasOwnerSigningAuthority,
                                         sendTypingIndicators = appState.preferences.sendTypingIndicators,
                                         sendReadReceipts = appState.preferences.sendReadReceipts,
@@ -369,6 +384,9 @@ fun NdrApp(
                                 ChatScreen(
                                     appManager = appManager,
                                     chatId = screen.chatId,
+                                    nearbyService = container.nearbyIrisService,
+                                    openInfoOnStart = pendingDirectChatInfoOwner == screen.chatId,
+                                    onInfoOpenConsumed = { pendingDirectChatInfoOwner = null },
                                 )
                             }
 
@@ -391,8 +409,10 @@ fun NdrApp(
                     appManager = appManager,
                     appState = appState,
                     service = container.nearbyIrisService,
+                    onNearbyEnabledChange = onNearbyEnabledChange,
                     onVisibleChange = onNearbyVisibilityChange,
                     onLocalNetworkVisibleChange = onNearbyLanVisibilityChange,
+                    onOpenPeerProfile = openNearbyProfile,
                     onDismiss = { showingNearbyIris = false },
                 )
             }

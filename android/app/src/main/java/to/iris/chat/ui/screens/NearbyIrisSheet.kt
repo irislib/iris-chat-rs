@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -44,11 +45,14 @@ fun NearbyIrisSheet(
     appManager: AppManager,
     appState: AppState,
     service: IrisNearbyService,
+    onNearbyEnabledChange: (Boolean) -> Unit,
     onVisibleChange: (Boolean) -> Unit,
     onLocalNetworkVisibleChange: (Boolean) -> Unit,
+    onOpenPeerProfile: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val snapshot by rememberNearbySnapshotState(service)
+    val nearbyEnabled = appState.preferences.nearbyEnabled
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -91,13 +95,19 @@ fun NearbyIrisSheet(
                         IrisSectionCard(
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
                         ) {
+                            NearbyMasterRow(
+                                checked = nearbyEnabled,
+                                onCheckedChange = onNearbyEnabledChange,
+                            )
+                            IrisDivider()
                             NearbyTransportRow(
                                 appManager = appManager,
                                 appState = appState,
                                 title = "Bluetooth",
-                                status = nearbyBluetoothTransportStatus(snapshot),
-                                checked = snapshot.visible,
-                                peers = snapshot.bluetoothPeers,
+                                status = if (nearbyEnabled) nearbyBluetoothTransportStatus(snapshot) else null,
+                                checked = appState.preferences.nearbyBluetoothEnabled,
+                                enabled = nearbyEnabled,
+                                peers = if (nearbyEnabled) snapshot.bluetoothPeers else emptyList(),
                                 onCheckedChange = onVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.let {
@@ -108,6 +118,9 @@ fun NearbyIrisSheet(
                                         onDismiss()
                                     }
                                 },
+                                onOpenPeerProfile = { peer ->
+                                    peer.ownerPubkeyHex?.let(onOpenPeerProfile)
+                                },
                                 modifier = Modifier.testTag("nearbyVisibilitySwitch"),
                             )
                             IrisDivider()
@@ -115,9 +128,10 @@ fun NearbyIrisSheet(
                                 appManager = appManager,
                                 appState = appState,
                                 title = "Wi-Fi",
-                                status = nearbyWifiTransportStatus(snapshot),
-                                checked = snapshot.localNetworkVisible,
-                                peers = snapshot.localNetworkPeers,
+                                status = if (nearbyEnabled) nearbyWifiTransportStatus(snapshot) else null,
+                                checked = appState.preferences.nearbyLanEnabled,
+                                enabled = nearbyEnabled,
+                                peers = if (nearbyEnabled) snapshot.localNetworkPeers else emptyList(),
                                 onCheckedChange = onLocalNetworkVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.let {
@@ -128,12 +142,16 @@ fun NearbyIrisSheet(
                                         onDismiss()
                                     }
                                 },
+                                onOpenPeerProfile = { peer ->
+                                    peer.ownerPubkeyHex?.let(onOpenPeerProfile)
+                                },
                                 modifier = Modifier.testTag("nearbyLanSwitch"),
                             )
                             IrisDivider()
                             NearbyMailbagRow(
                                 appManager = appManager,
                                 enabled = appState.preferences.nearbyMailbagEnabled,
+                                rowEnabled = nearbyEnabled,
                                 summary = snapshot.mailbagSummary,
                             )
                         }
@@ -144,6 +162,30 @@ fun NearbyIrisSheet(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NearbyMasterRow(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "Nearby",
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.testTag("nearbyEnabledSwitch"),
+        )
     }
 }
 
@@ -169,11 +211,16 @@ internal fun rememberNearbySnapshotState(service: IrisNearbyService) = produceSt
 private fun NearbyMailbagRow(
     appManager: AppManager,
     enabled: Boolean,
+    rowEnabled: Boolean,
     summary: String?,
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier =
+            modifier
+                .fillMaxWidth()
+                .alpha(if (rowEnabled) 1f else DisabledNearbyRowAlpha)
+                .padding(vertical = 8.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -195,10 +242,11 @@ private fun NearbyMailbagRow(
                 onCheckedChange = { next ->
                     appManager.dispatch(AppAction.SetNearbyMailbagEnabled(next))
                 },
+                enabled = rowEnabled,
                 modifier = Modifier.testTag("nearbyMailbagSwitch"),
             )
         }
-        if (enabled) {
+        if (rowEnabled && enabled) {
             Text(
                 // Mailbag carries other people's messages too — call
                 // that out so users understand what gets stored on
@@ -219,15 +267,18 @@ private fun NearbyTransportRow(
     title: String,
     status: String?,
     checked: Boolean,
+    enabled: Boolean,
     peers: List<IrisNearbyService.Peer>,
     onCheckedChange: (Boolean) -> Unit,
     onOpenPeer: (IrisNearbyService.Peer) -> Unit,
+    onOpenPeerProfile: (IrisNearbyService.Peer) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
         modifier =
             Modifier
                 .fillMaxWidth()
+                .alpha(if (enabled) 1f else DisabledNearbyRowAlpha)
                 .padding(vertical = 8.dp),
     ) {
         Row(
@@ -254,10 +305,11 @@ private fun NearbyTransportRow(
             Switch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
+                enabled = enabled,
                 modifier = modifier,
             )
         }
-        if (checked) {
+        if (enabled && checked) {
             if (peers.isEmpty() && status == null) {
                 Text(
                     text = "No users nearby",
@@ -275,6 +327,7 @@ private fun NearbyTransportRow(
                         appState = appState,
                         peer = peer,
                         onOpenChat = { onOpenPeer(peer) },
+                        onOpenProfile = { onOpenPeerProfile(peer) },
                     )
                 }
             }
@@ -324,6 +377,7 @@ private fun NearbyPeerRow(
     appState: AppState,
     peer: IrisNearbyService.Peer,
     onOpenChat: () -> Unit,
+    onOpenProfile: () -> Unit,
 ) {
     val avatarData by rememberNhashImageData(appManager, peer.pictureUrl)
     val avatarUrl =
@@ -346,6 +400,7 @@ private fun NearbyPeerRow(
         lastMessageMine = false,
         lastDelivery = null,
         onClick = onOpenChat,
+        onLongClick = onOpenProfile,
         leadingContent = {
             IrisAvatar(
                 label = peer.name,
@@ -357,3 +412,5 @@ private fun NearbyPeerRow(
         modifier = Modifier.testTag("nearbyIrisPeer-${peer.id.take(12)}"),
     )
 }
+
+private const val DisabledNearbyRowAlpha = 0.48f

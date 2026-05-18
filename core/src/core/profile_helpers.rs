@@ -14,6 +14,7 @@ impl OwnerProfileRecord {
             && self.name.is_none()
             && self.display_name.is_none()
             && self.picture.is_none()
+            && self.about.is_none()
     }
 }
 
@@ -37,6 +38,7 @@ pub(super) fn normalize_profile_url(value: Option<String>) -> Option<String> {
 pub(super) fn build_owner_profile_record(
     name: &str,
     picture_url: Option<&str>,
+    about: Option<&str>,
 ) -> Option<OwnerProfileRecord> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
@@ -48,6 +50,7 @@ pub(super) fn build_owner_profile_record(
         name: Some(trimmed.to_string()),
         display_name: Some(trimmed.to_string()),
         picture: normalize_profile_url(picture_url.map(str::to_string)),
+        about: normalize_profile_field(about.map(str::to_string)),
         updated_at_secs: unix_now().get(),
     })
 }
@@ -60,7 +63,8 @@ pub(super) fn parse_owner_profile_record(
     let name = normalize_profile_field(parsed.name);
     let display_name = normalize_profile_field(parsed.display_name);
     let picture = normalize_profile_url(parsed.picture);
-    if name.is_none() && display_name.is_none() && picture.is_none() {
+    let about = normalize_profile_field(parsed.about);
+    if name.is_none() && display_name.is_none() && picture.is_none() && about.is_none() {
         return None;
     }
 
@@ -69,6 +73,7 @@ pub(super) fn parse_owner_profile_record(
         name,
         display_name,
         picture,
+        about,
         updated_at_secs,
     })
 }
@@ -84,6 +89,7 @@ pub(super) fn build_profile_metadata_json(profile: &OwnerProfileRecord) -> Strin
         name: (!name.is_empty()).then_some(name.clone()),
         display_name,
         picture: profile.picture.clone(),
+        about: profile.about.clone(),
     })
     .unwrap_or_else(|_| format!(r#"{{"name":"{name}","display_name":"{name}"}}"#))
 }
