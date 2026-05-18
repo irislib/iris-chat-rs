@@ -1,7 +1,9 @@
 using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using IrisChat.Bindings;
 using IrisChat.Views;
 
@@ -14,6 +16,8 @@ public partial class DesktopShell : UserControl
     private string? _renderedChatId;
     private string? _renderedScreenKey;
     private bool _showingNearby;
+    private bool _syncingSearchText;
+    private string _searchQuery = string.Empty;
 
     public DesktopShell(AppManager manager, Screen activeScreen)
     {
@@ -56,25 +60,12 @@ public partial class DesktopShell : UserControl
             ProfileAvatar.PictureUrl = account.pictureUrl;
         }
 
+        SyncSearchChrome();
+
         // Sidebar chat list
         var chats = _manager.ChatList ?? Array.Empty<ChatThreadSnapshot>();
         var activeChatId = _activeScreen is Screen.Chat c ? c.chatId : null;
-        ChatRows.Items.Clear();
-        if (_manager.Preferences.nearbyEnabled)
-        {
-            ChatRows.Items.Add(BuildNearbyRow());
-        }
-        foreach (var chat in chats)
-        {
-            var row = new ChatRow { Chat = chat, IsActive = chat.chatId == activeChatId };
-            row.Activated += chosen =>
-            {
-                _showingNearby = false;
-                _manager.OpenChat(chosen.chatId);
-            };
-            row.ContextMenu = BuildChatContextMenu(chat);
-            ChatRows.Items.Add(row);
-        }
+        RefreshChatRows(chats, activeChatId);
 
         if (_showingNearby)
         {
@@ -100,6 +91,72 @@ public partial class DesktopShell : UserControl
         }
     }
 
+    private void RefreshChatRows(ChatThreadSnapshot[] chats, string? activeChatId)
+    {
+        ChatRows.Items.Clear();
+        var query = _searchQuery.Trim();
+
+        if (query.Length == 0 && _manager.Preferences.nearbyEnabled)
+        {
+            ChatRows.Items.Add(BuildNearbyRow());
+        }
+
+        var visibleChats = query.Length == 0
+            ? chats
+            : chats.Where(chat => ChatMatchesQuery(chat, query)).ToArray();
+
+        foreach (var chat in visibleChats)
+        {
+            ChatRows.Items.Add(BuildChatRow(chat, activeChatId));
+        }
+
+        if (query.Length > 0 && visibleChats.Length == 0)
+        {
+            ChatRows.Items.Add(BuildSearchEmptyRow());
+        }
+    }
+
+    private ChatRow BuildChatRow(ChatThreadSnapshot chat, string? activeChatId)
+    {
+        var row = new ChatRow { Chat = chat, IsActive = chat.chatId == activeChatId };
+        row.Activated += chosen =>
+        {
+            _showingNearby = false;
+            ClearSidebarSearch(focus: false, refresh: false);
+            _manager.OpenChat(chosen.chatId);
+        };
+        row.ContextMenu = BuildChatContextMenu(chat);
+        return row;
+    }
+
+    private FrameworkElement BuildSearchEmptyRow() =>
+        new Border
+        {
+            Padding = new Thickness(12, 28, 12, 28),
+            Child = new TextBlock
+            {
+                Text = "No matches",
+                Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
+                FontSize = 13,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            },
+        };
+
+    private static bool ChatMatchesQuery(ChatThreadSnapshot chat, string query)
+    {
+        var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return terms.Length == 0 || terms.All(term =>
+            ContainsSearch(chat.displayName, term)
+            || ContainsSearch(chat.subtitle, term)
+            || ContainsSearch(chat.chatId, term)
+            || ContainsSearch(chat.lastMessagePreview, term)
+            || ContainsSearch(chat.draft, term));
+    }
+
+    private static bool ContainsSearch(string? value, string query) =>
+        !string.IsNullOrWhiteSpace(value)
+        && value.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
+
     private FrameworkElement BuildMainPane(Screen screen) => screen switch
     {
         Screen.Chat c => CreateChatPane(c.chatId),
@@ -115,6 +172,96 @@ public partial class DesktopShell : UserControl
         Screen.ChatList => new NewChatView(),
         _ => new NewChatView(),
     };
+
+    private void SyncSearchChrome()
+    {
+        var hasQuery = _searchQuery.Length > 0;
+        SearchPlaceholder.Visibility = hasQuery ? Visibility.Collapsed : Visibility.Visible;
+        ClearSearchButton.Visibility = hasQuery ? Visibility.Visible : Visibility.Collapsed;
+        if (SearchInput.Text == _searchQuery) return;
+
+        _syncingSearchText = true;
+        try
+        {
+            SearchInput.Text = _searchQuery;
+        }
+        finally
+        {
+            _syncingSearchText = false;
+        }
+    }
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_syncingSearchText) return;
+        _searchQuery = SearchInput.Text ?? string.Empty;
+        var trimmed = _searchQuery.Trim();
+        if (TryDispatchSearchShortcut(trimmed)) return;
+        Refresh();
+    }
+
+    private bool TryDispatchSearchShortcut(string trimmed)
+    {
+        if (trimmed.Length == 0) return false;
+
+        ChatInputShortcut? shortcut;
+        try
+        {
+            shortcut = Native.ClassifyChatInput(trimmed);
+        }
+        catch
+        {
+            return false;
+        }
+
+        switch (shortcut)
+        {
+            case ChatInputShortcut.DirectPeer peer:
+                _showingNearby = false;
+                ClearSidebarSearch(focus: false, refresh: true);
+                _manager.CreateChat(peer.peerInput);
+                return true;
+
+            case ChatInputShortcut.Invite invite:
+                _showingNearby = false;
+                ClearSidebarSearch(focus: false, refresh: true);
+                _manager.AcceptInvite(invite.inviteInput);
+                return true;
+
+            default:
+                return false;
+        }
+    }
+
+    private void OnSearchKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.Escape) return;
+        ClearSidebarSearch(focus: true, refresh: true);
+        e.Handled = true;
+    }
+
+    private void OnClearSearch(object sender, RoutedEventArgs e) =>
+        ClearSidebarSearch(focus: true, refresh: true);
+
+    private void ClearSidebarSearch(bool focus, bool refresh)
+    {
+        _searchQuery = string.Empty;
+        if (SearchInput.Text.Length > 0)
+        {
+            _syncingSearchText = true;
+            try
+            {
+                SearchInput.Clear();
+            }
+            finally
+            {
+                _syncingSearchText = false;
+            }
+        }
+        SyncSearchChrome();
+        if (focus) SearchInput.Focus();
+        if (refresh) Refresh();
+    }
 
     private FrameworkElement CreateChatPane(string chatId)
     {

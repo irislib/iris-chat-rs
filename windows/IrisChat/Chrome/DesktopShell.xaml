@@ -13,6 +13,7 @@
         <Grid Grid.Column="0" Background="{StaticResource Background}">
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
@@ -58,12 +59,56 @@
                 </Grid>
             </Border>
 
-            <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <Border Grid.Row="1"
+                    Background="{StaticResource Toolbar}"
+                    Padding="10,8,10,6">
+                <Grid>
+                    <TextBox x:Name="SearchInput"
+                             Padding="34,8,34,8"
+                             TextChanged="OnSearchTextChanged"
+                             KeyDown="OnSearchKeyDown" />
+                    <TextBlock Text="&#xE721;"
+                               FontFamily="Segoe MDL2 Assets"
+                               Foreground="{StaticResource TextMuted}"
+                               FontSize="14"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Left"
+                               Margin="12,0,0,0"
+                               IsHitTestVisible="False" />
+                    <TextBlock x:Name="SearchPlaceholder"
+                               Text="Search"
+                               Foreground="{StaticResource TextMuted}"
+                               FontSize="14"
+                               VerticalAlignment="Center"
+                               HorizontalAlignment="Left"
+                               Margin="34,0,0,0"
+                               IsHitTestVisible="False" />
+                    <Button x:Name="ClearSearchButton"
+                            Style="{StaticResource IconButton}"
+                            Width="30"
+                            Height="30"
+                            Padding="4"
+                            HorizontalAlignment="Right"
+                            VerticalAlignment="Center"
+                            Click="OnClearSearch"
+                            Visibility="Collapsed"
+                            ToolTip="Clear search">
+                        <TextBlock Text="&#xE711;"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   Foreground="{StaticResource TextMuted}"
+                                   FontSize="12"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center" />
+                    </Button>
+                </Grid>
+            </Border>
+
+            <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                 <ItemsControl x:Name="ChatRows" Padding="6,8" />
             </ScrollViewer>
 
             <!-- bottom sidebar bar: open invites / settings shortcut -->
-            <Border Grid.Row="2"
+            <Border Grid.Row="3"
                     Background="{StaticResource Toolbar}"
                     BorderBrush="{StaticResource Border}"
                     BorderThickness="0,1,0,0"
