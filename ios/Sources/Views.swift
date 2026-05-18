@@ -7426,10 +7426,6 @@ struct SettingsScreen: View {
                 }
             }
 
-#if os(iOS) || os(macOS)
-            MailbagSettingsCard(manager: manager, service: manager.nearbyIris)
-#endif
-
         case .notifications:
             IrisSectionCard {
                 CardHeader(title: "Notifications")
@@ -7448,6 +7444,7 @@ struct SettingsScreen: View {
                 CardHeader(title: "Nearby")
                 NearbySettingsRows(manager: manager, service: manager.nearbyIris)
             }
+            MailbagSettingsCard(manager: manager, service: manager.nearbyIris)
             #endif
 
         case .messageServers:

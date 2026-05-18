@@ -378,27 +378,6 @@ fun MyProfileSheet(
                                     },
                                     tag = "myProfileReadReceiptsSwitch",
                                 )
-                                SettingsToggleRow(
-                                    title = "Sync mailbag",
-                                    checked = preferences.nearbyMailbagEnabled,
-                                    onCheckedChange = { enabled ->
-                                        appManager.dispatch(AppAction.SetNearbyMailbagEnabled(enabled))
-                                    },
-                                    tag = "myProfileMailbagSwitch",
-                                )
-                                // The bag's contents survive the toggle so the
-                                // user can pause sync without losing what's
-                                // already queued; surface the wipe action only
-                                // when there's something to wipe.
-                                if (nearbyService != null && nearbyService.mailbagEventCount() > 0) {
-                                    ProfileActionRow(
-                                        title = "Empty mailbag (${nearbyService.mailbagEventCount()})",
-                                        icon = IrisIcons.DeleteForever,
-                                        destructive = true,
-                                        onClick = { nearbyService.emptyMailbag() },
-                                        modifier = Modifier.testTag("myProfileEmptyMailbagButton"),
-                                    )
-                                }
                             }
                         }
 
@@ -523,6 +502,27 @@ fun MyProfileSheet(
                                         checked = preferences.nearbyLanEnabled,
                                         onCheckedChange = onNearbyLanChange,
                                         tag = "myProfileNearbyLanSwitch",
+                                    )
+                                }
+                                SettingsToggleRow(
+                                    title = "Sync mailbag",
+                                    checked = preferences.nearbyMailbagEnabled,
+                                    onCheckedChange = { enabled ->
+                                        appManager.dispatch(AppAction.SetNearbyMailbagEnabled(enabled))
+                                    },
+                                    tag = "myProfileMailbagSwitch",
+                                )
+                                // The bag's contents survive the toggle so the
+                                // user can pause sync without losing what's
+                                // already queued; surface the wipe action only
+                                // when there's something to wipe.
+                                if (nearbyService != null && nearbyService.mailbagEventCount() > 0) {
+                                    ProfileActionRow(
+                                        title = "Empty mailbag (${nearbyService.mailbagEventCount()})",
+                                        icon = IrisIcons.DeleteForever,
+                                        destructive = true,
+                                        onClick = { nearbyService.emptyMailbag() },
+                                        modifier = Modifier.testTag("myProfileEmptyMailbagButton"),
                                     )
                                 }
                             }
