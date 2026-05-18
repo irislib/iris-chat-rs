@@ -2047,19 +2047,22 @@ private struct MessageInfoSheet: View {
     @ObservedObject var manager: AppManager
     let onClose: () -> Void
 
-    private func participantInfo(_ pubkeyHex: String) -> ParticipantInfo {
-        if let account = manager.state.account, account.publicKeyHex == pubkeyHex {
-            let name = account.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-            return ParticipantInfo(
-                name: name.isEmpty ? "You" : name,
-                pictureUrl: account.pictureUrl,
-                isMe: true
-            )
-        }
-        if let chat, chat.kind == .direct, chat.chatId == pubkeyHex {
-            return ParticipantInfo(name: chat.displayName, pictureUrl: chat.pictureUrl, isMe: false)
-        }
-        return ParticipantInfo(name: shortNpub(pubkeyHex), pictureUrl: nil, isMe: false)
+    private func messageAuthorInfo() -> ParticipantInfo {
+        let owner = message.authorOwnerPubkeyHex?.isEmpty == false
+            ? message.authorOwnerPubkeyHex
+            : ((!message.isOutgoing && chat?.kind == .direct) ? chat?.chatId : nil)
+        return participantInfo(
+            ownerPubkeyHex: owner,
+            displayName: message.author,
+            pictureUrl: message.authorPictureUrl,
+            chat: chat
+        )
+    }
+
+    private func openPerson(_ info: ParticipantInfo) {
+        guard let owner = info.ownerPubkeyHex, !owner.isEmpty, !info.isMe else { return }
+        onClose()
+        manager.dispatch(.createChat(peerInput: owner))
     }
 
     var body: some View {
@@ -2136,25 +2139,35 @@ private struct MessageInfoSheet: View {
         MessageInfoSection(title: "People") {
             if message.isOutgoing {
                 if message.recipientDeliveries.isEmpty {
-                    MessageInfoValueRow(label: "Recipients", value: "No receipts")
+                    if let chat, chat.kind == .direct {
+                        MessageInfoRecipientRow(
+                            info: directRecipientInfo(chat),
+                            subtitle: "No receipt",
+                            delivery: message.delivery,
+                            manager: manager,
+                            onTap: openPerson
+                        )
+                    } else {
+                        MessageInfoValueRow(label: "Recipients", value: "No receipts")
+                    }
                 } else {
                     ForEach(message.recipientDeliveries, id: \.ownerPubkeyHex) { recipient in
-                        let info = participantInfo(recipient.ownerPubkeyHex)
                         MessageInfoRecipientRow(
-                            info: info,
+                            info: recipientInfo(recipient, chat: chat),
                             subtitle: messageInfoDateTime(recipient.updatedAtSecs),
                             delivery: recipient.delivery,
-                            manager: manager
+                            manager: manager,
+                            onTap: openPerson
                         )
                     }
                 }
             } else {
-                let info = ParticipantInfo(name: message.author, pictureUrl: chat?.pictureUrl, isMe: false)
                 MessageInfoRecipientRow(
-                    info: info,
+                    info: messageAuthorInfo(),
                     subtitle: messageInfoDateTime(message.createdAtSecs),
                     delivery: message.delivery,
-                    manager: manager
+                    manager: manager,
+                    onTap: openPerson
                 )
             }
         }
@@ -2242,9 +2255,10 @@ private struct MessageInfoSheet: View {
                 }
                 ForEach(message.reactors, id: \.author) { reactor in
                     MessageInfoReactorRow(
-                        info: participantInfo(reactor.author),
+                        info: reactorInfo(reactor, chat: chat),
                         emoji: reactor.emoji,
-                        manager: manager
+                        manager: manager,
+                        onTap: openPerson
                     )
                 }
             }
@@ -2333,9 +2347,66 @@ private func synthesizeMessageRumorJson(
 }
 
 private struct ParticipantInfo {
+    let ownerPubkeyHex: String?
     let name: String
     let pictureUrl: String?
     let isMe: Bool
+}
+
+private func participantInfo(
+    ownerPubkeyHex: String?,
+    displayName: String,
+    pictureUrl: String?,
+    chat: CurrentChatSnapshot?
+) -> ParticipantInfo {
+    let owner = ownerPubkeyHex?.trimmingCharacters(in: .whitespacesAndNewlines)
+    let participant = owner.flatMap { owner in
+        chat?.participants.first { $0.ownerPubkeyHex == owner }
+    }
+    let name = participant?.displayName
+        ?? nonEmptyTrimmed(displayName)
+        ?? "Iris user"
+    return ParticipantInfo(
+        ownerPubkeyHex: owner?.isEmpty == false ? owner : nil,
+        name: name,
+        pictureUrl: participant?.pictureUrl ?? pictureUrl,
+        isMe: participant?.isLocalOwner ?? false
+    )
+}
+
+private func recipientInfo(
+    _ recipient: MessageRecipientDeliverySnapshot,
+    chat: CurrentChatSnapshot?
+) -> ParticipantInfo {
+    participantInfo(
+        ownerPubkeyHex: recipient.ownerPubkeyHex,
+        displayName: recipient.displayName,
+        pictureUrl: recipient.pictureUrl,
+        chat: chat
+    )
+}
+
+private func reactorInfo(_ reactor: MessageReactor, chat: CurrentChatSnapshot?) -> ParticipantInfo {
+    participantInfo(
+        ownerPubkeyHex: reactor.author,
+        displayName: reactor.displayName,
+        pictureUrl: reactor.pictureUrl,
+        chat: chat
+    )
+}
+
+private func directRecipientInfo(_ chat: CurrentChatSnapshot) -> ParticipantInfo {
+    participantInfo(
+        ownerPubkeyHex: chat.chatId,
+        displayName: chat.displayName,
+        pictureUrl: chat.pictureUrl,
+        chat: chat
+    )
+}
+
+private func nonEmptyTrimmed(_ value: String) -> String? {
+    let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? nil : trimmed
 }
 
 private struct MessageInfoReactorRow: View {
@@ -2343,26 +2414,19 @@ private struct MessageInfoReactorRow: View {
     let info: ParticipantInfo
     let emoji: String
     @ObservedObject var manager: AppManager
+    let onTap: (ParticipantInfo) -> Void
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
-            IrisAvatar(
-                label: info.name,
-                size: 32,
-                pictureUrl: info.pictureUrl,
-                preferences: manager.state.preferences,
-                manager: manager
-            )
-            Text(info.name)
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(palette.textPrimary)
-                .lineLimit(1)
-            Spacer(minLength: 8)
+        MessageInfoUserRow(
+            info: info,
+            subtitle: nil,
+            manager: manager,
+            onTap: onTap
+        ) {
             Text(emoji.isEmpty ? "Removed" : emoji)
                 .font(emoji.isEmpty ? .system(.caption, design: .rounded, weight: .medium) : .system(size: 22))
                 .foregroundStyle(emoji.isEmpty ? palette.muted : palette.textPrimary)
         }
-        .padding(.vertical, 6)
     }
 }
 
@@ -2461,13 +2525,61 @@ private struct MessageInfoCopyListRow: View {
 }
 
 private struct MessageInfoRecipientRow: View {
-    @Environment(\.irisPalette) private var palette
     let info: ParticipantInfo
     let subtitle: String
     let delivery: DeliveryState
     @ObservedObject var manager: AppManager
+    let onTap: (ParticipantInfo) -> Void
 
     var body: some View {
+        MessageInfoUserRow(
+            info: info,
+            subtitle: "\(irisDeliveryLabel(delivery)) - \(subtitle)",
+            manager: manager,
+            onTap: onTap
+        ) {
+            IrisDeliveryGlyph(delivery: delivery)
+                .frame(width: 18, height: 18)
+        }
+    }
+}
+
+private struct MessageInfoUserRow<Trailing: View>: View {
+    @Environment(\.irisPalette) private var palette
+    let info: ParticipantInfo
+    let subtitle: String?
+    @ObservedObject var manager: AppManager
+    let onTap: (ParticipantInfo) -> Void
+    let trailing: () -> Trailing
+
+    init(
+        info: ParticipantInfo,
+        subtitle: String?,
+        manager: AppManager,
+        onTap: @escaping (ParticipantInfo) -> Void,
+        @ViewBuilder trailing: @escaping () -> Trailing
+    ) {
+        self.info = info
+        self.subtitle = subtitle
+        self.manager = manager
+        self.onTap = onTap
+        self.trailing = trailing
+    }
+
+    var body: some View {
+        if info.ownerPubkeyHex != nil && !info.isMe {
+            Button {
+                onTap(info)
+            } label: {
+                rowContent
+            }
+            .buttonStyle(.irisPlain)
+        } else {
+            rowContent
+        }
+    }
+
+    private var rowContent: some View {
         HStack(alignment: .center, spacing: 12) {
             IrisAvatar(
                 label: info.name,
@@ -2480,15 +2592,19 @@ private struct MessageInfoRecipientRow: View {
                 Text(info.name)
                     .font(.system(.subheadline, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
-                Text("\(irisDeliveryLabel(delivery)) - \(subtitle)")
-                    .font(.system(.caption, design: .rounded, weight: .medium))
-                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
+                if let subtitle, !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
             }
             Spacer(minLength: 0)
-            IrisDeliveryGlyph(delivery: delivery)
-                .frame(width: 18, height: 18)
+            trailing()
         }
         .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -3068,9 +3184,10 @@ private struct MessageReactorsSheet: View {
                 LazyVStack(spacing: 0) {
                     ForEach(visibleReactors, id: \.author) { reactor in
                         MessageInfoReactorRow(
-                            info: participantInfo(reactor.author),
+                            info: reactorInfo(reactor, chat: chat),
                             emoji: reactor.emoji,
-                            manager: manager
+                            manager: manager,
+                            onTap: openPerson
                         )
                         .padding(.horizontal, 18)
                     }
@@ -3101,19 +3218,10 @@ private struct MessageReactorsSheet: View {
         .irisModalSurface()
     }
 
-    private func participantInfo(_ pubkeyHex: String) -> ParticipantInfo {
-        if let account = manager.state.account, account.publicKeyHex == pubkeyHex {
-            let name = account.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
-            return ParticipantInfo(
-                name: name.isEmpty ? "You" : name,
-                pictureUrl: account.pictureUrl,
-                isMe: true
-            )
-        }
-        if let chat, chat.kind == .direct, chat.chatId == pubkeyHex {
-            return ParticipantInfo(name: chat.displayName, pictureUrl: chat.pictureUrl, isMe: false)
-        }
-        return ParticipantInfo(name: shortNpub(pubkeyHex), pictureUrl: nil, isMe: false)
+    private func openPerson(_ info: ParticipantInfo) {
+        guard let owner = info.ownerPubkeyHex, !owner.isEmpty, !info.isMe else { return }
+        onClose()
+        manager.dispatch(.createChat(peerInput: owner))
     }
 }
 

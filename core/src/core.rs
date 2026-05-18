@@ -1,10 +1,11 @@
 use crate::actions::AppAction;
 use crate::state::{
-    AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot, ChatThreadSnapshot,
-    CurrentChatSnapshot, DeliveryState, DeviceAuthorizationState, DeviceEntrySnapshot,
-    DeviceRosterSnapshot, GroupDetailsSnapshot, GroupMemberSnapshot, LinkDeviceSnapshot,
-    MessageAttachmentSnapshot, MessageDeliveryTraceSnapshot, MessageReactionSnapshot,
-    MessageReactor, MessageRecipientDeliverySnapshot, MobilePushNotificationResolution,
+    AccountSnapshot, AppState, ChatKind, ChatMessageKind, ChatMessageSnapshot,
+    ChatParticipantSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
+    DeviceAuthorizationState, DeviceEntrySnapshot, DeviceRosterSnapshot, GroupDetailsSnapshot,
+    GroupMemberSnapshot, LinkDeviceSnapshot, MessageAttachmentSnapshot,
+    MessageDeliveryTraceSnapshot, MessageReactionSnapshot, MessageReactor,
+    MessageRecipientDeliverySnapshot, MobilePushNotificationResolution,
     MobilePushSubscriptionRequest, MobilePushSyncSnapshot, NetworkStatusSnapshot,
     OutgoingAttachment, PeerProfileDebugSnapshot, PreferencesSnapshot, PublicInviteSnapshot,
     RelayConnectionSnapshot, Router, Screen, TypingIndicatorSnapshot,
@@ -214,13 +215,32 @@ fn build_chat_snapshot_with_messages(
         return None;
     }
     let thread = state.chat_list.iter().find(|chat| chat.chat_id == chat_id);
-    let messages = load_chat_messages(shared_db, chat_id, request)?;
+    let mut messages = load_chat_messages(shared_db, chat_id, request)?;
     let group_id = group_id_from_chat_id(chat_id);
+    let kind = thread
+        .map(|thread| thread.kind.clone())
+        .unwrap_or_else(|| chat_kind_for_id(chat_id));
+    let participants = state
+        .current_chat
+        .as_ref()
+        .filter(|chat| chat.chat_id == chat_id)
+        .map(|chat| chat.participants.clone())
+        .unwrap_or_else(|| fallback_chat_participants(state, thread, chat_id, &kind));
+    messages = messages
+        .into_iter()
+        .map(|message| {
+            decorate_chat_page_message(
+                message,
+                chat_id,
+                &kind,
+                state.account.as_ref(),
+                &participants,
+            )
+        })
+        .collect();
     Some(CurrentChatSnapshot {
         chat_id: chat_id.to_string(),
-        kind: thread
-            .map(|thread| thread.kind.clone())
-            .unwrap_or_else(|| chat_kind_for_id(chat_id)),
+        kind,
         display_name: thread
             .map(|thread| thread.display_name.clone())
             .unwrap_or_else(|| fallback_chat_title(chat_id)),
@@ -232,6 +252,7 @@ fn build_chat_snapshot_with_messages(
         member_count: thread.map(|thread| thread.member_count).unwrap_or(0),
         message_ttl_seconds: None,
         is_muted: thread.map(|thread| thread.is_muted).unwrap_or(false),
+        participants,
         messages,
         typing_indicators: Vec::new(),
         draft: thread
@@ -282,6 +303,114 @@ fn load_chat_messages(
             .map(chats::chat_message_from_persisted)
             .collect(),
     )
+}
+
+fn fallback_chat_participants(
+    state: &AppState,
+    thread: Option<&ChatThreadSnapshot>,
+    chat_id: &str,
+    kind: &ChatKind,
+) -> Vec<ChatParticipantSnapshot> {
+    let mut participants = Vec::new();
+    if let Some(account) = state.account.as_ref() {
+        participants.push(ChatParticipantSnapshot {
+            owner_pubkey_hex: account.public_key_hex.clone(),
+            display_name: account.display_name.trim().to_string(),
+            picture_url: account.picture_url.clone(),
+            is_local_owner: true,
+        });
+    }
+    if matches!(kind, ChatKind::Direct)
+        && state
+            .account
+            .as_ref()
+            .is_none_or(|account| account.public_key_hex != chat_id)
+    {
+        participants.push(ChatParticipantSnapshot {
+            owner_pubkey_hex: chat_id.to_string(),
+            display_name: thread
+                .map(|thread| thread.display_name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| profile::fallback_profile_name_for_identity(chat_id)),
+            picture_url: thread.and_then(|thread| thread.picture_url.clone()),
+            is_local_owner: false,
+        });
+    }
+    participants
+}
+
+fn decorate_chat_page_message(
+    mut message: ChatMessageSnapshot,
+    chat_id: &str,
+    kind: &ChatKind,
+    account: Option<&AccountSnapshot>,
+    participants: &[ChatParticipantSnapshot],
+) -> ChatMessageSnapshot {
+    let author_owner = message.author_owner_pubkey_hex.clone().or_else(|| {
+        if matches!(message.kind, ChatMessageKind::System) {
+            None
+        } else if message.is_outgoing {
+            account.map(|account| account.public_key_hex.clone())
+        } else if matches!(kind, ChatKind::Direct) {
+            Some(chat_id.to_string())
+        } else {
+            None
+        }
+    });
+    if let Some(owner) = author_owner {
+        if let Some(participant) = participant_for_owner(participants, &owner) {
+            message.author = participant.display_name.clone();
+            message.author_picture_url = participant.picture_url.clone();
+        }
+        message.author_owner_pubkey_hex = Some(owner);
+    }
+    message.recipient_deliveries = message
+        .recipient_deliveries
+        .into_iter()
+        .map(|delivery| decorate_chat_page_delivery(delivery, participants))
+        .collect();
+    message.reactors = message
+        .reactors
+        .into_iter()
+        .map(|reactor| decorate_chat_page_reactor(reactor, participants))
+        .collect();
+    message
+}
+
+fn decorate_chat_page_delivery(
+    mut delivery: MessageRecipientDeliverySnapshot,
+    participants: &[ChatParticipantSnapshot],
+) -> MessageRecipientDeliverySnapshot {
+    if let Some(participant) = participant_for_owner(participants, &delivery.owner_pubkey_hex) {
+        delivery.display_name = participant.display_name.clone();
+        delivery.picture_url = participant.picture_url.clone();
+    } else if delivery.display_name.trim().is_empty() {
+        delivery.display_name =
+            profile::fallback_profile_name_for_identity(&delivery.owner_pubkey_hex);
+    }
+    delivery
+}
+
+fn decorate_chat_page_reactor(
+    mut reactor: MessageReactor,
+    participants: &[ChatParticipantSnapshot],
+) -> MessageReactor {
+    if let Some(participant) = participant_for_owner(participants, &reactor.author) {
+        reactor.display_name = participant.display_name.clone();
+        reactor.picture_url = participant.picture_url.clone();
+    } else if reactor.display_name.trim().is_empty() {
+        reactor.display_name = profile::fallback_profile_name_for_identity(&reactor.author);
+    }
+    reactor
+}
+
+fn participant_for_owner<'a>(
+    participants: &'a [ChatParticipantSnapshot],
+    owner_pubkey_hex: &str,
+) -> Option<&'a ChatParticipantSnapshot> {
+    participants
+        .iter()
+        .find(|participant| participant.owner_pubkey_hex == owner_pubkey_hex)
 }
 
 fn group_id_from_chat_id(chat_id: &str) -> Option<String> {

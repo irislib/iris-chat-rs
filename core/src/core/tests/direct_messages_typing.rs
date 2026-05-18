@@ -610,6 +610,7 @@ fn self_synced_seen_receipt_marks_incoming_message_seen() {
         1_777_159_492,
         None,
         Some(chat_id.clone()),
+        Some(chat_id.clone()),
         Some("outer-incoming".to_string()),
     );
     assert_eq!(core.threads.get(&chat_id).unwrap().unread_count, 1);
@@ -770,6 +771,8 @@ fn open_chat_populates_current_chat_for_preview_only_thread() {
         chat_id: chat_id.clone(),
         kind: ChatMessageKind::User,
         author: peer.public_key().to_hex(),
+        author_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+        author_picture_url: None,
         body: "ping from nse".to_string(),
         attachments: Vec::new(),
         reactions: Vec::new(),

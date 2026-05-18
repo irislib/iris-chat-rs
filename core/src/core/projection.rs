@@ -89,6 +89,109 @@ impl AppCore {
             .iter()
             .any(|hex| hex == &needle)
     }
+
+    fn chat_participants_for_thread(
+        &self,
+        chat_id: &str,
+        group_snapshot: Option<&GroupSnapshot>,
+        local_owner_hex: Option<&str>,
+    ) -> Vec<ChatParticipantSnapshot> {
+        let mut owners = if let Some(group) = group_snapshot {
+            group
+                .members
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        } else {
+            vec![chat_id.to_string()]
+        };
+        if let Some(local_owner_hex) = local_owner_hex {
+            owners.push(local_owner_hex.to_string());
+        }
+        owners.sort();
+        owners.dedup();
+        owners
+            .into_iter()
+            .map(|owner| self.participant_snapshot_for_owner(&owner, local_owner_hex))
+            .collect()
+    }
+
+    fn participant_snapshot_for_owner(
+        &self,
+        owner_hex: &str,
+        local_owner_hex: Option<&str>,
+    ) -> ChatParticipantSnapshot {
+        let is_local_owner = local_owner_hex == Some(owner_hex);
+        let display_name = if is_local_owner {
+            self.state
+                .account
+                .as_ref()
+                .map(|account| account.display_name.trim().to_string())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| self.owner_display_label(owner_hex))
+        } else {
+            self.owner_display_label(owner_hex)
+        };
+        ChatParticipantSnapshot {
+            owner_pubkey_hex: owner_hex.to_string(),
+            display_name,
+            picture_url: self.owner_picture_url(owner_hex),
+            is_local_owner,
+        }
+    }
+
+    fn decorate_message_snapshot(
+        &self,
+        message: &ChatMessageSnapshot,
+        chat_id: &str,
+        local_owner_hex: Option<&str>,
+    ) -> ChatMessageSnapshot {
+        let mut decorated = message.clone();
+        let author_owner = decorated.author_owner_pubkey_hex.clone().or_else(|| {
+            if matches!(decorated.kind, ChatMessageKind::System) {
+                None
+            } else if decorated.is_outgoing {
+                local_owner_hex.map(ToString::to_string)
+            } else if !is_group_chat_id(chat_id) {
+                Some(chat_id.to_string())
+            } else {
+                None
+            }
+        });
+        if let Some(owner) = author_owner {
+            decorated.author = self.owner_display_label(&owner);
+            decorated.author_owner_pubkey_hex = Some(owner.clone());
+            decorated.author_picture_url = self.owner_picture_url(&owner);
+        }
+        decorated.recipient_deliveries = decorated
+            .recipient_deliveries
+            .iter()
+            .map(|delivery| self.decorate_recipient_delivery(delivery))
+            .collect();
+        decorated.reactors = decorated
+            .reactors
+            .iter()
+            .map(|reactor| self.decorate_reactor(reactor))
+            .collect();
+        decorated
+    }
+
+    fn decorate_recipient_delivery(
+        &self,
+        delivery: &MessageRecipientDeliverySnapshot,
+    ) -> MessageRecipientDeliverySnapshot {
+        let mut decorated = delivery.clone();
+        decorated.display_name = self.owner_display_label(&decorated.owner_pubkey_hex);
+        decorated.picture_url = self.owner_picture_url(&decorated.owner_pubkey_hex);
+        decorated
+    }
+
+    fn decorate_reactor(&self, reactor: &MessageReactor) -> MessageReactor {
+        let mut decorated = reactor.clone();
+        decorated.display_name = self.owner_display_label(&decorated.author);
+        decorated.picture_url = self.owner_picture_url(&decorated.author);
+        decorated
+    }
 }
 
 /// Compare two `AppState` snapshots ignoring `rev`. Returns true if the UI
@@ -199,9 +302,7 @@ impl AppCore {
                     .map(|group| group.members.len() as u64)
                     .unwrap_or(0);
                 let direct_picture = if group_snapshot.is_none() {
-                    self.owner_profiles
-                        .get(&thread.chat_id)
-                        .and_then(|profile| profile.picture.clone())
+                    self.owner_picture_url(&thread.chat_id)
                 } else {
                     None
                 };
@@ -247,9 +348,7 @@ impl AppCore {
                 let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
                 let is_muted = self.is_chat_muted(&thread.chat_id);
                 let direct_picture = if group_snapshot.is_none() {
-                    self.owner_profiles
-                        .get(&thread.chat_id)
-                        .and_then(|profile| profile.picture.clone())
+                    self.owner_picture_url(&thread.chat_id)
                 } else {
                     None
                 };
@@ -289,7 +388,22 @@ impl AppCore {
                         .get(&thread.chat_id)
                         .copied(),
                     is_muted,
-                    messages: thread.messages.clone(),
+                    participants: self.chat_participants_for_thread(
+                        &thread.chat_id,
+                        group_snapshot.as_ref(),
+                        local_owner_hex.as_deref(),
+                    ),
+                    messages: thread
+                        .messages
+                        .iter()
+                        .map(|message| {
+                            self.decorate_message_snapshot(
+                                message,
+                                &thread.chat_id,
+                                local_owner_hex.as_deref(),
+                            )
+                        })
+                        .collect(),
                     typing_indicators: self.typing_indicator_snapshots(&thread.chat_id),
                     draft: thread.draft.clone(),
                     is_request,
@@ -382,10 +496,7 @@ impl AppCore {
         let owner_npub = owner_npub_from_owner(logged_in.owner_pubkey)
             .unwrap_or_else(|| owner_public_key_hex.clone());
         let display_name = self.owner_display_label(&owner_public_key_hex);
-        let picture_url = self
-            .owner_profiles
-            .get(&owner_public_key_hex)
-            .and_then(|profile| profile.picture.clone());
+        let picture_url = self.owner_picture_url(&owner_public_key_hex);
         let device_public_key_hex = logged_in.device_keys.public_key().to_hex();
         let device_npub = logged_in
             .device_keys

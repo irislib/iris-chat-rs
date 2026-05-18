@@ -79,6 +79,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageKind
 import to.iris.chat.rust.ChatMessageSnapshot
@@ -89,7 +90,6 @@ import to.iris.chat.rust.MessageReactionSnapshot
 import to.iris.chat.rust.MessageReactor
 import to.iris.chat.rust.MessageRecipientDeliverySnapshot
 import to.iris.chat.core.AppManager
-import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.peerInputToNpub
 import to.iris.chat.ui.components.DeliveryGlyph
 import to.iris.chat.ui.components.IrisAvatar
@@ -982,8 +982,16 @@ private fun MessageReactorsSheet(
     appManager: AppManager?,
     onDismiss: () -> Unit,
 ) {
-    val account = appManager?.account?.collectAsStateWithLifecycle()?.value
+    val haptics = rememberIrisHapticFeedback()
     val visible = remember(reactors) { reactors.filter { it.emoji.isNotBlank() } }
+    val openPerson: (ParticipantInfo) -> Unit = { info ->
+        val owner = info.ownerPubkeyHex?.takeIf { it.isNotBlank() && !info.isMe }
+        if (owner != null && appManager != null) {
+            haptics.press()
+            onDismiss()
+            appManager.createChat(owner)
+        }
+    }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(),
@@ -1005,8 +1013,9 @@ private fun MessageReactorsSheet(
             )
             visible.forEach { reactor ->
                 MessageInfoReactorRow(
-                    info = participantInfo(reactor.author, chat = chat, account = account),
+                    info = reactorInfo(reactor, chat),
                     emoji = reactor.emoji,
+                    onClick = openPerson,
                 )
             }
         }
@@ -1314,9 +1323,13 @@ private fun MessageInfoDialog(
     val haptics = rememberIrisHapticFeedback()
     val palette = IrisTheme.palette
     val trace = message.deliveryTrace
-    val account = appManager?.account?.collectAsStateWithLifecycle()?.value
-    val resolveParticipant: (String) -> ParticipantInfo = { pubkeyHex ->
-        participantInfo(pubkeyHex, chat = chat, account = account)
+    val openPerson: (ParticipantInfo) -> Unit = { info ->
+        val owner = info.ownerPubkeyHex?.takeIf { it.isNotBlank() && !info.isMe }
+        if (owner != null && appManager != null) {
+            haptics.press()
+            onDismiss()
+            appManager.createChat(owner)
+        }
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1333,7 +1346,10 @@ private fun MessageInfoDialog(
             TextButton(
                 onClick = {
                     haptics.press()
-                    clipboard.setText("Message Details", messageInfoText(message, chat))
+                    clipboard.setText(
+                        "Message Details",
+                        messageInfoText(message, chat),
+                    )
                 },
                 colors = messageInfoTextButtonColors(),
             ) { Text("Copy info") }
@@ -1374,25 +1390,32 @@ private fun MessageInfoDialog(
                 MessageInfoSection(title = "People") {
                     if (message.isOutgoing) {
                         if (message.recipientDeliveries.isEmpty()) {
-                            MessageInfoValueRow("Recipients", "No receipts")
+                            if (chat?.kind == ChatKind.DIRECT) {
+                                MessageInfoRecipientRow(
+                                    info = directRecipientInfo(chat),
+                                    subtitle = "No receipt",
+                                    delivery = message.delivery,
+                                    onClick = openPerson,
+                                )
+                            } else {
+                                MessageInfoValueRow("Recipients", "No receipts")
+                            }
                         } else {
                             message.recipientDeliveries.forEach { recipient ->
                                 MessageInfoRecipientRow(
-                                    info = resolveParticipant(recipient.ownerPubkeyHex),
+                                    info = recipientInfo(recipient, chat),
                                     subtitle = messageInfoDateTime(recipient.updatedAtSecs.toLong()),
                                     delivery = recipient.delivery,
+                                    onClick = openPerson,
                                 )
                             }
                         }
                     } else {
                         MessageInfoRecipientRow(
-                            info = ParticipantInfo(
-                                name = message.author,
-                                pictureUrl = chat?.pictureUrl,
-                                isMe = false,
-                            ),
+                            info = messageAuthorInfo(message, chat),
                             subtitle = messageInfoDateTime(message.createdAtSecs.toLong()),
                             delivery = message.delivery,
+                            onClick = openPerson,
                         )
                     }
                 }
@@ -1470,13 +1493,15 @@ private fun MessageInfoDialog(
                         }
                         message.reactors.forEach { reactor ->
                             MessageInfoReactorRow(
-                                info = resolveParticipant(reactor.author),
+                                info = reactorInfo(reactor, chat),
                                 emoji = reactor.emoji,
+                                onClick = openPerson,
                             )
                         }
                     }
                 }
 
+                val account = appManager?.state?.value?.account
                 val rumorJson = remember(message, chat?.chatId, account?.publicKeyHex) {
                     synthesizeMessageRumorJson(message, chat, account)
                 }
@@ -1657,34 +1682,21 @@ private fun MessageInfoRecipientRow(
     info: ParticipantInfo,
     subtitle: String,
     delivery: DeliveryState,
+    onClick: (ParticipantInfo) -> Unit,
 ) {
-    val palette = IrisTheme.palette
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    MessageInfoUserRow(
+        info = info,
+        subtitle = "${deliveryLabel(delivery)} · $subtitle",
+        onClick = onClick,
     ) {
-        IrisAvatar(label = info.name, size = 32.dp, imageUrl = info.pictureUrl)
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(
-                text = info.name,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.SemiBold,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            Text(
-                text = "${deliveryLabel(delivery)} · $subtitle",
-                style = MaterialTheme.typography.labelSmall,
-                color = palette.muted,
-            )
-        }
         DeliveryGlyph(delivery, isOutgoing = true)
     }
 }
 
-private fun messageInfoText(message: ChatMessageSnapshot, chat: CurrentChatSnapshot? = null): String {
+private fun messageInfoText(
+    message: ChatMessageSnapshot,
+    chat: CurrentChatSnapshot? = null,
+): String {
     val trace = message.deliveryTrace
     val lines =
         mutableListOf(
@@ -1704,10 +1716,13 @@ private fun messageInfoText(message: ChatMessageSnapshot, chat: CurrentChatSnaps
         lines += "Recipients"
         lines +=
             message.recipientDeliveries.map { recipient ->
-                "- ${messageInfoRecipientName(recipient.ownerPubkeyHex, chat)} ${deliveryLabel(recipient.delivery)} ${messageInfoDateTime(recipient.updatedAtSecs.toLong())}"
+                val info = recipientInfo(recipient, chat)
+                "- ${info.name} ${deliveryLabel(recipient.delivery)} ${
+                    messageInfoDateTime(recipient.updatedAtSecs.toLong())
+                }"
             }
     } else if (!message.isOutgoing) {
-        lines += "From ${message.author}"
+        lines += "From ${messageAuthorInfo(message, chat).name}"
         lines += "You ${deliveryLabel(message.delivery)}"
     }
     if (trace.outerEventIds.isNotEmpty()) {
@@ -1752,13 +1767,6 @@ private fun messageInfoKind(message: ChatMessageSnapshot): String =
         ChatMessageKind.USER -> if (message.isOutgoing) "Sent" else "Received"
     }
 
-private fun messageInfoRecipientName(ownerPubkeyHex: String, chat: CurrentChatSnapshot?): String {
-    if (chat != null && chat.kind == ChatKind.DIRECT && chat.chatId == ownerPubkeyHex) {
-        return chat.displayName
-    }
-    return shortNpub(ownerPubkeyHex)
-}
-
 private fun shortNpub(pubkeyInput: String): String {
     val npub = peerInputToNpub(pubkeyInput).ifBlank { pubkeyInput }
     return shortMessageIdentifier(npub)
@@ -1772,53 +1780,141 @@ private fun prettyTransportChannel(channel: String): String =
     }
 
 private data class ParticipantInfo(
+    val ownerPubkeyHex: String?,
     val name: String,
     val pictureUrl: String?,
     val isMe: Boolean,
 )
 
-private fun participantInfo(
-    pubkeyHex: String,
+private fun messageAuthorInfo(
+    message: ChatMessageSnapshot,
     chat: CurrentChatSnapshot?,
-    account: AccountSnapshot?,
 ): ParticipantInfo {
-    if (account != null && account.publicKeyHex == pubkeyHex) {
-        val name = account.displayName.trim().ifEmpty { "You" }
-        return ParticipantInfo(name = name, pictureUrl = account.pictureUrl, isMe = true)
-    }
-    if (chat != null && chat.kind == ChatKind.DIRECT && chat.chatId == pubkeyHex) {
-        return ParticipantInfo(name = chat.displayName, pictureUrl = chat.pictureUrl, isMe = false)
-    }
-    return ParticipantInfo(name = shortNpub(pubkeyHex), pictureUrl = null, isMe = false)
+    val owner =
+        message.authorOwnerPubkeyHex?.takeIf { it.isNotBlank() }
+            ?: if (!message.isOutgoing && chat?.kind == ChatKind.DIRECT) chat.chatId else null
+    return participantInfo(
+        ownerPubkeyHex = owner,
+        displayName = message.author,
+        pictureUrl = message.authorPictureUrl,
+        chat = chat,
+    )
+}
+
+private fun recipientInfo(
+    recipient: MessageRecipientDeliverySnapshot,
+    chat: CurrentChatSnapshot?,
+): ParticipantInfo =
+    participantInfo(
+        ownerPubkeyHex = recipient.ownerPubkeyHex,
+        displayName = recipient.displayName,
+        pictureUrl = recipient.pictureUrl,
+        chat = chat,
+    )
+
+private fun reactorInfo(
+    reactor: MessageReactor,
+    chat: CurrentChatSnapshot?,
+): ParticipantInfo =
+    participantInfo(
+        ownerPubkeyHex = reactor.author,
+        displayName = reactor.displayName,
+        pictureUrl = reactor.pictureUrl,
+        chat = chat,
+    )
+
+private fun directRecipientInfo(chat: CurrentChatSnapshot): ParticipantInfo =
+    participantInfo(
+        ownerPubkeyHex = chat.chatId,
+        displayName = chat.displayName,
+        pictureUrl = chat.pictureUrl,
+        chat = chat,
+    )
+
+private fun participantInfo(
+    ownerPubkeyHex: String?,
+    displayName: String,
+    pictureUrl: String?,
+    chat: CurrentChatSnapshot?,
+): ParticipantInfo {
+    val participant =
+        ownerPubkeyHex
+            ?.takeIf { it.isNotBlank() }
+            ?.let { owner -> chat?.participants?.firstOrNull { it.ownerPubkeyHex == owner } }
+    val name =
+        participant?.displayName
+            ?: displayName.trim().takeIf { it.isNotEmpty() }
+            ?: "Iris user"
+    return ParticipantInfo(
+        ownerPubkeyHex = ownerPubkeyHex?.takeIf { it.isNotBlank() },
+        name = name,
+        pictureUrl = participant?.pictureUrl ?: pictureUrl,
+        isMe = participant?.isLocalOwner ?: false,
+    )
 }
 
 @Composable
-private fun MessageInfoReactorRow(info: ParticipantInfo, emoji: String) {
-    val palette = IrisTheme.palette
-    Row(
-        modifier = Modifier.padding(vertical = 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalAlignment = Alignment.CenterVertically,
+private fun MessageInfoReactorRow(
+    info: ParticipantInfo,
+    emoji: String,
+    onClick: (ParticipantInfo) -> Unit,
+) {
+    MessageInfoUserRow(
+        info = info,
+        subtitle = null,
+        onClick = onClick,
     ) {
-        IrisAvatar(label = info.name, size = 32.dp, imageUrl = info.pictureUrl)
-        Text(
-            text = info.name,
-            modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
         if (emoji.isBlank()) {
             Text(
                 text = "Removed",
                 style = MaterialTheme.typography.labelMedium,
-                color = palette.muted,
+                color = IrisTheme.palette.muted,
             )
         } else {
             Text(text = emoji, style = MaterialTheme.typography.titleLarge)
         }
+    }
+}
+
+@Composable
+private fun MessageInfoUserRow(
+    info: ParticipantInfo,
+    subtitle: String?,
+    onClick: (ParticipantInfo) -> Unit,
+    trailing: @Composable (() -> Unit)? = null,
+) {
+    val palette = IrisTheme.palette
+    val clickable = info.ownerPubkeyHex != null && !info.isMe
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .then(if (clickable) Modifier.clickable { onClick(info) } else Modifier)
+                .padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IrisAvatar(label = info.name, size = 32.dp, imageUrl = info.pictureUrl)
+        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(
+                text = info.name,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            subtitle?.takeIf { it.isNotBlank() }?.let {
+                Text(
+                    text = it,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        trailing?.invoke()
     }
 }
 

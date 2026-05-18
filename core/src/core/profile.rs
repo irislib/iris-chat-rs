@@ -192,6 +192,12 @@ impl AppCore {
             .unwrap_or_else(|| fallback_profile_name_for_identity(owner_hex))
     }
 
+    pub(super) fn owner_picture_url(&self, owner_hex: &str) -> Option<String> {
+        self.owner_profiles
+            .get(owner_hex)
+            .and_then(|profile| profile.picture.clone())
+    }
+
     pub(super) fn owner_secondary_identifier(&self, owner_hex: &str) -> Option<String> {
         let _ = owner_hex;
         None

@@ -279,6 +279,8 @@ mod tests {
             chat_id: "chat-1".to_string(),
             kind: ChatMessageKind::User,
             author: "alice".to_string(),
+            author_owner_pubkey_hex: None,
+            author_picture_url: None,
             body: body.to_string(),
             attachments,
             reactions: Vec::new(),

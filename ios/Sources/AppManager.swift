@@ -3066,6 +3066,9 @@ final class AppManager: ObservableObject {
         }
         var merged = page
         merged.messages = mergedChatMessages(existing: existing.messages, page: page.messages)
+        if merged.participants.isEmpty {
+            merged.participants = existing.participants
+        }
         if merged.typingIndicators.isEmpty {
             merged.typingIndicators = existing.typingIndicators
         }

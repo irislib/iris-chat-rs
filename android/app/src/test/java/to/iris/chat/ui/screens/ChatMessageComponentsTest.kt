@@ -74,6 +74,8 @@ class ChatMessageComponentsTest {
             chatId = "chat-1",
             kind = ChatMessageKind.USER,
             author = "owner-hex",
+            authorOwnerPubkeyHex = "owner-hex",
+            authorPictureUrl = null,
             body = body,
             attachments = attachments,
             reactions = emptyList(),

@@ -1861,6 +1861,8 @@ fn queued_runtime_publish_completion_uses_inner_message_id() {
                 chat_id: chat_id.clone(),
                 kind: ChatMessageKind::User,
                 author: owner.public_key().to_hex(),
+                author_owner_pubkey_hex: Some(owner.public_key().to_hex()),
+                author_picture_url: None,
                 body: "queued".to_string(),
                 attachments: Vec::new(),
                 reactions: Vec::new(),
@@ -2088,4 +2090,3 @@ fn explicit_accept_clears_is_request_without_outgoing_message() {
         "accept persists the peer in the whitelist"
     );
 }
-

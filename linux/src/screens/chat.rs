@@ -6,7 +6,8 @@ use adw::prelude::*;
 use iris_chat_core::{
     peer_input_to_npub, proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind,
     ChatMessageSnapshot, CurrentChatSnapshot, DeliveryState, MessageAttachmentSnapshot,
-    MessageReactionSnapshot, OutgoingAttachment, PreferencesSnapshot,
+    MessageReactionSnapshot, MessageReactor, MessageRecipientDeliverySnapshot, OutgoingAttachment,
+    PreferencesSnapshot,
 };
 
 use crate::app_manager::AppManager;
@@ -20,6 +21,13 @@ pub struct ChatInfoSnapshot {
     pub picture_url: Option<String>,
     pub is_muted: bool,
     pub preferences: PreferencesSnapshot,
+}
+
+struct ParticipantInfo {
+    owner_pubkey_hex: Option<String>,
+    name: String,
+    picture_url: Option<String>,
+    is_me: bool,
 }
 
 pub fn render(chat_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
@@ -191,36 +199,58 @@ fn present_message_info(
     info_value_row(&status_section, "Type", message_info_kind(message));
     content.append(&status_section);
 
+    let state = manager.current_state();
+
     // People
     let people_section = info_section("People");
     if message.is_outgoing {
         if message.recipient_deliveries.is_empty() {
-            info_value_row(&people_section, "Recipients", "No receipts");
-        } else {
-            for recipient in &message.recipient_deliveries {
+            if matches!(chat.kind, ChatKind::Direct) {
+                let info = direct_recipient_info(chat);
                 info_recipient_row(
                     &people_section,
-                    &message_info_recipient_name(&recipient.owner_pubkey_hex, chat),
+                    &info,
+                    &format!("{} · No receipt", delivery_label(&message.delivery)),
+                    Some(&message.delivery),
+                    &state.preferences,
+                    manager,
+                    &dialog,
+                );
+            } else {
+                info_value_row(&people_section, "Recipients", "No receipts");
+            }
+        } else {
+            for recipient in &message.recipient_deliveries {
+                let info = recipient_info(recipient, chat);
+                info_recipient_row(
+                    &people_section,
+                    &info,
                     &format!(
                         "{} · {}",
                         delivery_label(&recipient.delivery),
                         message_info_date_time(recipient.updated_at_secs)
                     ),
-                    &recipient.delivery,
+                    Some(&recipient.delivery),
+                    &state.preferences,
+                    manager,
+                    &dialog,
                 );
             }
         }
     } else {
-        info_value_row(&people_section, "From", &message.author);
+        let info = message_author_info(message, chat);
         info_recipient_row(
             &people_section,
-            "You",
+            &info,
             &format!(
                 "{} · {}",
                 delivery_label(&message.delivery),
                 message_info_date_time(message.created_at_secs)
             ),
-            &message.delivery,
+            Some(&message.delivery),
+            &state.preferences,
+            manager,
+            &dialog,
         );
     }
     content.append(&people_section);
@@ -345,10 +375,15 @@ fn present_message_info(
             } else {
                 reactor.emoji.clone()
             };
-            info_value_row(
+            let info = reactor_info(reactor, chat);
+            info_recipient_row(
                 &react_section,
-                &message_info_recipient_name(&reactor.author, chat),
+                &info,
                 &value,
+                None,
+                &state.preferences,
+                manager,
+                &dialog,
             );
         }
         content.append(&react_section);
@@ -358,7 +393,7 @@ fn present_message_info(
     // shows up across platforms. The `id` field matches the rumor hash
     // for messages received as runtime rumors; pubkey is best-effort.
     let rumor_section = info_section("Inner rumor");
-    let rumor_json = synthesize_message_rumor_json(message, chat, &manager.current_state());
+    let rumor_json = synthesize_message_rumor_json(message, chat, &state);
     let rumor_label = gtk::Label::new(Some(&rumor_json));
     rumor_label.set_wrap(true);
     rumor_label.set_wrap_mode(gtk::pango::WrapMode::WordChar);
@@ -473,18 +508,60 @@ fn info_copy_row(parent: &gtk::Box, label: &str, value: &str, monospace: bool) {
     parent.append(&row);
 }
 
-fn info_recipient_row(parent: &gtk::Box, title: &str, subtitle: &str, delivery: &DeliveryState) {
+fn info_recipient_row(
+    parent: &gtk::Box,
+    info: &ParticipantInfo,
+    subtitle: &str,
+    delivery: Option<&DeliveryState>,
+    preferences: &PreferencesSnapshot,
+    manager: &Rc<AppManager>,
+    dialog: &adw::Dialog,
+) {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     row.set_margin_top(4);
     row.set_margin_bottom(4);
     row.set_margin_start(12);
     row.set_margin_end(12);
-    let glyph = gtk::Label::new(Some(delivery_glyph(delivery)));
-    row.append(&glyph);
+    if let Some(owner_pubkey_hex) = info
+        .owner_pubkey_hex
+        .as_ref()
+        .filter(|owner| !owner.is_empty() && !info.is_me)
+    {
+        let click = gtk::GestureClick::new();
+        click.set_button(1);
+        let manager_for_click = manager.clone();
+        let dialog_for_click = dialog.clone();
+        let peer_input = owner_pubkey_hex.clone();
+        click.connect_released(move |_, _, _, _| {
+            dialog_for_click.close();
+            manager_for_click.dispatch(AppAction::CreateChat {
+                peer_input: peer_input.clone(),
+            });
+        });
+        row.add_controller(click);
+    }
+
+    let avatar = adw::Avatar::new(32, Some(&info.name), true);
+    if let Some(url) = info.picture_url.as_deref() {
+        if url.starts_with("http://") || url.starts_with("https://") {
+            let proxied = proxied_image_url(
+                url.to_string(),
+                preferences.clone(),
+                Some(64),
+                Some(64),
+                true,
+            );
+            image_cache::fetch_into_avatar(&avatar, &proxied);
+        }
+    }
+    row.append(&avatar);
+
     let column = gtk::Box::new(gtk::Orientation::Vertical, 1);
-    let title_widget = gtk::Label::new(Some(title));
+    column.set_hexpand(true);
+    let title_widget = gtk::Label::new(Some(&info.name));
     title_widget.set_xalign(0.0);
     title_widget.add_css_class("body");
+    title_widget.set_ellipsize(gtk::pango::EllipsizeMode::End);
     column.append(&title_widget);
     let subtitle_widget = gtk::Label::new(Some(subtitle));
     subtitle_widget.add_css_class("caption");
@@ -492,6 +569,10 @@ fn info_recipient_row(parent: &gtk::Box, title: &str, subtitle: &str, delivery: 
     subtitle_widget.set_xalign(0.0);
     column.append(&subtitle_widget);
     row.append(&column);
+    if let Some(delivery) = delivery {
+        let glyph = gtk::Label::new(Some(delivery_glyph(delivery)));
+        row.append(&glyph);
+    }
     parent.append(&row);
 }
 
@@ -1334,8 +1415,8 @@ fn message_info_text(message: &ChatMessageSnapshot, chat: Option<&CurrentChatSna
         lines.push("Recipients".to_string());
         lines.extend(message.recipient_deliveries.iter().map(|recipient| {
             let name = chat
-                .map(|c| message_info_recipient_name(&recipient.owner_pubkey_hex, c))
-                .unwrap_or_else(|| short_message_identifier(&recipient.owner_pubkey_hex));
+                .map(|c| recipient_info(recipient, c).name)
+                .unwrap_or_else(|| fallback_person_name(&recipient.display_name));
             format!(
                 "- {} {} {}",
                 name,
@@ -1344,7 +1425,10 @@ fn message_info_text(message: &ChatMessageSnapshot, chat: Option<&CurrentChatSna
             )
         }));
     } else if !message.is_outgoing {
-        lines.push(format!("From {}", message.author));
+        let name = chat
+            .map(|c| message_author_info(message, c).name)
+            .unwrap_or_else(|| fallback_person_name(&message.author));
+        lines.push(format!("From {name}"));
         lines.push(format!("You {}", delivery_label(&message.delivery)));
     }
     if !trace.outer_event_ids.is_empty() {
@@ -1479,11 +1563,92 @@ fn message_info_kind(message: &ChatMessageSnapshot) -> &'static str {
     }
 }
 
-fn message_info_recipient_name(owner_pubkey_hex: &str, chat: &CurrentChatSnapshot) -> String {
-    if matches!(chat.kind, ChatKind::Direct) && chat.chat_id == owner_pubkey_hex {
-        return chat.display_name.clone();
+fn participant_info(
+    owner_pubkey_hex: Option<&str>,
+    display_name: &str,
+    picture_url: Option<&str>,
+    chat: &CurrentChatSnapshot,
+) -> ParticipantInfo {
+    let owner = owner_pubkey_hex
+        .map(str::trim)
+        .filter(|owner| !owner.is_empty());
+    if let Some(participant) = owner.and_then(|owner| {
+        chat.participants
+            .iter()
+            .find(|p| p.owner_pubkey_hex == owner)
+    }) {
+        return ParticipantInfo {
+            owner_pubkey_hex: Some(participant.owner_pubkey_hex.clone()),
+            name: fallback_person_name(&participant.display_name),
+            picture_url: participant.picture_url.clone(),
+            is_me: participant.is_local_owner,
+        };
     }
-    short_npub(owner_pubkey_hex)
+    ParticipantInfo {
+        owner_pubkey_hex: owner.map(ToString::to_string),
+        name: fallback_person_name(display_name),
+        picture_url: picture_url.map(ToString::to_string),
+        is_me: false,
+    }
+}
+
+fn recipient_info(
+    recipient: &MessageRecipientDeliverySnapshot,
+    chat: &CurrentChatSnapshot,
+) -> ParticipantInfo {
+    participant_info(
+        Some(&recipient.owner_pubkey_hex),
+        &recipient.display_name,
+        recipient.picture_url.as_deref(),
+        chat,
+    )
+}
+
+fn reactor_info(reactor: &MessageReactor, chat: &CurrentChatSnapshot) -> ParticipantInfo {
+    participant_info(
+        Some(&reactor.author),
+        &reactor.display_name,
+        reactor.picture_url.as_deref(),
+        chat,
+    )
+}
+
+fn direct_recipient_info(chat: &CurrentChatSnapshot) -> ParticipantInfo {
+    participant_info(
+        Some(&chat.chat_id),
+        &chat.display_name,
+        chat.picture_url.as_deref(),
+        chat,
+    )
+}
+
+fn message_author_info(
+    message: &ChatMessageSnapshot,
+    chat: &CurrentChatSnapshot,
+) -> ParticipantInfo {
+    let owner = message
+        .author_owner_pubkey_hex
+        .as_deref()
+        .filter(|owner| !owner.is_empty())
+        .or_else(|| {
+            (!message.is_outgoing && matches!(chat.kind, ChatKind::Direct))
+                .then_some(chat.chat_id.as_str())
+        });
+    participant_info(
+        owner,
+        &message.author,
+        message.author_picture_url.as_deref(),
+        chat,
+    )
+}
+
+fn fallback_person_name(display_name: &str) -> String {
+    let trimmed = display_name.trim();
+    if trimmed.is_empty() {
+        "Iris user".to_string()
+    } else {
+        trimmed.to_string()
+    }
 }
 
 fn short_npub(pubkey_input: &str) -> String {

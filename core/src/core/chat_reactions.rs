@@ -155,6 +155,8 @@ fn apply_reaction_from(
     } else if !emoji.is_empty() {
         message.reactors.push(MessageReactor {
             author: sender.to_string(),
+            display_name: String::new(),
+            picture_url: None,
             emoji,
         });
     }

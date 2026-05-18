@@ -216,6 +216,11 @@ pub struct MessageReactionSnapshot {
 pub struct MessageReactor {
     /// Hex-encoded pubkey of the user who reacted.
     pub author: String,
+    /// Core-resolved display name for UI rows. Empty in persisted legacy data.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_url: Option<String>,
     /// Emoji content of their current (latest) reaction. Empty means unreacted.
     pub emoji: String,
 }
@@ -224,6 +229,11 @@ pub struct MessageReactor {
 pub struct MessageRecipientDeliverySnapshot {
     /// Hex-encoded owner/user pubkey.
     pub owner_pubkey_hex: String,
+    /// Core-resolved display name for UI rows. Empty in persisted legacy data.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture_url: Option<String>,
     pub delivery: DeliveryState,
     pub updated_at_secs: u64,
 }
@@ -245,6 +255,9 @@ pub struct ChatMessageSnapshot {
     pub chat_id: String,
     pub kind: ChatMessageKind,
     pub author: String,
+    /// Hex-encoded owner/user pubkey for the author when known.
+    pub author_owner_pubkey_hex: Option<String>,
+    pub author_picture_url: Option<String>,
     pub body: String,
     pub attachments: Vec<MessageAttachmentSnapshot>,
     pub reactions: Vec<MessageReactionSnapshot>,
@@ -302,6 +315,14 @@ pub struct ChatThreadSnapshot {
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct ChatParticipantSnapshot {
+    pub owner_pubkey_hex: String,
+    pub display_name: String,
+    pub picture_url: Option<String>,
+    pub is_local_owner: bool,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct CurrentChatSnapshot {
     pub chat_id: String,
     pub kind: ChatKind,
@@ -312,6 +333,7 @@ pub struct CurrentChatSnapshot {
     pub member_count: u64,
     pub message_ttl_seconds: Option<u64>,
     pub is_muted: bool,
+    pub participants: Vec<ChatParticipantSnapshot>,
     pub messages: Vec<ChatMessageSnapshot>,
     pub typing_indicators: Vec<TypingIndicatorSnapshot>,
     /// Same persisted draft text exposed on `ChatThreadSnapshot`. The

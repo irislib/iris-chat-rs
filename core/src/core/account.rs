@@ -657,6 +657,10 @@ impl AppCore {
                                         chat_id: message.chat_id.clone(),
                                         kind: message.kind.clone(),
                                         author: message.author.clone(),
+                                        author_owner_pubkey_hex: message
+                                            .author_owner_pubkey_hex
+                                            .clone(),
+                                        author_picture_url: None,
                                         body,
                                         attachments: if message.attachments.is_empty() {
                                             parsed_attachments

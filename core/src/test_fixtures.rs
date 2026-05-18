@@ -51,6 +51,7 @@ pub fn build_large_test_app_state(
         member_count: current_thread.member_count,
         message_ttl_seconds: Some(86_400),
         is_muted: current_thread.is_muted,
+        participants: Vec::new(),
         messages,
         typing_indicators: Vec::new(),
         draft: current_thread.draft.clone(),
@@ -210,6 +211,8 @@ fn fixture_message(chat_id: &str, index: u32) -> ChatMessageSnapshot {
         } else {
             fixture_hex(10_000 + index)
         },
+        author_owner_pubkey_hex: None,
+        author_picture_url: None,
         body: format!(
             "Fixture message {:05} for render and search stress with needle token",
             index + 1
@@ -259,6 +262,8 @@ fn fixture_reactors(index: u32) -> Vec<MessageReactor> {
     }
     vec![MessageReactor {
         author: fixture_hex(20_000 + index),
+        display_name: String::new(),
+        picture_url: None,
         emoji: "\u{1f44d}".to_string(),
     }]
 }

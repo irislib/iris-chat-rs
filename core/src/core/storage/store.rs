@@ -855,13 +855,14 @@ fn upsert_message_row(
 ) -> anyhow::Result<()> {
     tx.execute(
         "INSERT INTO messages(
-            chat_id, id, kind, author, body, is_outgoing, created_at_secs,
+            chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
             source_event_id, recipient_deliveries_json, delivery_trace_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT(chat_id, id) DO UPDATE SET
             kind = excluded.kind,
             author = excluded.author,
+            author_owner_pubkey_hex = excluded.author_owner_pubkey_hex,
             body = excluded.body,
             is_outgoing = excluded.is_outgoing,
             created_at_secs = excluded.created_at_secs,
@@ -878,6 +879,7 @@ fn upsert_message_row(
             message.id,
             serialize_message_kind(&message.kind),
             message.author,
+            message.author_owner_pubkey_hex,
             message.body,
             message.is_outgoing as i64,
             message.created_at_secs as i64,
@@ -901,17 +903,19 @@ fn upsert_notification_preview_message_row(
 ) -> anyhow::Result<()> {
     tx.execute(
         "INSERT INTO messages(
-            chat_id, id, kind, author, body, is_outgoing, created_at_secs,
+            chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
             source_event_id, recipient_deliveries_json, delivery_trace_json
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)
          ON CONFLICT(chat_id, id) DO UPDATE SET
+            author_owner_pubkey_hex = COALESCE(messages.author_owner_pubkey_hex, excluded.author_owner_pubkey_hex),
             source_event_id = COALESCE(NULLIF(messages.source_event_id, ''), excluded.source_event_id)",
         params![
             chat_id,
             message.id,
             serialize_message_kind(&message.kind),
             message.author,
+            message.author_owner_pubkey_hex,
             message.body,
             message.is_outgoing as i64,
             message.created_at_secs as i64,
@@ -1224,7 +1228,7 @@ fn load_threads(
 
     let mut messages_stmt = conn.prepare(
 	        "WITH ranked AS (
-		             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+		             SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 		                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
 		                    recipient_deliveries_json, delivery_trace_json,
 		                    rowid AS storage_order,
@@ -1235,7 +1239,7 @@ fn load_threads(
 	                    ) AS row_number
 	             FROM messages
 	         )
-		         SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+		         SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 		                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
 		                recipient_deliveries_json, delivery_trace_json
 	         FROM ranked
@@ -1369,11 +1373,11 @@ pub(crate) fn load_recent_messages(
     limit: usize,
 ) -> anyhow::Result<Vec<PersistedMessage>> {
     let mut stmt = conn.prepare(
-        "SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+        "SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 	                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
 	                recipient_deliveries_json, delivery_trace_json
 	         FROM (
-	             SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+	             SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 	                    delivery, attachments_json, reactions_json, reactors_json, source_event_id,
 	                    recipient_deliveries_json, delivery_trace_json,
 	                    rowid AS storage_order
@@ -1409,11 +1413,11 @@ pub(crate) fn load_messages_before(
 	             WHERE chat_id = ?1 AND id = ?2
 	             LIMIT 1
 	         )
-         SELECT chat_id, id, kind, author, body, is_outgoing, created_at_secs, expires_at_secs,
+         SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
                 delivery, attachments_json, reactions_json, reactors_json, source_event_id,
                 recipient_deliveries_json, delivery_trace_json
          FROM (
-             SELECT m.chat_id, m.id, m.kind, m.author, m.body, m.is_outgoing,
+             SELECT m.chat_id, m.id, m.kind, m.author, m.author_owner_pubkey_hex, m.body, m.is_outgoing,
 	                    m.created_at_secs, m.expires_at_secs, m.delivery, m.attachments_json,
 	                    m.reactions_json, m.reactors_json, m.source_event_id,
 	                    m.recipient_deliveries_json, m.delivery_trace_json,
@@ -1459,7 +1463,7 @@ pub(crate) fn load_messages_around(
 	             WHERE chat_id = ?1 AND id = ?2
 	             LIMIT 1
 	         )
-         SELECT m.chat_id, m.id, m.kind, m.author, m.body, m.is_outgoing, m.created_at_secs,
+         SELECT m.chat_id, m.id, m.kind, m.author, m.author_owner_pubkey_hex, m.body, m.is_outgoing, m.created_at_secs,
                 m.expires_at_secs, m.delivery, m.attachments_json, m.reactions_json,
                 m.reactors_json, m.source_event_id, m.recipient_deliveries_json,
                 m.delivery_trace_json
@@ -1494,21 +1498,22 @@ fn persisted_message_from_row(row: &Row<'_>) -> rusqlite::Result<PersistedMessag
         chat_id,
         kind: parse_message_kind(&row.get::<_, String>(2)?),
         author: row.get(3)?,
-        body: row.get(4)?,
-        attachments: serde_json::from_str(&row.get::<_, String>(9)?).unwrap_or_default(),
-        reactions: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or_default(),
-        reactors: serde_json::from_str(&row.get::<_, String>(11)?).unwrap_or_default(),
-        is_outgoing: row.get::<_, i64>(5)? != 0,
-        created_at_secs: row.get::<_, i64>(6)? as u64,
-        expires_at_secs: row.get::<_, Option<i64>>(7)?.map(|secs| secs as u64),
-        delivery: parse_delivery(&row.get::<_, String>(8)?),
-        source_event_id: row.get(12)?,
+        author_owner_pubkey_hex: row.get(4)?,
+        body: row.get(5)?,
+        attachments: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or_default(),
+        reactions: serde_json::from_str(&row.get::<_, String>(11)?).unwrap_or_default(),
+        reactors: serde_json::from_str(&row.get::<_, String>(12)?).unwrap_or_default(),
+        is_outgoing: row.get::<_, i64>(6)? != 0,
+        created_at_secs: row.get::<_, i64>(7)? as u64,
+        expires_at_secs: row.get::<_, Option<i64>>(8)?.map(|secs| secs as u64),
+        delivery: parse_delivery(&row.get::<_, String>(9)?),
+        source_event_id: row.get(13)?,
         recipient_deliveries: serde_json::from_str::<Vec<MessageRecipientDeliverySnapshot>>(
-            &row.get::<_, String>(13)?,
+            &row.get::<_, String>(14)?,
         )
         .unwrap_or_default(),
         delivery_trace: serde_json::from_str::<MessageDeliveryTraceSnapshot>(
-            &row.get::<_, String>(14)?,
+            &row.get::<_, String>(15)?,
         )
         .unwrap_or_default(),
     })
@@ -1642,6 +1647,8 @@ mod tests {
             chat_id: "chat".to_string(),
             kind: ChatMessageKind::User,
             author: "alice".to_string(),
+            author_owner_pubkey_hex: None,
+            author_picture_url: None,
             body: body.to_string(),
             attachments: Vec::new(),
             reactions: Vec::new(),
@@ -2224,6 +2231,8 @@ mod tests {
         });
         existing.reactors.push(MessageReactor {
             author: "alice".to_string(),
+            display_name: String::new(),
+            picture_url: None,
             emoji: "+1".to_string(),
         });
         let mut threads = BTreeMap::new();

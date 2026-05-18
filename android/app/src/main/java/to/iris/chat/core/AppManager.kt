@@ -1355,6 +1355,7 @@ class AppManager(
         page.messages.forEach { message -> messagesById[message.id] = message }
         val mergedMessages = messagesById.values.sortedWith(::compareChatMessages)
         return page.copy(
+            participants = page.participants.ifEmpty { existing.participants },
             messages = mergedMessages,
             typingIndicators = page.typingIndicators.ifEmpty { existing.typingIndicators },
             draft = page.draft.ifEmpty { existing.draft },

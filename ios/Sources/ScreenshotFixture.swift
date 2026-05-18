@@ -306,6 +306,7 @@ extension ScreenshotFixture {
             memberCount: thread.memberCount,
             messageTtlSeconds: nil,
             isMuted: thread.isMuted,
+            participants: [],
             messages: messages,
             typingIndicators: [],
             draft: "",
@@ -342,12 +343,22 @@ extension ScreenshotFixture {
         } else {
             author = Self.syntheticPeerHex(for: chat.chatId, index: index)
         }
+        let authorOwnerPubkeyHex: String?
+        if message.isOutgoing {
+            authorOwnerPubkeyHex = ownerHex
+        } else if message.groupAuthorName == nil {
+            authorOwnerPubkeyHex = author
+        } else {
+            authorOwnerPubkeyHex = nil
+        }
         let id = "\(chat.chatId)-msg-\(index)"
         return ChatMessageSnapshot(
             id: id,
             chatId: chat.chatId,
             kind: .user,
             author: author,
+            authorOwnerPubkeyHex: authorOwnerPubkeyHex,
+            authorPictureUrl: nil,
             body: message.body,
             attachments: [],
             reactions: message.reactions,

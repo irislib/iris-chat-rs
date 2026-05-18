@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using IrisChat.Bindings;
 
@@ -12,6 +13,7 @@ namespace IrisChat.Chrome;
 public class MessageInfoWindow : Window
 {
     private readonly ChatMessageSnapshot _message;
+    private sealed record ParticipantInfo(string? OwnerPubkeyHex, string Name, string? PictureUrl, bool IsMe);
 
     public MessageInfoWindow(ChatMessageSnapshot message)
     {
@@ -230,22 +232,35 @@ public class MessageInfoWindow : Window
         var rows = new List<UIElement>();
         if (_message.isOutgoing)
         {
-            rows.Add(ValueRow("You", $"{DeliveryLabel(_message.delivery)} · {FormatDateTime(_message.createdAtSecs)}"));
+            rows.Add(ParticipantRow(
+                MessageAuthorInfo(),
+                $"{DeliveryLabel(_message.delivery)} · {FormatDateTime(_message.createdAtSecs)}"));
             var recipients = _message.recipientDeliveries;
             if (recipients != null && recipients.Length > 0)
             {
                 foreach (var r in recipients)
                 {
-                    rows.Add(ValueRow(
-                        ShortNpub(r.ownerPubkeyHex),
+                    rows.Add(ParticipantRow(
+                        RecipientInfo(r),
                         $"{DeliveryLabel(r.delivery)} · {FormatDateTime(r.updatedAtSecs)}"));
                 }
+            }
+            else if (App.CurrentManager.CurrentChat is { kind: ChatKind.Direct } chat)
+            {
+                rows.Add(ParticipantRow(
+                    DirectRecipientInfo(chat),
+                    $"{DeliveryLabel(_message.delivery)} · No receipt"));
+            }
+            else
+            {
+                rows.Add(ValueRow("Recipients", "No receipts"));
             }
         }
         else
         {
-            rows.Add(ValueRow("From", _message.author));
-            rows.Add(ValueRow("Status", DeliveryLabel(_message.delivery)));
+            rows.Add(ParticipantRow(
+                MessageAuthorInfo(),
+                $"{DeliveryLabel(_message.delivery)} · {FormatDateTime(_message.createdAtSecs)}"));
         }
         return rows;
     }
@@ -336,10 +351,62 @@ public class MessageInfoWindow : Window
             foreach (var reactor in _message.reactors)
             {
                 var value = string.IsNullOrEmpty(reactor.emoji) ? "Removed" : reactor.emoji;
-                rows.Add(ValueRow(ShortNpub(reactor.author), value));
+                rows.Add(ParticipantRow(ReactorInfo(reactor), value));
             }
         }
         return rows;
+    }
+
+    private UIElement ParticipantRow(ParticipantInfo info, string detail)
+    {
+        var row = new Grid { Margin = new Thickness(0, 5, 0, 5) };
+        if (!string.IsNullOrWhiteSpace(info.OwnerPubkeyHex) && !info.IsMe)
+        {
+            var owner = info.OwnerPubkeyHex!;
+            row.Background = Brushes.Transparent;
+            row.Cursor = Cursors.Hand;
+            row.MouseLeftButtonUp += (_, _) =>
+            {
+                Close();
+                App.CurrentManager.CreateChat(owner);
+            };
+        }
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var avatar = new Avatar
+        {
+            Label = info.Name,
+            PictureUrl = info.PictureUrl,
+            Size = 32,
+            Margin = new Thickness(0, 0, 10, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        Grid.SetColumn(avatar, 0);
+        row.Children.Add(avatar);
+
+        var stack = new StackPanel { Orientation = Orientation.Vertical };
+        var name = new TextBlock
+        {
+            Text = info.Name,
+            FontSize = 13,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = (Brush)Application.Current.Resources["TextPrimary"],
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        stack.Children.Add(name);
+        var subtitle = new TextBlock
+        {
+            Text = detail,
+            FontSize = 12,
+            Foreground = (Brush)Application.Current.Resources["TextMuted"],
+            TextWrapping = TextWrapping.Wrap,
+        };
+        stack.Children.Add(subtitle);
+        Grid.SetColumn(stack, 1);
+        row.Children.Add(stack);
+
+        return row;
     }
 
     private UIElement ValueRow(string label, string value, bool monospace = false)
@@ -416,6 +483,55 @@ public class MessageInfoWindow : Window
         return grid;
     }
 
+    private ParticipantInfo MessageAuthorInfo()
+    {
+        var chat = App.CurrentManager.CurrentChat;
+        var owner = !string.IsNullOrWhiteSpace(_message.authorOwnerPubkeyHex)
+            ? _message.authorOwnerPubkeyHex
+            : (!_message.isOutgoing && chat?.kind == ChatKind.Direct ? chat.chatId : null);
+        return ParticipantInfoFor(owner, _message.author, _message.authorPictureUrl, chat);
+    }
+
+    private static ParticipantInfo RecipientInfo(MessageRecipientDeliverySnapshot recipient) =>
+        ParticipantInfoFor(
+            recipient.ownerPubkeyHex,
+            recipient.displayName,
+            recipient.pictureUrl,
+            App.CurrentManager.CurrentChat);
+
+    private static ParticipantInfo ReactorInfo(MessageReactor reactor) =>
+        ParticipantInfoFor(
+            reactor.author,
+            reactor.displayName,
+            reactor.pictureUrl,
+            App.CurrentManager.CurrentChat);
+
+    private static ParticipantInfo DirectRecipientInfo(CurrentChatSnapshot chat) =>
+        ParticipantInfoFor(chat.chatId, chat.displayName, chat.pictureUrl, chat);
+
+    private static ParticipantInfo ParticipantInfoFor(
+        string? ownerPubkeyHex,
+        string? displayName,
+        string? pictureUrl,
+        CurrentChatSnapshot? chat)
+    {
+        var owner = string.IsNullOrWhiteSpace(ownerPubkeyHex) ? null : ownerPubkeyHex.Trim();
+        var participant = owner == null
+            ? null
+            : chat?.participants?.FirstOrDefault(p => p.ownerPubkeyHex == owner);
+        return new ParticipantInfo(
+            participant?.ownerPubkeyHex ?? owner,
+            FallbackPersonName(participant?.displayName ?? displayName),
+            participant?.pictureUrl ?? pictureUrl,
+            participant?.isLocalOwner ?? false);
+    }
+
+    private static string FallbackPersonName(string? displayName)
+    {
+        var trimmed = displayName?.Trim() ?? string.Empty;
+        return string.IsNullOrEmpty(trimmed) ? "Iris user" : trimmed;
+    }
+
     private static string KindLabel(ChatMessageSnapshot message) =>
         message.kind == ChatMessageKind.System ? "System" :
         (message.isOutgoing ? "Sent" : "Received");
@@ -479,6 +595,20 @@ public class MessageInfoWindow : Window
         if (!string.IsNullOrEmpty(message.sourceEventId))
         {
             sb.AppendLine($"Received as {ShortIdentifier(message.sourceEventId!)}");
+        }
+        if (message.recipientDeliveries != null && message.recipientDeliveries.Length > 0)
+        {
+            sb.AppendLine("Recipients");
+            foreach (var recipient in message.recipientDeliveries)
+            {
+                sb.AppendLine(
+                    $"- {FallbackPersonName(recipient.displayName)} {DeliveryLabel(recipient.delivery)} {FormatDateTime(recipient.updatedAtSecs)}");
+            }
+        }
+        else if (!message.isOutgoing)
+        {
+            sb.AppendLine($"From {FallbackPersonName(message.author)}");
+            sb.AppendLine($"You {DeliveryLabel(message.delivery)}");
         }
         if (message.attachments != null && message.attachments.Length > 0)
         {

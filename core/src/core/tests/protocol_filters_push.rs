@@ -1835,6 +1835,8 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
                 chat_id: chat_id.clone(),
                 kind: ChatMessageKind::User,
                 author: alice.public_key().to_hex(),
+                author_owner_pubkey_hex: Some(alice.public_key().to_hex()),
+                author_picture_url: None,
                 body: "lunch?".to_string(),
                 attachments: Vec::new(),
                 reactions: Vec::new(),

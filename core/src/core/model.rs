@@ -457,6 +457,8 @@ pub(super) struct PersistedMessage {
     #[serde(default = "default_message_kind")]
     pub(super) kind: ChatMessageKind,
     pub(super) author: String,
+    #[serde(default)]
+    pub(super) author_owner_pubkey_hex: Option<String>,
     pub(super) body: String,
     #[serde(default)]
     pub(super) attachments: Vec<MessageAttachmentSnapshot>,

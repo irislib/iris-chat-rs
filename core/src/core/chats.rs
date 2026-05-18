@@ -884,6 +884,13 @@ impl AppCore {
         delivery: DeliveryState,
     ) -> ChatMessageSnapshot {
         let (body, attachments) = extract_message_attachments(&body);
+        let author_owner_pubkey_hex = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey.to_hex());
+        let author_picture_url = author_owner_pubkey_hex
+            .as_ref()
+            .and_then(|owner_hex| self.owner_picture_url(owner_hex));
         let message = ChatMessageSnapshot {
             id: message_id,
             chat_id: chat_id.to_string(),
@@ -894,6 +901,8 @@ impl AppCore {
                 .as_ref()
                 .map(|account| account.display_name.clone())
                 .unwrap_or_else(|| "me".to_string()),
+            author_owner_pubkey_hex,
+            author_picture_url,
             body,
             attachments,
             reactions: Vec::new(),
@@ -959,6 +968,7 @@ impl AppCore {
         created_at_secs: u64,
         expires_at_secs: Option<u64>,
         author: Option<String>,
+        author_owner_pubkey_hex: Option<String>,
         source_event_id: Option<String>,
     ) {
         let message_id_ref = message_id.as_deref();
@@ -985,7 +995,17 @@ impl AppCore {
             ),
         }
         let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
-        let author = author.unwrap_or_else(|| self.owner_display_label(chat_id));
+        let author_owner_pubkey_hex = author_owner_pubkey_hex
+            .or_else(|| (!is_group_chat_id(chat_id)).then(|| chat_id.to_string()));
+        let author_picture_url = author_owner_pubkey_hex
+            .as_ref()
+            .and_then(|owner_hex| self.owner_picture_url(owner_hex));
+        let author = author.unwrap_or_else(|| {
+            author_owner_pubkey_hex
+                .as_deref()
+                .map(|owner| self.owner_display_label(owner))
+                .unwrap_or_else(|| self.owner_display_label(chat_id))
+        });
         let should_count_unread = !self.is_chat_visible(chat_id);
         let (body, attachments) = extract_message_attachments(&body);
         let mut delivery_trace = delivery_trace_for_source_event(source_event_id.as_deref());
@@ -1000,6 +1020,8 @@ impl AppCore {
             chat_id: chat_id.to_string(),
             kind: ChatMessageKind::User,
             author,
+            author_owner_pubkey_hex,
+            author_picture_url,
             body,
             attachments,
             reactions: Vec::new(),
@@ -1078,6 +1100,8 @@ impl AppCore {
             chat_id: chat_id.to_string(),
             kind: ChatMessageKind::System,
             author: "Iris".to_string(),
+            author_owner_pubkey_hex: None,
+            author_picture_url: None,
             body,
             attachments: Vec::new(),
             reactions: Vec::new(),
@@ -1640,6 +1664,7 @@ impl AppCore {
             created_at_secs,
             expires_at_secs,
             Some(self.owner_display_label(&sender_owner.to_hex())),
+            Some(sender_owner.to_hex()),
             source_event_id,
         );
     }
@@ -1679,6 +1704,8 @@ impl AppCore {
         recipients
             .into_iter()
             .map(|owner_pubkey_hex| MessageRecipientDeliverySnapshot {
+                display_name: self.owner_display_label(&owner_pubkey_hex),
+                picture_url: self.owner_picture_url(&owner_pubkey_hex),
                 owner_pubkey_hex,
                 delivery: DeliveryState::Pending,
                 updated_at_secs: created_at_secs,
@@ -1694,6 +1721,8 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
         chat_id: message.chat_id.clone(),
         kind: message.kind.clone(),
         author: message.author.clone(),
+        author_owner_pubkey_hex: message.author_owner_pubkey_hex.clone(),
+        author_picture_url: None,
         body,
         attachments: if message.attachments.is_empty() {
             parsed_attachments

@@ -173,6 +173,8 @@ impl AppCore {
                             .recipient_deliveries
                             .push(MessageRecipientDeliverySnapshot {
                                 owner_pubkey_hex: author.to_string(),
+                                display_name: String::new(),
+                                picture_url: None,
                                 delivery: delivery.clone(),
                                 updated_at_secs: now,
                             });
