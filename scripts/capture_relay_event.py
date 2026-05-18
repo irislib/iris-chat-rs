@@ -109,6 +109,7 @@ def main() -> int:
     parser.add_argument("--kinds", default="1060", help="comma-separated event kinds")
     parser.add_argument("--p-tag", help="filter events tagged with #p=<hex>")
     parser.add_argument("--author", help="filter events authored by <hex> (comma- or pipe-separated)")
+    parser.add_argument("--id", help="filter by event id (comma- or pipe-separated)")
     parser.add_argument("--since-secs", type=int, default=0, help="only consider events created_at >= now-since")
     parser.add_argument("--timeout-secs", type=float, default=60.0)
     parser.add_argument("--count", type=int, default=1, help="number of matching events to capture")
@@ -144,6 +145,14 @@ def main() -> int:
         ]
         if authors:
             filter_["authors"] = authors
+    if args.id:
+        ids = [
+            value.strip().lower()
+            for value in args.id.replace("|", ",").split(",")
+            if value.strip()
+        ]
+        if ids:
+            filter_["ids"] = ids
     if args.since_secs:
         filter_["since"] = int(time.time()) - args.since_secs
     req = json.dumps(["REQ", sub_id, filter_])

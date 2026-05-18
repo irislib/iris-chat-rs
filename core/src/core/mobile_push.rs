@@ -63,6 +63,14 @@ impl AppCore {
                 .into_iter()
                 .filter(|author| !muted_direct_chat_ids.contains(author)),
         );
+        if let Some(protocol_engine) = self.protocol_engine.as_ref() {
+            message_author_pubkeys.extend(
+                protocol_engine
+                    .known_group_sender_event_pubkeys()
+                    .into_iter()
+                    .map(|pubkey| pubkey.to_hex()),
+            );
+        }
         let message_author_pubkeys = sorted_hexes(message_author_pubkeys);
         let invite_response_pubkeys = if self.preferences.invite_acceptance_notifications_enabled {
             let mut pubkeys = HashSet::new();
@@ -229,8 +237,20 @@ pub(crate) fn decrypt_mobile_push_notification(
     // saw the wrapper as a non-message rumor (typing, receipt,
     // reaction, settings) and there's nothing useful to show.
     let cached_fallback = || {
-        lookup_mobile_push_preview_after_short_wait(&data_dir, &outer_event_id)
-            .unwrap_or_else(suppressed_resolution)
+        let is_group_outer = parse_group_sender_key_message_event(&outer_event).is_ok();
+        lookup_mobile_push_preview_after_short_wait(&data_dir, &outer_event_id).unwrap_or_else(
+            || {
+                if is_group_outer {
+                    lookup_recent_group_mobile_push_preview_after_short_wait(
+                        &data_dir,
+                        outer_event.created_at.as_secs().saturating_sub(5),
+                    )
+                    .unwrap_or_else(suppressed_resolution)
+                } else {
+                    suppressed_resolution()
+                }
+            },
+        )
     };
 
     // If the foreground app already wrote a chat message for this
@@ -289,6 +309,43 @@ pub(crate) fn decrypt_mobile_push_notification(
         Err(_) => return cached_fallback(),
     };
 
+    if parse_group_sender_key_message_event(&outer_event).is_ok() {
+        let group_result = match engine.process_group_outer_event(&outer_event) {
+            Ok(result) => result,
+            Err(_) => return cached_fallback(),
+        };
+        let Some(message) = group_result
+            .events
+            .into_iter()
+            .find_map(|event| match event {
+                GroupIncomingEvent::Message(message) => Some(message),
+                GroupIncomingEvent::MetadataUpdated(_) => None,
+            })
+        else {
+            return cached_fallback();
+        };
+        let Ok(sender_owner) = nostr::PublicKey::from_slice(&message.sender_owner.to_bytes())
+        else {
+            return cached_fallback();
+        };
+        let inner_json = String::from_utf8_lossy(&message.body).to_string();
+        let Some(runtime_rumor) = parse_runtime_rumor(&inner_json) else {
+            return cached_fallback();
+        };
+        if runtime_rumor.pubkey != sender_owner {
+            return cached_fallback();
+        }
+        return decrypted_mobile_push_resolution(
+            payload_object,
+            &data_dir,
+            sender_owner,
+            Some(message.group_id),
+            runtime_rumor.kind as u64,
+            runtime_rumor.content,
+            inner_json,
+        );
+    }
+
     let decrypted = match engine.process_direct_message_event(&outer_event) {
         Ok(Some(decrypted)) => decrypted,
         Ok(None) | Err(_) => return cached_fallback(),
@@ -318,6 +375,27 @@ pub(crate) fn decrypt_mobile_push_notification(
         [name, value, ..] if name == "l" && !value.is_empty() => Some(value.clone()),
         _ => None,
     });
+
+    decrypted_mobile_push_resolution(
+        payload_object,
+        &data_dir,
+        sender_owner,
+        group_id,
+        inner_kind,
+        inner_content,
+        inner_json,
+    )
+}
+
+fn decrypted_mobile_push_resolution(
+    payload_object: &serde_json::Map<String, serde_json::Value>,
+    data_dir: &str,
+    sender_owner: nostr::PublicKey,
+    group_id: Option<String>,
+    inner_kind: u64,
+    inner_content: String,
+    inner_json: String,
+) -> MobilePushNotificationResolution {
     let sender_name = lookup_sender_display_name(&data_dir, &sender_owner)
         .or_else(|| lookup_direct_thread_sender_name(&data_dir, &sender_owner));
     let group_title = group_id
@@ -504,11 +582,108 @@ fn lookup_mobile_push_preview(
     })
 }
 
+fn lookup_recent_group_mobile_push_preview(
+    data_dir: &str,
+    min_created_at_secs: u64,
+) -> Option<MobilePushNotificationResolution> {
+    let conn = open_lookup_connection(data_dir)?;
+    let min_created_at_secs = i64::try_from(min_created_at_secs).ok()?;
+    let (chat_id, body, author_owner_hex, author): (String, String, Option<String>, String) = conn
+        .query_row(
+            "SELECT chat_id, body, author_owner_pubkey_hex, author
+             FROM messages
+             WHERE chat_id LIKE 'group:%'
+               AND is_outgoing = 0
+               AND created_at_secs >= ?1
+             ORDER BY created_at_secs DESC, rowid DESC
+             LIMIT 1",
+            [min_created_at_secs],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .ok()?;
+    let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX)?.to_string();
+    if is_chat_muted_in(&conn, &chat_id) {
+        return Some(suppressed_resolution());
+    }
+
+    let sender_name = author_owner_hex
+        .as_deref()
+        .and_then(|hex| nostr::PublicKey::parse(hex).ok())
+        .and_then(|pubkey| lookup_owner_display_name(&conn, &pubkey))
+        .filter(|value| !is_generic_sender_title(value))
+        .or_else(|| {
+            let fallback = author.trim().to_string();
+            (!fallback.is_empty() && !is_generic_sender_title(&fallback)).then_some(fallback)
+        })
+        .unwrap_or_else(|| "Iris Chat".to_string());
+    let group_title = lookup_group_name_in(&conn, &group_id);
+    let title = match (&group_title, sender_name.as_str()) {
+        (Some(group), sender) if !sender.is_empty() && sender != "Iris Chat" => {
+            format!("{sender} in {group}")
+        }
+        (Some(group), _) => group.clone(),
+        (None, sender) => sender.to_string(),
+    };
+    let body_preview = chat_message_body_preview(&body);
+    let body_text = if body_preview.is_empty() {
+        decrypted_mobile_push_body(MOBILE_PUSH_CHAT_MESSAGE_KIND, "")
+    } else {
+        body_preview
+    };
+
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "title".to_string(),
+        serde_json::Value::String(title.clone()),
+    );
+    payload.insert(
+        "body".to_string(),
+        serde_json::Value::String(body_text.clone()),
+    );
+    payload.insert(
+        "inner_kind".to_string(),
+        serde_json::Value::String(MOBILE_PUSH_CHAT_MESSAGE_KIND.to_string()),
+    );
+    payload.insert("chat_id".to_string(), serde_json::Value::String(chat_id));
+    payload.insert("group_id".to_string(), serde_json::Value::String(group_id));
+    if let Some(author_owner_hex) = author_owner_hex {
+        payload.insert(
+            "sender_pubkey".to_string(),
+            serde_json::Value::String(author_owner_hex),
+        );
+    }
+
+    Some(MobilePushNotificationResolution {
+        should_show: true,
+        title,
+        body: body_text,
+        payload_json: serde_json::to_string(&serde_json::Value::Object(payload))
+            .unwrap_or_else(|_| "{}".to_string()),
+    })
+}
+
+fn lookup_recent_group_mobile_push_preview_after_short_wait(
+    data_dir: &str,
+    min_created_at_secs: u64,
+) -> Option<MobilePushNotificationResolution> {
+    for delay_ms in [0_u64, 25, 75, 150, 300, 600, 1_200, 2_400] {
+        if delay_ms > 0 {
+            std::thread::sleep(Duration::from_millis(delay_ms));
+        }
+        if let Some(resolution) =
+            lookup_recent_group_mobile_push_preview(data_dir, min_created_at_secs)
+        {
+            return Some(resolution);
+        }
+    }
+    None
+}
+
 fn lookup_mobile_push_preview_after_short_wait(
     data_dir: &str,
     outer_event_id: &str,
 ) -> Option<MobilePushNotificationResolution> {
-    for delay_ms in [0_u64, 25, 75, 150] {
+    for delay_ms in [0_u64, 25, 75, 150, 300, 600, 1_200, 2_400] {
         if delay_ms > 0 {
             std::thread::sleep(Duration::from_millis(delay_ms));
         }

@@ -2247,6 +2247,38 @@ fn mobile_push_snapshot_tracks_private_invite_when_enabled() {
 }
 
 #[test]
+fn mobile_push_snapshot_tracks_group_sender_key_authors() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("mobile-push-group-sender-key", &owner, &device);
+
+    core.create_group("Push group", &[]);
+
+    let group_authors = core
+        .protocol_engine
+        .as_ref()
+        .expect("protocol engine")
+        .known_group_sender_event_pubkeys()
+        .into_iter()
+        .map(|pubkey| pubkey.to_hex())
+        .collect::<Vec<_>>();
+    assert!(
+        !group_authors.is_empty(),
+        "group creation should create a sender-key event author"
+    );
+
+    let snapshot = core.build_mobile_push_sync_snapshot();
+
+    for author in group_authors {
+        assert!(
+            snapshot.message_author_pubkeys.contains(&author),
+            "push subscriptions must include group sender-key author {author}; snapshot={:?}",
+            snapshot.message_author_pubkeys
+        );
+    }
+}
+
+#[test]
 fn mobile_push_snapshot_omits_local_invite_when_disabled() {
     let owner = Keys::generate();
     let device = Keys::generate();
