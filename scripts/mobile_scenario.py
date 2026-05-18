@@ -125,6 +125,20 @@ def tcp_open(host: str, port: int) -> bool:
         return False
 
 
+def discover_android_sdk_dir() -> Path | None:
+    value = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
+    local_properties = ROOT_DIR / "android" / "local.properties"
+    if not value and local_properties.exists():
+        for line in local_properties.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("sdk.dir="):
+                value = line.split("=", 1)[1].strip()
+    if not value:
+        default = Path.home() / "Library" / "Android" / "sdk"
+        if default.exists():
+            value = str(default)
+    return Path(value) if value else None
+
+
 class Scenario:
     def __init__(self, config_path: Path):
         self.config_path = config_path
@@ -180,18 +194,15 @@ class Scenario:
         env["IRIS_DEFAULT_RELAYS"] = self.relay_url()
         env["IRIS_RELAY_SET_ID"] = str(relay["set_id"])
         env["IRIS_TRUSTED_TEST_BUILD"] = "true"
+        if sdk_dir := discover_android_sdk_dir():
+            env.setdefault("ANDROID_HOME", str(sdk_dir))
         return env
 
     def android_sdk_dir(self) -> Path:
-        value = os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT")
-        local_properties = ROOT_DIR / "android" / "local.properties"
-        if not value and local_properties.exists():
-            for line in local_properties.read_text(encoding="utf-8", errors="replace").splitlines():
-                if line.startswith("sdk.dir="):
-                    value = line.split("=", 1)[1].strip()
-        if not value:
+        value = discover_android_sdk_dir()
+        if value is None:
             raise SystemExit("Android SDK path not found. Set ANDROID_HOME, ANDROID_SDK_ROOT, or android/local.properties.")
-        return Path(value)
+        return value
 
     def adb(self) -> Path:
         adb = self.android_sdk_dir() / "platform-tools" / "adb"
@@ -325,7 +336,11 @@ class Scenario:
         self.save_state()
 
     def build_ios(self) -> None:
-        if not self.config.get("ios", {}).get("build", True):
+        ios_devices = [
+            device for device in self.state.get("devices", {}).values()
+            if device.get("platform") == "ios"
+        ]
+        if not ios_devices or not self.config.get("ios", {}).get("build", True):
             return
         run([str(IOS_BUILD), "ios-xcframework"], env=self.scenario_env())
 
