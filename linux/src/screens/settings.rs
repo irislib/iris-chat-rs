@@ -520,7 +520,11 @@ fn profile_group(
         image_cache::fetch_into_avatar(&avatar, &proxied);
     }
     avatar_row.add_prefix(&avatar);
-    avatar_row.set_title(&account.display_name);
+    avatar_row.set_title(if account.display_name.is_empty() {
+        "Profile"
+    } else {
+        &account.display_name
+    });
 
     let change_pic = gtk::Button::with_label("Change photo");
     change_pic.add_css_class("flat");
@@ -606,8 +610,7 @@ fn profile_group(
     group.add(&about_row);
 
     let qr_row = adw::ActionRow::builder()
-        .title("Show code")
-        .subtitle("Show this code to link another device or start a chat")
+        .title("Show QR code")
         .activatable(true)
         .build();
     let qr_icon = gtk::Image::from_icon_name("preferences-other-symbolic");
@@ -628,6 +631,16 @@ fn profile_group(
         );
     });
     group.add(&qr_row);
+
+    let copy_user_id_row = adw::ActionRow::builder()
+        .title("Copy user ID")
+        .activatable(true)
+        .build();
+    let copy_icon = gtk::Image::from_icon_name("edit-copy-symbolic");
+    copy_user_id_row.add_prefix(&copy_icon);
+    let user_id = account.npub.clone();
+    copy_user_id_row.connect_activated(move |_| clipboard::copy(&user_id));
+    group.add(&copy_user_id_row);
 
     group
 }

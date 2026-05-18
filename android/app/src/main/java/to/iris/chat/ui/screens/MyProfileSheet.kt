@@ -1032,7 +1032,7 @@ private fun ProfileSettingsPage(
 
         IrisListSection {
             ProfileActionRow(
-                title = "Show code",
+                title = "Show QR code",
                 icon = IrisIcons.ScanQr,
                 onClick = onShowQr,
                 modifier = Modifier.testTag("myProfileShowQrButton"),
@@ -1067,8 +1067,8 @@ private fun ProfileHero(
     ) {
         IrisAvatar(
             label = displayName.ifBlank { "Profile" },
-            size = 80.dp,
-            emphasize = true,
+            size = 96.dp,
+            emphasize = false,
             imageUrl = imageUrl,
             imageData = imageData,
             modifier =
@@ -1213,18 +1213,43 @@ private fun ProfileAboutRow(
                     .padding(top = 4.dp)
                     .size(24.dp),
         )
-        TextField(
+        BasicTextField(
             value = value,
             onValueChange = onValueChange,
             enabled = enabled,
             minLines = 2,
             maxLines = 5,
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.onSurface),
+            textStyle =
+                MaterialTheme.typography.bodyLarge.copy(
+                    color =
+                        if (enabled) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            IrisTheme.palette.muted
+                        },
+                ),
             modifier =
                 Modifier
                     .weight(1f)
                     .testTag("myProfileAboutInput"),
-            label = { Text("About") },
-            colors = irisTextFieldColors(),
+            decorationBox = { innerTextField ->
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.TopStart,
+                ) {
+                    if (value.isBlank()) {
+                        Text(
+                            text = "About",
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = IrisTheme.palette.muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    innerTextField()
+                }
+            },
         )
     }
 }
