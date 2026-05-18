@@ -2909,6 +2909,7 @@ struct ChatListScreen: View {
             expandedSearchSections: expandedSearchSections,
             messageLimit: searchMessageLimit,
             onOpenNearby: onOpenNearby,
+            onShortcutNavigate: { searchText = "" },
             onViewMoreSearchResults: viewMoreSearchResults
         )
         .background(palette.background)
@@ -2937,6 +2938,7 @@ struct ChatListScreen: View {
                             relativeNow: relativeNow,
                             expandedSections: expandedSearchSections,
                             messageLimit: searchMessageLimit,
+                            onShortcutNavigate: { searchText = "" },
                             onViewMore: viewMoreSearchResults
                         )
                     }
@@ -3210,6 +3212,7 @@ private struct SearchResultsList: View {
     let relativeNow: Date
     let expandedSections: Set<ChatListSearchSection>
     let messageLimit: UInt32
+    let onShortcutNavigate: () -> Void
     let onViewMore: (ChatListSearchSection) -> Void
 
     private let initialChatRows = 7
@@ -3231,7 +3234,11 @@ private struct SearchResultsList: View {
         } else {
             LazyVStack(alignment: .leading, spacing: 0) {
                 if let shortcut = results.shortcut {
-                    ChatInputShortcutRow(manager: manager, shortcut: shortcut)
+                    ChatInputShortcutRow(
+                        manager: manager,
+                        shortcut: shortcut,
+                        onNavigate: onShortcutNavigate
+                    )
                 }
                 if !results.contacts.isEmpty {
                     SearchSectionHeader(title: "Contacts")
@@ -3330,10 +3337,12 @@ private struct ChatInputShortcutRow: View {
     @Environment(\.irisPalette) private var palette
     let manager: AppManager
     let shortcut: ChatInputShortcut
+    let onNavigate: () -> Void
 
     var body: some View {
         let descriptor = describe(shortcut)
         Button {
+            onNavigate()
             manager.dispatch(descriptor.action)
         } label: {
             HStack(spacing: 12) {
@@ -3730,6 +3739,7 @@ private struct ChatListTableView: UIViewRepresentable {
     let expandedSearchSections: Set<ChatListSearchSection>
     let messageLimit: UInt32
     let onOpenNearby: () -> Void
+    let onShortcutNavigate: () -> Void
     let onViewMoreSearchResults: (ChatListSearchSection) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -3764,6 +3774,7 @@ private struct ChatListTableView: UIViewRepresentable {
         context.coordinator.expandedSearchSections = expandedSearchSections
         context.coordinator.messageLimit = messageLimit
         context.coordinator.onOpenNearby = onOpenNearby
+        context.coordinator.onShortcutNavigate = onShortcutNavigate
         context.coordinator.onViewMoreSearchResults = onViewMoreSearchResults
         context.coordinator.sections = sections
         guard context.coordinator.fingerprint != fingerprint else { return }
@@ -3919,6 +3930,7 @@ private struct ChatListTableView: UIViewRepresentable {
         var expandedSearchSections: Set<ChatListSearchSection> = []
         var messageLimit: UInt32 = 0
         var onOpenNearby: (() -> Void)?
+        var onShortcutNavigate: (() -> Void)?
         var onViewMoreSearchResults: ((ChatListSearchSection) -> Void)?
         var fingerprint: [String] = []
 
@@ -4111,6 +4123,9 @@ private struct ChatListTableView: UIViewRepresentable {
                     relativeNow: relativeNow,
                     expandedSections: expandedSearchSections,
                     messageLimit: messageLimit,
+                    onShortcutNavigate: { [weak self] in
+                        self?.onShortcutNavigate?()
+                    },
                     onViewMore: { [weak self] section in
                         self?.onViewMoreSearchResults?(section)
                     }

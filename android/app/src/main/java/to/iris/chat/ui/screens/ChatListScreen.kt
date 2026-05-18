@@ -245,6 +245,7 @@ fun ChatListScreen(
                             ChatInputShortcutRow(
                                 appManager = appManager,
                                 shortcut = shortcut,
+                                onNavigate = { searchQuery = "" },
                             )
                         }
                     }
@@ -951,6 +952,7 @@ private fun ChatThreadSnapshot.chatListPreview(): String {
 private fun ChatInputShortcutRow(
     appManager: AppManager,
     shortcut: ChatInputShortcut,
+    onNavigate: () -> Unit,
 ) {
     val haptics = rememberIrisHapticFeedback()
     val interactionSource = remember { MutableInteractionSource() }
@@ -977,6 +979,7 @@ private fun ChatInputShortcutRow(
                     indication = null,
                     onClick = {
                         haptics.press()
+                        onNavigate()
                         action()
                     },
                 )
