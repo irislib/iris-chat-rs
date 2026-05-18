@@ -1121,6 +1121,7 @@ final class AppManager: ObservableObject {
 #if os(iOS)
     private let screenshotFixture: ScreenshotFixture?
     private let screenshotFixtureReferenceDate: Date
+    private let screenshotFixtureShowsNearbyTransportPeers: Bool
 #endif
     private lazy var reconciler = UpdateBridge(owner: self)
     init(
@@ -1159,6 +1160,8 @@ final class AppManager: ObservableObject {
 #if os(iOS)
         self.screenshotFixture = ScreenshotFixture.enabled(environment: environment) ? .default : nil
         self.screenshotFixtureReferenceDate = Date()
+        self.screenshotFixtureShowsNearbyTransportPeers =
+            environment["IRIS_UI_TEST_NEARBY_TAPPABLE_FIRST_PEER_HEX"] != nil
 #endif
         try? fileManager.createDirectory(at: resolvedDataDir, withIntermediateDirectories: true)
         AppPaths.prepareDataDirForBackgroundNotificationReads(resolvedDataDir, fileManager: fileManager)
@@ -1414,7 +1417,11 @@ final class AppManager: ObservableObject {
             guard fixture.chatIsFixture(trimmed) else { return false }
             pendingNavigationOverride = nil
             applyLocalScreenStack([.chat(chatId: trimmed)])
-            state = fixture.applyTo(state: state, referenceDate: screenshotFixtureReferenceDate)
+            state = fixture.applyTo(
+                state: state,
+                referenceDate: screenshotFixtureReferenceDate,
+                showNearbyTransportPeers: screenshotFixtureShowsNearbyTransportPeers
+            )
             return true
         case .sendMessage(let chatId, _),
              .sendDisappearingMessage(let chatId, _, _),
@@ -2939,7 +2946,11 @@ final class AppManager: ObservableObject {
                 screenStack: state.router.screenStack
             )
         }
-        return fixture.applyTo(state: pinned, referenceDate: screenshotFixtureReferenceDate)
+        return fixture.applyTo(
+            state: pinned,
+            referenceDate: screenshotFixtureReferenceDate,
+            showNearbyTransportPeers: screenshotFixtureShowsNearbyTransportPeers
+        )
     }
 
     private func stateByApplyingUiTestSeedDaySplit(_ source: AppState) -> AppState {

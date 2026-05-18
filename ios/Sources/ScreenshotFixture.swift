@@ -217,7 +217,11 @@ extension ScreenshotFixture {
 
     /// Apply the fixture overrides on top of a state snapshot. Called from
     /// AppManager.apply(update:) on the iOS dispatch path.
-    func applyTo(state: AppState, referenceDate: Date) -> AppState {
+    func applyTo(
+        state: AppState,
+        referenceDate: Date,
+        showNearbyTransportPeers: Bool = false
+    ) -> AppState {
         guard let account = state.account else {
             return state
         }
@@ -232,6 +236,10 @@ extension ScreenshotFixture {
         // Force the Nearby row visible in the chat list — the row only
         // renders when `preferences.nearbyEnabled` is true.
         next.preferences.nearbyEnabled = true
+        if showNearbyTransportPeers {
+            next.preferences.nearbyBluetoothEnabled = true
+            next.preferences.nearbyLanEnabled = true
+        }
 
         // Replace the chat list with our curated threads.
         let ownerHex = account.publicKeyHex

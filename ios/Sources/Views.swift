@@ -4570,7 +4570,7 @@ private struct ChatListTableView: UIViewRepresentable {
             guard let manager else { return }
             let service = manager.nearbyIris
             let nearbyEnabled = preferences?.nearbyEnabled ?? true
-            cell.accessibilityIdentifier = "nearbyChatRow"
+            cell.accessibilityIdentifier = nil
             cell.accessibilityLabel = nearbyAccessibilityLabel(
                 nearbyEnabled: nearbyEnabled,
                 hasPeers: nearbyEnabled && !service.peers.isEmpty,
@@ -5008,7 +5008,6 @@ private struct NearbyChatListRow: View {
                     onOpenNearby: onOpen,
                     onOpenPeerProfile: onOpenPeerProfile
                 )
-                .accessibilityIdentifier("nearbyChatRow")
             }
         }
         .onAppear {
@@ -5080,24 +5079,26 @@ private struct NearbyEmptyRow: View {
     }
 
     var body: some View {
-        HStack(spacing: IrisChatListRowMetrics.avatarTextSpacing) {
-            NearbyWirelessAvatar(active: active)
+        Button(action: onOpen) {
+            HStack(spacing: IrisChatListRowMetrics.avatarTextSpacing) {
+                NearbyWirelessAvatar(active: active)
 
-            Text(statusText)
-                .font(.subheadline)
-                .foregroundStyle(palette.muted)
-                .lineLimit(1)
+                Text(statusText)
+                    .font(.subheadline)
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
 
-            Spacer(minLength: 0)
+                Spacer(minLength: 0)
+            }
         }
+        .buttonStyle(.irisPlain)
         .padding(.horizontal, IrisChatListRowMetrics.horizontalPadding)
         .padding(.vertical, IrisChatListRowMetrics.verticalPadding)
         .frame(height: NearbyChatListRowHeight, alignment: .top)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onOpen)
-        .onLongPressGesture(minimumDuration: 0.5) {
+        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
             toggleNearbyMaster(manager: manager)
-        }
+        })
+        .accessibilityElement(children: .ignore)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("nearbyChatRow")
         .accessibilityLabel(nearbyAccessibilityLabel(
@@ -5138,48 +5139,52 @@ private struct NearbyPeerStripRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: IrisChatListRowMetrics.avatarTextSpacing) {
-            NearbyWirelessAvatar(size: avatarSize, active: active)
-                .contentShape(Rectangle())
-                .onTapGesture(perform: onOpenNearby)
-                .onLongPressGesture(minimumDuration: 0.5) {
+            Button(action: onOpenNearby) {
+                NearbyWirelessAvatar(size: avatarSize, active: active)
+            }
+                .buttonStyle(.irisPlain)
+                .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
                     toggleNearbyMaster(manager: manager)
-                }
+                })
+                .accessibilityElement(children: .ignore)
                 .accessibilityAddTraits(.isButton)
-                .accessibilityIdentifier("nearbyOpenButton")
+                .accessibilityIdentifier("nearbyChatRow")
                 .accessibilityLabel("Nearby")
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(peers) { peer in
                         let name = nearbyPeerResolvedName(peer, manager: manager, fallback: "Nearby user")
-                        VStack(spacing: 4) {
-                            IrisAvatar(
-                                label: name,
-                                size: avatarSize,
-                                pictureUrl: peer.pictureURL,
-                                preferences: manager.state.preferences,
-                                manager: manager
-                            )
-                            Text(nearbyPeerDisplayName(name))
-                                .font(.caption2.weight(.medium))
-                                .foregroundStyle(Color.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.tail)
-                                .frame(width: max(avatarSize + 12, 64), alignment: .center)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
+                        Button {
                             openNearbyPeer(
                                 peer,
                                 manager: manager,
                                 onOpenPeerProfile: onOpenPeerProfile
                             )
+                        } label: {
+                            VStack(spacing: 4) {
+                                IrisAvatar(
+                                    label: name,
+                                    size: avatarSize,
+                                    pictureUrl: peer.pictureURL,
+                                    preferences: manager.state.preferences,
+                                    manager: manager
+                                )
+                                Text(nearbyPeerDisplayName(name))
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(Color.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .frame(width: max(avatarSize + 12, 64), alignment: .center)
+                            }
                         }
-                        .onLongPressGesture(minimumDuration: 0.5) {
+                        .buttonStyle(.irisPlain)
+                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
                             openNearbyPeerProfile(peer, onOpenPeerProfile: onOpenPeerProfile)
-                        }
+                        })
+                        .accessibilityElement(children: .ignore)
                         .accessibilityAddTraits(.isButton)
-                        .accessibilityIdentifier("nearbyPeer-\(String(peer.id.prefix(12)))")
+                        .accessibilityIdentifier("nearbyPreviewPeer-\(String(peer.id.prefix(12)))")
                         .accessibilityLabel(name)
                     }
                 }
@@ -5589,27 +5594,29 @@ private struct NearbyIrisScreen: View {
                 HStack(spacing: 12) {
                     ForEach(peers) { peer in
                         let name = nearbyPeerResolvedName(peer, manager: manager, fallback: "Nearby user")
-                        VStack(spacing: 6) {
-                            IrisAvatar(
-                                label: name,
-                                size: 42,
-                                pictureUrl: peer.pictureURL,
-                                preferences: manager.state.preferences,
-                                manager: manager
-                            )
-                            Text(name)
-                                .font(.system(.caption, design: .rounded, weight: .semibold))
-                                .foregroundStyle(palette.textPrimary)
-                                .lineLimit(1)
-                                .frame(maxWidth: 78)
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
+                        Button {
                             openPeer(peer)
+                        } label: {
+                            VStack(spacing: 6) {
+                                IrisAvatar(
+                                    label: name,
+                                    size: 42,
+                                    pictureUrl: peer.pictureURL,
+                                    preferences: manager.state.preferences,
+                                    manager: manager
+                                )
+                                Text(name)
+                                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                                    .foregroundStyle(palette.textPrimary)
+                                    .lineLimit(1)
+                                    .frame(maxWidth: 78)
+                            }
                         }
-                        .onLongPressGesture(minimumDuration: 0.5) {
+                        .buttonStyle(.irisPlain)
+                        .simultaneousGesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in
                             openNearbyPeerProfile(peer, onOpenPeerProfile: openPeerProfile)
-                        }
+                        })
+                        .accessibilityElement(children: .ignore)
                         .accessibilityAddTraits(.isButton)
                         .accessibilityIdentifier("nearbyPeer-\(String(peer.id.prefix(12)))")
                         .accessibilityLabel(name)
