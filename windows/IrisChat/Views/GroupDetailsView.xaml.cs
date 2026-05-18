@@ -12,6 +12,11 @@ namespace IrisChat.Views;
 
 public partial class GroupDetailsView : UserControl
 {
+    private const int KnownUserLimit = 8;
+
+    private readonly HashSet<string> _selectedAddOwners = new(StringComparer.OrdinalIgnoreCase);
+    private bool _knownUsersVisible = true;
+
     public string? GroupId { get; set; }
 
     public GroupDetailsView()
@@ -40,6 +45,7 @@ public partial class GroupDetailsView : UserControl
         SaveNameButton.IsEnabled = details.canManage;
         AddMemberInput.IsEnabled = details.canManage;
         MuteChatText.Text = details.isMuted ? "Unmute chat" : "Mute chat";
+        UpdateAddMemberButton(details);
 
         MembersList.Items.Clear();
         foreach (var m in details.members)
@@ -50,20 +56,29 @@ public partial class GroupDetailsView : UserControl
         RebuildKnownUsers();
     }
 
-    private void OnAddMemberTextChanged(object sender, TextChangedEventArgs e) => RebuildKnownUsers();
+    private void OnAddMemberTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _knownUsersVisible = true;
+        RebuildKnownUsers();
+        var details = App.CurrentManager.GroupDetails;
+        if (details != null) UpdateAddMemberButton(details);
+    }
 
     private void RebuildKnownUsers()
     {
         var details = App.CurrentManager.GroupDetails;
-        if (details == null || !details.canManage)
+        if (details == null || !details.canManage || !_knownUsersVisible)
         {
             KnownUsersList.Items.Clear();
-            KnownUsersHeader.Visibility = Visibility.Collapsed;
+            KnownUsersHeaderRow.Visibility = Visibility.Collapsed;
             return;
         }
 
         var localOwnerHex = App.CurrentManager.Account?.publicKeyHex ?? string.Empty;
-        var memberHexes = new HashSet<string>(details.members.Select(m => m.ownerPubkeyHex));
+        var memberHexes = new HashSet<string>(
+            details.members.Select(m => m.ownerPubkeyHex),
+            StringComparer.OrdinalIgnoreCase
+        );
         var query = (AddMemberInput.Text ?? string.Empty).Trim().ToLowerInvariant();
 
         var candidates = App.CurrentManager.ChatList
@@ -74,18 +89,19 @@ public partial class GroupDetailsView : UserControl
                 || (c.displayName ?? string.Empty).ToLowerInvariant().Contains(query)
                 || (c.chatId ?? string.Empty).ToLowerInvariant().Contains(query)
                 || (c.subtitle ?? string.Empty).ToLowerInvariant().Contains(query))
+            .Take(KnownUserLimit)
             .ToList();
 
         KnownUsersList.Items.Clear();
         foreach (var chat in candidates)
         {
-            KnownUsersList.Items.Add(BuildKnownUserRow(details.groupId, chat));
+            KnownUsersList.Items.Add(BuildKnownUserRow(chat));
         }
         KnownUsersHeader.Text = query.Length == 0 ? "Known users" : "Search results";
-        KnownUsersHeader.Visibility = candidates.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        KnownUsersHeaderRow.Visibility = candidates.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private FrameworkElement BuildKnownUserRow(string groupId, ChatThreadSnapshot chat)
+    private FrameworkElement BuildKnownUserRow(ChatThreadSnapshot chat)
     {
         var grid = new Grid { Margin = new Thickness(0, 4, 0, 4) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -123,18 +139,22 @@ public partial class GroupDetailsView : UserControl
         }
         Grid.SetColumn(info, 1);
 
-        var addBtn = new Button
+        var selected = _selectedAddOwners.Contains(chat.chatId);
+        var checkbox = new CheckBox
         {
-            Style = (Style)FindResource("CompactSecondaryButton"),
-            Content = new TextBlock { Text = "Add" },
+            IsChecked = selected,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        addBtn.Click += (_, _) => OnKnownUserAdd(groupId, chat.chatId);
-        Grid.SetColumn(addBtn, 2);
+        checkbox.Click += (_, e) =>
+        {
+            e.Handled = true;
+            ToggleKnownUserSelection(chat.chatId);
+        };
+        Grid.SetColumn(checkbox, 2);
 
         grid.Children.Add(avatar);
         grid.Children.Add(info);
-        grid.Children.Add(addBtn);
+        grid.Children.Add(checkbox);
 
         var border = new Border
         {
@@ -143,15 +163,56 @@ public partial class GroupDetailsView : UserControl
             Cursor = Cursors.Hand,
             Child = grid,
         };
-        border.MouseLeftButtonUp += (_, _) => OnKnownUserAdd(groupId, chat.chatId);
+        border.MouseLeftButtonUp += (_, _) => ToggleKnownUserSelection(chat.chatId);
         return border;
     }
 
-    private void OnKnownUserAdd(string groupId, string ownerHex)
+    private void ToggleKnownUserSelection(string ownerHex)
     {
         if (string.IsNullOrEmpty(ownerHex)) return;
-        App.CurrentManager.AddGroupMembers(groupId, new[] { ownerHex });
-        AddMemberInput.Clear();
+        if (!_selectedAddOwners.Add(ownerHex))
+        {
+            _selectedAddOwners.Remove(ownerHex);
+        }
+        RebuildKnownUsers();
+        var details = App.CurrentManager.GroupDetails;
+        if (details != null) UpdateAddMemberButton(details);
+    }
+
+    private void UpdateAddMemberButton(GroupDetailsSnapshot details)
+    {
+        var pendingCount = PendingAddMemberInputs(details).Count;
+        AddMemberButton.IsEnabled = details.canManage && pendingCount > 0;
+        AddMemberButtonText.Text = pendingCount > 1 ? $"Add {pendingCount}" : "Add";
+    }
+
+    private List<string> PendingAddMemberInputs(GroupDetailsSnapshot details)
+    {
+        var memberHexes = new HashSet<string>(
+            details.members.Select(m => m.ownerPubkeyHex),
+            StringComparer.OrdinalIgnoreCase
+        );
+        var localOwnerHex = App.CurrentManager.Account?.publicKeyHex ?? string.Empty;
+        var inputs = _selectedAddOwners
+            .Where(owner => !string.Equals(owner, localOwnerHex, StringComparison.OrdinalIgnoreCase)
+                && !memberHexes.Contains(owner))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var typedInput = AddMemberInput.Text?.Trim();
+        if (!string.IsNullOrEmpty(typedInput)
+            && !string.Equals(typedInput, localOwnerHex, StringComparison.OrdinalIgnoreCase)
+            && !memberHexes.Contains(typedInput))
+        {
+            inputs.Add(typedInput!);
+        }
+
+        return inputs.OrderBy(owner => owner).ToList();
+    }
+
+    private void OnCloseKnownUsers(object sender, RoutedEventArgs e)
+    {
+        _knownUsersVisible = false;
+        RebuildKnownUsers();
     }
 
     private FrameworkElement BuildMember(GroupDetailsSnapshot details, GroupMemberSnapshot m)
@@ -254,10 +315,14 @@ public partial class GroupDetailsView : UserControl
     {
         var details = App.CurrentManager.GroupDetails;
         if (details == null) return;
-        var input = AddMemberInput.Text?.Trim();
-        if (string.IsNullOrEmpty(input)) return;
-        App.CurrentManager.AddGroupMembers(details.groupId, new[] { input });
+        var inputs = PendingAddMemberInputs(details);
+        if (inputs.Count == 0) return;
+        App.CurrentManager.AddGroupMembers(details.groupId, inputs);
+        _selectedAddOwners.Clear();
         AddMemberInput.Clear();
+        _knownUsersVisible = false;
+        RebuildKnownUsers();
+        UpdateAddMemberButton(details);
     }
 
     private void OnDeleteChat(object sender, RoutedEventArgs e)

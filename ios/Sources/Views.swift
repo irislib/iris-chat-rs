@@ -5535,6 +5535,8 @@ struct NewGroupScreen: View {
     #endif
 }
 
+private let groupDetailsMemberCandidateLimit = 8
+
 struct GroupDetailsScreen: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
@@ -5542,6 +5544,8 @@ struct GroupDetailsScreen: View {
 
     @State private var groupName = ""
     @State private var memberInput = ""
+    @State private var selectedAddMemberOwners = Set<String>()
+    @State private var addMemberSuggestionsVisible = true
     @State private var showingScanner = false
     @State private var showingGroupPicturePicker = false
     @State private var showingGroupPictureSourceMenu = false
@@ -5556,6 +5560,16 @@ struct GroupDetailsScreen: View {
 
     private var normalizedMemberInput: String {
         normalizePeerInput(input: memberInput)
+    }
+
+    private var addMemberInputBinding: Binding<String> {
+        Binding(
+            get: { memberInput },
+            set: { value in
+                memberInput = value
+                addMemberSuggestionsVisible = true
+            }
+        )
     }
 
     var body: some View {
@@ -5717,14 +5731,16 @@ struct GroupDetailsScreen: View {
                     IrisSectionCard {
                         CardHeader(
                             title: "Add members",
-                            subtitle: "Search known users or paste / scan a user ID."
+                            subtitle: "Search, paste, or scan a user ID."
                         )
 
-                        TextField("Search or paste user ID", text: $memberInput)
+                        TextField("Search or paste user ID", text: addMemberInputBinding)
                             .irisIdentifierInputModifiers()
                             .textFieldStyle(.plain)
                             .irisInputField()
                             .accessibilityIdentifier("groupDetailsAddMemberInput")
+
+                        selectedAddMemberChips(details: details)
 
                         VStack(spacing: 10) {
                             if irisSupportsQrScanning {
@@ -5733,30 +5749,47 @@ struct GroupDetailsScreen: View {
                                     .accessibilityIdentifier("groupDetailsScanQrButton")
                             }
 
-                            Button(manager.state.busy.updatingGroup ? "Adding…" : "Add members") {
-                                manager.dispatch(.addGroupMembers(groupId: groupId, memberInputs: [normalizedMemberInput]))
+                            let pendingInputs = pendingAddMemberInputs(details: details)
+                            Button(addMembersButtonTitle(inputCount: pendingInputs.count)) {
+                                manager.dispatch(.addGroupMembers(groupId: groupId, memberInputs: pendingInputs))
+                                selectedAddMemberOwners.removeAll()
                                 memberInput = ""
+                                addMemberSuggestionsVisible = false
                             }
                             .buttonStyle(IrisPrimaryButtonStyle())
-                            .disabled(!isValidPeerInput(input: normalizedMemberInput) || manager.state.busy.updatingGroup)
+                            .disabled(pendingInputs.isEmpty || manager.state.busy.updatingGroup)
                             .accessibilityIdentifier("groupDetailsAddMembersButton")
                         }
                     }
 
                     let candidateChats = knownUsersForAdding(details: details)
-                    if !candidateChats.isEmpty {
+                    let visibleCandidateChats = Array(candidateChats.prefix(groupDetailsMemberCandidateLimit))
+                    if addMemberSuggestionsVisible && !visibleCandidateChats.isEmpty {
                         IrisSectionCard {
-                            CardHeader(
-                                title: memberInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results"
-                            )
-
-                            ForEach(Array(candidateChats.enumerated()), id: \.element.chatId) { index, chat in
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                CardHeader(
+                                    title: memberInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results"
+                                )
+                                Spacer()
                                 Button {
-                                    manager.dispatch(.addGroupMembers(groupId: groupId, memberInputs: [chat.chatId]))
-                                    memberInput = ""
+                                    addMemberSuggestionsVisible = false
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 18, weight: .semibold))
+                                }
+                                .buttonStyle(.irisPlain)
+                                .foregroundStyle(palette.muted)
+                                .accessibilityLabel("Close search results")
+                                .accessibilityIdentifier("groupDetailsCloseMemberResultsButton")
+                            }
+
+                            ForEach(Array(visibleCandidateChats.enumerated()), id: \.element.chatId) { index, chat in
+                                let selected = selectedAddMemberOwners.contains(chat.chatId)
+                                Button {
+                                    toggleSelectedAddMember(chat.chatId)
                                 } label: {
                                     HStack(spacing: 12) {
-                                        IrisAvatar(label: chat.displayName, size: 38)
+                                        IrisAvatar(label: chat.displayName, size: 38, emphasize: selected)
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(chat.displayName)
                                                 .font(.system(.headline, design: .rounded, weight: .semibold))
@@ -5768,16 +5801,18 @@ struct GroupDetailsScreen: View {
                                             }
                                         }
                                         Spacer()
-                                        Image(systemName: "plus.circle")
-                                            .foregroundStyle(palette.textPrimary)
+                                        Image(systemName: selected ? "checkmark.square.fill" : "square")
+                                            .font(.system(size: 22, weight: .semibold))
+                                            .foregroundStyle(selected ? palette.textPrimary : palette.muted)
                                     }
                                     .contentShape(Rectangle())
                                 }
                                 .buttonStyle(.irisPlain)
                                 .accessibilityIdentifier("groupDetailsKnownUser-\(String(chat.chatId.prefix(12)))")
+                                .accessibilityValue(selected ? "Selected" : "Not selected")
                                 .disabled(manager.state.busy.updatingGroup)
 
-                                if index < candidateChats.count - 1 {
+                                if index < visibleCandidateChats.count - 1 {
                                     Divider().overlay(palette.border)
                                 }
                             }
@@ -5811,6 +5846,7 @@ struct GroupDetailsScreen: View {
         .sheet(isPresented: $showingScanner) {
             QrScannerSheet { code in
                 memberInput = normalizePeerInput(input: code)
+                addMemberSuggestionsVisible = true
                 showingScanner = false
             }
             .irisModalSurface()
@@ -5925,6 +5961,72 @@ struct GroupDetailsScreen: View {
                     && !memberHexes.contains(chat.chatId)
             }
             .filteredByQuery(memberInput)
+    }
+
+    private func pendingAddMemberInputs(details: GroupDetailsSnapshot) -> [String] {
+        let memberHexes = Set(details.members.map { $0.ownerPubkeyHex })
+        let localOwnerHex = manager.state.account?.publicKeyHex
+        var inputs = Set(
+            selectedAddMemberOwners
+                .filter { $0 != localOwnerHex && !memberHexes.contains($0) }
+        )
+
+        if isValidPeerInput(input: normalizedMemberInput),
+           normalizedMemberInput != localOwnerHex,
+           !memberHexes.contains(normalizedMemberInput)
+        {
+            inputs.insert(normalizedMemberInput)
+        }
+
+        return inputs.sorted()
+    }
+
+    private func addMembersButtonTitle(inputCount: Int) -> String {
+        if manager.state.busy.updatingGroup {
+            return "Adding…"
+        }
+        return inputCount > 1 ? "Add \(inputCount) members" : "Add member"
+    }
+
+    @ViewBuilder
+    private func selectedAddMemberChips(details: GroupDetailsSnapshot) -> some View {
+        let pendingOwners = selectedAddMemberOwners
+            .filter { owner in details.members.allSatisfy { $0.ownerPubkeyHex != owner } }
+            .sorted()
+
+        if !pendingOwners.isEmpty {
+            FlowWrap(spacing: 8, lineSpacing: 8) {
+                ForEach(pendingOwners, id: \.self) { owner in
+                    let presentation = addMemberPresentation(for: owner)
+                    SelectedMemberChip(
+                        title: presentation.primary,
+                        subtitle: presentation.secondary,
+                        onRemove: { selectedAddMemberOwners.remove(owner) }
+                    )
+                }
+            }
+        }
+    }
+
+    private func toggleSelectedAddMember(_ owner: String) {
+        if selectedAddMemberOwners.contains(owner) {
+            selectedAddMemberOwners.remove(owner)
+        } else {
+            selectedAddMemberOwners.insert(owner)
+        }
+    }
+
+    private func addMemberPresentation(for owner: String) -> OwnerPresentation {
+        if let chat = manager.state.chatList.first(where: { sameOwner(owner, hex: $0.chatId, npub: $0.subtitle) }) {
+            let primary = primaryDisplayName(displayName: chat.displayName, fallback: normalizePeerInput(input: owner))
+            return OwnerPresentation(
+                primary: primary,
+                secondary: secondaryDisplayName(chat.subtitle, primary: primary)
+            )
+        }
+
+        let normalized = normalizePeerInput(input: owner)
+        return OwnerPresentation(primary: fallbackProfileNameForIdentity(normalized), secondary: nil)
     }
 
     private func memberAdminButton(_ member: GroupMemberSnapshot) -> some View {

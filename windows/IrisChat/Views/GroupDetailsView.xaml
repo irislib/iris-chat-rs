@@ -71,19 +71,33 @@
                                  TextChanged="OnAddMemberTextChanged" />
                         <Button Style="{StaticResource SecondaryButton}"
                                 Grid.Column="1"
+                                x:Name="AddMemberButton"
                                 Click="OnAddMember"
                                 Margin="8,0,0,0">
-                            <TextBlock Text="Add" />
+                            <TextBlock x:Name="AddMemberButtonText" Text="Add" />
                         </Button>
                     </Grid>
                     <TextBlock Style="{StaticResource MutedText}"
                                Text="Search known users or paste a user ID."
                                Margin="0,4,0,8" />
-                    <TextBlock x:Name="KnownUsersHeader"
-                               Text="Known users"
-                               Style="{StaticResource SectionTitleText}"
-                               Margin="0,4,0,4"
-                               Visibility="Collapsed" />
+                    <Grid x:Name="KnownUsersHeaderRow"
+                          Margin="0,4,0,4"
+                          Visibility="Collapsed">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock x:Name="KnownUsersHeader"
+                                   Text="Known users"
+                                   Style="{StaticResource SectionTitleText}"
+                                   Grid.Column="0"
+                                   VerticalAlignment="Center" />
+                        <Button Style="{StaticResource CompactSecondaryButton}"
+                                Grid.Column="1"
+                                Click="OnCloseKnownUsers">
+                            <TextBlock Text="x" />
+                        </Button>
+                    </Grid>
                     <ItemsControl x:Name="KnownUsersList" />
                 </StackPanel>
             </Border>

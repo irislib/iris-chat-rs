@@ -15,7 +15,9 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -55,6 +57,8 @@ import to.iris.chat.ui.components.rememberIrisClipboard
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 
+private const val GroupDetailsMemberCandidateLimit = 8
+
 @Composable
 fun GroupDetailsScreen(
     appManager: AppManager,
@@ -68,6 +72,8 @@ fun GroupDetailsScreen(
     val haptics = rememberIrisHapticFeedback()
     var renameValue by remember(groupId, details?.name) { mutableStateOf(details?.name.orEmpty()) }
     var memberInput by remember(groupId) { mutableStateOf("") }
+    var selectedAddMemberOwners by remember(groupId) { mutableStateOf(setOf<String>()) }
+    var memberResultsVisible by remember(groupId) { mutableStateOf(true) }
     var showScanner by remember { mutableStateOf(false) }
     var showGroupPhotoSourceMenu by remember { mutableStateOf(false) }
     var pendingCameraPhoto by remember { mutableStateOf<PendingCameraImage?>(null) }
@@ -83,6 +89,18 @@ fun GroupDetailsScreen(
                     chat.chatId !in existingMemberHexes
             }
             .filterByQuery(memberInput)
+    val visibleKnownUsers = knownUsers.take(GroupDetailsMemberCandidateLimit)
+    val typedMemberInput =
+        normalizedInput.takeIf {
+            it.isNotBlank() &&
+                isValidPeerInput(it) &&
+                it != localOwnerHex &&
+                it !in existingMemberHexes
+        }
+    val pendingAddMemberInputs =
+        (selectedAddMemberOwners + listOfNotNull(typedMemberInput))
+            .filter { it.isNotBlank() && it != localOwnerHex && it !in existingMemberHexes }
+            .distinct()
     val pictureData by rememberNhashImageData(appManager, details?.pictureUrl)
     val pictureUrl =
         details
@@ -397,7 +415,10 @@ fun GroupDetailsScreen(
                     )
                     TextField(
                         value = memberInput,
-                        onValueChange = { memberInput = it },
+                        onValueChange = {
+                            memberInput = it
+                            memberResultsVisible = true
+                        },
                         modifier =
                             Modifier
                                 .fillMaxWidth()
@@ -418,6 +439,7 @@ fun GroupDetailsScreen(
                             onClick = {
                                 clipboard.getText { text ->
                                     memberInput = normalizePeerInput(text)
+                                    memberResultsVisible = true
                                 }
                             },
                             icon = {
@@ -440,12 +462,19 @@ fun GroupDetailsScreen(
                         )
                     }
                     IrisPrimaryButton(
-                        text = if (appState.busy.updatingGroup) "Adding…" else "Add member",
+                        text =
+                            when {
+                                appState.busy.updatingGroup -> "Adding…"
+                                pendingAddMemberInputs.size > 1 -> "Add ${pendingAddMemberInputs.size} members"
+                                else -> "Add member"
+                            },
                         onClick = {
-                            appManager.addGroupMembers(groupId, listOf(normalizedInput))
+                            appManager.addGroupMembers(groupId, pendingAddMemberInputs)
+                            selectedAddMemberOwners = emptySet()
                             memberInput = ""
+                            memberResultsVisible = false
                         },
-                        enabled = normalizedInput.isNotBlank() && isValidPeerInput(normalizedInput) && !appState.busy.updatingGroup,
+                        enabled = pendingAddMemberInputs.isNotEmpty() && !appState.busy.updatingGroup,
                         modifier = Modifier.testTag("groupDetailsAddMembersButton"),
                         icon = {
                             Icon(
@@ -456,15 +485,32 @@ fun GroupDetailsScreen(
                     )
                 }
 
-                if (knownUsers.isNotEmpty()) {
+                if (memberResultsVisible && visibleKnownUsers.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = if (memberInput.isBlank()) "Known users" else "Search results",
-                            style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(horizontal = 2.dp),
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                text = if (memberInput.isBlank()) "Known users" else "Search results",
+                                style = MaterialTheme.typography.titleMedium,
+                                modifier = Modifier.padding(horizontal = 2.dp),
+                            )
+                            IconButton(
+                                onClick = { memberResultsVisible = false },
+                                modifier = Modifier.testTag("groupDetailsCloseMemberResultsButton"),
+                            ) {
+                                Icon(
+                                    imageVector = IrisIcons.Close,
+                                    contentDescription = "Close search results",
+                                    tint = IrisTheme.palette.muted,
+                                )
+                            }
+                        }
                         IrisListSection {
-                            knownUsers.forEach { chat ->
+                            visibleKnownUsers.forEach { chat ->
+                                val selected = chat.chatId in selectedAddMemberOwners
                                 val title =
                                     chat.displayName.trim().ifEmpty {
                                         chat.subtitle.orEmpty().ifEmpty { chat.chatId }
@@ -481,8 +527,12 @@ fun GroupDetailsScreen(
                                                 indication = null,
                                             ) {
                                                 haptics.press()
-                                                appManager.addGroupMembers(groupId, listOf(chat.chatId))
-                                                memberInput = ""
+                                                selectedAddMemberOwners =
+                                                    if (selected) {
+                                                        selectedAddMemberOwners - chat.chatId
+                                                    } else {
+                                                        selectedAddMemberOwners + chat.chatId
+                                                    }
                                             }
                                             .padding(16.dp)
                                             .testTag("groupDetailsKnownUser-${chat.chatId.take(12)}"),
@@ -507,10 +557,17 @@ fun GroupDetailsScreen(
                                             )
                                         }
                                     }
-                                    Icon(
-                                        imageVector = IrisIcons.NewGroup,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    Checkbox(
+                                        checked = selected,
+                                        onCheckedChange = { checked ->
+                                            haptics.press()
+                                            selectedAddMemberOwners =
+                                                if (checked) {
+                                                    selectedAddMemberOwners + chat.chatId
+                                                } else {
+                                                    selectedAddMemberOwners - chat.chatId
+                                                }
+                                        },
                                     )
                                 }
                             }
@@ -592,6 +649,7 @@ fun GroupDetailsScreen(
                     "That code or user ID is not valid."
                 } else {
                     memberInput = normalized
+                    memberResultsVisible = true
                     showScanner = false
                     null
                 }
