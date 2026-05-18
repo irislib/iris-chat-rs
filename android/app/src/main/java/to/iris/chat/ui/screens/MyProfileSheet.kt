@@ -118,25 +118,31 @@ private enum class SettingsPage(
     Media("Media", "settingsMediaRow"),
     Nearby("Nearby", "settingsNearbyRow"),
     MessageServers("Message servers", "settingsMessageServersRow"),
-    Security("Security", "settingsSecurityRow"),
+    Security("Keys", "settingsSecurityRow"),
     About("About", "settingsAboutRow"),
     Support("Support", "settingsSupportRow"),
     AccountData("Account data", "settingsAccountDataRow"),
     ;
 
     companion object {
-        val menuPages =
+        val primaryMenuPages =
             listOf(
-                Devices,
-                Messaging,
                 Notifications,
-                Media,
+                Messaging,
                 Nearby,
-                MessageServers,
+                Devices,
                 Security,
-                About,
+            )
+        val infoMenuPages =
+            listOf(
                 Support,
+                About,
                 AccountData,
+            )
+        val advancedMenuPages =
+            listOf(
+                Media,
+                MessageServers,
             )
     }
 }
@@ -292,12 +298,17 @@ fun MyProfileSheet(
                         onQrClick = { showProfileQr = true },
                     )
                     SettingsMenuSection {
-                        SettingsPage.menuPages.take(7).forEach { page ->
+                        SettingsPage.primaryMenuPages.forEach { page ->
                             SettingsMenuRow(page = page, onClick = { selectedPage = page })
                         }
                     }
                     SettingsMenuSection {
-                        SettingsPage.menuPages.drop(7).forEach { page ->
+                        SettingsPage.infoMenuPages.forEach { page ->
+                            SettingsMenuRow(page = page, onClick = { selectedPage = page })
+                        }
+                    }
+                    SettingsMenuSection(title = "Advanced") {
+                        SettingsPage.advancedMenuPages.forEach { page ->
                             SettingsMenuRow(page = page, onClick = { selectedPage = page })
                         }
                     }
@@ -1521,9 +1532,22 @@ private fun SettingsProfileMenuRow(
 }
 
 @Composable
-private fun SettingsMenuSection(content: @Composable () -> Unit) {
-    IrisListSection {
-        content()
+private fun SettingsMenuSection(
+    title: String? = null,
+    content: @Composable () -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if (title != null) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
+        IrisListSection {
+            content()
+        }
     }
 }
 

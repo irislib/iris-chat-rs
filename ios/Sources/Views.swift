@@ -220,7 +220,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .media: return "Media"
         case .nearby: return "Nearby"
         case .messageServers: return "Message servers"
-        case .security: return "Security"
+        case .security: return "Keys"
         case .updates: return "Updates"
         case .about: return "About"
         case .legal: return "Legal"
@@ -238,7 +238,7 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         case .media: return "photo.fill"
         case .nearby: return "dot.radiowaves.left.and.right"
         case .messageServers: return "server.rack"
-        case .security: return "lock.fill"
+        case .security: return "key.fill"
         case .updates: return "arrow.down.circle.fill"
         case .about: return "info.circle.fill"
         case .legal: return "doc.text.fill"
@@ -265,21 +265,31 @@ private enum SettingsPage: String, CaseIterable, Identifiable {
         }
     }
 
-    static var menuPages: [SettingsPage] {
-        var pages: [SettingsPage] = [
-            .devices,
-            .messaging,
+    static var primaryMenuPages: [SettingsPage] {
+        [
             .notifications,
-            .media,
+            .messaging,
             .nearby,
-            .messageServers,
+            .devices,
             .security,
         ]
+    }
+
+    static var infoMenuPages: [SettingsPage] {
+        var pages: [SettingsPage] = []
         #if os(macOS)
         pages.append(.updates)
         #endif
-        pages.append(contentsOf: [.about, .legal, .support, .accountData])
+        pages.append(contentsOf: [.support, .about])
+        #if os(iOS)
+        pages.append(.legal)
+        #endif
+        pages.append(.accountData)
         return pages
+    }
+
+    static var advancedMenuPages: [SettingsPage] {
+        [.media, .messageServers]
     }
 }
 
@@ -6828,7 +6838,7 @@ struct SettingsScreen: View {
             }
 
             SettingsMenuSection {
-                ForEach(SettingsPage.menuPages.prefix(7)) { page in
+                ForEach(SettingsPage.primaryMenuPages) { page in
                     SettingsMenuRow(page: page, selected: selectedPage == page) {
                         selectedPage = page
                     }
@@ -6836,7 +6846,15 @@ struct SettingsScreen: View {
             }
 
             SettingsMenuSection {
-                ForEach(Array(SettingsPage.menuPages.dropFirst(7))) { page in
+                ForEach(SettingsPage.infoMenuPages) { page in
+                    SettingsMenuRow(page: page, selected: selectedPage == page) {
+                        selectedPage = page
+                    }
+                }
+            }
+
+            SettingsMenuSection(title: "Advanced") {
+                ForEach(SettingsPage.advancedMenuPages) { page in
                     SettingsMenuRow(page: page, selected: selectedPage == page) {
                         selectedPage = page
                     }
@@ -6970,7 +6988,7 @@ struct SettingsScreen: View {
 
         case .security:
             IrisSectionCard {
-                CardHeader(title: "Security")
+                CardHeader(title: "Keys")
 
                 if manager.state.account?.hasOwnerSigningAuthority == true {
                     Button {
@@ -7618,22 +7636,32 @@ private struct SettingsProfileMenuRow: View {
 
 private struct SettingsMenuSection<Content: View>: View {
     @Environment(\.irisPalette) private var palette
+    let title: String?
     let content: () -> Content
 
-    init(@ViewBuilder content: @escaping () -> Content) {
+    init(title: String? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
         self.content = content
     }
 
     var body: some View {
-        VStack(spacing: 0, content: content)
-            .background(
-                RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
-                    .fill(palette.panel)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
-                            .stroke(palette.border, lineWidth: 1)
-                    )
-            )
+        VStack(alignment: .leading, spacing: 8) {
+            if let title {
+                Text(title)
+                    .font(.system(.caption, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                    .padding(.horizontal, 4)
+            }
+            VStack(spacing: 0, content: content)
+                .background(
+                    RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
+                        .fill(palette.panel)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: IrisLayout.sectionCornerRadius, style: .continuous)
+                                .stroke(palette.border, lineWidth: 1)
+                        )
+                )
+        }
     }
 }
 

@@ -39,26 +39,6 @@
                         Padding="8"
                         Margin="0,0,0,14">
                     <StackPanel>
-                        <Button Style="{StaticResource GhostButton}" Tag="Messaging" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Messaging" FontWeight="SemiBold" />
-                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
-                            </Grid>
-                        </Button>
-                        <Button Style="{StaticResource GhostButton}" Tag="Devices" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Devices" FontWeight="SemiBold" />
-                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
-                            </Grid>
-                        </Button>
                         <Button Style="{StaticResource GhostButton}" Tag="Notifications" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -69,13 +49,13 @@
                                 <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
                             </Grid>
                         </Button>
-                        <Button Style="{StaticResource GhostButton}" Tag="Media" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                        <Button Style="{StaticResource GhostButton}" Tag="Messaging" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="Media" FontWeight="SemiBold" />
+                                <TextBlock Text="Messaging" FontWeight="SemiBold" />
                                 <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
                             </Grid>
                         </Button>
@@ -89,13 +69,23 @@
                                 <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
                             </Grid>
                         </Button>
-                        <Button Style="{StaticResource GhostButton}" Tag="MessageServers" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                        <Button Style="{StaticResource GhostButton}" Tag="Devices" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*" />
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
-                                <TextBlock Text="Message servers" FontWeight="SemiBold" />
+                                <TextBlock Text="Devices" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="Security" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Keys" FontWeight="SemiBold" />
                                 <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
                             </Grid>
                         </Button>
@@ -104,18 +94,9 @@
 
                 <Border Background="{StaticResource Panel}"
                         CornerRadius="{StaticResource SectionRadius}"
-                        Padding="8">
+                        Padding="8"
+                        Margin="0,0,0,14">
                     <StackPanel>
-                        <Button Style="{StaticResource GhostButton}" Tag="Security" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="Security" FontWeight="SemiBold" />
-                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
-                            </Grid>
-                        </Button>
                         <Button Style="{StaticResource GhostButton}" Tag="Updates" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -123,16 +104,6 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="Updates" FontWeight="SemiBold" />
-                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
-                            </Grid>
-                        </Button>
-                        <Button Style="{StaticResource GhostButton}" Tag="About" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
-                            <Grid>
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="Auto" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Text="About" FontWeight="SemiBold" />
                                 <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
                             </Grid>
                         </Button>
@@ -146,6 +117,16 @@
                                 <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
                             </Grid>
                         </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="About" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="About" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
                         <Button Style="{StaticResource GhostButton}" Tag="AccountData" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
                             <Grid>
                                 <Grid.ColumnDefinitions>
@@ -153,6 +134,37 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <TextBlock Text="Account data" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="Advanced"
+                           Style="{StaticResource MutedText}"
+                           FontWeight="SemiBold"
+                           Margin="4,0,0,8" />
+                <Border Background="{StaticResource Panel}"
+                        CornerRadius="{StaticResource SectionRadius}"
+                        Padding="8">
+                    <StackPanel>
+                        <Button Style="{StaticResource GhostButton}" Tag="Media" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Media" FontWeight="SemiBold" />
+                                <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
+                            </Grid>
+                        </Button>
+                        <Button Style="{StaticResource GhostButton}" Tag="MessageServers" Click="OnSettingsMenuClick" HorizontalContentAlignment="Stretch">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="Message servers" FontWeight="SemiBold" />
                                 <TextBlock Grid.Column="1" Text=">" Style="{StaticResource MutedText}" />
                             </Grid>
                         </Button>
@@ -360,7 +372,7 @@
                         CornerRadius="{StaticResource SectionRadius}"
                         Padding="20">
                     <StackPanel>
-                        <TextBlock Text="Security"
+                        <TextBlock Text="Keys"
                                    Style="{StaticResource SectionTitleText}"
                                    Margin="0,0,0,12" />
                         <Button x:Name="ExportOwnerKeyButton"

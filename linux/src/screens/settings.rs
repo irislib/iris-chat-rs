@@ -211,12 +211,10 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
 
     let primary = adw::PreferencesGroup::new();
     for settings_page in [
-        SettingsPage::Devices,
-        SettingsPage::Messaging,
         SettingsPage::Notifications,
-        SettingsPage::Media,
+        SettingsPage::Messaging,
         SettingsPage::Nearby,
-        SettingsPage::MessageServers,
+        SettingsPage::Devices,
     ] {
         primary.add(&settings_menu_row(
             settings_page,
@@ -230,8 +228,8 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
     let secondary = adw::PreferencesGroup::new();
     for settings_page in [
         SettingsPage::Updates,
-        SettingsPage::About,
         SettingsPage::Support,
+        SettingsPage::About,
         SettingsPage::AccountData,
     ] {
         secondary.add(&settings_menu_row(
@@ -242,6 +240,17 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
         ));
     }
     page.add(&secondary);
+
+    let advanced = adw::PreferencesGroup::builder().title("Advanced").build();
+    for settings_page in [SettingsPage::Media, SettingsPage::MessageServers] {
+        advanced.add(&settings_menu_row(
+            settings_page,
+            settings_page.title(),
+            None,
+            stack,
+        ));
+    }
+    page.add(&advanced);
 
     page
 }
