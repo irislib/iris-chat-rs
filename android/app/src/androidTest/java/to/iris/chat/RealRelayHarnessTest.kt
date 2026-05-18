@@ -1361,8 +1361,9 @@ class RealRelayHarnessTest {
     /**
      * Verifies that the FCM/APNs notification-decryption path turns an
      * encrypted Nostr event into a notification with the sender's
-     * display name as title and the plaintext message as body — what
-     * `IrisFirebaseMessagingService` shows the user.
+     * display name as title and the plaintext message as body for direct
+     * chats, or the group name as title with the sender-prefixed body
+     * for group chats — what `IrisFirebaseMessagingService` shows the user.
      *
      * Driven from a smoke script that has already established a real
      * DR session between this device and a peer, then waited for the
@@ -1375,7 +1376,7 @@ class RealRelayHarnessTest {
      *   - outer_event_json: serialized Nostr event the notification
      *     server would forward in `payload['event']`
      *   - expected_body: plaintext the rumor carries
-     *   - expected_title: sender's display name (or "<sender> in <group>")
+     *   - expected_title: sender's display name or group name
      */
     @Test
     fun decrypt_notification_payload_from_args() {

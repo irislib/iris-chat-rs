@@ -409,12 +409,6 @@ fn decrypted_mobile_push_resolution(
         return suppressed_resolution();
     }
 
-    let body = decrypted_mobile_push_body(inner_kind, &inner_content);
-
-    // Title shape:
-    //   1-1 chat:    "<sender_name>"
-    //   group chat:  "<sender_name> in <group_title>"   (or just the group
-    //                title when we can't resolve a sender name)
     let resolved_sender_name = sender_name.unwrap_or_else(|| {
         payload_object
             .get("sender_name")
@@ -422,13 +416,9 @@ fn decrypted_mobile_push_resolution(
             .map(str::to_string)
             .unwrap_or_else(|| "Iris Chat".to_string())
     });
-    let title = match (&group_title, resolved_sender_name.as_str()) {
-        (Some(group), sender) if !sender.is_empty() && sender != "Iris Chat" => {
-            format!("{sender} in {group}")
-        }
-        (Some(group), _) => group.clone(),
-        (None, sender) => sender.to_string(),
-    };
+    let body_preview = decrypted_mobile_push_body(inner_kind, &inner_content);
+    let (title, body) =
+        group_notification_title_and_body(group_title, &resolved_sender_name, body_preview.clone());
 
     let mut resolved_payload = serde_json::Map::new();
     for (key, value) in payload_object {
@@ -439,6 +429,10 @@ fn decrypted_mobile_push_resolution(
         serde_json::Value::String(title.clone()),
     );
     resolved_payload.insert("body".to_string(), serde_json::Value::String(body.clone()));
+    resolved_payload.insert(
+        "message_preview".to_string(),
+        serde_json::Value::String(body_preview),
+    );
     resolved_payload.insert(
         "inner_event_json".to_string(),
         serde_json::Value::String(inner_json),
@@ -471,6 +465,20 @@ fn decrypted_mobile_push_resolution(
         body,
         payload_json: serde_json::to_string(&serde_json::Value::Object(resolved_payload))
             .unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
+fn group_notification_title_and_body(
+    group_title: Option<String>,
+    sender_name: &str,
+    body_preview: String,
+) -> (String, String) {
+    match (group_title, sender_name) {
+        (Some(group), sender) if !sender.is_empty() && sender != "Iris Chat" => {
+            (group, format!("{sender}: {body_preview}"))
+        }
+        (Some(group), _) => (group, body_preview),
+        (None, sender) => (sender.to_string(), body_preview),
     }
 }
 
@@ -523,14 +531,6 @@ fn lookup_mobile_push_preview(
         });
     let group_title = group_id.and_then(|id| lookup_group_name_in(&conn, id));
 
-    let title = match (&group_title, sender_name.as_str()) {
-        (Some(group), sender) if !sender.is_empty() && sender != "Iris Chat" => {
-            format!("{sender} in {group}")
-        }
-        (Some(group), _) => group.clone(),
-        (None, sender) => sender.to_string(),
-    };
-
     // Persisted body has the attachment markup stripped already; if
     // it's empty (e.g. an attachment-only message) fall back to the
     // chat-message placeholder so the user sees something rather than
@@ -541,6 +541,8 @@ fn lookup_mobile_push_preview(
     } else {
         body_preview
     };
+    let (title, body_text) =
+        group_notification_title_and_body(group_title, &sender_name, body_text);
 
     let mut payload = serde_json::Map::new();
     payload.insert(
@@ -616,20 +618,15 @@ fn lookup_recent_group_mobile_push_preview(
             (!fallback.is_empty() && !is_generic_sender_title(&fallback)).then_some(fallback)
         })
         .unwrap_or_else(|| "Iris Chat".to_string());
-    let group_title = lookup_group_name_in(&conn, &group_id);
-    let title = match (&group_title, sender_name.as_str()) {
-        (Some(group), sender) if !sender.is_empty() && sender != "Iris Chat" => {
-            format!("{sender} in {group}")
-        }
-        (Some(group), _) => group.clone(),
-        (None, sender) => sender.to_string(),
-    };
     let body_preview = chat_message_body_preview(&body);
     let body_text = if body_preview.is_empty() {
         decrypted_mobile_push_body(MOBILE_PUSH_CHAT_MESSAGE_KIND, "")
     } else {
         body_preview
     };
+    let group_title = lookup_group_name_in(&conn, &group_id);
+    let (title, body_text) =
+        group_notification_title_and_body(group_title, &sender_name, body_text);
 
     let mut payload = serde_json::Map::new();
     payload.insert(
@@ -1498,6 +1495,18 @@ mod tests {
             .expect("resolved preview");
 
         assert_eq!(resolution.body, "only show the new reply");
+    }
+
+    #[test]
+    fn group_notification_format_matches_signal() {
+        let (title, body) = group_notification_title_and_body(
+            Some("Trip crew".to_string()),
+            "Alice",
+            "Landing at 7".to_string(),
+        );
+
+        assert_eq!(title, "Trip crew");
+        assert_eq!(body, "Alice: Landing at 7");
     }
 
     #[test]

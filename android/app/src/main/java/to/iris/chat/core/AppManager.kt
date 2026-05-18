@@ -1563,9 +1563,10 @@ class AppManager(
 
     /**
      * Decrypt an incoming FCM push payload against the persisted ratchet
-     * state. Returns a resolution with the sender's display name (or
-     * "<sender> in <group>" for groups) as the title and the decrypted
-     * plaintext as the body. If we don't have the secrets yet (logged
+     * state. Returns a resolution with the chat name as the title and
+     * the decrypted plaintext as the body. Group notifications use the
+     * group name as title and prefix the body with the sender name. If
+     * we don't have the secrets yet (logged
      * out, restore in flight) or anything else fails, falls back to the
      * generic resolver so the user still gets *some* notification.
      *

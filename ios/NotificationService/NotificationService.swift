@@ -4,9 +4,10 @@ import UserNotifications
 /// iOS Notification Service Extension. Receives the encrypted Nostr
 /// event the notification server forwarded, decrypts it against the
 /// persisted double-ratchet state in the App Group container, and
-/// rewrites the visible notification with the sender's display name
-/// (or "<sender> in <group>") as the title and the plaintext message
-/// as the body. If decryption fails for any reason — no logged-in
+/// rewrites the visible notification with the chat name as the title
+/// and the plaintext message as the body. Group notifications use the
+/// group name as title and prefix the body with the sender name. If
+/// decryption fails for any reason — no logged-in
 /// account, missing storage, ratchet already advanced by the foreground
 /// app — encrypted Iris placeholders are cleared instead of surfacing
 /// generic "New activity" text.

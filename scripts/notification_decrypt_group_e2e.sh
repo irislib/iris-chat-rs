@@ -38,7 +38,8 @@ TIMESTAMP="$(date +%s)"
 ALICE_DISPLAY_NAME="${ALICE_DISPLAY_NAME:-Alice}"
 GROUP_NAME="${GROUP_NAME:-Push Test Group}"
 MESSAGE="${MESSAGE:-group-decrypt-push-${TIMESTAMP}}"
-EXPECTED_TITLE="${EXPECTED_TITLE:-${ALICE_DISPLAY_NAME} in ${GROUP_NAME}}"
+EXPECTED_TITLE="${EXPECTED_TITLE:-${GROUP_NAME}}"
+EXPECTED_BODY="${EXPECTED_BODY:-${ALICE_DISPLAY_NAME}: ${MESSAGE}}"
 
 usage() {
   cat <<EOF
@@ -189,7 +190,7 @@ echo "Captured ${#OUTER_EVENT_JSON} bytes of encrypted group wrapper"
 echo "Feeding wrapper to Bob's decryption path"
 run_test "${SERIAL_B}" decrypt_notification_payload_from_args \
   outer_event_json "${OUTER_EVENT_JSON}" \
-  expected_body "${MESSAGE}" \
+  expected_body "${EXPECTED_BODY}" \
   expected_title "${EXPECTED_TITLE}"
 
-echo "Group notification-decrypt e2e passed: Bob's notification renders <${EXPECTED_TITLE}>: ${MESSAGE}"
+echo "Group notification-decrypt e2e passed: Bob's notification renders <${EXPECTED_TITLE}>: ${EXPECTED_BODY}"
