@@ -2376,10 +2376,6 @@ private struct DirectChatInfoScreen: View {
                         profileAboutRow(about)
                     }
 
-                    if let nearbyStatus = directChatNearbyStatus(chatId: chat.chatId) {
-                        nearbyStatusRow(nearbyStatus)
-                    }
-
                     nicknameCard(chat)
 
                     if !commonGroups.isEmpty {
@@ -2778,47 +2774,6 @@ private struct DirectChatInfoScreen: View {
         .irisOnChange(of: "\(chat.chatId)|\(chat.nickname ?? "")") { _ in
             syncNicknameDraft(chat)
         }
-    }
-
-    private func nearbyStatusRow(_ status: String) -> some View {
-        IrisSectionCard {
-            HStack(spacing: 12) {
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(palette.action)
-                    .frame(width: 24)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Nearby now")
-                        .font(.system(.body, design: .rounded, weight: .semibold))
-                        .foregroundStyle(palette.textPrimary)
-                    Text(status)
-                        .font(.system(.subheadline, design: .rounded))
-                        .foregroundStyle(palette.muted)
-                }
-                Spacer(minLength: 0)
-            }
-        }
-        .accessibilityIdentifier("directChatNearbyStatusCard")
-    }
-
-    private func directChatNearbyStatus(chatId: String) -> String? {
-#if os(iOS) || os(macOS)
-        guard manager.state.preferences.nearbyEnabled else { return nil }
-        let onBluetooth = manager.nearbyIris.bluetoothPeers.contains { peer in
-            peer.ownerPubkeyHex?.caseInsensitiveCompare(chatId) == .orderedSame
-        }
-        let onWifi = manager.nearbyIris.lanPeers.contains { peer in
-            peer.ownerPubkeyHex?.caseInsensitiveCompare(chatId) == .orderedSame
-        }
-        switch (onBluetooth, onWifi) {
-        case (true, true): return "Bluetooth and Wi-Fi"
-        case (true, false): return "Bluetooth"
-        case (false, true): return "Wi-Fi"
-        case (false, false): return nil
-        }
-#else
-        return nil
-#endif
     }
 
     private func syncNicknameDraft(_ chat: CurrentChatSnapshot) {

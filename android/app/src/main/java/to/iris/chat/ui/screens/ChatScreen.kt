@@ -502,7 +502,6 @@ fun ChatScreen(
             DirectChatInfoScreen(
                 appManager = appManager,
                 chatId = chatId,
-                nearbyService = nearbyService,
                 onBack = { directChatInfoOpen = false },
             )
             return@Scaffold
@@ -859,14 +858,11 @@ private fun TimelineDaySeparator(
 private fun DirectChatInfoScreen(
     appManager: AppManager,
     chatId: String,
-    nearbyService: IrisNearbyService?,
     onBack: () -> Unit,
 ) {
     val currentChat by appManager.currentChat.collectAsStateWithLifecycle()
     val preferences by appManager.preferences.collectAsStateWithLifecycle()
     val chat = currentChat?.takeIf { it.chatId == chatId } ?: return
-    val nearbySnapshot = nearbyService?.let { rememberNearbySnapshotState(it).value }
-    val nearbyStatus = nearbyProfileStatus(preferences.nearbyEnabled, nearbySnapshot, chat.chatId)
     val avatarBytes by rememberNhashImageData(appManager, chat.pictureUrl)
     var advancedOpen by remember(chatId) { mutableStateOf(false) }
     var profileDebug by remember(chatId) { mutableStateOf<PeerProfileDebugSnapshot?>(null) }
@@ -970,10 +966,6 @@ private fun DirectChatInfoScreen(
                     val clipboard = rememberIrisClipboard()
                     ProfileAboutCard(
                         about = chat.about,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    NearbyProfileStatusCard(
-                        status = nearbyStatus,
                         modifier = Modifier.fillMaxWidth(),
                     )
                     ContactNicknameCard(
@@ -1120,64 +1112,6 @@ private fun linkHighlightedText(
             append(text.substring(cursor))
         }
     }
-
-@Composable
-private fun NearbyProfileStatusCard(
-    status: String?,
-    modifier: Modifier = Modifier,
-) {
-    val text = status ?: return
-    IrisSectionCard(modifier = modifier.testTag("directChatNearbyStatusCard")) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = IrisIcons.Nearby,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp),
-            )
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                Text(
-                    text = "Nearby now",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                Text(
-                    text = text,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = IrisTheme.palette.muted,
-                )
-            }
-        }
-    }
-}
-
-private fun nearbyProfileStatus(
-    nearbyEnabled: Boolean,
-    snapshot: IrisNearbyService.Snapshot?,
-    ownerPubkeyHex: String,
-): String? {
-    if (!nearbyEnabled || snapshot == null) {
-        return null
-    }
-    val onBluetooth =
-        snapshot.bluetoothPeers.any { peer ->
-            peer.ownerPubkeyHex?.equals(ownerPubkeyHex, ignoreCase = true) == true
-        }
-    val onWifi =
-        snapshot.localNetworkPeers.any { peer ->
-            peer.ownerPubkeyHex?.equals(ownerPubkeyHex, ignoreCase = true) == true
-        }
-    return when {
-        onBluetooth && onWifi -> "Bluetooth and Wi-Fi"
-        onBluetooth -> "Bluetooth"
-        onWifi -> "Wi-Fi"
-        else -> null
-    }
-}
 
 @Composable
 private fun ContactNicknameCard(
