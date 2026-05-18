@@ -1141,7 +1141,6 @@ private fun ContactNicknameCard(
         chat.profileName
             ?.trim()
             ?.takeIf { it.isNotEmpty() && !it.equals(primaryName, ignoreCase = true) }
-    val summary = storedNickname.ifEmpty { "Add nickname" }
 
     IrisSectionCard(modifier = modifier) {
         Row(
@@ -1159,13 +1158,15 @@ private fun ContactNicknameCard(
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Text(
-                text = summary,
-                style = MaterialTheme.typography.bodyLarge,
-                color = if (storedNickname.isEmpty()) IrisTheme.palette.muted else MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (storedNickname.isNotEmpty()) {
+                Text(
+                    text = storedNickname,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         profileName?.let { name ->
             IrisDivider()

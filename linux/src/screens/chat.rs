@@ -241,9 +241,11 @@ fn nickname_card(info: &ChatInfoSnapshot, manager: Rc<AppManager>) -> gtk::Widge
         .map(ToString::to_string);
     let nickname_row = adw::ActionRow::builder()
         .title("Nickname")
-        .subtitle(stored_nickname.as_deref().unwrap_or("Add nickname"))
         .activatable(true)
         .build();
+    if let Some(nickname) = stored_nickname.as_deref() {
+        nickname_row.set_subtitle(nickname);
+    }
     let info_for_edit = info.clone();
     nickname_row.connect_activated(move |row| {
         let parent = row

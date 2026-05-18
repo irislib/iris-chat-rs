@@ -411,17 +411,21 @@ public partial class ChatView : UserControl
             Foreground = ResourceBrush("TextPrimary"),
             VerticalAlignment = VerticalAlignment.Center,
         });
-        var nicknameValue = new TextBlock
+        var nickname = chat.nickname?.Trim();
+        if (!string.IsNullOrWhiteSpace(nickname))
         {
-            Text = string.IsNullOrWhiteSpace(chat.nickname) ? "Add nickname" : chat.nickname,
-            Foreground = ResourceBrush(string.IsNullOrWhiteSpace(chat.nickname) ? "TextMuted" : "TextPrimary"),
-            TextTrimming = TextTrimming.CharacterEllipsis,
-            HorizontalAlignment = HorizontalAlignment.Right,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(12, 0, 0, 0),
-        };
-        Grid.SetColumn(nicknameValue, 1);
-        nicknameRow.Children.Add(nicknameValue);
+            var nicknameValue = new TextBlock
+            {
+                Text = nickname,
+                Foreground = ResourceBrush("TextPrimary"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(12, 0, 0, 0),
+            };
+            Grid.SetColumn(nicknameValue, 1);
+            nicknameRow.Children.Add(nicknameValue);
+        }
 
         var editNickname = new Button
         {
