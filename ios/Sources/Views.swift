@@ -752,18 +752,41 @@ private struct ShareTargetSheet: View {
         }
     }
 
+    private var filteredNearbyPeers: [IrisNearbyPeer] {
+        let peers = manager.nearbyIris.peers.filter { $0.ownerPubkeyHex != nil }
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !query.isEmpty else {
+            return peers
+        }
+        return peers.filter { peer in
+            peer.name.lowercased().contains(query)
+                || (peer.ownerPubkeyHex?.lowercased().contains(query) ?? false)
+        }
+    }
+
+    private var hasShareTargets: Bool {
+        !manager.state.chatList.isEmpty || !manager.nearbyIris.peers.filter { $0.ownerPubkeyHex != nil }.isEmpty
+    }
+
     private var selectedChats: [ChatThreadSnapshot] {
         manager.state.chatList.filter { selectedChatIds.contains($0.chatId) }
     }
 
     private var selectedNamesText: String {
-        selectedChats.map(\.displayName).joined(separator: ", ")
+        let chatNames = selectedChats.map(\.displayName)
+        let nearbyNames = manager.nearbyIris.peers.compactMap { peer -> String? in
+            guard let owner = peer.ownerPubkeyHex, selectedChatIds.contains(owner) else {
+                return nil
+            }
+            return nearbyPeerDisplayName(peer.name)
+        }
+        return (chatNames + nearbyNames).joined(separator: ", ")
     }
 
     var body: some View {
         NavigationStack {
             Group {
-                if manager.state.chatList.isEmpty {
+                if !hasShareTargets {
                     emptyState
                 } else {
                     chatList
@@ -778,7 +801,7 @@ private struct ShareTargetSheet: View {
 #endif
 #if os(iOS)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if !manager.state.chatList.isEmpty {
+                if hasShareTargets {
                     approvalFooter
                 }
             }
@@ -798,7 +821,7 @@ private struct ShareTargetSheet: View {
                         dismiss()
                     }
                 }
-                if !manager.state.chatList.isEmpty {
+                if hasShareTargets {
                     ToolbarItem(placement: .confirmationAction) {
                         Button {
                             sendSelectedAndDismiss()
@@ -837,7 +860,7 @@ private struct ShareTargetSheet: View {
 
     private var chatList: some View {
         List {
-            if filteredChats.isEmpty {
+            if filteredChats.isEmpty && filteredNearbyPeers.isEmpty {
                 Text("No matches")
                     .font(.system(size: 17, weight: .regular))
                     .foregroundStyle(palette.muted)
@@ -846,15 +869,30 @@ private struct ShareTargetSheet: View {
                     .listRowBackground(palette.background)
                     .listRowSeparator(.hidden)
             } else {
-                Section {
-                    ForEach(filteredChats, id: \.chatId) { chat in
-                        shareTargetRow(chat)
+                if !filteredNearbyPeers.isEmpty {
+                    Section {
+                        ForEach(filteredNearbyPeers) { peer in
+                            shareNearbyTargetRow(peer)
+                        }
+                    } header: {
+                        Text("Nearby")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .textCase(nil)
                     }
-                } header: {
-                    Text(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recent chats" : "Chats")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(palette.muted)
-                        .textCase(nil)
+                }
+
+                if !filteredChats.isEmpty {
+                    Section {
+                        ForEach(filteredChats, id: \.chatId) { chat in
+                            shareTargetRow(chat)
+                        }
+                    } header: {
+                        Text(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recent chats" : "Chats")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                            .textCase(nil)
+                    }
                 }
             }
         }
@@ -921,9 +959,7 @@ private struct ShareTargetSheet: View {
 
     private func sendSelectedAndDismiss() {
         manager.sendPendingShare(
-            to: manager.state.chatList
-                .map(\.chatId)
-                .filter { selectedChatIds.contains($0) }
+            to: Array(selectedChatIds).sorted()
         )
         dismiss()
     }
@@ -972,6 +1008,55 @@ private struct ShareTargetSheet: View {
         .listRowSeparator(.hidden)
         .accessibilityLabel("\(chat.displayName), \(selected ? "selected" : "not selected")")
         .accessibilityValue(selected ? "Selected" : "Not selected")
+    }
+
+    private func shareNearbyTargetRow(_ peer: IrisNearbyPeer) -> some View {
+        guard let owner = peer.ownerPubkeyHex else {
+            return AnyView(EmptyView())
+        }
+        let selected = selectedChatIds.contains(owner)
+        return AnyView(
+            Button {
+                if selected {
+                    selectedChatIds.remove(owner)
+                } else {
+                    selectedChatIds.insert(owner)
+                }
+            } label: {
+                HStack(spacing: 12) {
+                    IrisAvatar(
+                        label: peer.name.isEmpty ? "?" : peer.name,
+                        size: 40,
+                        emphasize: false,
+                        pictureUrl: peer.pictureURL,
+                        preferences: manager.state.preferences,
+                        manager: manager
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(nearbyPeerDisplayName(peer.name))
+                            .font(.system(size: 17, weight: .regular))
+                            .foregroundStyle(palette.textPrimary)
+                            .lineLimit(1)
+                        Text("Nearby")
+                            .font(.system(size: 13, weight: .regular))
+                            .foregroundStyle(palette.muted)
+                            .lineLimit(1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Spacer()
+                    ShareTargetSelectionBadge(isSelected: selected)
+                }
+                .padding(.vertical, 7)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.irisPlain)
+            .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
+            .listRowBackground(palette.panel)
+            .listRowSeparator(.hidden)
+            .accessibilityLabel("\(peer.name.isEmpty ? "Nearby user" : peer.name), \(selected ? "selected" : "not selected")")
+            .accessibilityValue(selected ? "Selected" : "Not selected")
+        )
     }
 
     private func preselectSuggestedChat() {
@@ -4052,24 +4137,24 @@ private struct ChatListTableView: UIViewRepresentable {
             ]
         }
 
-        if chats.isEmpty {
-            return [
-                Section(title: nil, items: [.nearby, .empty])
-            ]
+        var sections: [Section] = []
+        if preferences.nearbyEnabled {
+            sections.append(Section(title: "Nearby", items: [.nearby]))
         }
-
         let pinnedChats = chats.filter(\.isPinned)
-        guard !pinnedChats.isEmpty else {
-            return [
-                Section(title: nil, items: [.nearby] + chats.map(Item.chat))
-            ]
+        let unpinnedChats = chats.filter { !$0.isPinned }
+        if !pinnedChats.isEmpty {
+            sections.append(Section(title: "Pinned", items: pinnedChats.map(Item.chat)))
         }
 
-        let unpinnedChats = chats.filter { !$0.isPinned }
-        return [
-            Section(title: "Pinned", items: pinnedChats.map(Item.chat)),
-            Section(title: "Chats", items: [.nearby] + unpinnedChats.map(Item.chat)),
-        ]
+        if chats.isEmpty {
+            sections.append(Section(title: sections.isEmpty ? nil : "Chats", items: [.empty]))
+        } else if !unpinnedChats.isEmpty {
+            let title = sections.isEmpty ? nil : "Chats"
+            sections.append(Section(title: title, items: unpinnedChats.map(Item.chat)))
+        }
+
+        return sections
     }
 
     private func makeFingerprint() -> [String] {
@@ -4077,6 +4162,7 @@ private struct ChatListTableView: UIViewRepresentable {
         var values = [
             "search:\(isSearchActive):\(searchText):\(messageLimit):\(expanded)",
             "nearby:\(manager.nearbyIris.sidebarSubtitle):" +
+                "\(manager.nearbyIris.isVisible):\(manager.nearbyIris.isLanVisible):" +
                 manager.nearbyIris.peers.map {
                     "\($0.id):\($0.name):\($0.pictureURL ?? ""):\($0.ownerPubkeyHex ?? "")"
                 }.joined(separator: "\u{1E}"),
@@ -4280,41 +4366,19 @@ private struct ChatListTableView: UIViewRepresentable {
 
         private func configureNearby(_ cell: UITableViewCell) {
             guard let manager else { return }
-            let hasPeers = !manager.nearbyIris.peers.isEmpty
             cell.accessibilityIdentifier = "nearbyChatRow"
-            cell.accessibilityLabel = "Nearby, \(manager.nearbyIris.sidebarSubtitle)"
-            cell.accessibilityTraits = hasPeers ? [] : [.button]
-            cell.isAccessibilityElement = !hasPeers
-            cell.selectionStyle = hasPeers ? .none : .default
+            cell.accessibilityLabel = manager.nearbyIris.isNearbyActive
+                ? "Nearby"
+                : "Nearby, Tap to enable"
+            cell.accessibilityTraits = []
+            cell.isAccessibilityElement = false
+            cell.selectionStyle = .none
             cell.contentConfiguration = UIHostingConfiguration {
-                Group {
-                    if hasPeers {
-                        NearbyPeerStripRow(
-                            manager: manager,
-                            peers: manager.nearbyIris.peers,
-                            avatarSize: IrisChatListRowMetrics.avatarSize,
-                            horizontalPadding: IrisChatListRowMetrics.horizontalPadding,
-                            verticalPadding: IrisChatListRowMetrics.verticalPadding,
-                            onOpenNearby: { [weak self] in
-                                self?.onOpenNearby?()
-                            }
-                        )
-                        .accessibilityIdentifier("nearbyChatRow")
-                    } else {
-                        ChatListTableRowContent(
-                            title: "Nearby",
-                            preview: manager.nearbyIris.sidebarSubtitle,
-                            subtitle: nil,
-                            timeLabel: nil,
-                            unreadCount: 0,
-                            preferences: manager.state.preferences,
-                            manager: manager,
-                            leading: AnyView(NearbyWirelessAvatar()),
-                            previewLeading: nil
-                        )
-                        .accessibilityHidden(true)
-                    }
-                }
+                NearbyChatListRow(
+                    manager: manager,
+                    service: manager.nearbyIris,
+                    onOpen: { [weak self] in self?.onOpenNearby?() }
+                )
                 .environment(\.irisPalette, palette)
             }
             .margins(.all, 0)
@@ -4673,22 +4737,7 @@ private struct NearbyChatListRow: View {
 
     var body: some View {
         if service.peers.isEmpty {
-            IrisChatRow(
-                title: "Nearby",
-                preview: service.sidebarSubtitle,
-                subtitle: nil,
-                timeLabel: nil,
-                unreadCount: 0,
-                pictureUrl: nil,
-                preferences: manager.state.preferences,
-                manager: manager,
-                leading: AnyView(NearbyWirelessAvatar()),
-                previewLeading: nil,
-                onTap: {
-                    onOpen()
-                }
-            )
-            .accessibilityIdentifier("nearbyChatRow")
+            NearbyEmptyRow(service: service, onOpen: onOpen)
         } else {
             NearbyPeerStripRow(
                 manager: manager,
@@ -4703,17 +4752,47 @@ private struct NearbyChatListRow: View {
     }
 }
 
+private struct NearbyEmptyRow: View {
+    @Environment(\.irisPalette) private var palette
+    @ObservedObject var service: IrisNearbyService
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: IrisChatListRowMetrics.avatarTextSpacing) {
+                NearbyWirelessAvatar(active: service.isNearbyActive)
+
+                if !service.isNearbyActive {
+                    Text("Tap to enable")
+                        .font(.subheadline)
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, IrisChatListRowMetrics.horizontalPadding)
+            .padding(.vertical, IrisChatListRowMetrics.verticalPadding)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.irisPlain)
+        .accessibilityIdentifier("nearbyChatRow")
+        .accessibilityLabel(service.isNearbyActive ? "Nearby" : "Nearby, Tap to enable")
+    }
+}
+
 private struct NearbyWirelessAvatar: View {
     @Environment(\.irisPalette) private var palette
     var size: CGFloat = IrisChatListRowMetrics.avatarSize
+    var active: Bool = false
 
-    var body: some View {
-        ZStack {
-            Circle().fill(palette.panelAlt)
+        var body: some View {
+            ZStack {
+            Circle().fill(active ? palette.action : palette.panelAlt)
             Circle().stroke(palette.border, lineWidth: 1)
             Image(systemName: "dot.radiowaves.left.and.right")
                 .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(palette.textPrimary)
+                .foregroundStyle(active ? palette.onAccent : palette.muted)
         }
         .frame(width: size, height: size)
     }
@@ -4728,27 +4807,35 @@ private struct NearbyPeerStripRow: View {
     let onOpenNearby: () -> Void
 
     var body: some View {
-        HStack(spacing: IrisChatListRowMetrics.avatarTextSpacing) {
+        HStack(alignment: .top, spacing: IrisChatListRowMetrics.avatarTextSpacing) {
             Button(action: onOpenNearby) {
-                NearbyWirelessAvatar(size: avatarSize)
+                NearbyWirelessAvatar(size: avatarSize, active: true)
             }
             .buttonStyle(.irisPlain)
             .accessibilityIdentifier("nearbyOpenButton")
             .accessibilityLabel("Nearby")
 
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                HStack(alignment: .top, spacing: 10) {
                     ForEach(peers) { peer in
                         Button {
                             openNearbyPeer(peer, manager: manager)
                         } label: {
-                            IrisAvatar(
-                                label: peer.name.isEmpty ? "?" : peer.name,
-                                size: avatarSize,
-                                pictureUrl: peer.pictureURL,
-                                preferences: manager.state.preferences,
-                                manager: manager
-                            )
+                            VStack(spacing: 4) {
+                                IrisAvatar(
+                                    label: peer.name.isEmpty ? "?" : peer.name,
+                                    size: avatarSize,
+                                    pictureUrl: peer.pictureURL,
+                                    preferences: manager.state.preferences,
+                                    manager: manager
+                                )
+                                Text(nearbyPeerDisplayName(peer.name))
+                                    .font(.caption2.weight(.medium))
+                                    .foregroundStyle(Color.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .frame(width: max(avatarSize + 12, 64), alignment: .center)
+                            }
                         }
                         .buttonStyle(.irisPlain)
                         .disabled(peer.ownerPubkeyHex == nil)
@@ -4764,6 +4851,13 @@ private struct NearbyPeerStripRow: View {
         .padding(.vertical, verticalPadding)
         .contentShape(Rectangle())
     }
+}
+
+private func nearbyPeerDisplayName(_ name: String) -> String {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return "Nearby" }
+    if trimmed.count <= 14 { return trimmed }
+    return String(trimmed.prefix(13)) + "…"
 }
 
 @MainActor
@@ -6335,6 +6429,7 @@ private struct DeviceRosterRow: View {
     let device: DeviceEntrySnapshot
     let canManageDevices: Bool
     @State private var showingRemoveConfirmation = false
+    @State private var deviceName = ""
 
     private var displayTitle: String {
         if device.isCurrentDevice {
@@ -6372,6 +6467,22 @@ private struct DeviceRosterRow: View {
                 }
             }
 
+            if canManageDevices && device.isCurrentDevice {
+                VStack(spacing: 10) {
+                    TextField("Device name", text: $deviceName)
+                        .textFieldStyle(.plain)
+                        .irisInputField()
+                        .accessibilityIdentifier("deviceRosterCurrentDeviceNameInput")
+
+                    Button(manager.state.busy.updatingRoster ? "Saving…" : "Save name") {
+                        manager.setCurrentDeviceName(deviceName, currentClientLabel: device.clientLabel)
+                    }
+                    .buttonStyle(IrisPrimaryButtonStyle())
+                    .disabled(manager.state.busy.updatingRoster)
+                    .accessibilityIdentifier("deviceRosterCurrentDeviceNameButton")
+                }
+            }
+
             HStack(spacing: 8) {
                 IrisInfoPill(device.isAuthorized ? "Linked" : "Pending", tint: device.isAuthorized ? .green : .orange)
                 if device.isStale {
@@ -6400,6 +6511,14 @@ private struct DeviceRosterRow: View {
             }
         }
         .accessibilityIdentifier("deviceRosterRow-\(String(device.devicePubkeyHex.prefix(12)))")
+        .onAppear(perform: resetDeviceName)
+        .irisOnChange(of: device.deviceLabel ?? "") { _ in
+            resetDeviceName()
+        }
+    }
+
+    private func resetDeviceName() {
+        deviceName = nonEmpty(device.deviceLabel) ?? PlatformDeviceLabels.currentDeviceLabel
     }
 
     private var approveButton: some View {

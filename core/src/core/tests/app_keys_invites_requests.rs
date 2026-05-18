@@ -506,6 +506,71 @@ fn app_keys_cache_merges_same_timestamp_roster_events() {
 }
 
 #[test]
+fn removing_authorized_device_advances_app_keys_timestamp() {
+    let owner = Keys::generate();
+    let device_a = Keys::generate();
+    let device_b = Keys::generate();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!(
+                "iris-chat-rs-test-roster-remove-{}",
+                owner.public_key().to_hex()
+            ))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    let previous_created_at = unix_now().get().saturating_add(60);
+    let linked_device_created_at = previous_created_at + 1;
+    core.app_keys.insert(
+        owner.public_key().to_hex(),
+        known_app_keys_from_ndr(
+            owner.public_key(),
+            &AppKeys::new(vec![
+                DeviceEntry::new(device_a.public_key(), previous_created_at),
+                DeviceEntry::new(device_b.public_key(), linked_device_created_at),
+            ]),
+            previous_created_at,
+        ),
+    );
+
+    core.remove_local_app_key_device(owner.public_key(), device_b.public_key());
+
+    let cached = core
+        .app_keys
+        .get(&owner.public_key().to_hex())
+        .expect("cached roster");
+    assert_eq!(cached.created_at_secs, linked_device_created_at + 1);
+    assert!(cached
+        .devices
+        .iter()
+        .any(|entry| entry.identity_pubkey_hex == device_a.public_key().to_hex()));
+    assert!(!cached
+        .devices
+        .iter()
+        .any(|entry| entry.identity_pubkey_hex == device_b.public_key().to_hex()));
+
+    let stale_linked_cache = AppKeys::new(vec![
+        DeviceEntry::new(device_a.public_key(), previous_created_at),
+        DeviceEntry::new(device_b.public_key(), linked_device_created_at),
+    ]);
+    let published_removal = known_app_keys_to_ndr(cached).expect("published removal");
+    let applied = apply_app_keys_snapshot_with_required_device(
+        Some(&stale_linked_cache),
+        linked_device_created_at,
+        &published_removal,
+        cached.created_at_secs,
+        None,
+    );
+    assert!(applied
+        .app_keys
+        .get_device(&device_b.public_key())
+        .is_none());
+}
+
+#[test]
 fn app_keys_runtime_storage_failure_does_not_mark_seen_or_mutate_app_cache() {
     let owner = Keys::generate();
     let device = Keys::generate();

@@ -28,22 +28,60 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         let results = manager.run_search(50);
         append_search_results(&body, state, manager, &results);
     } else {
-        let list = gtk::ListBox::new();
-        list.set_selection_mode(gtk::SelectionMode::None);
-        list.add_css_class("boxed-list");
-        list.set_margin_top(12);
-        list.set_margin_bottom(12);
-        list.set_margin_start(12);
-        list.set_margin_end(12);
+        body.set_margin_top(12);
+        body.set_margin_bottom(12);
+        body.set_margin_start(12);
+        body.set_margin_end(12);
 
         let now = unix_now();
-        if state.preferences.nearby_enabled {
-            list.append(&nearby_row(manager));
+        let show_nearby = state.preferences.nearby_enabled;
+        let pinned: Vec<&ChatThreadSnapshot> = state
+            .chat_list
+            .iter()
+            .filter(|chat| chat.is_pinned)
+            .collect();
+        let unpinned: Vec<&ChatThreadSnapshot> = state
+            .chat_list
+            .iter()
+            .filter(|chat| !chat.is_pinned)
+            .collect();
+        let section_count = usize::from(show_nearby)
+            + usize::from(!pinned.is_empty())
+            + usize::from(!unpinned.is_empty() || state.chat_list.is_empty());
+
+        if show_nearby {
+            append_grouped_section(
+                &body,
+                (section_count > 1).then_some("Nearby"),
+                vec![nearby_row(manager)],
+            );
         }
-        for chat in &state.chat_list {
-            list.append(&row_for(chat, &state.preferences, now, manager));
+        if !pinned.is_empty() {
+            append_grouped_section(
+                &body,
+                (section_count > 1).then_some("Pinned"),
+                pinned
+                    .into_iter()
+                    .map(|chat| row_for(chat, &state.preferences, now, manager).upcast())
+                    .collect(),
+            );
         }
-        body.append(&list);
+        if unpinned.is_empty() && state.chat_list.is_empty() {
+            append_grouped_section(
+                &body,
+                (section_count > 1).then_some("Chats"),
+                vec![empty_chats_row()],
+            );
+        } else if !unpinned.is_empty() {
+            append_grouped_section(
+                &body,
+                (section_count > 1).then_some("Chats"),
+                unpinned
+                    .into_iter()
+                    .map(|chat| row_for(chat, &state.preferences, now, manager).upcast())
+                    .collect(),
+            );
+        }
     }
 
     scrolled.set_child(Some(&body));
@@ -276,6 +314,26 @@ fn grouped_list() -> gtk::ListBox {
     list
 }
 
+fn append_grouped_section(container: &gtk::Box, title: Option<&str>, rows: Vec<gtk::Widget>) {
+    if let Some(title) = title {
+        container.append(&section_label(title));
+    }
+    let list = grouped_list();
+    for row in rows {
+        list.append(&row);
+    }
+    container.append(&list);
+}
+
+fn empty_chats_row() -> gtk::Widget {
+    let label = gtk::Label::new(Some("No chats yet"));
+    label.add_css_class("dim-label");
+    label.set_margin_top(18);
+    label.set_margin_bottom(18);
+    label.set_halign(gtk::Align::Center);
+    label.upcast()
+}
+
 fn message_hit_row(
     hit: &MessageSearchHit,
     prefs: &PreferencesSnapshot,
@@ -316,11 +374,7 @@ fn message_hit_row(
 
 fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     let snapshot = manager.nearby_snapshot();
-    let subtitle = if !snapshot.visible {
-        "Click to enable".to_string()
-    } else {
-        wifi_status_label(&snapshot.status)
-    };
+    let active = snapshot.visible;
 
     let outer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     outer.set_margin_top(6);
@@ -328,32 +382,30 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     outer.set_margin_start(12);
     outer.set_margin_end(12);
     outer.set_hexpand(true);
+    outer.set_valign(gtk::Align::Start);
 
     if !snapshot.peers.is_empty() {
-        outer.append(&nearby_icon_button(manager));
+        outer.append(&nearby_icon_button(manager, active));
         outer.append(&nearby_avatar_strip(&snapshot.peers, manager));
         return outer.upcast();
     }
 
-    outer.append(&nearby_icon());
+    outer.append(&nearby_icon(active));
 
-    let text_col = gtk::Box::new(gtk::Orientation::Vertical, 2);
-    text_col.set_valign(gtk::Align::Center);
-    text_col.set_hexpand(true);
-    let title_label = gtk::Label::new(Some("Nearby"));
-    title_label.set_halign(gtk::Align::Start);
-    title_label.set_xalign(0.0);
-    title_label.add_css_class("heading");
-    text_col.append(&title_label);
-
-    let subtitle_label = gtk::Label::new(Some(&subtitle));
-    subtitle_label.set_halign(gtk::Align::Start);
-    subtitle_label.set_xalign(0.0);
-    subtitle_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-    subtitle_label.add_css_class("dim-label");
-    subtitle_label.add_css_class("caption");
-    text_col.append(&subtitle_label);
-    outer.append(&text_col);
+    if !active {
+        let label = gtk::Label::new(Some("Tap to enable"));
+        label.set_valign(gtk::Align::Center);
+        label.set_halign(gtk::Align::Start);
+        label.set_xalign(0.0);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.add_css_class("dim-label");
+        label.set_hexpand(true);
+        outer.append(&label);
+    } else {
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        outer.append(&spacer);
+    }
 
     let button = gtk::Button::new();
     button.add_css_class("flat");
@@ -365,12 +417,13 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     button.upcast()
 }
 
-fn nearby_icon_button(manager: &Rc<AppManager>) -> gtk::Button {
+fn nearby_icon_button(manager: &Rc<AppManager>, active: bool) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("flat");
     button.set_size_request(40, 40);
     button.set_tooltip_text(Some("Nearby"));
-    button.set_child(Some(&nearby_icon()));
+    button.set_child(Some(&nearby_icon(active)));
+    button.set_valign(gtk::Align::Start);
     let manager_for_click = manager.clone();
     button.connect_clicked(move |btn| {
         present_nearby_from_button(btn, manager_for_click.clone());
@@ -378,12 +431,28 @@ fn nearby_icon_button(manager: &Rc<AppManager>) -> gtk::Button {
     button
 }
 
-fn nearby_icon() -> gtk::Image {
+fn nearby_icon(active: bool) -> gtk::Box {
+    let background = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    background.set_size_request(40, 40);
+    background.set_valign(gtk::Align::Start);
+    background.set_halign(gtk::Align::Center);
+    background.add_css_class("circular");
+    background.add_css_class(if active {
+        "nearby-active"
+    } else {
+        "nearby-off"
+    });
     let icon = gtk::Image::from_icon_name("network-wireless-symbolic");
     icon.set_pixel_size(24);
     icon.set_valign(gtk::Align::Center);
-    icon.set_size_request(40, 40);
-    icon
+    icon.set_halign(gtk::Align::Center);
+    icon.add_css_class(if active {
+        "nearby-active-icon"
+    } else {
+        "dim-label"
+    });
+    background.append(&icon);
+    background
 }
 
 fn present_nearby_from_button(button: &gtk::Button, manager: Rc<AppManager>) {
@@ -397,7 +466,7 @@ fn nearby_avatar_strip(
 ) -> gtk::Widget {
     let avatar_size: i32 = 40;
     let strip = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-    strip.set_valign(gtk::Align::Center);
+    strip.set_valign(gtk::Align::Start);
     let prefs = manager.current_state().preferences.clone();
     for peer in peers {
         let avatar = adw::Avatar::new(avatar_size, Some(&peer.name), true);
@@ -411,9 +480,23 @@ fn nearby_avatar_strip(
             );
             image_cache::fetch_into_avatar(&avatar, &proxied);
         }
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
+        column.set_size_request(64, -1);
+        column.set_halign(gtk::Align::Center);
+        column.set_valign(gtk::Align::Start);
+        column.append(&avatar);
+        let label = gtk::Label::new(Some(&nearby_peer_display_name(&peer.name)));
+        label.add_css_class("caption");
+        label.add_css_class("dim-label");
+        label.set_max_width_chars(9);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_halign(gtk::Align::Center);
+        label.set_xalign(0.5);
+        column.append(&label);
+
         let button = gtk::Button::new();
         button.add_css_class("flat");
-        button.set_child(Some(&avatar));
+        button.set_child(Some(&column));
         button.set_tooltip_text(Some(if peer.name.trim().is_empty() {
             "Nearby user"
         } else {
@@ -435,9 +518,23 @@ fn nearby_avatar_strip(
     let scrolled = gtk::ScrolledWindow::new();
     scrolled.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
     scrolled.set_hexpand(true);
-    scrolled.set_min_content_height(avatar_size);
+    scrolled.set_min_content_height(avatar_size + 22);
     scrolled.set_child(Some(&strip));
     scrolled.upcast()
+}
+
+fn nearby_peer_display_name(name: &str) -> String {
+    let trimmed = name.trim();
+    let value = if trimmed.is_empty() {
+        "Nearby"
+    } else {
+        trimmed
+    };
+    if value.chars().count() <= 14 {
+        value.to_string()
+    } else {
+        format!("{}…", value.chars().take(13).collect::<String>())
+    }
 }
 
 fn row_for(
@@ -640,15 +737,6 @@ fn context_button_with_widget(label: &str, action: impl Fn(&gtk::Button) + 'stat
 
 fn escape(s: &str) -> String {
     glib::markup_escape_text(s).to_string()
-}
-
-fn wifi_status_label(status: &str) -> String {
-    match status {
-        "Local network unavailable" => "Wi-Fi unavailable".to_string(),
-        "Local network failed" => "Wi-Fi failed".to_string(),
-        "No local network access" => "No Wi-Fi access".to_string(),
-        _ => status.to_string(),
-    }
 }
 
 pub(crate) fn unix_now() -> u64 {

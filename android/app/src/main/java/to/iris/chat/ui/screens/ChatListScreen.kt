@@ -8,7 +8,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Arrangement
@@ -62,6 +64,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
@@ -327,15 +330,31 @@ fun ChatListScreen(
                     }
                 }
             } else {
-                if (nearbyService != null && appState.preferences.nearbyEnabled) {
+                val nearby = nearbyService?.takeIf { appState.preferences.nearbyEnabled }
+                val showNearby = nearby != null
+                val pinnedChats = appState.chatList.filter { it.isPinned }
+                val unpinnedChats = appState.chatList.filter { !it.isPinned }
+                val visibleSectionCount =
+                    (if (showNearby) 1 else 0) +
+                        (if (pinnedChats.isNotEmpty()) 1 else 0) +
+                        (if (unpinnedChats.isNotEmpty() || appState.chatList.isEmpty()) 1 else 0)
+
+                if (nearby != null) {
+                    if (visibleSectionCount > 1) {
+                        item(key = "section-nearby") { SearchSectionHeader("Nearby") }
+                    }
                     item(key = "nearby") {
                         NearbyChatListItem(
-                            service = nearbyService,
+                            appManager = appManager,
+                            service = nearby,
                             onClick = onNearbyClick,
                         )
                     }
                 }
                 if (appState.chatList.isEmpty()) {
+                    if (visibleSectionCount > 1) {
+                        item(key = "section-chats") { SearchSectionHeader("Chats") }
+                    }
                     item {
                         Box(
                             modifier =
@@ -352,67 +371,33 @@ fun ChatListScreen(
                         }
                     }
                 } else {
-                    items(appState.chatList, key = { it.chatId }) { chat ->
-                    val subtitle = chat.subtitle
-                    val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
-                    val avatarUrl =
-                        chat.pictureUrl
-                            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-                            ?.let { url ->
-                                proxiedImageUrl(
-                                    originalSrc = url,
-                                    preferences = appState.preferences,
-                                    width = 84u,
-                                    height = 84u,
-                                    square = true,
-                                )
-                            }
-                    Column(modifier = Modifier.fillMaxWidth()) {
-                        SwipeableChatListRow(
-                            chat = chat,
-                            onToggleUnread = {
-                                appManager.dispatch(
-                                    AppAction.SetChatUnread(chat.chatId, chat.unreadCount == 0uL),
-                                )
-                            },
-                            onTogglePin = {
-                                appManager.dispatch(
-                                    AppAction.SetChatPinned(chat.chatId, !chat.isPinned),
-                                )
-                            },
-                            onToggleMute = {
-                                appManager.dispatch(
-                                    AppAction.SetChatMuted(chat.chatId, !chat.isMuted),
-                                )
-                            },
-                            onDeleteRequest = { pendingDeleteChat = chat },
-                        ) {
-                            IrisChatListRow(
-                                title = chat.displayName,
-                                isMuted = chat.isMuted,
-                                isPinned = chat.isPinned,
-                                preview = chat.chatListPreview(),
-                                timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
-                                imageUrl = avatarUrl,
-                                imageData = avatarData,
-                                unreadCount = chat.unreadCount.toLong(),
-                                lastMessageMine = chat.lastMessageIsOutgoing == true,
-                                lastDelivery = chat.lastMessageDelivery,
-                                onClick = { appManager.openChat(chat.chatId) },
-                                modifier = Modifier.testTag("chatRow-${chat.chatId.take(12)}"),
+                    if (pinnedChats.isNotEmpty()) {
+                        if (visibleSectionCount > 1) {
+                            item(key = "section-pinned") { SearchSectionHeader("Pinned") }
+                        }
+                        items(pinnedChats, key = { it.chatId }) { chat ->
+                            ChatListConversationRow(
+                                appManager = appManager,
+                                appState = appState,
+                                chat = chat,
+                                onDeleteRequest = { pendingDeleteChat = it },
                             )
                         }
-                        if (chat.kind == ChatKind.GROUP && subtitle != null) {
-                            Text(
-                                text = subtitle,
-                                modifier = Modifier.padding(start = 70.dp, bottom = 10.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = IrisTheme.palette.muted,
+                    }
+                    if (unpinnedChats.isNotEmpty()) {
+                        if (visibleSectionCount > 1) {
+                            item(key = "section-chats") { SearchSectionHeader("Chats") }
+                        }
+                        items(unpinnedChats, key = { it.chatId }) { chat ->
+                            ChatListConversationRow(
+                                appManager = appManager,
+                                appState = appState,
+                                chat = chat,
+                                onDeleteRequest = { pendingDeleteChat = it },
                             )
                         }
                     }
                 }
-            }
             }
         }
 
@@ -615,6 +600,7 @@ private fun SwipeableChatListRow(
 }
 
 private val ChatSwipeActionsWidth = 176.dp
+private val NearbyActiveBlue = Color(0xFF2267F5)
 
 @Composable
 private fun ChatSwipeActionButton(
@@ -654,138 +640,190 @@ private fun ChatSwipeActionButton(
 
 @Composable
 private fun NearbyChatListItem(
+    appManager: AppManager,
     service: IrisNearbyService,
     onClick: () -> Unit,
 ) {
     val snapshot by rememberNearbySnapshotState(service)
-    Column(modifier = Modifier.fillMaxWidth()) {
-        IrisChatListRow(
-            title = "Nearby",
-            preview = nearbyPreview(snapshot),
-            timeLabel = null,
-            leadingContent = {
-                NearbyChatIcon(visible = snapshot.visible || snapshot.localNetworkVisible)
-            },
-            previewLeading =
-                if (snapshot.peers.isNotEmpty()) {
-                    { NearbyAvatarStack(peers = snapshot.peers.take(3)) }
-                } else {
-                    null
-                },
-            unreadCount = 0,
-            lastMessageMine = false,
-            lastDelivery = null,
-            onClick = onClick,
-            modifier = Modifier.testTag("nearbyChatRow"),
-        )
-    }
-}
+    val nearbyEnabled = snapshot.visible || snapshot.localNetworkVisible
+    val interactionSource = remember { MutableInteractionSource() }
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = 84.dp)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                )
+                .padding(horizontal = 16.dp, vertical = 10.dp)
+                .testTag("nearbyChatRow"),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+        verticalAlignment = if (snapshot.peers.isEmpty()) Alignment.CenterVertically else Alignment.Top,
+    ) {
+        NearbyChatIcon(enabled = nearbyEnabled)
 
-private fun nearbyPreview(snapshot: IrisNearbyService.Snapshot): String =
-    when {
-        snapshot.peers.isNotEmpty() -> nearbyPeerSummary(snapshot.peers)
-        !snapshot.visible &&
-            !snapshot.localNetworkVisible &&
-            (!snapshot.bluetoothPermissionGranted || !snapshot.localNetworkPermissionGranted) -> "Click to enable"
-        !snapshot.visible && !snapshot.localNetworkVisible -> "Off"
-        snapshot.localNetworkVisible && snapshot.localNetworkStatus in nearbyLanBlockingStatuses ->
-            nearbyWifiStatusLabel(snapshot.localNetworkStatus)
-        !snapshot.localNetworkVisible && snapshot.status in nearbyBlockingStatuses -> snapshot.status
-        else -> "No users nearby"
-    }
-
-private fun nearbyPeerSummary(peers: List<IrisNearbyService.Peer>): String {
-    val names = peers.map { it.name.trim().ifEmpty { "Someone" } }
-    return when (names.size) {
-        1 -> "${names[0]} nearby"
-        2 -> "${names[0]} and ${names[1]} nearby"
-        3 -> "${names[0]}, ${names[1]} and ${names[2]} nearby"
-        else -> {
-            val otherCount = names.size - 3
-            val suffix = if (otherCount == 1) "other" else "others"
-            "${names.take(3).joinToString(", ")} and $otherCount $suffix nearby"
-        }
-    }
-}
-
-private val nearbyBlockingStatuses =
-    setOf(
-        "No Bluetooth access",
-        "Bluetooth off",
-        "Bluetooth unavailable",
-        "Advertise unavailable",
-        "Advertise failed",
-        "Scan failed",
-        "Connect failed",
-    )
-
-private val nearbyLanBlockingStatuses =
-    setOf(
-        "No local network access",
-        "Local network unavailable",
-        "Local network failed",
-    )
-
-private fun nearbyWifiStatusLabel(status: String): String =
-    when (status) {
-        "No local network access" -> "No Wi-Fi access"
-        "Local network unavailable" -> "Wi-Fi unavailable"
-        "Local network failed" -> "Wi-Fi failed"
-        else -> status
-    }
-
-// Small avatar group shown inline with the "Boromir nearby" subtitle so the
-// faces of the people who are actually around appear next to their names,
-// rather than replacing the wireless icon in the leading slot. Each avatar
-// gets a thin ring in the surface color to keep overlapping faces
-// visually separated, same trick as iOS.
-@Composable
-private fun NearbyAvatarStack(peers: List<IrisNearbyService.Peer>) {
-    // Stays smaller than the bodyMedium line height so the row's preview
-    // row doesn't grow taller when the stack appears.
-    val avatarSize = 16.dp
-    val overlap = 6.dp
-    val stride = avatarSize - overlap
-    val stackWidth = stride * (peers.size - 1) + avatarSize
-    val ringColor = MaterialTheme.colorScheme.background
-    Box(modifier = Modifier.size(width = stackWidth, height = avatarSize)) {
-        peers.forEachIndexed { index, peer ->
-            Box(
+        if (snapshot.peers.isEmpty()) {
+            if (!nearbyEnabled) {
+                Text(
+                    text = "Tap to enable",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = IrisTheme.palette.muted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Spacer(modifier = Modifier.weight(1f))
+            }
+        } else {
+            Row(
                 modifier =
                     Modifier
-                        .align(Alignment.CenterStart)
-                        .offset(x = stride * index)
-                        .size(avatarSize)
-                        .background(ringColor, CircleShape),
-                contentAlignment = Alignment.Center,
+                        .weight(1f)
+                        .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.Top,
             ) {
-                IrisAvatar(
-                    label = peer.name.ifBlank { "?" },
-                    size = avatarSize - 2.dp,
-                    imageUrl = peer.pictureUrl,
-                )
+                snapshot.peers.forEach { peer ->
+                    NearbyPeerAvatar(
+                        peer = peer,
+                        onClick = {
+                            peer.ownerPubkeyHex?.let(appManager::openChat)
+                        },
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun NearbyChatIcon(visible: Boolean) {
+private fun ChatListConversationRow(
+    appManager: AppManager,
+    appState: AppState,
+    chat: ChatThreadSnapshot,
+    onDeleteRequest: (ChatThreadSnapshot) -> Unit,
+) {
+    val subtitle = chat.subtitle
+    val avatarData by rememberNhashImageData(appManager, chat.pictureUrl)
+    val avatarUrl =
+        chat.pictureUrl
+            ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?.let { url ->
+                proxiedImageUrl(
+                    originalSrc = url,
+                    preferences = appState.preferences,
+                    width = 84u,
+                    height = 84u,
+                    square = true,
+                )
+            }
+    Column(modifier = Modifier.fillMaxWidth()) {
+        SwipeableChatListRow(
+            chat = chat,
+            onToggleUnread = {
+                appManager.dispatch(
+                    AppAction.SetChatUnread(chat.chatId, chat.unreadCount == 0uL),
+                )
+            },
+            onTogglePin = {
+                appManager.dispatch(
+                    AppAction.SetChatPinned(chat.chatId, !chat.isPinned),
+                )
+            },
+            onToggleMute = {
+                appManager.dispatch(
+                    AppAction.SetChatMuted(chat.chatId, !chat.isMuted),
+                )
+            },
+            onDeleteRequest = { onDeleteRequest(chat) },
+        ) {
+            IrisChatListRow(
+                title = chat.displayName,
+                isMuted = chat.isMuted,
+                isPinned = chat.isPinned,
+                preview = chat.chatListPreview(),
+                timeLabel = formatRelativeTime(chat.lastMessageAtSecs?.toLong(), System.currentTimeMillis()),
+                imageUrl = avatarUrl,
+                imageData = avatarData,
+                unreadCount = chat.unreadCount.toLong(),
+                lastMessageMine = chat.lastMessageIsOutgoing == true,
+                lastDelivery = chat.lastMessageDelivery,
+                onClick = { appManager.openChat(chat.chatId) },
+                modifier = Modifier.testTag("chatRow-${chat.chatId.take(12)}"),
+            )
+        }
+        if (chat.kind == ChatKind.GROUP && subtitle != null) {
+            Text(
+                text = subtitle,
+                modifier = Modifier.padding(start = 70.dp, bottom = 10.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = IrisTheme.palette.muted,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NearbyPeerAvatar(
+    peer: IrisNearbyService.Peer,
+    onClick: () -> Unit,
+) {
+    val name = nearbyPeerDisplayName(peer.name)
+    val interactionSource = remember(peer.id) { MutableInteractionSource() }
+    Column(
+        modifier =
+            Modifier
+                .width(64.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .clickable(
+                    enabled = !peer.ownerPubkeyHex.isNullOrBlank(),
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                ),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        IrisAvatar(
+            label = peer.name.ifBlank { "?" },
+            size = 48.dp,
+            imageUrl = peer.pictureUrl,
+        )
+        Text(
+            text = name,
+            style = MaterialTheme.typography.labelSmall,
+            color = IrisTheme.palette.muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+@Composable
+private fun NearbyChatIcon(enabled: Boolean) {
     val palette = IrisTheme.palette
     Box(
         modifier =
             Modifier
                 .size(48.dp)
-                .background(if (visible) palette.accent else palette.panelAlt, CircleShape),
+                .background(if (enabled) NearbyActiveBlue else palette.panelAlt, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = IrisIcons.Nearby,
             contentDescription = null,
-            tint = if (visible) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+            tint = if (enabled) MaterialTheme.colorScheme.onPrimary else palette.muted,
             modifier = Modifier.size(24.dp),
         )
     }
+}
+
+private fun nearbyPeerDisplayName(name: String): String {
+    val trimmed = name.trim().ifEmpty { "Nearby" }
+    return if (trimmed.length <= 14) trimmed else trimmed.take(13) + "…"
 }
 
 @Composable

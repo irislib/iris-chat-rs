@@ -1,3 +1,10 @@
+# Iris Chat 2026.5.18.2
+
+- Adding people to groups now asks for confirmation before sending invites.
+- Linked device names can be renamed from Devices.
+- Nearby now shows cleaner chat-list shortcuts, opens chats from nearby avatars, and appears in mobile sharing.
+- Removed linked devices now stay removed more reliably.
+
 # Iris Chat 2026.5.18.1
 
 - Group photos now persist and appear in chats, chat lists, and group details.

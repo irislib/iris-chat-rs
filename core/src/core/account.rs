@@ -959,10 +959,23 @@ impl AppCore {
 
     pub(super) fn remove_local_app_key_device(&mut self, owner: PublicKey, device: PublicKey) {
         if let Some(entry) = self.app_keys.get_mut(&owner.to_hex()) {
+            let latest_device_created_at = entry
+                .devices
+                .iter()
+                .map(|candidate| {
+                    candidate
+                        .created_at_secs
+                        .max(candidate.label_updated_at_secs)
+                })
+                .max()
+                .unwrap_or_default();
             entry
                 .devices
                 .retain(|candidate| candidate.identity_pubkey_hex != device.to_hex());
-            entry.created_at_secs = unix_now().get();
+            entry.created_at_secs = next_app_keys_created_at(
+                unix_now().get(),
+                entry.created_at_secs.max(latest_device_created_at),
+            );
         }
     }
 

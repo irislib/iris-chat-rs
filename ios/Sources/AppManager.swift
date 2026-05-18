@@ -2473,6 +2473,20 @@ final class AppManager: ObservableObject {
         dispatchToRust(.removeAuthorizedDevice(devicePubkeyHex: trimmed))
     }
 
+    func setCurrentDeviceName(_ name: String, currentClientLabel: String?) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let deviceLabel = trimmed.isEmpty ? PlatformDeviceLabels.currentDeviceLabel : trimmed
+        let clientLabel = nonEmptyLabel(currentClientLabel) ?? PlatformDeviceLabels.currentClientLabel
+        let key = "\(deviceLabel)\u{1F}\(clientLabel)"
+        lastSyncedDeviceLabelsKey = key
+        if !dispatchToRust(
+            .setCurrentDeviceLabels(deviceLabel: deviceLabel, clientLabel: clientLabel),
+            showsToastOnFailure: true
+        ) {
+            lastSyncedDeviceLabelsKey = nil
+        }
+    }
+
     func copyToClipboard(_ value: String) {
         PlatformClipboard.setString(value)
         showToast("Copied")
@@ -2765,8 +2779,9 @@ final class AppManager: ObservableObject {
             lastSyncedDeviceLabelsKey = nil
             return
         }
-        let deviceLabel = PlatformDeviceLabels.currentDeviceLabel
-        let clientLabel = PlatformDeviceLabels.currentClientLabel
+        let currentDevice = state.deviceRoster?.devices.first(where: \.isCurrentDevice)
+        let deviceLabel = nonEmptyLabel(currentDevice?.deviceLabel) ?? PlatformDeviceLabels.currentDeviceLabel
+        let clientLabel = nonEmptyLabel(currentDevice?.clientLabel) ?? PlatformDeviceLabels.currentClientLabel
         let key = "\(deviceLabel)\u{1F}\(clientLabel)"
         guard key != lastSyncedDeviceLabelsKey else { return }
         lastSyncedDeviceLabelsKey = key
@@ -2776,6 +2791,11 @@ final class AppManager: ObservableObject {
         ) {
             lastSyncedDeviceLabelsKey = nil
         }
+    }
+
+    private func nonEmptyLabel(_ value: String?) -> String? {
+        let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed?.isEmpty == false ? trimmed : nil
     }
 
 #if os(iOS)

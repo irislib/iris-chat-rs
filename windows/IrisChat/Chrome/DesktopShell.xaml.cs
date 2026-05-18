@@ -96,14 +96,43 @@ public partial class DesktopShell : UserControl
         ChatRows.Items.Clear();
         var query = _searchQuery.Trim();
 
-        if (query.Length == 0 && _manager.Preferences.nearbyEnabled)
+        if (query.Length == 0)
         {
-            ChatRows.Items.Add(BuildNearbyRow());
+            var showNearby = _manager.Preferences.nearbyEnabled;
+            var pinned = chats.Where(chat => chat.isPinned).ToArray();
+            var unpinned = chats.Where(chat => !chat.isPinned).ToArray();
+            var sectionCount = (showNearby ? 1 : 0)
+                + (pinned.Length > 0 ? 1 : 0)
+                + ((unpinned.Length > 0 || chats.Length == 0) ? 1 : 0);
+
+            if (showNearby)
+            {
+                AddSidebarSectionHeader("Nearby", sectionCount);
+                ChatRows.Items.Add(BuildNearbyRow());
+            }
+
+            if (pinned.Length > 0)
+            {
+                AddSidebarSectionHeader("Pinned", sectionCount);
+                foreach (var chat in pinned)
+                    ChatRows.Items.Add(BuildChatRow(chat, activeChatId));
+            }
+
+            if (chats.Length == 0)
+            {
+                AddSidebarSectionHeader("Chats", sectionCount);
+                ChatRows.Items.Add(BuildEmptyChatsRow());
+            }
+            else if (unpinned.Length > 0)
+            {
+                AddSidebarSectionHeader("Chats", sectionCount);
+                foreach (var chat in unpinned)
+                    ChatRows.Items.Add(BuildChatRow(chat, activeChatId));
+            }
+            return;
         }
 
-        var visibleChats = query.Length == 0
-            ? chats
-            : chats.Where(chat => ChatMatchesQuery(chat, query)).ToArray();
+        var visibleChats = chats.Where(chat => ChatMatchesQuery(chat, query)).ToArray();
 
         foreach (var chat in visibleChats)
         {
@@ -115,6 +144,22 @@ public partial class DesktopShell : UserControl
             ChatRows.Items.Add(BuildSearchEmptyRow());
         }
     }
+
+    private void AddSidebarSectionHeader(string title, int sectionCount)
+    {
+        if (sectionCount <= 1) return;
+        ChatRows.Items.Add(BuildSidebarSectionHeader(title));
+    }
+
+    private FrameworkElement BuildSidebarSectionHeader(string title) =>
+        new TextBlock
+        {
+            Text = title,
+            Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
+            FontSize = 12,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(12, 12, 12, 4),
+        };
 
     private ChatRow BuildChatRow(ChatThreadSnapshot chat, string? activeChatId)
     {
@@ -136,6 +181,19 @@ public partial class DesktopShell : UserControl
             Child = new TextBlock
             {
                 Text = "No matches",
+                Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
+                FontSize = 13,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            },
+        };
+
+    private FrameworkElement BuildEmptyChatsRow() =>
+        new Border
+        {
+            Padding = new Thickness(12, 20, 12, 20),
+            Child = new TextBlock
+            {
+                Text = "No chats yet",
                 Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
                 FontSize = 13,
                 HorizontalAlignment = HorizontalAlignment.Center,
@@ -274,17 +332,19 @@ public partial class DesktopShell : UserControl
     private FrameworkElement BuildNearbyRow()
     {
         var snapshot = _manager.NearbySnapshot;
-        var subtitle = !snapshot.visible
-            ? "Click to enable"
-            : WifiStatusLabel(snapshot.status);
+        var active = snapshot.visible;
 
-        var grid = new Grid { Margin = new Thickness(10, 8, 10, 8) };
+        var grid = new Grid
+        {
+            Margin = new Thickness(10, 8, 10, 8),
+            VerticalAlignment = VerticalAlignment.Top,
+        };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
         if (snapshot.peers.Length > 0)
         {
-            var iconButton = BuildWirelessIconButton();
+            var iconButton = BuildWirelessIconButton(active);
             Grid.SetColumn(iconButton, 0);
             var strip = BuildNearbyAvatarStrip(snapshot.peers);
             Grid.SetColumn(strip, 1);
@@ -293,37 +353,24 @@ public partial class DesktopShell : UserControl
             return grid;
         }
 
-        var leading = BuildWirelessIcon();
+        var leading = BuildWirelessIcon(active);
         Grid.SetColumn(leading, 0);
-
-        var text = new StackPanel
-        {
-            Orientation = Orientation.Vertical,
-            VerticalAlignment = VerticalAlignment.Center,
-            Margin = new Thickness(12, 0, 0, 0),
-        };
-        text.Children.Add(new TextBlock
-        {
-            Text = "Nearby",
-            Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
-            FontSize = 15,
-            FontWeight = FontWeights.SemiBold,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        });
-
-        text.Children.Add(new TextBlock
-        {
-            Text = subtitle,
-            Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
-            FontSize = 13,
-            Margin = new Thickness(0, 2, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            TextTrimming = TextTrimming.CharacterEllipsis,
-        });
-        Grid.SetColumn(text, 1);
-
         grid.Children.Add(leading);
-        grid.Children.Add(text);
+
+        if (!active)
+        {
+            var text = new TextBlock
+            {
+                Text = "Tap to enable",
+                Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
+                FontSize = 13,
+                Margin = new Thickness(12, 0, 0, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+            };
+            Grid.SetColumn(text, 1);
+            grid.Children.Add(text);
+        }
 
         var button = new Button
         {
@@ -340,7 +387,7 @@ public partial class DesktopShell : UserControl
     // 44px round wireless badge that always occupies the leading slot of
     // the Nearby chat-list row, so the row visually lines up with regular
     // chat avatars.
-    private FrameworkElement BuildWirelessIcon()
+    private FrameworkElement BuildWirelessIcon(bool active)
     {
         const double Size = 44;
         return new System.Windows.Controls.Border
@@ -348,22 +395,27 @@ public partial class DesktopShell : UserControl
             Width = Size,
             Height = Size,
             CornerRadius = new CornerRadius(Size / 2),
-            Background = (System.Windows.Media.Brush)FindResource("Panel"),
-            VerticalAlignment = VerticalAlignment.Center,
+            Background = active ? NearbyActiveBrush() : (System.Windows.Media.Brush)FindResource("PanelAlt"),
+            VerticalAlignment = VerticalAlignment.Top,
             Child = new TextBlock
             {
                 // Segoe MDL2 Assets E701 = wireless / wifi fan
                 Text = "\uE701",
                 FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
                 FontSize = 20,
-                Foreground = (System.Windows.Media.Brush)FindResource("TextPrimary"),
+                Foreground = active
+                    ? System.Windows.Media.Brushes.White
+                    : (System.Windows.Media.Brush)FindResource("TextMuted"),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 VerticalAlignment = VerticalAlignment.Center,
             },
         };
     }
 
-    private Button BuildWirelessIconButton()
+    private static System.Windows.Media.Brush NearbyActiveBrush() =>
+        new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(0x22, 0x67, 0xF5));
+
+    private Button BuildWirelessIconButton(bool active)
     {
         var button = new Button
         {
@@ -371,8 +423,9 @@ public partial class DesktopShell : UserControl
             Padding = new Thickness(0),
             Width = 44,
             Height = 44,
-            Content = BuildWirelessIcon(),
+            Content = BuildWirelessIcon(active),
             ToolTip = "Nearby",
+            VerticalAlignment = VerticalAlignment.Top,
         };
         button.Click += OnNearby;
         return button;
@@ -384,27 +437,44 @@ public partial class DesktopShell : UserControl
         var panel = new StackPanel
         {
             Orientation = Orientation.Horizontal,
-            VerticalAlignment = VerticalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
         };
 
         foreach (var peer in peers)
         {
             var name = string.IsNullOrWhiteSpace(peer.name) ? "Nearby user" : peer.name.Trim();
+            var stack = new StackPanel
+            {
+                Orientation = Orientation.Vertical,
+                Width = 64,
+                VerticalAlignment = VerticalAlignment.Top,
+            };
+            stack.Children.Add(new Avatar
+            {
+                Size = AvatarSize,
+                Label = string.IsNullOrEmpty(peer.name) ? "?" : peer.name,
+                PictureUrl = peer.pictureUrl,
+                HorizontalAlignment = HorizontalAlignment.Center,
+            });
+            stack.Children.Add(new TextBlock
+            {
+                Text = NearbyPeerDisplayName(peer.name),
+                Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
+                FontSize = 11,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                TextAlignment = TextAlignment.Center,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
             var button = new Button
             {
                 Style = (Style)FindResource("GhostButton"),
                 Padding = new Thickness(0),
                 Margin = new Thickness(0, 0, 10, 0),
-                Width = AvatarSize,
-                Height = AvatarSize,
+                Width = 64,
                 ToolTip = name,
                 IsEnabled = !string.IsNullOrWhiteSpace(peer.ownerPubkeyHex),
-                Content = new Avatar
-                {
-                    Size = AvatarSize,
-                    Label = string.IsNullOrEmpty(peer.name) ? "?" : peer.name,
-                    PictureUrl = peer.pictureUrl,
-                },
+                Content = stack,
+                VerticalAlignment = VerticalAlignment.Top,
             };
             if (!string.IsNullOrWhiteSpace(peer.ownerPubkeyHex))
             {
@@ -420,8 +490,14 @@ public partial class DesktopShell : UserControl
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Margin = new Thickness(12, 0, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Top,
         };
+    }
+
+    private static string NearbyPeerDisplayName(string? name)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(name) ? "Nearby" : name.Trim();
+        return trimmed.Length <= 14 ? trimmed : trimmed[..13] + "…";
     }
 
     private ContextMenu BuildChatContextMenu(ChatThreadSnapshot chat)
@@ -471,15 +547,6 @@ public partial class DesktopShell : UserControl
         _renderedScreenKey = null;
         Refresh();
     }
-
-    private static string WifiStatusLabel(string status) =>
-        status switch
-        {
-            "Local network unavailable" => "Wi-Fi unavailable",
-            "Local network failed" => "Wi-Fi failed",
-            "No local network access" => "No Wi-Fi access",
-            _ => status,
-        };
 
     private void OnProfile(object sender, RoutedEventArgs e) =>
         PushMain(new Screen.Settings());

@@ -88,7 +88,26 @@ public partial class DeviceRosterView : UserControl
             VerticalAlignment = VerticalAlignment.Center,
         };
 
-        if (roster.canManageDevices && !d.isCurrentDevice && d.isAuthorized)
+        if (roster.canManageDevices && d.isCurrentDevice)
+        {
+            var nameInput = new TextBox
+            {
+                Text = string.IsNullOrWhiteSpace(d.deviceLabel) ? "" : d.deviceLabel!.Trim(),
+                Width = 180,
+                Margin = new Thickness(0, 0, 8, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            var save = new Button
+            {
+                Style = (Style)FindResource("SecondaryButton"),
+                Content = new TextBlock { Text = "Save" },
+                Padding = new Thickness(10, 6, 10, 6),
+            };
+            save.Click += (_, _) => App.CurrentManager.SetCurrentDeviceName(nameInput.Text, d.clientLabel);
+            actions.Children.Add(nameInput);
+            actions.Children.Add(save);
+        }
+        else if (roster.canManageDevices && !d.isCurrentDevice && d.isAuthorized)
         {
             var revoke = new Button
             {

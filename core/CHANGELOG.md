@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.27
+
+- Advance app-key roster timestamps when a linked device is removed so stale device rosters cannot restore the removed device.
+
 ## 0.1.26
 
 - Add group photo persistence and projection so group pictures survive restart and appear in chat lists, open chats, and group details.

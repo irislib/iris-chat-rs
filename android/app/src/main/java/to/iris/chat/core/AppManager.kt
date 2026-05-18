@@ -509,6 +509,23 @@ class AppManager(
         dispatchToRust(AppAction.RemoveAuthorizedDevice(trimmed))
     }
 
+    fun setCurrentDeviceName(
+        name: String,
+        currentClientLabel: String?,
+    ) {
+        val deviceLabel = name.trim().ifEmpty { currentPlatformDeviceLabel() }
+        val clientLabel = currentClientLabel?.trim()?.ifEmpty { null } ?: "Iris Chat Android"
+        lastSyncedDeviceLabelsKey = "$deviceLabel\u001F$clientLabel"
+        if (
+            !dispatchToRust(
+                AppAction.SetCurrentDeviceLabels(deviceLabel, clientLabel),
+                showsToastOnFailure = true,
+            )
+        ) {
+            lastSyncedDeviceLabelsKey = null
+        }
+    }
+
     fun dispatch(action: AppAction) {
         if (handleOptimisticNavigation(action)) {
             return
@@ -1811,8 +1828,11 @@ class AppManager(
             lastSyncedDeviceLabelsKey = null
             return
         }
-        val deviceLabel = currentDeviceLabel()
-        val clientLabel = "Iris Chat Android"
+        val currentDevice = snapshot.deviceRoster?.devices?.firstOrNull { it.isCurrentDevice }
+        val deviceLabel =
+            currentDevice?.deviceLabel?.trim()?.ifEmpty { null } ?: currentPlatformDeviceLabel()
+        val clientLabel =
+            currentDevice?.clientLabel?.trim()?.ifEmpty { null } ?: "Iris Chat Android"
         val key = "$deviceLabel\u001F$clientLabel"
         if (key == lastSyncedDeviceLabelsKey) {
             return
@@ -1828,7 +1848,7 @@ class AppManager(
         }
     }
 
-    private fun currentDeviceLabel(): String {
+    private fun currentPlatformDeviceLabel(): String {
         val configuredName =
             runCatching {
                 Settings.Global.getString(appContext.contentResolver, Settings.Global.DEVICE_NAME)

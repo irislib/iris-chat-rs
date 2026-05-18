@@ -316,8 +316,18 @@ impl AppManager {
             *self.last_synced_device_labels_key.borrow_mut() = None;
             return;
         }
-        let device_label = local_device_label();
-        let client_label = "Iris Chat Linux".to_string();
+        let current_device = state.device_roster.as_ref().and_then(|roster| {
+            roster
+                .devices
+                .iter()
+                .find(|device| device.is_current_device)
+        });
+        let device_label = current_device
+            .and_then(|device| non_empty_owned(device.device_label.as_deref()))
+            .unwrap_or_else(local_device_label);
+        let client_label = current_device
+            .and_then(|device| non_empty_owned(device.client_label.as_deref()))
+            .unwrap_or_else(|| "Iris Chat Linux".to_string());
         let key = format!("{device_label}\x1F{client_label}");
         if self.last_synced_device_labels_key.borrow().as_deref() == Some(key.as_str()) {
             return;
@@ -780,6 +790,13 @@ fn local_device_label() -> String {
     } else {
         format!("{name} - {os}")
     }
+}
+
+fn non_empty_owned(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn linux_pretty_name() -> Option<String> {

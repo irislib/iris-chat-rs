@@ -200,9 +200,66 @@ fn devices_card(
     }
 
     for device in &roster.devices {
-        group.add(&device_row(state, roster, device, manager));
+        if roster.can_manage_devices && device.is_current_device {
+            group.add(&current_device_row(state, device, manager));
+        } else {
+            group.add(&device_row(state, roster, device, manager));
+        }
     }
     group.upcast()
+}
+
+fn current_device_row(
+    state: &AppState,
+    device: &DeviceEntrySnapshot,
+    manager: &Rc<AppManager>,
+) -> adw::EntryRow {
+    let row = adw::EntryRow::builder().title("This device").build();
+    row.set_text(non_empty(device.device_label.as_deref()).unwrap_or("This device"));
+
+    let save = gtk::Button::with_label(if state.busy.updating_roster {
+        "Saving…"
+    } else {
+        "Save"
+    });
+    save.add_css_class("suggested-action");
+    save.set_valign(gtk::Align::Center);
+    save.set_sensitive(!state.busy.updating_roster);
+
+    let manager_for_save = manager.clone();
+    let row_for_save = row.clone();
+    let client_label = non_empty(device.client_label.as_deref())
+        .unwrap_or("Iris Chat Linux")
+        .to_string();
+    save.connect_clicked(move |button| {
+        let value = row_for_save.text().trim().to_string();
+        if value.is_empty() {
+            return;
+        }
+        button.set_sensitive(false);
+        manager_for_save.dispatch(AppAction::SetCurrentDeviceLabels {
+            device_label: value,
+            client_label: client_label.clone(),
+        });
+    });
+    row.add_suffix(&save);
+
+    let manager_for_apply = manager.clone();
+    let client_label = non_empty(device.client_label.as_deref())
+        .unwrap_or("Iris Chat Linux")
+        .to_string();
+    row.connect_apply(move |row| {
+        let value = row.text().trim().to_string();
+        if value.is_empty() {
+            return;
+        }
+        manager_for_apply.dispatch(AppAction::SetCurrentDeviceLabels {
+            device_label: value,
+            client_label: client_label.clone(),
+        });
+    });
+
+    row
 }
 
 fn device_row(

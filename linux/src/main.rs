@@ -302,6 +302,20 @@ button.suggested-action {{
     color: @iris_accent;
 }}
 
+.nearby-active {{
+    background-color: #2267F5;
+    color: #fff;
+}}
+
+.nearby-active-icon {{
+    color: #fff;
+}}
+
+.nearby-off {{
+    background-color: @iris_panel_alt;
+    color: @iris_muted;
+}}
+
 .warning {{
     background-color: @iris_accent_alt;
     color: @iris_on_accent;
