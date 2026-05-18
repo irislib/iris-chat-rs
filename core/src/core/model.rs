@@ -71,6 +71,8 @@ pub(super) struct CurrentDeviceLabels {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct OwnerProfileRecord {
     #[serde(default)]
+    pub(super) nickname: Option<String>,
+    #[serde(default)]
     pub(super) name: Option<String>,
     #[serde(default)]
     pub(super) display_name: Option<String>,

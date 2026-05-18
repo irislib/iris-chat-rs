@@ -261,6 +261,7 @@ public partial class ChatView : UserControl
             stack.Children.Add(BuildCommonGroupsSection(commonGroups, window));
         }
 
+        stack.Children.Add(BuildNicknameSection(chat));
         stack.Children.Add(BuildDirectInfoButton(
             chat.isMuted ? "Unmute chat" : "Mute chat",
             () => App.CurrentManager.SetChatMuted(chat.chatId, !chat.isMuted)
@@ -323,6 +324,92 @@ public partial class ChatView : UserControl
         Grid.SetColumn(text, 1);
         row.Children.Add(text);
         return row;
+    }
+
+    private static FrameworkElement BuildNicknameSection(CurrentChatSnapshot chat)
+    {
+        var border = new Border
+        {
+            Background = ResourceBrush("Panel"),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14, 12, 14, 12),
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        var stack = new StackPanel { Orientation = Orientation.Vertical };
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Nickname",
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ResourceBrush("TextPrimary"),
+            Margin = new Thickness(0, 0, 0, 8),
+        });
+
+        var input = new TextBox
+        {
+            Text = chat.nickname ?? string.Empty,
+            MinWidth = 240,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        stack.Children.Add(input);
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 0, string.IsNullOrWhiteSpace(chat.profileName) ? 0 : 10),
+        };
+        var save = new Button
+        {
+            Content = "Save",
+            Padding = new Thickness(12, 7, 12, 7),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        save.Click += (_, _) => App.CurrentManager.SetContactNickname(chat.chatId, input.Text ?? string.Empty);
+        actions.Children.Add(save);
+
+        if (!string.IsNullOrWhiteSpace(chat.nickname))
+        {
+            var remove = new Button
+            {
+                Content = "Remove",
+                Padding = new Thickness(12, 7, 12, 7),
+            };
+            remove.Click += (_, _) =>
+            {
+                input.Text = string.Empty;
+                App.CurrentManager.SetContactNickname(chat.chatId, string.Empty);
+            };
+            actions.Children.Add(remove);
+        }
+        stack.Children.Add(actions);
+
+        var primaryName = string.IsNullOrWhiteSpace(chat.nickname) ? chat.displayName : chat.nickname;
+        if (!string.IsNullOrWhiteSpace(chat.profileName)
+            && !string.Equals(chat.profileName.Trim(), primaryName?.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            var profile = new Grid { Margin = new Thickness(0, 2, 0, 0) };
+            profile.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            profile.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            profile.Children.Add(new TextBlock
+            {
+                Text = "Profile name",
+                FontWeight = FontWeights.SemiBold,
+                Foreground = ResourceBrush("TextPrimary"),
+            });
+            var value = new TextBlock
+            {
+                Text = chat.profileName,
+                Foreground = ResourceBrush("TextMuted"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Margin = new Thickness(12, 0, 0, 0),
+            };
+            Grid.SetColumn(value, 1);
+            profile.Children.Add(value);
+            stack.Children.Add(profile);
+        }
+
+        border.Child = stack;
+        return border;
     }
 
     private static FrameworkElement BuildCommonGroupsSection(

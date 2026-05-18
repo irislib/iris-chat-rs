@@ -292,6 +292,16 @@ impl AppCore {
                     .as_ref()
                     .map(|group| group.name.clone())
                     .unwrap_or_else(|| self.owner_display_label(&thread.chat_id));
+                let direct_nickname = if group_snapshot.is_none() {
+                    self.owner_nickname(&thread.chat_id)
+                } else {
+                    None
+                };
+                let direct_profile_name = if group_snapshot.is_none() {
+                    self.owner_profile_name(&thread.chat_id)
+                } else {
+                    None
+                };
                 let subtitle = if group_snapshot.is_some() {
                     None
                 } else {
@@ -320,6 +330,8 @@ impl AppCore {
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
                     display_name,
+                    nickname: direct_nickname,
+                    profile_name: direct_profile_name,
                     subtitle,
                     picture_url: group_snapshot
                         .as_ref()
@@ -352,6 +364,16 @@ impl AppCore {
                 } else {
                     None
                 };
+                let direct_nickname = if group_snapshot.is_none() {
+                    self.owner_nickname(&thread.chat_id)
+                } else {
+                    None
+                };
+                let direct_profile_name = if group_snapshot.is_none() {
+                    self.owner_profile_name(&thread.chat_id)
+                } else {
+                    None
+                };
                 let current_chat_kind = chat_kind_for_id(&thread.chat_id);
                 let current_group_creator_hex = group_snapshot
                     .as_ref()
@@ -370,6 +392,8 @@ impl AppCore {
                         .as_ref()
                         .map(|group| group.name.clone())
                         .unwrap_or_else(|| self.owner_display_label(&thread.chat_id)),
+                    nickname: direct_nickname,
+                    profile_name: direct_profile_name,
                     subtitle: group_snapshot
                         .as_ref()
                         .map(|group| format!("{} members", group.members.len()))
@@ -720,6 +744,8 @@ impl AppCore {
                     chat_id,
                     kind: ChatKind::Group,
                     display_name: group.name.clone(),
+                    nickname: None,
+                    profile_name: None,
                     subtitle: None,
                     picture_url: None,
                     member_count: group.members.len() as u64,

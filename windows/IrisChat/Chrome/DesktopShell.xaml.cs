@@ -147,6 +147,8 @@ public partial class DesktopShell : UserControl
         var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return terms.Length == 0 || terms.All(term =>
             ContainsSearch(chat.displayName, term)
+            || ContainsSearch(chat.nickname, term)
+            || ContainsSearch(chat.profileName, term)
             || ContainsSearch(chat.subtitle, term)
             || ContainsSearch(chat.chatId, term)
             || ContainsSearch(chat.lastMessagePreview, term)

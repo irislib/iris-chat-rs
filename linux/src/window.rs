@@ -155,6 +155,8 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) {
                     crate::screens::chat::ChatInfoSnapshot {
                         chat_id: chat.chat_id.clone(),
                         display_name: chat.display_name.clone(),
+                        nickname: chat.nickname.clone(),
+                        profile_name: chat.profile_name.clone(),
                         subtitle: chat.subtitle.clone(),
                         picture_url: chat.picture_url.clone(),
                         is_muted: chat.is_muted,
@@ -591,6 +593,8 @@ fn attach_chat_title_click(slot: &gtk::Box, manager: &Rc<AppManager>, chat: &Cur
             crate::screens::chat::ChatInfoSnapshot {
                 chat_id: chat.chat_id.clone(),
                 display_name: chat.display_name.clone(),
+                nickname: chat.nickname.clone(),
+                profile_name: chat.profile_name.clone(),
                 subtitle: chat.subtitle.clone(),
                 picture_url: chat.picture_url.clone(),
                 is_muted: chat.is_muted,

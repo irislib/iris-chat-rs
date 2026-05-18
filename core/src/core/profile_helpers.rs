@@ -2,7 +2,18 @@ use super::*;
 
 impl OwnerProfileRecord {
     pub(super) fn preferred_label(&self) -> Option<String> {
+        self.nickname.clone().or_else(|| self.profile_label())
+    }
+
+    pub(super) fn profile_label(&self) -> Option<String> {
         self.display_name.clone().or_else(|| self.name.clone())
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.nickname.is_none()
+            && self.name.is_none()
+            && self.display_name.is_none()
+            && self.picture.is_none()
     }
 }
 
@@ -33,6 +44,7 @@ pub(super) fn build_owner_profile_record(
     }
 
     Some(OwnerProfileRecord {
+        nickname: None,
         name: Some(trimmed.to_string()),
         display_name: Some(trimmed.to_string()),
         picture: normalize_profile_url(picture_url.map(str::to_string)),
@@ -53,6 +65,7 @@ pub(super) fn parse_owner_profile_record(
     }
 
     Some(OwnerProfileRecord {
+        nickname: None,
         name,
         display_name,
         picture,

@@ -953,6 +953,73 @@ fn set_chat_draft_persists_until_send() {
 }
 
 #[test]
+fn contact_nickname_overrides_direct_chat_title_and_persists() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_string_lossy().to_string();
+    let chat_id = peer.public_key().to_hex();
+    let mut core = logged_in_test_core_at_data_dir(&owner, &device, data_dir);
+    core.owner_profiles.insert(
+        chat_id.clone(),
+        OwnerProfileRecord {
+            nickname: None,
+            name: Some("alice".to_string()),
+            display_name: Some("Alice Actual".to_string()),
+            picture: None,
+            updated_at_secs: 1,
+        },
+    );
+    core.handle_action(AppAction::CreateChat {
+        peer_input: chat_id.clone(),
+    });
+
+    core.handle_action(AppAction::SetContactNickname {
+        owner_pubkey_hex: chat_id.clone(),
+        nickname: "  Work Alice  ".to_string(),
+    });
+
+    let thread = core
+        .state
+        .chat_list
+        .iter()
+        .find(|chat| chat.chat_id == chat_id)
+        .expect("direct chat row");
+    assert_eq!(thread.display_name, "Work Alice");
+    assert_eq!(thread.nickname.as_deref(), Some("Work Alice"));
+    assert_eq!(thread.profile_name.as_deref(), Some("Alice Actual"));
+    assert_eq!(thread.subtitle.as_deref(), Some("Alice Actual"));
+
+    let current = core.state.current_chat.as_ref().expect("current chat");
+    assert_eq!(current.display_name, "Work Alice");
+    assert_eq!(current.nickname.as_deref(), Some("Work Alice"));
+    assert_eq!(current.profile_name.as_deref(), Some("Alice Actual"));
+
+    let loaded = core
+        .load_persisted()
+        .expect("load persisted")
+        .expect("persisted state");
+    assert_eq!(
+        loaded
+            .owner_profiles
+            .get(&chat_id)
+            .and_then(|profile| profile.nickname.as_deref()),
+        Some("Work Alice")
+    );
+
+    core.handle_action(AppAction::SetContactNickname {
+        owner_pubkey_hex: chat_id.clone(),
+        nickname: String::new(),
+    });
+    let current = core.state.current_chat.as_ref().expect("current chat");
+    assert_eq!(current.display_name, "Alice Actual");
+    assert_eq!(current.nickname, None);
+    assert_eq!(current.profile_name.as_deref(), Some("Alice Actual"));
+    assert_eq!(current.subtitle, None);
+}
+
+#[test]
 fn self_synced_direct_message_updates_existing_local_outgoing_without_duplicate() {
     let owner = Keys::generate();
     let device = Keys::generate();

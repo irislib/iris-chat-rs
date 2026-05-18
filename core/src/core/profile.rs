@@ -27,9 +27,93 @@ impl AppCore {
             return;
         };
 
+        let mut record = record;
+        if let Some(existing) = self.owner_profiles.get(&local_owner_hex) {
+            record.nickname = existing.nickname.clone();
+        }
         self.owner_profiles.insert(local_owner_hex.clone(), record);
         self.push_debug_log("profile.local.set", format!("owner={local_owner_hex}"));
         self.persist_best_effort();
+    }
+
+    pub(super) fn set_contact_nickname(&mut self, owner_pubkey_hex: &str, nickname: &str) {
+        let trimmed_owner = owner_pubkey_hex.trim();
+        if trimmed_owner.is_empty() || is_group_chat_id(trimmed_owner) {
+            self.state.toast = Some("User ID is invalid.".to_string());
+            self.emit_state();
+            return;
+        }
+        let Ok(owner) = PublicKey::parse(trimmed_owner) else {
+            self.state.toast = Some("User ID is invalid.".to_string());
+            self.emit_state();
+            return;
+        };
+        let owner_hex = owner.to_hex();
+        if self
+            .logged_in
+            .as_ref()
+            .is_some_and(|logged_in| logged_in.owner_pubkey == owner)
+        {
+            self.state.toast = Some("Use your profile name for yourself.".to_string());
+            self.emit_state();
+            return;
+        }
+        if !self.threads.contains_key(&owner_hex) {
+            self.state.toast = Some("Chat was not found.".to_string());
+            self.emit_state();
+            return;
+        }
+
+        let next_nickname = normalize_nickname_field(nickname);
+        if next_nickname
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > MAX_CONTACT_NICKNAME_CHARS)
+        {
+            self.state.toast = Some("Nickname is too long.".to_string());
+            self.emit_state();
+            return;
+        }
+
+        let previous_nickname = self
+            .owner_profiles
+            .get(&owner_hex)
+            .and_then(|profile| profile.nickname.clone());
+        if previous_nickname == next_nickname {
+            self.state.toast = Some(if next_nickname.is_some() {
+                "Nickname saved".to_string()
+            } else {
+                "Nickname removed".to_string()
+            });
+            self.emit_state();
+            return;
+        }
+
+        if let Some(existing) = self.owner_profiles.get_mut(&owner_hex) {
+            existing.nickname = next_nickname.clone();
+            if existing.is_empty() {
+                self.owner_profiles.remove(&owner_hex);
+            }
+        } else if let Some(nickname) = next_nickname.clone() {
+            self.owner_profiles.insert(
+                owner_hex.clone(),
+                OwnerProfileRecord {
+                    nickname: Some(nickname),
+                    ..OwnerProfileRecord::default()
+                },
+            );
+        }
+
+        self.push_debug_log("profile.nickname.set", format!("owner={owner_hex}"));
+        self.state.toast = Some(if next_nickname.is_some() {
+            "Nickname saved".to_string()
+        } else {
+            "Nickname removed".to_string()
+        });
+        self.persist_best_effort();
+        // Mobile-push snapshot embeds peer display labels.
+        self.mark_mobile_push_dirty();
+        self.rebuild_state();
+        self.emit_state();
     }
 
     pub(super) fn update_profile_metadata(&mut self, name: &str, picture_url: Option<&str>) {
@@ -163,7 +247,8 @@ impl AppCore {
 
     pub(super) fn apply_profile_metadata_event(&mut self, event: &Event) -> bool {
         let owner_hex = event.pubkey.to_hex();
-        let Some(record) = parse_owner_profile_record(&event.content, event.created_at.as_secs())
+        let Some(mut record) =
+            parse_owner_profile_record(&event.content, event.created_at.as_secs())
         else {
             return false;
         };
@@ -172,6 +257,7 @@ impl AppCore {
             if existing.updated_at_secs > record.updated_at_secs {
                 return false;
             }
+            record.nickname = existing.nickname.clone();
         }
 
         self.owner_profiles.insert(owner_hex.clone(), record);
@@ -187,6 +273,18 @@ impl AppCore {
             .and_then(OwnerProfileRecord::preferred_label)
     }
 
+    pub(super) fn owner_nickname(&self, owner_hex: &str) -> Option<String> {
+        self.owner_profiles
+            .get(owner_hex)
+            .and_then(|profile| profile.nickname.clone())
+    }
+
+    pub(super) fn owner_profile_name(&self, owner_hex: &str) -> Option<String> {
+        self.owner_profiles
+            .get(owner_hex)
+            .and_then(OwnerProfileRecord::profile_label)
+    }
+
     pub(super) fn owner_display_label(&self, owner_hex: &str) -> String {
         self.owner_display_name(owner_hex)
             .unwrap_or_else(|| fallback_profile_name_for_identity(owner_hex))
@@ -199,9 +297,17 @@ impl AppCore {
     }
 
     pub(super) fn owner_secondary_identifier(&self, owner_hex: &str) -> Option<String> {
-        let _ = owner_hex;
-        None
+        let nickname = self.owner_nickname(owner_hex)?;
+        let profile_name = self.owner_profile_name(owner_hex)?;
+        (profile_name != nickname).then_some(profile_name)
     }
+}
+
+const MAX_CONTACT_NICKNAME_CHARS: usize = 80;
+
+fn normalize_nickname_field(value: &str) -> Option<String> {
+    let normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    normalize_profile_field(Some(normalized))
 }
 
 pub(super) fn fallback_profile_name_for_identity(identity: &str) -> String {

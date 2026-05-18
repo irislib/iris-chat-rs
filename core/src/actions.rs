@@ -9,6 +9,10 @@ pub enum AppAction {
         name: String,
         picture_url: Option<String>,
     },
+    SetContactNickname {
+        owner_pubkey_hex: String,
+        nickname: String,
+    },
     RestoreSession {
         owner_nsec: String,
     },

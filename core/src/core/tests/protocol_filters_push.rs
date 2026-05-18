@@ -1263,6 +1263,7 @@ fn local_identity_artifacts_offer_profile_metadata_to_nearby() {
     core.owner_profiles.insert(
         owner.public_key().to_hex(),
         OwnerProfileRecord {
+            nickname: None,
             name: None,
             display_name: None,
             picture: Some("htree://profile-picture".to_string()),
@@ -1352,6 +1353,7 @@ fn delete_profile_metadata_publishes_blank_profile_and_clears_local_record() {
     core.owner_profiles.insert(
         owner_hex.clone(),
         OwnerProfileRecord {
+            nickname: None,
             name: Some("Alice".to_string()),
             display_name: Some("Alice".to_string()),
             picture: Some("https://example.com/alice.jpg".to_string()),
@@ -1816,6 +1818,7 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
     core.owner_profiles.insert(
         alice.public_key().to_hex(),
         OwnerProfileRecord {
+            nickname: None,
             name: Some("alice".to_string()),
             display_name: Some("Alice from work".to_string()),
             picture: None,

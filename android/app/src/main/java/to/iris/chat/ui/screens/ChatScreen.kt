@@ -850,6 +850,7 @@ private fun DirectChatInfoScreen(
     var advancedOpen by remember(chatId) { mutableStateOf(false) }
     var profileDebug by remember(chatId) { mutableStateOf<PeerProfileDebugSnapshot?>(null) }
     var commonGroups by remember(chatId) { mutableStateOf<List<ChatThreadSnapshot>>(emptyList()) }
+    var nicknameDraft by remember(chatId) { mutableStateOf(chat.nickname.orEmpty()) }
     val proxiedAvatarUrl =
         chat.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
@@ -870,6 +871,9 @@ private fun DirectChatInfoScreen(
     }
     LaunchedEffect(chatId) {
         commonGroups = appManager.mutualGroups(chatId)
+    }
+    LaunchedEffect(chatId, chat.nickname) {
+        nicknameDraft = chat.nickname.orEmpty()
     }
 
     BackHandler {
@@ -942,6 +946,21 @@ private fun DirectChatInfoScreen(
                         }
                     }
                     val clipboard = rememberIrisClipboard()
+                    ContactNicknameCard(
+                        chat = chat,
+                        nicknameDraft = nicknameDraft,
+                        onNicknameChange = { nicknameDraft = it },
+                        onSave = {
+                            appManager.dispatch(
+                                AppAction.SetContactNickname(chatId, nicknameDraft),
+                            )
+                        },
+                        onRemove = {
+                            nicknameDraft = ""
+                            appManager.dispatch(AppAction.SetContactNickname(chatId, ""))
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     if (commonGroups.isNotEmpty()) {
                         CommonGroupsCard(
                             appManager = appManager,
@@ -1001,6 +1020,90 @@ private fun DirectChatInfoScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContactNicknameCard(
+    chat: to.iris.chat.rust.CurrentChatSnapshot,
+    nicknameDraft: String,
+    onNicknameChange: (String) -> Unit,
+    onSave: () -> Unit,
+    onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val storedNickname = chat.nickname?.trim().orEmpty()
+    val primaryName = storedNickname.ifEmpty { chat.displayName.trim() }
+    val profileName =
+        chat.profileName
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && !it.equals(primaryName, ignoreCase = true) }
+
+    IrisSectionCard(modifier = modifier) {
+        Text(
+            text = "Nickname",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        TextField(
+            value = nicknameDraft,
+            onValueChange = onNicknameChange,
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .testTag("directChatNicknameField"),
+            label = { Text("Nickname") },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            colors = irisTextFieldColors(),
+        )
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IrisInlineAction(
+                text = "Save",
+                onClick = onSave,
+                modifier = Modifier.testTag("directChatSaveNicknameButton"),
+            ) {
+                Icon(imageVector = IrisIcons.Check, contentDescription = null)
+            }
+            if (storedNickname.isNotEmpty()) {
+                IrisInlineAction(
+                    text = "Remove",
+                    onClick = onRemove,
+                    modifier = Modifier.testTag("directChatRemoveNicknameButton"),
+                ) {
+                    Icon(imageVector = IrisIcons.Close, contentDescription = null)
+                }
+            }
+        }
+        profileName?.let { name ->
+            IrisDivider()
+            Row(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag("directChatProfileNameRow"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "Profile name",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Text(
+                    text = name,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = IrisTheme.palette.muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
     }

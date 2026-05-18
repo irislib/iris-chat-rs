@@ -4287,34 +4287,36 @@ private struct ChatListTableView: UIViewRepresentable {
             cell.isAccessibilityElement = !hasPeers
             cell.selectionStyle = hasPeers ? .none : .default
             cell.contentConfiguration = UIHostingConfiguration {
-                if hasPeers {
-                    NearbyPeerStripRow(
-                        manager: manager,
-                        peers: manager.nearbyIris.peers,
-                        avatarSize: IrisChatListRowMetrics.avatarSize,
-                        horizontalPadding: IrisChatListRowMetrics.horizontalPadding,
-                        verticalPadding: IrisChatListRowMetrics.verticalPadding,
-                        onOpenNearby: { [weak self] in
-                            self?.onOpenNearby?()
-                        }
-                    )
-                    .accessibilityIdentifier("nearbyChatRow")
-                } else {
-                    ChatListTableRowContent(
-                        title: "Nearby",
-                        preview: manager.nearbyIris.sidebarSubtitle,
-                        subtitle: nil,
-                        timeLabel: nil,
-                        unreadCount: 0,
-                        preferences: manager.state.preferences,
-                        manager: manager,
-                        leading: AnyView(NearbyWirelessAvatar()),
-                        previewLeading: nil
-                    )
-                    .accessibilityHidden(true)
+                Group {
+                    if hasPeers {
+                        NearbyPeerStripRow(
+                            manager: manager,
+                            peers: manager.nearbyIris.peers,
+                            avatarSize: IrisChatListRowMetrics.avatarSize,
+                            horizontalPadding: IrisChatListRowMetrics.horizontalPadding,
+                            verticalPadding: IrisChatListRowMetrics.verticalPadding,
+                            onOpenNearby: { [weak self] in
+                                self?.onOpenNearby?()
+                            }
+                        )
+                        .accessibilityIdentifier("nearbyChatRow")
+                    } else {
+                        ChatListTableRowContent(
+                            title: "Nearby",
+                            preview: manager.nearbyIris.sidebarSubtitle,
+                            subtitle: nil,
+                            timeLabel: nil,
+                            unreadCount: 0,
+                            preferences: manager.state.preferences,
+                            manager: manager,
+                            leading: AnyView(NearbyWirelessAvatar()),
+                            previewLeading: nil
+                        )
+                        .accessibilityHidden(true)
+                    }
                 }
+                .environment(\.irisPalette, palette)
             }
-            .environment(\.irisPalette, palette)
             .margins(.all, 0)
         }
 

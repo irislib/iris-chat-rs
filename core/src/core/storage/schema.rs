@@ -3,7 +3,7 @@ use rusqlite::Connection;
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 19;
+const SCHEMA_VERSION: u32 = 20;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS preferences (
 
 CREATE TABLE IF NOT EXISTS owner_profiles (
     owner_pubkey_hex TEXT PRIMARY KEY,
+    nickname TEXT,
     name TEXT,
     display_name TEXT,
     picture TEXT,
@@ -407,6 +408,12 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
              ADD COLUMN author_owner_pubkey_hex TEXT;",
         )?;
     }
+    if current < 20 && !column_exists(&tx, "owner_profiles", "nickname")? {
+        tx.execute_batch(
+            "ALTER TABLE owner_profiles
+             ADD COLUMN nickname TEXT;",
+        )?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())
@@ -563,6 +570,45 @@ mod tests {
             .map(|r| r.unwrap())
             .collect();
         assert_eq!(hits, vec!["1".to_string(), "3".to_string()]);
+    }
+
+    #[test]
+    fn migrates_v19_owner_profiles_adds_nickname_column() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            r#"
+            CREATE TABLE owner_profiles (
+                owner_pubkey_hex TEXT PRIMARY KEY,
+                name TEXT,
+                display_name TEXT,
+                picture TEXT,
+                updated_at_secs INTEGER NOT NULL
+            );
+            INSERT INTO owner_profiles
+                (owner_pubkey_hex, name, display_name, picture, updated_at_secs)
+            VALUES
+                ('peer', 'alice', 'Alice', NULL, 1);
+            PRAGMA user_version = 19;
+            "#,
+        )
+        .unwrap();
+
+        ensure_schema(&mut conn).unwrap();
+
+        assert_eq!(user_version(&conn), SCHEMA_VERSION);
+        assert!(connection_column_exists(
+            &conn,
+            "owner_profiles",
+            "nickname"
+        ));
+        let row: (Option<String>, Option<String>) = conn
+            .query_row(
+                "SELECT nickname, display_name FROM owner_profiles WHERE owner_pubkey_hex = 'peer'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row, (None, Some("Alice".to_string())));
     }
 
     fn user_version(conn: &Connection) -> u32 {

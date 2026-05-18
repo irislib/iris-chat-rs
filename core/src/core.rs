@@ -245,6 +245,8 @@ fn build_chat_snapshot_with_messages(
         display_name: thread
             .map(|thread| thread.display_name.clone())
             .unwrap_or_else(|| fallback_chat_title(chat_id)),
+        nickname: thread.and_then(|thread| thread.nickname.clone()),
+        profile_name: thread.and_then(|thread| thread.profile_name.clone()),
         subtitle: thread
             .and_then(|thread| thread.subtitle.clone())
             .or_else(|| group_id.as_ref().map(|_| "Group".to_string())),
