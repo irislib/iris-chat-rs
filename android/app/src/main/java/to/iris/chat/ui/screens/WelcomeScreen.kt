@@ -355,6 +355,11 @@ fun RestoreAccountScreen(
                 shape = RoundedCornerShape(10.dp),
                 colors = irisTextFieldColors(),
             )
+            Text(
+                text = "Secret key = nostr nsec",
+                color = IrisTheme.palette.muted,
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
 
         OnboardingMessageCard(message = appState.toast)

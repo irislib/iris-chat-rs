@@ -2733,6 +2733,11 @@ struct RestoreAccountScreen: View {
                 ))
                     .irisInputField()
 
+                Text("Secret key = nostr nsec")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
                 Button(manager.state.busy.restoringSession ? "Restoring…" : "Restore profile") {
                     submitRestore(restoreSecret.text, force: true)
                 }

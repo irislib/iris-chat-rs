@@ -25,6 +25,11 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     nsec.set_input_purpose(gtk::InputPurpose::Password);
     container.append(&nsec);
 
+    let secret_key_info = gtk::Label::new(Some("Secret key = nostr nsec"));
+    secret_key_info.add_css_class("dim-label");
+    secret_key_info.set_halign(gtk::Align::Start);
+    container.append(&secret_key_info);
+
     let busy = state.busy.restoring_session;
     let submit = primary_button(if busy {
         "Restoring…"
