@@ -72,6 +72,7 @@ class IrisNearbyService(
         val ownerPubkeyHex: String?,
         val pictureUrl: String?,
         val profileEventId: String?,
+        val bluetoothRssi: Int?,
         val lastSeenMillis: Long,
     )
 
@@ -96,6 +97,8 @@ class IrisNearbyService(
     private val serverAssemblers = linkedMapOf<String, FrameAssembler>()
     private val peerIdsByAddress = linkedMapOf<String, String>()
     private val bluetoothPeerLastSeenMillis = linkedMapOf<String, Long>()
+    private val bluetoothRssiByAddress = linkedMapOf<String, Int>()
+    private val bluetoothRssiByPeerId = linkedMapOf<String, Int>()
     private val peerInventorySentMillis = linkedMapOf<String, Long>()
     private val inventoryIdsSentByPeer = linkedMapOf<String, RecentIdSet>()
     private val wantIdsSentByPeer = linkedMapOf<String, RecentIdSet>()
@@ -151,11 +154,17 @@ class IrisNearbyService(
 
     val snapshot: Snapshot
         get() {
-            val sortedPeers =
-                peers.values
-                    .sortedWith(compareBy<Peer> { it.name.lowercase() }.thenBy { it.id })
             val bluetoothPeerIds = recentBluetoothPeerIds()
             val localNetworkPeerIds = lanService.peerIds()
+            val sortedPeers =
+                peers.values.sortedWith { left, right ->
+                    compareNearbyPeers(
+                        left = left,
+                        right = right,
+                        bluetoothPeerIds = bluetoothPeerIds,
+                        localNetworkPeerIds = localNetworkPeerIds,
+                    )
+                }
             return Snapshot(
                 visible = visible,
                 status = if (!visible && !bluetoothPermissionGranted) "No Bluetooth access" else status,
@@ -430,6 +439,8 @@ class IrisNearbyService(
         val bluetoothPeerIds = recentBluetoothPeerIds()
         peerIdsByAddress.clear()
         bluetoothPeerLastSeenMillis.clear()
+        bluetoothRssiByAddress.clear()
+        bluetoothRssiByPeerId.keys.removeAll(bluetoothPeerIds)
         peerInventorySentMillis.clear()
         inventoryIdsSentByPeer.clear()
         wantIdsSentByPeer.clear()
@@ -1359,6 +1370,7 @@ class IrisNearbyService(
         stalePeerIds.forEach { peerId ->
             peers.remove(peerId)
             bluetoothPeerLastSeenMillis.remove(peerId)
+            bluetoothRssiByPeerId.remove(peerId)
             peerInventorySentMillis.remove(peerId)
             inventoryIdsSentByPeer.remove(peerId)
             wantIdsSentByPeer.remove(peerId)
@@ -1403,6 +1415,7 @@ class IrisNearbyService(
             .forEach { peerId ->
                 peers.remove(peerId)
                 peerNonces.remove(peerId)
+                bluetoothRssiByPeerId.remove(peerId)
                 peerInventorySentMillis.remove(peerId)
                 inventoryIdsSentByPeer.remove(peerId)
                 wantIdsSentByPeer.remove(peerId)
@@ -1420,7 +1433,10 @@ class IrisNearbyService(
         when (source) {
             is NearbySource.BluetoothAddress -> {
                 bluetoothPeerLastSeenMillis[peerId] = System.currentTimeMillis()
-                source.address?.let { peerIdsByAddress[it] = peerId }
+                source.address?.let { address ->
+                    peerIdsByAddress[address] = peerId
+                    bluetoothRssiByAddress[address]?.let { rememberBluetoothRssi(peerId, it) }
+                }
             }
             is NearbySource.Lan -> lanService.markPeer(source.connectionId, peerId)
         }
@@ -1436,6 +1452,7 @@ class IrisNearbyService(
                 val address = sourceKey.removePrefix(BLUETOOTH_SOURCE_PREFIX)
                 bluetoothPeerLastSeenMillis[peerId] = System.currentTimeMillis()
                 peerIdsByAddress[address] = peerId
+                bluetoothRssiByAddress[address]?.let { rememberBluetoothRssi(peerId, it) }
             }
             sourceKey.startsWith(LAN_SOURCE_PREFIX) -> {
                 lanService.markPeer(sourceKey.removePrefix(LAN_SOURCE_PREFIX), peerId)
@@ -1626,6 +1643,7 @@ class IrisNearbyService(
             !subscribedServerAddresses.contains(address)
         ) {
             peerIdsByAddress.remove(address)
+            bluetoothRssiByAddress.remove(address)
             connectionNonces.remove(bluetoothSourceKey(address))
         }
     }
@@ -1641,6 +1659,18 @@ class IrisNearbyService(
     private fun touchPeer(peerId: String) {
         val existing = peers[peerId] ?: return
         peers[peerId] = existing.copy(lastSeenMillis = System.currentTimeMillis())
+    }
+
+    private fun rememberBluetoothRssi(
+        peerId: String,
+        rssi: Int,
+    ) {
+        bluetoothRssiByPeerId[peerId] = rssi
+        peers[peerId]?.let { peer ->
+            if (peer.bluetoothRssi != rssi) {
+                peers[peerId] = peer.copy(bluetoothRssi = rssi)
+            }
+        }
     }
 
     private fun nearbyStatusWhenVisible(): String =
@@ -1673,6 +1703,7 @@ class IrisNearbyService(
                 ownerPubkeyHex = existing?.ownerPubkeyHex,
                 pictureUrl = existing?.pictureUrl,
                 profileEventId = sanitizedProfileEventId ?: existing?.profileEventId,
+                bluetoothRssi = bluetoothRssiByPeerId[peerId] ?: existing?.bluetoothRssi,
                 lastSeenMillis = System.currentTimeMillis(),
             )
         val profile = peers[peerId]?.profileEventId?.let { knownProfiles[it] }
@@ -1700,6 +1731,7 @@ class IrisNearbyService(
                         ownerPubkeyHex = profile.ownerPubkeyHex,
                         pictureUrl = profile.pictureUrl,
                         profileEventId = profile.id,
+                        bluetoothRssi = bluetoothRssiByPeerId[remotePeerId],
                         lastSeenMillis = System.currentTimeMillis(),
                     )
                 status = if (peers.size == 1) "1 nearby" else "${peers.size} nearby"
@@ -1727,6 +1759,7 @@ class IrisNearbyService(
                     ownerPubkeyHex = null,
                     pictureUrl = null,
                     profileEventId = null,
+                    bluetoothRssi = bluetoothRssiByPeerId[peerId],
                     lastSeenMillis = System.currentTimeMillis(),
                 )
         val nextProfileEventId = profileEventId ?: existing.profileEventId
@@ -1741,6 +1774,7 @@ class IrisNearbyService(
                     ),
                 ownerPubkeyHex = ownerPubkeyHex,
                 profileEventId = nextProfileEventId,
+                bluetoothRssi = bluetoothRssiByPeerId[peerId] ?: existing.bluetoothRssi,
                 lastSeenMillis = System.currentTimeMillis(),
             )
         val profile = nextProfileEventId?.let { knownProfiles[it] }
@@ -1774,6 +1808,7 @@ class IrisNearbyService(
                 ownerPubkeyHex = profile.ownerPubkeyHex,
                 pictureUrl = profile.pictureUrl ?: peer.pictureUrl,
                 profileEventId = profile.id,
+                bluetoothRssi = bluetoothRssiByPeerId[peerId] ?: peer.bluetoothRssi,
                 lastSeenMillis = System.currentTimeMillis(),
             )
     }
@@ -1842,6 +1877,48 @@ class IrisNearbyService(
             ?: existingName.sanitizedPeerLabel()
             ?: "Iris"
     }
+
+    private fun compareNearbyPeers(
+        left: Peer,
+        right: Peer,
+        bluetoothPeerIds: Set<String>,
+        localNetworkPeerIds: Set<String>,
+    ): Int =
+        compareValues(
+            transportRank(left.id, bluetoothPeerIds, localNetworkPeerIds),
+            transportRank(right.id, bluetoothPeerIds, localNetworkPeerIds),
+        ).takeIf { it != 0 }
+            ?: compareBluetoothRssi(left, right, bluetoothPeerIds).takeIf { it != 0 }
+            ?: deterministicPeerKey(left).compareTo(deterministicPeerKey(right))
+                .takeIf { it != 0 }
+            ?: left.id.compareTo(right.id)
+
+    private fun compareBluetoothRssi(
+        left: Peer,
+        right: Peer,
+        bluetoothPeerIds: Set<String>,
+    ): Int {
+        if (left.id !in bluetoothPeerIds || right.id !in bluetoothPeerIds) {
+            return 0
+        }
+        return (right.bluetoothRssi ?: Int.MIN_VALUE)
+            .compareTo(left.bluetoothRssi ?: Int.MIN_VALUE)
+    }
+
+    private fun transportRank(
+        peerId: String,
+        bluetoothPeerIds: Set<String>,
+        localNetworkPeerIds: Set<String>,
+    ): Int =
+        when (peerId) {
+            in bluetoothPeerIds -> 0
+            in localNetworkPeerIds -> 1
+            else -> 2
+        }
+
+    private fun deterministicPeerKey(peer: Peer): String =
+        peer.ownerPubkeyHex?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
+            ?: "peer:${peer.id.lowercase()}"
 
     private fun String?.sanitizedPeerLabel(): String? =
         this?.trim()?.takeIf { it.isNotEmpty() && it != "Iris" }
@@ -1922,6 +1999,11 @@ class IrisNearbyService(
                         val advertisedServices = result.scanRecord?.serviceUuids.orEmpty()
                         if (advertisedServices.isNotEmpty() && advertisedServices.none { it.uuid == SERVICE_UUID }) {
                             return@guardBluetooth
+                        }
+                        val address = result.device.address
+                        bluetoothRssiByAddress[address] = result.rssi
+                        peerIdsByAddress[address]?.let { peerId ->
+                            rememberBluetoothRssi(peerId, result.rssi)
                         }
                         connect(result.device)
                     }

@@ -777,7 +777,12 @@ private struct ShareTargetSheet: View {
     }
 
     private var filteredNearbyPeers: [IrisNearbyPeer] {
-        let peers = manager.nearbyIris.peers.filter { $0.ownerPubkeyHex != nil }
+        let peers = sortedNearbyPeers(
+            manager.nearbyIris.peers.filter { $0.ownerPubkeyHex != nil },
+            manager: manager,
+            bluetoothPeerIDs: Set(manager.nearbyIris.bluetoothPeers.map(\.id)),
+            lanPeerIDs: Set(manager.nearbyIris.lanPeers.map(\.id))
+        )
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else {
             return peers
@@ -4911,7 +4916,13 @@ private struct NearbyChatListRow: View {
     }
 
     private var livePeers: [IrisNearbyPeer] {
-        nearbyEnabled ? service.peers : []
+        guard nearbyEnabled else { return [] }
+        return sortedNearbyPeers(
+            service.peers,
+            manager: manager,
+            bluetoothPeerIDs: Set(service.bluetoothPeers.map(\.id)),
+            lanPeerIDs: Set(service.lanPeers.map(\.id))
+        )
     }
 
     private var visiblePeers: [IrisNearbyPeer] {
@@ -5162,6 +5173,83 @@ private func nearbyPeerResolvedName(
 }
 
 @MainActor
+private func sortedNearbyPeers(
+    _ peers: [IrisNearbyPeer],
+    manager: AppManager,
+    bluetoothPeerIDs: Set<String>,
+    lanPeerIDs: Set<String>
+) -> [IrisNearbyPeer] {
+    peers.sorted { left, right in
+        compareNearbyPeers(
+            left,
+            right,
+            manager: manager,
+            bluetoothPeerIDs: bluetoothPeerIDs,
+            lanPeerIDs: lanPeerIDs
+        ) == .orderedAscending
+    }
+}
+
+@MainActor
+private func compareNearbyPeers(
+    _ left: IrisNearbyPeer,
+    _ right: IrisNearbyPeer,
+    manager: AppManager,
+    bluetoothPeerIDs: Set<String>,
+    lanPeerIDs: Set<String>
+) -> ComparisonResult {
+    let leftHasChat = left.ownerPubkeyHex.map { nearbyPeerHasKnownChat($0, manager: manager) } ?? false
+    let rightHasChat = right.ownerPubkeyHex.map { nearbyPeerHasKnownChat($0, manager: manager) } ?? false
+    if leftHasChat != rightHasChat {
+        return leftHasChat ? .orderedAscending : .orderedDescending
+    }
+
+    let leftTransport = nearbyTransportRank(left.id, bluetoothPeerIDs: bluetoothPeerIDs, lanPeerIDs: lanPeerIDs)
+    let rightTransport = nearbyTransportRank(right.id, bluetoothPeerIDs: bluetoothPeerIDs, lanPeerIDs: lanPeerIDs)
+    if leftTransport != rightTransport {
+        return leftTransport < rightTransport ? .orderedAscending : .orderedDescending
+    }
+
+    if bluetoothPeerIDs.contains(left.id), bluetoothPeerIDs.contains(right.id) {
+        let leftRSSI = left.bluetoothRSSI ?? Int.min
+        let rightRSSI = right.bluetoothRSSI ?? Int.min
+        if leftRSSI != rightRSSI {
+            return leftRSSI > rightRSSI ? .orderedAscending : .orderedDescending
+        }
+    }
+
+    let leftKey = nearbyDeterministicPeerKey(left)
+    let rightKey = nearbyDeterministicPeerKey(right)
+    if leftKey != rightKey {
+        return leftKey < rightKey ? .orderedAscending : .orderedDescending
+    }
+    return left.id < right.id ? .orderedAscending : .orderedDescending
+}
+
+private func nearbyTransportRank(
+    _ peerID: String,
+    bluetoothPeerIDs: Set<String>,
+    lanPeerIDs: Set<String>
+) -> Int {
+    if bluetoothPeerIDs.contains(peerID) { return 0 }
+    if lanPeerIDs.contains(peerID) { return 1 }
+    return 2
+}
+
+private func nearbyDeterministicPeerKey(_ peer: IrisNearbyPeer) -> String {
+    let owner = peer.ownerPubkeyHex?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    return owner.isEmpty ? "peer:\(peer.id.lowercased())" : owner
+}
+
+@MainActor
+private func nearbyPeerHasKnownChat(_ ownerPubkeyHex: String, manager: AppManager) -> Bool {
+    manager.state.chatList.contains { chat in
+        chat.kind == .direct &&
+            chat.chatId.caseInsensitiveCompare(ownerPubkeyHex) == .orderedSame
+    }
+}
+
+@MainActor
 private func openNearbyPeer(
     _ peer: IrisNearbyPeer,
     manager: AppManager,
@@ -5261,7 +5349,7 @@ private struct NearbyIrisScreen: View {
             transportRow(
                 title: "Bluetooth",
                 subtitle: nearbyEnabled ? service.bluetoothTransportWarning : nil,
-                peers: nearbyEnabled ? service.bluetoothPeers : [],
+                peers: nearbyEnabled ? sortedBluetoothPeers : [],
                 isOn: bluetoothBinding,
                 isEnabled: nearbyEnabled,
                 accessibilityID: "nearbyBluetoothSwitch"
@@ -5275,7 +5363,7 @@ private struct NearbyIrisScreen: View {
             transportRow(
                 title: "Wi-Fi",
                 subtitle: nearbyEnabled ? service.lanTransportWarning : nil,
-                peers: nearbyEnabled ? service.lanPeers : [],
+                peers: nearbyEnabled ? sortedLanPeers : [],
                 isOn: lanBinding,
                 isEnabled: nearbyEnabled,
                 accessibilityID: "nearbyLanSwitch"
@@ -5422,6 +5510,26 @@ private struct NearbyIrisScreen: View {
         )
     }
 
+    private var sortedBluetoothPeers: [IrisNearbyPeer] {
+        let peers = service.bluetoothPeers
+        return sortedNearbyPeers(
+            peers,
+            manager: manager,
+            bluetoothPeerIDs: Set(peers.map(\.id)),
+            lanPeerIDs: []
+        )
+    }
+
+    private var sortedLanPeers: [IrisNearbyPeer] {
+        let peers = service.lanPeers
+        return sortedNearbyPeers(
+            peers,
+            manager: manager,
+            bluetoothPeerIDs: [],
+            lanPeerIDs: Set(peers.map(\.id))
+        )
+    }
+
     @ViewBuilder
     private func peerStrip(_ peers: [IrisNearbyPeer]) -> some View {
         if !peers.isEmpty {
@@ -5452,6 +5560,7 @@ private struct NearbyIrisScreen: View {
                         }
                         .accessibilityAddTraits(.isButton)
                         .accessibilityIdentifier("nearbyPeer-\(String(peer.id.prefix(12)))")
+                        .accessibilityLabel(name)
                     }
                 }
                 .padding(.horizontal, 0)
@@ -6839,7 +6948,6 @@ private struct DeviceRosterRow: View {
     let device: DeviceEntrySnapshot
     let canManageDevices: Bool
     @State private var showingRemoveConfirmation = false
-    @State private var deviceName = ""
 
     private var displayTitle: String {
         if device.isCurrentDevice {
@@ -6877,22 +6985,6 @@ private struct DeviceRosterRow: View {
                 }
             }
 
-            if canManageDevices && device.isCurrentDevice {
-                VStack(spacing: 10) {
-                    TextField("Device name", text: $deviceName)
-                        .textFieldStyle(.plain)
-                        .irisInputField()
-                        .accessibilityIdentifier("deviceRosterCurrentDeviceNameInput")
-
-                    Button(manager.state.busy.updatingRoster ? "Saving…" : "Save name") {
-                        manager.setCurrentDeviceName(deviceName, currentClientLabel: device.clientLabel)
-                    }
-                    .buttonStyle(IrisPrimaryButtonStyle())
-                    .disabled(manager.state.busy.updatingRoster)
-                    .accessibilityIdentifier("deviceRosterCurrentDeviceNameButton")
-                }
-            }
-
             HStack(spacing: 8) {
                 IrisInfoPill(device.isAuthorized ? "Linked" : "Pending", tint: device.isAuthorized ? .green : .orange)
                 if device.isStale {
@@ -6921,14 +7013,6 @@ private struct DeviceRosterRow: View {
             }
         }
         .accessibilityIdentifier("deviceRosterRow-\(String(device.devicePubkeyHex.prefix(12)))")
-        .onAppear(perform: resetDeviceName)
-        .irisOnChange(of: device.deviceLabel ?? "") { _ in
-            resetDeviceName()
-        }
-    }
-
-    private func resetDeviceName() {
-        deviceName = nonEmpty(device.deviceLabel) ?? PlatformDeviceLabels.currentDeviceLabel
     }
 
     private var approveButton: some View {

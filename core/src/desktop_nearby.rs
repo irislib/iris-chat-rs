@@ -1072,9 +1072,8 @@ fn snapshot_locked(inner: &DesktopNearbyInner) -> DesktopNearbySnapshot {
         })
         .collect::<Vec<_>>();
     peers.sort_by(|a, b| {
-        a.name
-            .to_lowercase()
-            .cmp(&b.name.to_lowercase())
+        deterministic_peer_sort_key(a)
+            .cmp(&deterministic_peer_sort_key(b))
             .then_with(|| a.id.cmp(&b.id))
     });
     DesktopNearbySnapshot {
@@ -1082,6 +1081,15 @@ fn snapshot_locked(inner: &DesktopNearbyInner) -> DesktopNearbySnapshot {
         status: inner.status.clone(),
         peers,
     }
+}
+
+fn deterministic_peer_sort_key(peer: &DesktopNearbyPeerSnapshot) -> String {
+    peer.owner_pubkey_hex
+        .as_deref()
+        .map(str::trim)
+        .filter(|owner| !owner.is_empty())
+        .map(str::to_lowercase)
+        .unwrap_or_else(|| format!("peer:{}", peer.id.to_lowercase()))
 }
 
 fn remember_peer(

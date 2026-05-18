@@ -11,6 +11,7 @@ struct IrisNearbyPeer: Identifiable, Equatable {
     var ownerPubkeyHex: String?
     var pictureURL: String?
     var profileEventID: String?
+    var bluetoothRSSI: Int?
     var lastSeen: Date
 }
 
@@ -120,6 +121,8 @@ final class IrisNearbyService: NSObject, ObservableObject {
     private var peerIDByPeripheral: [UUID: String] = [:]
     private var peerIDByCentral: [UUID: String] = [:]
     private var bluetoothPeerLastSeen: [String: Date] = [:]
+    private var bluetoothRSSIByPeripheral: [UUID: Int] = [:]
+    private var bluetoothRSSIByPeerID: [String: Int] = [:]
     private var peerInventorySentAt: [String: Date] = [:]
     private var inventoryIDsSentByPeer: [String: RecentIDSet] = [:]
     private var wantIDsSentByPeer: [String: RecentIDSet] = [:]
@@ -635,6 +638,10 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peerIDByPeripheral.removeAll()
         peerIDByCentral.removeAll()
         bluetoothPeerLastSeen.removeAll()
+        bluetoothRSSIByPeripheral.removeAll()
+        for peerID in bluetoothPeerIDs {
+            bluetoothRSSIByPeerID.removeValue(forKey: peerID)
+        }
         peerInventorySentAt.removeAll()
         inventoryIDsSentByPeer.removeAll()
         wantIDsSentByPeer.removeAll()
@@ -1587,6 +1594,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         peers.removeAll { stalePeerIDs.contains($0.id) }
         for peerID in stalePeerIDs {
             bluetoothPeerLastSeen.removeValue(forKey: peerID)
+            bluetoothRSSIByPeerID.removeValue(forKey: peerID)
             peerInventorySentAt.removeValue(forKey: peerID)
             inventoryIDsSentByPeer.removeValue(forKey: peerID)
             wantIDsSentByPeer.removeValue(forKey: peerID)
@@ -1600,6 +1608,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
             .map { $0.key }
         for peripheralID in stalePeripheralIDs {
             peerIDByPeripheral.removeValue(forKey: peripheralID)
+            bluetoothRSSIByPeripheral.removeValue(forKey: peripheralID)
             connectionNonces.removeValue(forKey: Self.bluetoothSourcePrefix + peripheralID.uuidString)
             writableCharacteristics.removeValue(forKey: peripheralID)
             peripheralAssemblers.removeValue(forKey: peripheralID)
@@ -1730,6 +1739,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
         for peripheralID in peripheralIDs {
             suppressedPeripheralReconnectUntil[peripheralID] = Date().addingTimeInterval(Self.dedupeReconnectBackoff)
             peerIDByPeripheral.removeValue(forKey: peripheralID)
+            bluetoothRSSIByPeripheral.removeValue(forKey: peripheralID)
             connectionNonces.removeValue(forKey: Self.bluetoothSourcePrefix + peripheralID.uuidString)
             writableCharacteristics.removeValue(forKey: peripheralID)
             peripheralAssemblers.removeValue(forKey: peripheralID)
@@ -1745,6 +1755,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
         case .peripheral(let peripheral):
             peerIDByPeripheral[peripheral.identifier] = peerID
             bluetoothPeerLastSeen[peerID] = Date()
+            if let rssi = bluetoothRSSIByPeripheral[peripheral.identifier] {
+                rememberBluetoothRSSI(rssi, peerID: peerID)
+            }
         case .central(let central):
             peerIDByCentral[central.identifier] = peerID
             bluetoothPeerLastSeen[peerID] = Date()
@@ -1760,6 +1773,9 @@ final class IrisNearbyService: NSObject, ObservableObject {
             guard let peripheralID = UUID(uuidString: value) else { return }
             peerIDByPeripheral[peripheralID] = peerID
             bluetoothPeerLastSeen[peerID] = Date()
+            if let rssi = bluetoothRSSIByPeripheral[peripheralID] {
+                rememberBluetoothRSSI(rssi, peerID: peerID)
+            }
         } else if sourceKey.hasPrefix(Self.centralSourcePrefix) {
             let value = String(sourceKey.dropFirst(Self.centralSourcePrefix.count))
             guard let centralID = UUID(uuidString: value) else { return }
@@ -1772,6 +1788,13 @@ final class IrisNearbyService: NSObject, ObservableObject {
             )
         }
         pruneDuplicateBluetoothRoutes(for: peerID)
+    }
+
+    private func rememberBluetoothRSSI(_ rssi: Int, peerID: String) {
+        bluetoothRSSIByPeerID[peerID] = rssi
+        guard let index = peers.firstIndex(where: { $0.id == peerID }),
+              peers[index].bluetoothRSSI != rssi else { return }
+        peers[index].bluetoothRSSI = rssi
     }
 
     private func peerIDForSource(_ source: IrisNearbySource) -> String? {
@@ -1876,6 +1899,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
                     ownerPubkeyHex: existing.ownerPubkeyHex,
                     pictureURL: existing.pictureURL,
                     profileEventID: nextProfileEventID,
+                    bluetoothRSSI: bluetoothRSSIByPeerID[peerID] ?? existing.bluetoothRSSI,
                     lastSeen: now
                 )
                 sortPeers()
@@ -1889,6 +1913,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
                     ownerPubkeyHex: nil,
                     pictureURL: nil,
                     profileEventID: nextProfileEventID,
+                    bluetoothRSSI: bluetoothRSSIByPeerID[peerID],
                     lastSeen: now
                 )
             )
@@ -1998,6 +2023,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
                         ownerPubkeyHex: profile.ownerPubkeyHex,
                         pictureURL: profile.pictureURL,
                         profileEventID: profile.id,
+                        bluetoothRSSI: bluetoothRSSIByPeerID[remotePeerID],
                         lastSeen: Date()
                     )
                 )
@@ -2023,6 +2049,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
                     ownerPubkeyHex: nil,
                     pictureURL: nil,
                     profileEventID: nil,
+                    bluetoothRSSI: bluetoothRSSIByPeerID[peerID],
                     lastSeen: now
                 )
             )
@@ -2090,12 +2117,18 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
     private func sortPeers() {
         peers.sort {
-            let comparison = $0.name.localizedCaseInsensitiveCompare($1.name)
-            if comparison == .orderedSame {
+            let leftKey = Self.deterministicPeerSortKey($0)
+            let rightKey = Self.deterministicPeerSortKey($1)
+            if leftKey == rightKey {
                 return $0.id < $1.id
             }
-            return comparison == .orderedAscending
+            return leftKey < rightKey
         }
+    }
+
+    private static func deterministicPeerSortKey(_ peer: IrisNearbyPeer) -> String {
+        let owner = peer.ownerPubkeyHex?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+        return owner.isEmpty ? "peer:\(peer.id.lowercased())" : owner
     }
 
     private func sanitizedEventID(_ value: String?) -> String? {
@@ -2181,6 +2214,10 @@ extension IrisNearbyService: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
+        bluetoothRSSIByPeripheral[peripheral.identifier] = RSSI.intValue
+        if let peerID = peerIDByPeripheral[peripheral.identifier] {
+            rememberBluetoothRSSI(RSSI.intValue, peerID: peerID)
+        }
         guard isVisible, peripherals[peripheral.identifier] == nil else { return }
         guard shouldConnect(to: peripheral.identifier, advertisementData: advertisementData) else { return }
         peripherals[peripheral.identifier] = peripheral
@@ -2202,6 +2239,7 @@ extension IrisNearbyService: CBCentralManagerDelegate {
         peripheralAssemblers.removeValue(forKey: peripheral.identifier)
         peripheralWriteQueues.removeValue(forKey: peripheral.identifier)
         peerIDByPeripheral.removeValue(forKey: peripheral.identifier)
+        bluetoothRSSIByPeripheral.removeValue(forKey: peripheral.identifier)
         connectionNonces.removeValue(forKey: Self.bluetoothSourcePrefix + peripheral.identifier.uuidString)
         if let remotePeerID, !shouldUseOutgoingBluetoothRoute(remotePeerID) {
             suppressedPeripheralReconnectUntil[peripheral.identifier] =

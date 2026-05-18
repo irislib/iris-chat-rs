@@ -399,6 +399,7 @@ extension ScreenshotFixture {
                 ownerPubkeyHex: index == 0 ? firstPeerOwnerHex : nil,
                 pictureURL: nil,
                 profileEventID: nil,
+                bluetoothRSSI: peer.transport == .bluetooth ? -45 - index : nil,
                 lastSeen: now
             )
         }

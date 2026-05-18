@@ -6,6 +6,15 @@ namespace IrisChat.Chrome;
 
 public static class NearbyPeerNames
 {
+    public static DesktopNearbyPeerSnapshot[] Sort(
+        AppManager manager,
+        DesktopNearbyPeerSnapshot[] peers) =>
+        peers
+            .OrderBy(peer => HasDirectChat(manager, peer) ? 0 : 1)
+            .ThenBy(DeterministicKey, StringComparer.Ordinal)
+            .ThenBy(peer => peer.id, StringComparer.Ordinal)
+            .ToArray();
+
     public static string Resolve(
         AppManager manager,
         DesktopNearbyPeerSnapshot peer,
@@ -30,5 +39,23 @@ public static class NearbyPeerNames
     {
         var trimmed = string.IsNullOrWhiteSpace(name) ? "Nearby" : name.Trim();
         return trimmed.Length <= 14 ? trimmed : trimmed[..13] + "...";
+    }
+
+    private static bool HasDirectChat(AppManager manager, DesktopNearbyPeerSnapshot peer)
+    {
+        var owner = string.IsNullOrWhiteSpace(peer.ownerPubkeyHex)
+            ? null
+            : peer.ownerPubkeyHex!.Trim();
+        return owner is not null && manager.ChatList.Any(chat =>
+            chat.kind == ChatKind.Direct &&
+            string.Equals(chat.chatId, owner, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string DeterministicKey(DesktopNearbyPeerSnapshot peer)
+    {
+        var owner = string.IsNullOrWhiteSpace(peer.ownerPubkeyHex)
+            ? null
+            : peer.ownerPubkeyHex!.Trim().ToLowerInvariant();
+        return owner ?? $"peer:{peer.id.ToLowerInvariant()}";
     }
 }

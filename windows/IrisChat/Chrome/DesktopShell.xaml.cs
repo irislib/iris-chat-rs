@@ -336,7 +336,9 @@ public partial class DesktopShell : UserControl
         var snapshot = _manager.NearbySnapshot;
         var nearbyEnabled = _manager.Preferences.nearbyEnabled;
         var active = nearbyEnabled && snapshot.visible;
-        var peers = nearbyEnabled ? snapshot.peers : Array.Empty<DesktopNearbyPeerSnapshot>();
+        var peers = nearbyEnabled
+            ? NearbyPeerNames.Sort(_manager, snapshot.peers)
+            : Array.Empty<DesktopNearbyPeerSnapshot>();
 
         var grid = new Grid
         {

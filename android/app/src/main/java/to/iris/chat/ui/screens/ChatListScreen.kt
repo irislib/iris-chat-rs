@@ -660,7 +660,17 @@ private fun NearbyChatListItem(
 ) {
     val snapshot by rememberNearbySnapshotState(service)
     val nearbyActive = nearbyEnabled && (snapshot.visible || snapshot.localNetworkVisible)
-    val visiblePeers = if (nearbyEnabled) snapshot.peers else emptyList()
+    val visiblePeers =
+        if (nearbyEnabled) {
+            rememberSortedNearbyPeers(
+                peers = snapshot.peers,
+                knownDirectChatIds = knownDirectChatNames.keys,
+                bluetoothPeerIds = snapshot.bluetoothPeers.mapTo(mutableSetOf()) { it.id },
+                localNetworkPeerIds = snapshot.localNetworkPeers.mapTo(mutableSetOf()) { it.id },
+            )
+        } else {
+            emptyList()
+        }
     val haptics = rememberIrisHapticFeedback()
     val interactionSource = remember { MutableInteractionSource() }
     Row(

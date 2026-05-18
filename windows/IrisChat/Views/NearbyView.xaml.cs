@@ -52,7 +52,9 @@ public partial class NearbyView : UserControl
             : Visibility.Visible;
         RebuildPeers(
             prefs.nearbyEnabled,
-            prefs.nearbyEnabled ? snapshot.peers ?? Array.Empty<DesktopNearbyPeerSnapshot>() : Array.Empty<DesktopNearbyPeerSnapshot>()
+            prefs.nearbyEnabled
+                ? NearbyPeerNames.Sort(manager, snapshot.peers ?? Array.Empty<DesktopNearbyPeerSnapshot>())
+                : Array.Empty<DesktopNearbyPeerSnapshot>()
         );
     }
 

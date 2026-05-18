@@ -249,7 +249,6 @@ fun DeviceRosterContent(
                         isUpdatingRoster = appState.busy.updatingRoster,
                         onApprove = { appManager.addAuthorizedDevice(device.devicePubkeyHex) },
                         onRemove = { appManager.removeAuthorizedDevice(device.devicePubkeyHex) },
-                        onRename = { name, clientLabel -> appManager.setCurrentDeviceName(name, clientLabel) },
                     )
                 }
             }
@@ -300,7 +299,6 @@ private fun DeviceRosterRows(
                 isUpdatingRoster = appState.busy.updatingRoster,
                 onApprove = { appManager.addAuthorizedDevice(device.devicePubkeyHex) },
                 onRemove = { appManager.removeAuthorizedDevice(device.devicePubkeyHex) },
-                onRename = { name, clientLabel -> appManager.setCurrentDeviceName(name, clientLabel) },
             )
         }
     }
@@ -335,17 +333,10 @@ private fun DeviceRosterRow(
     isUpdatingRoster: Boolean,
     onApprove: () -> Unit,
     onRemove: () -> Unit,
-    onRename: (String, String?) -> Unit,
 ) {
     val displayTitle = deviceDisplayTitle(device)
     val displaySubtitle = deviceDisplaySubtitle(device)
-    val currentDeviceLabel = device.deviceLabel?.trim()?.takeIf { it.isNotEmpty() }.orEmpty()
-    var deviceName by remember(device.devicePubkeyHex) { mutableStateOf(currentDeviceLabel) }
     var confirmRemoval by remember { mutableStateOf(false) }
-
-    LaunchedEffect(currentDeviceLabel) {
-        deviceName = currentDeviceLabel
-    }
 
     IrisListSection(
         modifier = Modifier.testTag("deviceRosterRow-${device.devicePubkeyHex.take(12)}"),
@@ -386,37 +377,6 @@ private fun DeviceRosterRow(
                         DeviceStateChip(text = "Added $ago ago")
                     }
                 }
-            }
-        }
-
-        if (canManageDevices && device.isCurrentDevice) {
-            Column(
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                TextField(
-                    value = deviceName,
-                    onValueChange = { deviceName = it },
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .testTag("deviceRosterCurrentDeviceNameInput"),
-                    placeholder = {
-                        Text(
-                            text = "Device name",
-                            color = IrisTheme.palette.muted,
-                        )
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = irisTextFieldColors(),
-                )
-                IrisPrimaryButton(
-                    text = if (isUpdatingRoster) "Saving…" else "Save name",
-                    onClick = { onRename(deviceName, device.clientLabel) },
-                    enabled = !isUpdatingRoster,
-                    modifier = Modifier.testTag("deviceRosterCurrentDeviceNameButton"),
-                )
             }
         }
 

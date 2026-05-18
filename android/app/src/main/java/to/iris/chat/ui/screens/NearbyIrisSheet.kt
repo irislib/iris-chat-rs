@@ -54,6 +54,31 @@ fun NearbyIrisSheet(
 ) {
     val snapshot by rememberNearbySnapshotState(service)
     val nearbyEnabled = appState.preferences.nearbyEnabled
+    val knownDirectChatIds = appState.knownDirectChatIds()
+    val sortedBluetoothPeers =
+        if (nearbyEnabled) {
+            val bluetoothPeerIds = snapshot.bluetoothPeers.mapTo(mutableSetOf()) { it.id }
+            rememberSortedNearbyPeers(
+                peers = snapshot.bluetoothPeers,
+                knownDirectChatIds = knownDirectChatIds,
+                bluetoothPeerIds = bluetoothPeerIds,
+                localNetworkPeerIds = emptySet(),
+            )
+        } else {
+            emptyList()
+        }
+    val sortedLocalNetworkPeers =
+        if (nearbyEnabled) {
+            val localNetworkPeerIds = snapshot.localNetworkPeers.mapTo(mutableSetOf()) { it.id }
+            rememberSortedNearbyPeers(
+                peers = snapshot.localNetworkPeers,
+                knownDirectChatIds = knownDirectChatIds,
+                bluetoothPeerIds = emptySet(),
+                localNetworkPeerIds = localNetworkPeerIds,
+            )
+        } else {
+            emptyList()
+        }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -108,7 +133,7 @@ fun NearbyIrisSheet(
                                 status = if (nearbyEnabled) nearbyBluetoothTransportStatus(snapshot) else null,
                                 checked = appState.preferences.nearbyBluetoothEnabled,
                                 enabled = nearbyEnabled,
-                                peers = if (nearbyEnabled) snapshot.bluetoothPeers else emptyList(),
+                                peers = sortedBluetoothPeers,
                                 onCheckedChange = onVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.takeIf { it.isNotBlank() }?.let { owner ->
@@ -133,7 +158,7 @@ fun NearbyIrisSheet(
                                 status = if (nearbyEnabled) nearbyWifiTransportStatus(snapshot) else null,
                                 checked = appState.preferences.nearbyLanEnabled,
                                 enabled = nearbyEnabled,
-                                peers = if (nearbyEnabled) snapshot.localNetworkPeers else emptyList(),
+                                peers = sortedLocalNetworkPeers,
                                 onCheckedChange = onLocalNetworkVisibleChange,
                                 onOpenPeer = { peer ->
                                     peer.ownerPubkeyHex?.takeIf { it.isNotBlank() }?.let { owner ->
@@ -379,6 +404,14 @@ private fun AppState.hasKnownDirectChat(ownerPubkeyHex: String): Boolean =
         chat.kind == ChatKind.DIRECT &&
             chat.chatId.equals(ownerPubkeyHex, ignoreCase = true)
     }
+
+private fun AppState.knownDirectChatIds(): Set<String> =
+    chatList
+        .asSequence()
+        .filter { it.kind == ChatKind.DIRECT }
+        .map { it.chatId.trim().lowercase() }
+        .filter { it.isNotEmpty() }
+        .toSet()
 
 private fun AppState.nearbyPeerResolvedName(peer: IrisNearbyService.Peer): String {
     val owner = peer.ownerPubkeyHex?.trim()

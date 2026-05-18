@@ -357,18 +357,6 @@ public sealed class AppManager : INotifyPropertyChanged
         DispatchToRust(new AppAction.RemoveAuthorizedDevice(t));
     }
 
-    public void SetCurrentDeviceName(string name, string? currentClientLabel)
-    {
-        var deviceLabel = string.IsNullOrWhiteSpace(name)
-            ? PlatformDeviceLabels.CurrentDeviceLabel
-            : name.Trim();
-        var clientLabel = string.IsNullOrWhiteSpace(currentClientLabel)
-            ? PlatformDeviceLabels.CurrentClientLabel
-            : currentClientLabel.Trim();
-        _lastSyncedDeviceLabelsKey = $"{deviceLabel}\u001F{clientLabel}";
-        DispatchToRust(new AppAction.SetCurrentDeviceLabels(deviceLabel, clientLabel));
-    }
-
     public void AcknowledgeRevokedDevice() =>
         DispatchToRust(new AppAction.AcknowledgeRevokedDevice());
 

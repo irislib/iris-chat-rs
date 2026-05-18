@@ -1,4 +1,4 @@
-use std::rc::Rc;
+use std::{cmp::Ordering, rc::Rc};
 
 use adw::prelude::*;
 use gtk::glib;
@@ -132,11 +132,12 @@ fn refresh(
     status.set_label(&status_text);
     status.set_visible(!status_text.is_empty());
 
-    let peers: Vec<DesktopNearbyPeerSnapshot> = if nearby_enabled {
+    let mut peers: Vec<DesktopNearbyPeerSnapshot> = if nearby_enabled {
         snapshot.peers.clone()
     } else {
         Vec::new()
     };
+    peers.sort_by(|left, right| compare_nearby_peers(left, right, manager));
 
     if peers.is_empty() {
         let row = adw::ActionRow::builder()
@@ -206,6 +207,37 @@ fn is_known_direct_chat(manager: &Rc<AppManager>, owner: &str) -> bool {
     manager.current_state().chat_list.iter().any(|chat| {
         matches!(chat.kind, ChatKind::Direct) && chat.chat_id.eq_ignore_ascii_case(owner)
     })
+}
+
+fn compare_nearby_peers(
+    left: &DesktopNearbyPeerSnapshot,
+    right: &DesktopNearbyPeerSnapshot,
+    manager: &Rc<AppManager>,
+) -> Ordering {
+    let left_has_chat = left
+        .owner_pubkey_hex
+        .as_deref()
+        .is_some_and(|owner| is_known_direct_chat(manager, owner));
+    let right_has_chat = right
+        .owner_pubkey_hex
+        .as_deref()
+        .is_some_and(|owner| is_known_direct_chat(manager, owner));
+    left_has_chat
+        .cmp(&right_has_chat)
+        .reverse()
+        .then_with(|| {
+            deterministic_nearby_peer_key(left).cmp(&deterministic_nearby_peer_key(right))
+        })
+        .then_with(|| left.id.cmp(&right.id))
+}
+
+fn deterministic_nearby_peer_key(peer: &DesktopNearbyPeerSnapshot) -> String {
+    peer.owner_pubkey_hex
+        .as_deref()
+        .map(str::trim)
+        .filter(|owner| !owner.is_empty())
+        .map(str::to_lowercase)
+        .unwrap_or_else(|| format!("peer:{}", peer.id.to_lowercase()))
 }
 
 fn nearby_peer_chat_info(
