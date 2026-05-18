@@ -66,6 +66,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalWindowInfo
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.TextUnit
 import kotlinx.coroutines.launch
 import kotlin.math.abs
 import androidx.compose.ui.text.AnnotatedString
@@ -78,6 +79,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.ChatKind
@@ -396,9 +398,13 @@ internal fun MessageBubble(
                             ReplyPreview(reply = reply, isOutgoing = message.isOutgoing, onTap = onScrollToQuote)
                         }
                         if (parsed.body.isNotBlank()) {
+                            val bodyStyle = MaterialTheme.typography.bodyLarge
                             TruncatableMessageBody(
                                 text = parsed.body,
-                                style = MaterialTheme.typography.bodyLarge,
+                                style =
+                                    bodyStyle.copy(
+                                        fontSize = jumbomojiFontSize(parsed.body) ?: bodyStyle.fontSize,
+                                    ),
                                 color =
                                     if (message.isOutgoing) {
                                         MaterialTheme.colorScheme.onPrimary
@@ -638,6 +644,60 @@ private fun ReactionPickerMenu(
 
 internal fun postReactionSuggestionEmojis(reactions: List<MessageReactionSnapshot>): List<String> =
     uniqueReactionEmojis(reactions.map { it.emoji })
+
+internal fun jumbomojiCount(text: String): Int {
+    val trimmed = text.trim()
+    if (trimmed.isEmpty()) return 0
+
+    var count = 0
+    var clusterOpen = false
+    var lastWasJoiner = false
+    var index = 0
+    while (index < trimmed.length) {
+        val codePoint = trimmed.codePointAt(index)
+        index += Character.charCount(codePoint)
+
+        when {
+            Character.isWhitespace(codePoint) -> {
+                clusterOpen = false
+                lastWasJoiner = false
+            }
+            isEmojiContinuation(codePoint) -> {
+                if (!clusterOpen) return 0
+                lastWasJoiner = codePoint == 0x200D
+            }
+            isEmojiBase(codePoint) -> {
+                if (!clusterOpen || !lastWasJoiner) {
+                    count += 1
+                    if (count > 5) return 0
+                }
+                clusterOpen = true
+                lastWasJoiner = false
+            }
+            else -> return 0
+        }
+    }
+    return count
+}
+
+private fun jumbomojiFontSize(text: String): TextUnit? =
+    when (jumbomojiCount(text)) {
+        1 -> 56.sp
+        2 -> 48.sp
+        3 -> 40.sp
+        4 -> 36.sp
+        5 -> 32.sp
+        else -> null
+    }
+
+private fun isEmojiContinuation(codePoint: Int): Boolean =
+    codePoint == 0x200D ||
+        codePoint == 0xFE0F ||
+        codePoint in 0x1F3FB..0x1F3FF
+
+private fun isEmojiBase(codePoint: Int): Boolean =
+    codePoint in 0x1F000..0x1FAFF ||
+        codePoint in 0x2600..0x27BF
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

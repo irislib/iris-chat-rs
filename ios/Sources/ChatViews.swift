@@ -1758,7 +1758,8 @@ private struct ChatMessageRow: View, Equatable {
                                             ? palette.onBubbleMine
                                             : palette.onBubbleTheirs
                                     ),
-                                    isOutgoing: message.isOutgoing
+                                    isOutgoing: message.isOutgoing,
+                                    bodyFont: irisMessageBodyFont(for: parsed.body)
                                 )
                             }
                             let imageAttachments = message.attachments.filter { $0.isImage }
@@ -1990,6 +1991,7 @@ private struct ChatMessageRow: View, Equatable {
 private struct TruncatableMessageBody: View {
     let attributed: AttributedString
     let isOutgoing: Bool
+    let bodyFont: Font
     @Environment(\.irisPalette) private var palette
     @State private var isExpanded = false
 
@@ -2008,7 +2010,7 @@ private struct TruncatableMessageBody: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(attributed)
-                .font(.system(.body, design: .rounded))
+                .font(bodyFont)
                 .multilineTextAlignment(.leading)
                 .lineLimit(isExpanded ? nil : collapsedLineLimit)
                 .fixedSize(horizontal: false, vertical: true)
@@ -2038,6 +2040,59 @@ private struct TruncatableMessageBody: View {
         .buttonStyle(.plain)
         .accessibilityIdentifier("chatMessageBodyToggle")
     }
+}
+
+private func irisMessageBodyFont(for text: String) -> Font {
+    switch irisJumbomojiCount(text) {
+    case 1:
+        return .system(size: 56, weight: .regular, design: .rounded)
+    case 2:
+        return .system(size: 48, weight: .regular, design: .rounded)
+    case 3:
+        return .system(size: 40, weight: .regular, design: .rounded)
+    case 4:
+        return .system(size: 36, weight: .regular, design: .rounded)
+    case 5:
+        return .system(size: 32, weight: .regular, design: .rounded)
+    default:
+        return .system(.body, design: .rounded)
+    }
+}
+
+func irisJumbomojiCount(_ text: String) -> Int {
+    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else { return 0 }
+
+    var count = 0
+    for character in trimmed {
+        if character.unicodeScalars.allSatisfy({ CharacterSet.whitespacesAndNewlines.contains($0) }) {
+            continue
+        }
+        guard irisIsEmojiCluster(character) else {
+            return 0
+        }
+        count += 1
+        if count > 5 {
+            return 0
+        }
+    }
+    return count
+}
+
+private func irisIsEmojiCluster(_ character: Character) -> Bool {
+    var hasEmojiBase = false
+    for scalar in character.unicodeScalars {
+        let value = scalar.value
+        if value == 0x200D || value == 0xFE0F || (0x1F3FB...0x1F3FF).contains(value) {
+            continue
+        }
+        if (0x1F000...0x1FAFF).contains(value) || (0x2600...0x27BF).contains(value) {
+            hasEmojiBase = true
+            continue
+        }
+        return false
+    }
+    return hasEmojiBase
 }
 
 private struct MessageInfoSheet: View {

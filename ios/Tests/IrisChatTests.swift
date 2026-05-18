@@ -304,6 +304,15 @@ final class IrisEmojiPickerSearchTests: XCTestCase {
             ["🔥", "😂"]
         )
     }
+
+    func testJumbomojiCountOnlyAcceptsUpToFiveEmojiIgnoringWhitespace() {
+        XCTAssertEqual(irisJumbomojiCount("🔥"), 1)
+        XCTAssertEqual(irisJumbomojiCount("🔥 😂"), 2)
+        XCTAssertEqual(irisJumbomojiCount("👨‍👩‍👧‍👦"), 1)
+        XCTAssertEqual(irisJumbomojiCount("😀😃😄😁😆"), 5)
+        XCTAssertEqual(irisJumbomojiCount("😀😃😄😁😆😅"), 0)
+        XCTAssertEqual(irisJumbomojiCount("nice 🔥"), 0)
+    }
 }
 
 private let largeFixtureMessageCount: UInt32 = 1_200

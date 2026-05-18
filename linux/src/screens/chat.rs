@@ -951,6 +951,9 @@ fn append_truncatable_body(bubble: &gtk::Box, body_text: &str) {
     body.set_xalign(0.0);
     body.set_max_width_chars(40);
     body.set_selectable(true);
+    if let Some(count) = jumbomoji_count(body_text) {
+        body.add_css_class(&format!("bubble-jumbomoji-{count}"));
+    }
 
     let long = body_text.chars().count() > LONG_CHAR_THRESHOLD
         || body_text.matches('\n').count() >= LONG_NEWLINE_THRESHOLD;
@@ -990,6 +993,50 @@ fn append_truncatable_body(bubble: &gtk::Box, body_text: &str) {
         }
     });
     bubble.append(&toggle);
+}
+
+fn jumbomoji_count(text: &str) -> Option<usize> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut count = 0usize;
+    let mut cluster_open = false;
+    let mut last_was_joiner = false;
+    for ch in trimmed.chars() {
+        let code = ch as u32;
+        if ch.is_whitespace() {
+            cluster_open = false;
+            last_was_joiner = false;
+        } else if is_emoji_continuation(code) {
+            if !cluster_open {
+                return None;
+            }
+            last_was_joiner = code == 0x200D;
+        } else if is_emoji_base(code) {
+            if !cluster_open || !last_was_joiner {
+                count += 1;
+                if count > 5 {
+                    return None;
+                }
+            }
+            cluster_open = true;
+            last_was_joiner = false;
+        } else {
+            return None;
+        }
+    }
+
+    (count > 0).then_some(count)
+}
+
+fn is_emoji_continuation(code: u32) -> bool {
+    code == 0x200D || code == 0xFE0F || (0x1F3FB..=0x1F3FF).contains(&code)
+}
+
+fn is_emoji_base(code: u32) -> bool {
+    (0x1F000..=0x1FAFF).contains(&code) || (0x2600..=0x27BF).contains(&code)
 }
 
 fn build_message_popover(

@@ -23,6 +23,16 @@ class ChatMessageComponentsTest {
     }
 
     @Test
+    fun jumbomojiCountOnlyAcceptsUpToFiveEmojiIgnoringWhitespace() {
+        assertEquals(1, jumbomojiCount("🔥"))
+        assertEquals(2, jumbomojiCount("🔥 😂"))
+        assertEquals(1, jumbomojiCount("👨‍👩‍👧‍👦"))
+        assertEquals(5, jumbomojiCount("😀😃😄😁😆"))
+        assertEquals(0, jumbomojiCount("😀😃😄😁😆😅"))
+        assertEquals(0, jumbomojiCount("nice 🔥"))
+    }
+
+    @Test
     fun forwardableMessageTextStripsQuotedReplyAndKeepsAttachments() {
         val attachment =
             MessageAttachmentSnapshot(

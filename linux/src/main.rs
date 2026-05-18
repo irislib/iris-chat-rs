@@ -86,6 +86,26 @@ const CUSTOM_CSS: &str = r#"
     font-size: 0.78em;
     opacity: 0.72;
 }
+.bubble-jumbomoji-1 {
+    font-size: 56px;
+    line-height: 1.05;
+}
+.bubble-jumbomoji-2 {
+    font-size: 48px;
+    line-height: 1.05;
+}
+.bubble-jumbomoji-3 {
+    font-size: 40px;
+    line-height: 1.05;
+}
+.bubble-jumbomoji-4 {
+    font-size: 36px;
+    line-height: 1.05;
+}
+.bubble-jumbomoji-5 {
+    font-size: 32px;
+    line-height: 1.05;
+}
 /* Show more/less toggle inside a bubble. We dropped Adwaita's
  * `.link` class to keep the toggle from rendering in brand purple
  * (which violates the "no purple text/icons" rule), so we have to

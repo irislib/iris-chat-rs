@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -55,6 +56,7 @@ public partial class MessageBubble : UserControl
 
         BodyText.Text = message.body ?? string.Empty;
         BodyText.Visibility = string.IsNullOrEmpty(message.body) ? Visibility.Collapsed : Visibility.Visible;
+        ApplyJumbomojiFont(message.body);
         ApplyBodyTruncation(message.body);
 
         if (message.kind == ChatMessageKind.System)
@@ -422,6 +424,74 @@ public partial class MessageBubble : UserControl
             ShowMoreLink.Visibility = Visibility.Collapsed;
         }
     }
+
+    private void ApplyJumbomojiFont(string? body)
+    {
+        BodyText.FontSize = JumbomojiCount(body ?? string.Empty) switch
+        {
+            1 => 56,
+            2 => 48,
+            3 => 40,
+            4 => 36,
+            5 => 32,
+            _ => 14,
+        };
+        BodyText.LineHeight = BodyText.FontSize > 14 ? BodyText.FontSize * 1.05 : double.NaN;
+    }
+
+    private static int JumbomojiCount(string text)
+    {
+        var trimmed = text.Trim();
+        if (trimmed.Length == 0) return 0;
+
+        var count = 0;
+        var clusterOpen = false;
+        var lastWasJoiner = false;
+        var remaining = trimmed.AsSpan();
+        while (!remaining.IsEmpty)
+        {
+            var status = Rune.DecodeFromUtf16(remaining, out var rune, out var consumed);
+            if (status != System.Buffers.OperationStatus.Done) return 0;
+            remaining = remaining[consumed..];
+
+            var codePoint = rune.Value;
+            if (Rune.IsWhiteSpace(rune))
+            {
+                clusterOpen = false;
+                lastWasJoiner = false;
+            }
+            else if (IsEmojiContinuation(codePoint))
+            {
+                if (!clusterOpen) return 0;
+                lastWasJoiner = codePoint == 0x200D;
+            }
+            else if (IsEmojiBase(codePoint))
+            {
+                if (!clusterOpen || !lastWasJoiner)
+                {
+                    count++;
+                    if (count > 5) return 0;
+                }
+                clusterOpen = true;
+                lastWasJoiner = false;
+            }
+            else
+            {
+                return 0;
+            }
+        }
+
+        return count;
+    }
+
+    private static bool IsEmojiContinuation(int codePoint) =>
+        codePoint == 0x200D ||
+        codePoint == 0xFE0F ||
+        codePoint is >= 0x1F3FB and <= 0x1F3FF;
+
+    private static bool IsEmojiBase(int codePoint) =>
+        codePoint is >= 0x1F000 and <= 0x1FAFF ||
+        codePoint is >= 0x2600 and <= 0x27BF;
 
     private void OnToggleShowMore(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
