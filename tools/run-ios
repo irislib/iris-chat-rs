@@ -6,12 +6,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SIMULATOR_NAME="${IRIS_IOS_SIMULATOR_NAME:-Iris Chat iPhone}"
 DESTINATION="${IRIS_IOS_SIM_DESTINATION:-platform=iOS Simulator,name=${SIMULATOR_NAME}}"
 BUNDLE_ID="${IRIS_IOS_BUNDLE_ID:-to.iris.chat}"
+DEVELOPMENT_TEAM="${IRIS_IOS_DEVELOPMENT_TEAM:-J8PPJKD7TA}"
 IOS_PROJECT="$ROOT/ios/IrisChat.xcodeproj"
 IOS_SCHEME="IrisChat"
+MODE="devices"
 
 usage() {
   cat <<'EOF'
-usage: ./tools/run-ios [--list-targets]
+usage: ./tools/run-ios [--devices|--simulator|--list-targets]
 EOF
 }
 
@@ -108,8 +110,117 @@ if candidates:
 PY
 }
 
+connected_device_ids() {
+  xcrun devicectl list devices 2>/dev/null |
+    awk '
+      NR > 2 && $0 ~ /connected|available \(paired\)/ {
+        for (i = 1; i <= NF; i++) {
+          if ($i ~ /^[0-9A-Fa-f-]{36}$/) {
+            print $i
+            break
+          }
+        }
+      }
+    '
+}
+
+device_app_path() {
+  local settings
+  local target_build_dir
+  local wrapper_name
+
+  settings="$(
+    xcodebuild \
+      -project "$IOS_PROJECT" \
+      -scheme "$IOS_SCHEME" \
+      -configuration Debug \
+      -destination "generic/platform=iOS" \
+      -showBuildSettings 2>/dev/null
+  )"
+  target_build_dir="$(awk -F' = ' '/^[[:space:]]*TARGET_BUILD_DIR = / { print $2; exit }' <<<"$settings")"
+  wrapper_name="$(awk -F' = ' '/^[[:space:]]*WRAPPER_NAME = / { print $2; exit }' <<<"$settings")"
+  if [[ -n "${target_build_dir:-}" && -n "${wrapper_name:-}" ]]; then
+    printf '%s/%s\n' "$target_build_dir" "$wrapper_name"
+  fi
+}
+
+build_device_app() {
+  IRIS_IOS_RUST_TARGETS="${IRIS_IOS_RUST_TARGETS:-aarch64-apple-ios}" "$ROOT/scripts/ios-build" ios-xcframework
+  "$ROOT/scripts/ios-build" ios-xcodeproj
+  xcodebuild \
+    -project "$IOS_PROJECT" \
+    -scheme "$IOS_SCHEME" \
+    -configuration Debug \
+    -destination "generic/platform=iOS" \
+    -allowProvisioningUpdates \
+    DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+    CODE_SIGN_STYLE=Automatic \
+    build
+}
+
+run_devices() {
+  local -a devices
+  local app_path
+  local device
+  local installed=0
+
+  while IFS= read -r device; do
+    [[ -n "$device" ]] && devices+=("$device")
+  done < <(connected_device_ids)
+  if [[ "${#devices[@]}" -eq 0 ]]; then
+    echo "No connected iOS devices found." >&2
+    exit 1
+  fi
+
+  build_device_app
+  app_path="$(device_app_path)"
+  if [[ -z "${app_path:-}" || ! -d "$app_path" ]]; then
+    echo "Built iOS device app not found." >&2
+    exit 1
+  fi
+
+  for device in "${devices[@]}"; do
+    echo "Installing iOS app on $device"
+    xcrun devicectl device install app --device "$device" "$app_path"
+    if xcrun devicectl device process launch --device "$device" "$BUNDLE_ID" >/tmp/iris-chat-ios-launch-"$device".log 2>&1; then
+      echo "iOS app launched on $device"
+    else
+      echo "iOS app installed on $device; launch failed or app was already running." >&2
+    fi
+    installed=$((installed + 1))
+  done
+
+  echo "Installed iOS app on $installed device(s)."
+}
+
+run_simulator() {
+  if simulator_name="$(destination_name)"; [[ -n "${simulator_name:-}" ]]; then
+    "$ROOT/scripts/run_ios_simulators.sh" --no-open "$simulator_name" >/dev/null
+  fi
+
+  IRIS_IOS_SIM_DESTINATION="$DESTINATION" "$ROOT/scripts/ios-build" ios-build-sim
+  UDID="$(resolve_udid)"
+  APP_PATH="$(resolve_app_path)"
+  if [[ -z "${UDID:-}" || -z "${APP_PATH:-}" ]]; then
+    echo "Built simulator app not found." >&2
+    exit 1
+  fi
+  xcrun simctl install "$UDID" "$APP_PATH" >/dev/null
+  xcrun simctl launch "$UDID" "$BUNDLE_ID" >/tmp/iris-chat-ios-launch.log 2>&1 || true
+  open -a Simulator >/dev/null 2>&1 || true
+  echo "iOS app launched on $UDID"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --devices)
+      MODE="devices"
+      shift
+      ;;
+    --simulator)
+      MODE="simulator"
+      shift
+      ;;
     --list-targets)
       exec "$ROOT/tools/ndr-run" ios list-targets
       ;;
@@ -125,18 +236,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if simulator_name="$(destination_name)"; [[ -n "${simulator_name:-}" ]]; then
-  "$ROOT/scripts/run_ios_simulators.sh" --no-open "$simulator_name" >/dev/null
-fi
-
-IRIS_IOS_SIM_DESTINATION="$DESTINATION" "$ROOT/scripts/ios-build" ios-build-sim
-UDID="$(resolve_udid)"
-APP_PATH="$(resolve_app_path)"
-if [[ -z "${UDID:-}" || -z "${APP_PATH:-}" ]]; then
-  echo "Built simulator app not found." >&2
-  exit 1
-fi
-xcrun simctl install "$UDID" "$APP_PATH" >/dev/null
-xcrun simctl launch "$UDID" "$BUNDLE_ID" >/tmp/iris-chat-ios-launch.log 2>&1 || true
-open -a Simulator >/dev/null 2>&1 || true
-echo "iOS app launched on $UDID"
+case "$MODE" in
+  devices) run_devices ;;
+  simulator) run_simulator ;;
+esac

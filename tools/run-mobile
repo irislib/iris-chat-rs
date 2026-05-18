@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+ios_status=0
+android_status=0
+
+"$ROOT/tools/run-ios" || ios_status=$?
+"$ROOT/tools/run-android" || android_status=$?
+
+if [[ "$ios_status" -ne 0 && "$android_status" -ne 0 ]]; then
+  echo "No mobile installs completed." >&2
+  exit 1
+fi
+
+if [[ "$ios_status" -ne 0 ]]; then
+  echo "iOS install did not complete." >&2
+fi
+if [[ "$android_status" -ne 0 ]]; then
+  echo "Android install did not complete." >&2
+fi

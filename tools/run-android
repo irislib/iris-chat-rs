@@ -10,6 +10,7 @@ LOCAL_PROPERTIES="$ROOT/android/local.properties"
 SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 APP_PACKAGE="${IRIS_ANDROID_APP_PACKAGE:-to.iris.chat.debug}"
 MAIN_ACTIVITY="${IRIS_ANDROID_MAIN_ACTIVITY:-to.iris.chat.MainActivity}"
+MODE="all"
 
 if [[ -z "${SDK_DIR}" && -f "${LOCAL_PROPERTIES}" ]]; then
   SDK_DIR="$(
@@ -41,7 +42,7 @@ fi
 
 usage() {
   cat <<'EOF'
-usage: ./tools/run-android [--serial <adb-serial>] [--list-targets]
+usage: ./tools/run-android [--all|--single] [--serial <adb-serial>] [--list-targets]
 EOF
 }
 
@@ -49,10 +50,58 @@ first_online_device() {
   "$ADB" devices | awk 'NR>1 && $2=="device" { print $1; exit }'
 }
 
+online_devices() {
+  "$ADB" devices | awk 'NR>1 && $2=="device" { print $1 }'
+}
+
+ensure_single_device() {
+  if [[ -z "${SERIAL:-}" ]]; then
+    SERIAL="$(first_online_device)"
+  fi
+
+  if [[ -z "${SERIAL:-}" ]]; then
+    emulator_args=()
+    if [[ "$BOOT_MODE" == "headless" ]]; then
+      emulator_args+=(--headless)
+    fi
+    SERIAL="$("$ROOT/scripts/run_android_emulators.sh" "${emulator_args[@]}" "$DEFAULT_AVD" | awk 'END { print $2 }')"
+  fi
+
+  if [[ -n "${SERIAL:-}" ]]; then
+    if ! "$ADB" -s "$SERIAL" get-state >/dev/null 2>&1; then
+      echo "Android target $SERIAL is not online." >&2
+      exit 1
+    fi
+  fi
+
+  if [[ -z "${SERIAL:-}" ]]; then
+    echo "No Android device or emulator available." >&2
+    exit 1
+  fi
+}
+
+install_and_launch() {
+  local serial="$1"
+  local apk="$2"
+
+  "$ADB" -s "$serial" install -r "$apk" >/dev/null
+  "$ADB" -s "$serial" shell am start -n "${APP_PACKAGE}/${MAIN_ACTIVITY}" >/dev/null
+  echo "Android app launched on $serial"
+}
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --all)
+      MODE="all"
+      shift
+      ;;
+    --single)
+      MODE="single"
+      shift
+      ;;
     --serial)
       SERIAL="$2"
+      MODE="single"
       shift 2
       ;;
     --list-targets)
@@ -70,33 +119,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ -z "${SERIAL:-}" ]]; then
-  SERIAL="$(first_online_device)"
-fi
-
-if [[ -z "${SERIAL:-}" ]]; then
-  emulator_args=()
-  if [[ "$BOOT_MODE" == "headless" ]]; then
-    emulator_args+=(--headless)
-  fi
-  SERIAL="$("$ROOT/scripts/run_android_emulators.sh" "${emulator_args[@]}" "$DEFAULT_AVD" | awk 'END { print $2 }')"
-fi
-
-if [[ -n "${SERIAL:-}" ]]; then
-  if ! "$ADB" -s "$SERIAL" get-state >/dev/null 2>&1; then
-    echo "Android target $SERIAL is not online." >&2
+APK="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
+if [[ "$MODE" == "single" ]]; then
+  ensure_single_device
+  "$ROOT/scripts/android-build" android-assemble
+  install_and_launch "$SERIAL" "$APK"
+else
+  DEVICES=()
+  while IFS= read -r device; do
+    [[ -n "$device" ]] && DEVICES+=("$device")
+  done < <(online_devices)
+  if [[ "${#DEVICES[@]}" -eq 0 ]]; then
+    echo "No connected Android devices found." >&2
     exit 1
   fi
+  "$ROOT/scripts/android-build" android-assemble
+  for SERIAL in "${DEVICES[@]}"; do
+    install_and_launch "$SERIAL" "$APK"
+  done
+  echo "Installed Android app on ${#DEVICES[@]} device(s)."
 fi
-
-if [[ -z "${SERIAL:-}" ]]; then
-  echo "No Android device or emulator available." >&2
-  exit 1
-fi
-
-"$ROOT/scripts/android-build" android-assemble
-
-APK="$ROOT/android/app/build/outputs/apk/debug/app-debug.apk"
-"$ADB" -s "$SERIAL" install -r "$APK" >/dev/null
-"$ADB" -s "$SERIAL" shell am start -n "${APP_PACKAGE}/${MAIN_ACTIVITY}" >/dev/null
-echo "Android app launched on $SERIAL"

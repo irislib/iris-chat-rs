@@ -8,6 +8,7 @@ info:
     @echo
     @echo "Run"
     @echo "  just run"
+    @echo "  just run-mobile"
     @echo "  just run-android"
     @echo "  just run-ios"
     @echo "  just run-linux"
@@ -75,6 +76,9 @@ run:
 
 run-ios:
     ./tools/run-ios
+
+run-mobile:
+    ./tools/run-mobile
 
 run-macos:
     ./tools/run-macos
