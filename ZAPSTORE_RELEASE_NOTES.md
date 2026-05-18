@@ -1,7 +1,10 @@
-# Iris Chat 2026.5.18.3
+# Iris Chat 2026.5.18.4
 
 - Nearby profiles now open as profiles instead of being mistaken for chats.
 - Profile nickname editing no longer shows a placeholder nickname as saved data.
+- Desktop message actions sit beside bubbles more neatly.
+- Idle sync retries use less CPU.
+- macOS release builds find the shared Cargo build directory more reliably.
 
 # Iris Chat 2026.5.18.2
 
