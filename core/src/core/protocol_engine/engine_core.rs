@@ -336,14 +336,9 @@ impl ProtocolEngine {
         &self,
         read: impl FnOnce(&KnownMessageAuthorCache) -> T,
     ) -> T {
-        if self.known_message_author_cache.borrow().is_none() {
-            let cache = self.build_known_message_author_cache();
-            *self.known_message_author_cache.borrow_mut() = Some(cache);
-        }
-        let cache = self.known_message_author_cache.borrow();
-        read(cache
-            .as_ref()
-            .expect("known message author cache must be populated"))
+        let mut cached = self.known_message_author_cache.borrow_mut();
+        let cache = cached.get_or_insert_with(|| self.build_known_message_author_cache());
+        read(cache)
     }
 
     fn build_known_message_author_cache(&self) -> KnownMessageAuthorCache {
