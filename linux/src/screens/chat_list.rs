@@ -3,11 +3,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use adw::prelude::*;
 use iris_chat_core::{
-    proxied_image_url, AppAction, AppState, ChatInputShortcut, ChatThreadSnapshot,
+    proxied_image_url, AppAction, AppState, ChatInputShortcut, ChatKind, ChatThreadSnapshot,
     DesktopNearbyPeerSnapshot, MessageSearchHit, PreferencesSnapshot, SearchResultSnapshot,
 };
 
 use crate::app_manager::{AppManager, SearchUiState};
+use crate::screens::chat::{present_chat_info, ChatInfoSnapshot};
 use crate::screens::confirm_delete_chat;
 use crate::widgets::image_cache;
 
@@ -513,10 +514,14 @@ fn nearby_avatar_strip(
         }));
         if let Some(owner) = peer.owner_pubkey_hex.clone() {
             let manager_for_click = manager.clone();
-            button.connect_clicked(move |_| {
-                manager_for_click.dispatch(AppAction::OpenChat {
-                    chat_id: owner.clone(),
-                });
+            let peer_for_click = peer.clone();
+            button.connect_clicked(move |button| {
+                open_nearby_peer_from_widget(
+                    button,
+                    &peer_for_click,
+                    owner.as_str(),
+                    manager_for_click.clone(),
+                );
             });
         } else {
             button.set_sensitive(false);
@@ -543,6 +548,57 @@ fn nearby_peer_display_name(name: &str) -> String {
         value.to_string()
     } else {
         format!("{}…", value.chars().take(13).collect::<String>())
+    }
+}
+
+fn open_nearby_peer_from_widget(
+    widget: &gtk::Button,
+    peer: &DesktopNearbyPeerSnapshot,
+    owner: &str,
+    manager: Rc<AppManager>,
+) {
+    if is_known_direct_chat(&manager, owner) {
+        manager.dispatch(AppAction::OpenChat {
+            chat_id: owner.to_string(),
+        });
+        return;
+    }
+
+    let parent = widget.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+    present_chat_info(
+        parent.as_ref(),
+        nearby_peer_chat_info(peer, owner, &manager),
+        manager,
+    );
+}
+
+fn is_known_direct_chat(manager: &Rc<AppManager>, owner: &str) -> bool {
+    manager.current_state().chat_list.iter().any(|chat| {
+        matches!(chat.kind, ChatKind::Direct) && chat.chat_id.eq_ignore_ascii_case(owner)
+    })
+}
+
+fn nearby_peer_chat_info(
+    peer: &DesktopNearbyPeerSnapshot,
+    owner: &str,
+    manager: &Rc<AppManager>,
+) -> ChatInfoSnapshot {
+    let name = peer.name.trim();
+    ChatInfoSnapshot {
+        chat_id: owner.to_string(),
+        display_name: if name.is_empty() {
+            "Nearby user".to_string()
+        } else {
+            name.to_string()
+        },
+        nickname: None,
+        profile_name: None,
+        subtitle: None,
+        picture_url: peer.picture_url.clone(),
+        about: None,
+        is_muted: false,
+        show_message_action: true,
+        preferences: manager.current_state().preferences,
     }
 }
 

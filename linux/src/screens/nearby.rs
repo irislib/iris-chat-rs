@@ -2,9 +2,10 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use gtk::glib;
-use iris_chat_core::{AppAction, DesktopNearbyPeerSnapshot, DesktopNearbySnapshot};
+use iris_chat_core::{AppAction, ChatKind, DesktopNearbyPeerSnapshot, DesktopNearbySnapshot};
 
 use crate::app_manager::AppManager;
+use crate::screens::chat::{present_chat_info, ChatInfoSnapshot};
 
 pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
     let dialog = adw::Dialog::builder()
@@ -180,15 +181,52 @@ fn peer_row(peer: &DesktopNearbyPeerSnapshot, manager: &Rc<AppManager>) -> adw::
     row.add_prefix(&icon);
     if let Some(owner) = peer.owner_pubkey_hex.clone() {
         let manager = manager.clone();
-        row.connect_activated(move |_| {
-            // OpenChat (not CreateChat) so the desktop navigates
-            // optimistically rather than depending on the Rust state
-            // round-trip — the modal dismissal would otherwise race
-            // the stack update.
-            manager.dispatch(AppAction::OpenChat {
-                chat_id: owner.clone(),
-            });
+        let peer = peer.clone();
+        row.connect_activated(move |row| {
+            if is_known_direct_chat(&manager, owner.as_str()) {
+                manager.dispatch(AppAction::OpenChat {
+                    chat_id: owner.clone(),
+                });
+                return;
+            }
+
+            let parent = row.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+            present_chat_info(
+                parent.as_ref(),
+                nearby_peer_chat_info(&peer, owner.as_str(), &manager),
+                manager.clone(),
+            );
         });
     }
     row
+}
+
+fn is_known_direct_chat(manager: &Rc<AppManager>, owner: &str) -> bool {
+    manager.current_state().chat_list.iter().any(|chat| {
+        matches!(chat.kind, ChatKind::Direct) && chat.chat_id.eq_ignore_ascii_case(owner)
+    })
+}
+
+fn nearby_peer_chat_info(
+    peer: &DesktopNearbyPeerSnapshot,
+    owner: &str,
+    manager: &Rc<AppManager>,
+) -> ChatInfoSnapshot {
+    let name = peer.name.trim();
+    ChatInfoSnapshot {
+        chat_id: owner.to_string(),
+        display_name: if name.is_empty() {
+            "Nearby user".to_string()
+        } else {
+            name.to_string()
+        },
+        nickname: None,
+        profile_name: None,
+        subtitle: None,
+        picture_url: peer.picture_url.clone(),
+        about: None,
+        is_muted: false,
+        show_message_action: true,
+        preferences: manager.current_state().preferences,
+    }
 }

@@ -23,6 +23,7 @@ pub struct ChatInfoSnapshot {
     pub picture_url: Option<String>,
     pub about: Option<String>,
     pub is_muted: bool,
+    pub show_message_action: bool,
     pub preferences: PreferencesSnapshot,
 }
 
@@ -128,6 +129,21 @@ pub fn present_chat_info(
     }
 
     content.append(&nickname_card(&info, manager.clone()));
+
+    if info.show_message_action {
+        let message = gtk::Button::with_label("Message");
+        message.set_halign(gtk::Align::Start);
+        let manager_for_message = manager.clone();
+        let chat_id_for_message = info.chat_id.clone();
+        let dialog_for_message = dialog.clone();
+        message.connect_clicked(move |_| {
+            manager_for_message.dispatch(AppAction::OpenChat {
+                chat_id: chat_id_for_message.clone(),
+            });
+            dialog_for_message.close();
+        });
+        content.append(&message);
+    }
 
     let mute = gtk::Button::with_label(if info.is_muted {
         "Unmute chat"

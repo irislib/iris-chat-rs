@@ -74,7 +74,7 @@ public partial class DesktopShell : UserControl
             if (_renderedScreenKey != "nearby")
             {
                 _renderedScreenKey = "nearby";
-                MainHost.Content = new NearbyView();
+                MainHost.Content = new NearbyView(OpenNearbyPeer);
             }
             return;
         }
@@ -516,8 +516,9 @@ public partial class DesktopShell : UserControl
             };
             if (!string.IsNullOrWhiteSpace(peer.ownerPubkeyHex))
             {
-                var owner = peer.ownerPubkeyHex!;
-                button.Click += (_, _) => _manager.OpenChat(owner);
+                var peerForClick = peer;
+                button.Click += (_, _) => OpenNearbyPeer(peerForClick);
+                AttachLongPress(button, () => ShowNearbyPeerProfile(peerForClick));
             }
             panel.Children.Add(button);
         }
@@ -538,6 +539,39 @@ public partial class DesktopShell : UserControl
         var trimmed = string.IsNullOrWhiteSpace(name) ? "Nearby" : name.Trim();
         return trimmed.Length <= 14 ? trimmed : trimmed[..13] + "…";
     }
+
+    private void OpenNearbyPeer(DesktopNearbyPeerSnapshot peer)
+    {
+        var owner = peer.ownerPubkeyHex;
+        if (string.IsNullOrWhiteSpace(owner)) return;
+
+        if (IsKnownDirectChat(owner))
+        {
+            _showingNearby = false;
+            _manager.OpenChat(owner);
+            return;
+        }
+
+        ShowNearbyPeerProfile(peer);
+    }
+
+    private void ShowNearbyPeerProfile(DesktopNearbyPeerSnapshot peer) =>
+        NearbyPeerProfileWindow.Show(
+            Window.GetWindow(this),
+            _manager,
+            peer,
+            owner =>
+            {
+                _showingNearby = false;
+                _manager.OpenChat(owner);
+            }
+        );
+
+    private bool IsKnownDirectChat(string ownerPubkeyHex) =>
+        _manager.ChatList.Any(chat =>
+            chat.kind == ChatKind.Direct &&
+            string.Equals(chat.chatId, ownerPubkeyHex, StringComparison.OrdinalIgnoreCase)
+        );
 
     private ContextMenu BuildChatContextMenu(ChatThreadSnapshot chat)
     {

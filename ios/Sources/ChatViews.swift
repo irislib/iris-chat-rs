@@ -4355,6 +4355,10 @@ private struct IrisImageViewer: View {
         currentAttachment.flatMap { loadedData[$0.htreeUrl] }
     }
 
+    private var loadTaskID: String {
+        "\(item.id):\(currentIndex)"
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -4385,17 +4389,11 @@ private struct IrisImageViewer: View {
         .irisOnExitCommand(onClose)
         .irisOnEscapeKey(onClose)
         .zIndex(10)
-        .task(id: item.id) {
-            await ensureLoaded(index: currentIndex)
+        .task(id: loadTaskID) {
+            let index = currentIndex
+            await ensureLoaded(index: index)
             updateSharedFile()
-            await preloadAdjacent(index: currentIndex)
-        }
-        .onChange(of: currentIndex) { newValue in
-            Task {
-                await ensureLoaded(index: newValue)
-                updateSharedFile()
-                await preloadAdjacent(index: newValue)
-            }
+            await preloadAdjacent(index: index)
         }
     }
 

@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(AppKit)
@@ -4904,7 +4905,7 @@ private let NearbyChatListRowHeight: CGFloat =
 private func nearbyAccessibilityLabel(nearbyEnabled: Bool, hasPeers: Bool, active: Bool) -> String {
     guard nearbyEnabled else { return "Nearby, Off" }
     if hasPeers { return "Nearby" }
-    return active ? "Nearby, No users nearby" : "Nearby, Tap to enable"
+    return active ? "Nearby, No users nearby" : "Nearby, Off"
 }
 
 private struct NearbyChatListRow: View {
@@ -4912,6 +4913,11 @@ private struct NearbyChatListRow: View {
     @ObservedObject var service: IrisNearbyService
     let onOpen: () -> Void
     let onOpenPeerProfile: (String) -> Void
+    @State private var cachedPeers: [IrisNearbyPeer] = []
+    @State private var isTransitioningNearby = false
+    @State private var transitionGeneration = 0
+    @State private var observedNearbyEnabled: Bool?
+    @State private var observedNearbyActive: Bool?
 
     private var nearbyEnabled: Bool {
         manager.state.preferences.nearbyEnabled
@@ -4921,31 +4927,93 @@ private struct NearbyChatListRow: View {
         nearbyEnabled && service.isNearbyActive
     }
 
-    private var visiblePeers: [IrisNearbyPeer] {
+    private var livePeers: [IrisNearbyPeer] {
         nearbyEnabled ? service.peers : []
     }
 
-    var body: some View {
-        if visiblePeers.isEmpty {
-            NearbyEmptyRow(
-                manager: manager,
-                active: active,
-                onOpen: onOpen
-            )
-        } else {
-            NearbyPeerStripRow(
-                manager: manager,
-                peers: visiblePeers,
-                avatarSize: IrisChatListRowMetrics.avatarSize,
-                horizontalPadding: IrisChatListRowMetrics.horizontalPadding,
-                verticalPadding: IrisChatListRowMetrics.verticalPadding,
-                rowHeight: NearbyChatListRowHeight,
-                active: active,
-                onOpenNearby: onOpen,
-                onOpenPeerProfile: onOpenPeerProfile
-            )
-            .accessibilityIdentifier("nearbyChatRow")
+    private var visiblePeers: [IrisNearbyPeer] {
+        if !livePeers.isEmpty {
+            return livePeers
         }
+        if isTransitioningNearby, !cachedPeers.isEmpty {
+            return cachedPeers
+        }
+        return []
+    }
+
+    var body: some View {
+        Group {
+            if visiblePeers.isEmpty {
+                NearbyEmptyRow(
+                    manager: manager,
+                    active: active,
+                    isTransitioning: isTransitioningNearby,
+                    onOpen: onOpen
+                )
+            } else {
+                NearbyPeerStripRow(
+                    manager: manager,
+                    peers: visiblePeers,
+                    avatarSize: IrisChatListRowMetrics.avatarSize,
+                    horizontalPadding: IrisChatListRowMetrics.horizontalPadding,
+                    verticalPadding: IrisChatListRowMetrics.verticalPadding,
+                    rowHeight: NearbyChatListRowHeight,
+                    active: active,
+                    onOpenNearby: onOpen,
+                    onOpenPeerProfile: onOpenPeerProfile
+                )
+                .accessibilityIdentifier("nearbyChatRow")
+            }
+        }
+        .onAppear {
+            cachePeersIfNeeded(service.peers)
+        }
+        .onReceive(service.$peers) { newPeers in
+            cachePeersIfNeeded(newPeers)
+            if !newPeers.isEmpty {
+                endNearbyTransition()
+            }
+        }
+        .onReceive(manager.$state.map { $0.preferences.nearbyEnabled }.removeDuplicates()) { enabled in
+            guard let previous = observedNearbyEnabled else {
+                observedNearbyEnabled = enabled
+                return
+            }
+            observedNearbyEnabled = enabled
+            if previous != enabled {
+                beginNearbyTransition()
+            }
+        }
+        .onReceive(service.$isVisible.combineLatest(service.$isLanVisible).map { $0 || $1 }.removeDuplicates()) { active in
+            guard let previous = observedNearbyActive else {
+                observedNearbyActive = active
+                return
+            }
+            observedNearbyActive = active
+            if previous != active {
+                beginNearbyTransition()
+            }
+        }
+    }
+
+    private func cachePeersIfNeeded(_ peers: [IrisNearbyPeer]) {
+        guard !peers.isEmpty else { return }
+        cachedPeers = peers
+    }
+
+    private func beginNearbyTransition() {
+        transitionGeneration += 1
+        let generation = transitionGeneration
+        isTransitioningNearby = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            guard transitionGeneration == generation else { return }
+            isTransitioningNearby = false
+        }
+    }
+
+    private func endNearbyTransition() {
+        transitionGeneration += 1
+        isTransitioningNearby = false
     }
 }
 
@@ -4953,12 +5021,16 @@ private struct NearbyEmptyRow: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var manager: AppManager
     let active: Bool
+    let isTransitioning: Bool
     let onOpen: () -> Void
     private var statusText: String {
+        if isTransitioning, manager.state.preferences.nearbyEnabled {
+            return "Starting"
+        }
         if !manager.state.preferences.nearbyEnabled {
             return "Off"
         }
-        return active ? "No users nearby" : "Tap to enable"
+        return active ? "No users nearby" : "Off"
     }
 
     var body: some View {
@@ -5050,7 +5122,11 @@ private struct NearbyPeerStripRow: View {
                         }
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            openNearbyPeer(peer, manager: manager)
+                            openNearbyPeer(
+                                peer,
+                                manager: manager,
+                                onOpenPeerProfile: onOpenPeerProfile
+                            )
                         }
                         .onLongPressGesture(minimumDuration: 0.5) {
                             openNearbyPeerProfile(peer, onOpenPeerProfile: onOpenPeerProfile)
@@ -5079,9 +5155,17 @@ private func nearbyPeerDisplayName(_ name: String) -> String {
 }
 
 @MainActor
-private func openNearbyPeer(_ peer: IrisNearbyPeer, manager: AppManager) {
+private func openNearbyPeer(
+    _ peer: IrisNearbyPeer,
+    manager: AppManager,
+    onOpenPeerProfile: (String) -> Void
+) {
     guard let ownerPubkeyHex = peer.ownerPubkeyHex else { return }
-    manager.dispatch(.openChat(chatId: ownerPubkeyHex))
+    if isKnownDirectNearbyPeer(ownerPubkeyHex, manager: manager) {
+        manager.dispatch(.openChat(chatId: ownerPubkeyHex))
+    } else {
+        onOpenPeerProfile(ownerPubkeyHex)
+    }
 }
 
 @MainActor
@@ -5097,6 +5181,14 @@ private func openNearbyPeerProfile(
     guard let ownerPubkeyHex = peer.ownerPubkeyHex else { return }
     irisNearbyLongPressFeedback()
     onOpenPeerProfile(ownerPubkeyHex)
+}
+
+@MainActor
+private func isKnownDirectNearbyPeer(_ ownerPubkeyHex: String, manager: AppManager) -> Bool {
+    manager.state.chatList.contains { chat in
+        chat.kind == .direct &&
+            chat.chatId.caseInsensitiveCompare(ownerPubkeyHex) == .orderedSame
+    }
 }
 
 private func irisNearbyLongPressFeedback() {
@@ -5362,11 +5454,12 @@ private struct NearbyIrisScreen: View {
 
     private func openPeer(_ peer: IrisNearbyPeer) {
         guard let ownerPubkeyHex = peer.ownerPubkeyHex else { return }
-        // openChat (not createChat) navigates optimistically; otherwise
-        // the sheet dismissal races the Rust round-trip and the user
-        // ends up back on the chat list with the new row but no chat open.
-        manager.dispatch(.openChat(chatId: ownerPubkeyHex))
-        onClose()
+        if isKnownDirectNearbyPeer(ownerPubkeyHex, manager: manager) {
+            manager.dispatch(.openChat(chatId: ownerPubkeyHex))
+            onClose()
+        } else {
+            openPeerProfile(ownerPubkeyHex)
+        }
     }
 }
 #endif

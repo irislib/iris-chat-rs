@@ -351,6 +351,7 @@ fun ChatListScreen(
                         NearbyChatListItem(
                             appManager = appManager,
                             nearbyEnabled = appState.preferences.nearbyEnabled,
+                            knownDirectChatIds = appState.knownDirectChatIds(),
                             service = nearby,
                             onClick = onNearbyClick,
                             onLongClick = onNearbyLongClick,
@@ -651,6 +652,7 @@ private fun ChatSwipeActionButton(
 private fun NearbyChatListItem(
     appManager: AppManager,
     nearbyEnabled: Boolean,
+    knownDirectChatIds: Set<String>,
     service: IrisNearbyService,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -719,7 +721,15 @@ private fun NearbyChatListItem(
                     NearbyPeerAvatar(
                         peer = peer,
                         onClick = {
-                            peer.ownerPubkeyHex?.let(appManager::openChat)
+                            peer.ownerPubkeyHex
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { owner ->
+                                    if (owner.lowercase() in knownDirectChatIds) {
+                                        appManager.openChat(owner)
+                                    } else {
+                                        onPeerLongClick(owner)
+                                    }
+                                }
                         },
                         onLongClick = { ownerPubkeyHex ->
                             haptics.longPress()
@@ -865,6 +875,13 @@ private fun nearbyPeerDisplayName(name: String): String {
     val trimmed = name.trim().ifEmpty { "Nearby" }
     return if (trimmed.length <= 14) trimmed else trimmed.take(13) + "…"
 }
+
+private fun AppState.knownDirectChatIds(): Set<String> =
+    chatList
+        .asSequence()
+        .filter { it.kind == ChatKind.DIRECT }
+        .map { it.chatId.lowercase() }
+        .toSet()
 
 @Composable
 internal fun rememberNhashImageData(

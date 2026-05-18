@@ -1,18 +1,22 @@
 using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using IrisChat.Bindings;
+using IrisChat.Chrome;
 
 namespace IrisChat.Views;
 
 public partial class NearbyView : UserControl
 {
+    private readonly Action<DesktopNearbyPeerSnapshot>? _openPeer;
     private bool _suppressToggleDispatch;
 
-    public NearbyView()
+    public NearbyView(Action<DesktopNearbyPeerSnapshot>? openPeer = null)
     {
+        _openPeer = openPeer;
         InitializeComponent();
         Loaded += (_, _) =>
         {
@@ -103,10 +107,32 @@ public partial class NearbyView : UserControl
 
         if (!string.IsNullOrWhiteSpace(peer.ownerPubkeyHex))
         {
-            var owner = peer.ownerPubkeyHex!;
-            button.Click += (_, _) => App.CurrentManager.CreateChat(owner);
+            var peerForClick = peer;
+            button.Click += (_, _) => OpenPeer(peerForClick);
         }
         return button;
+    }
+
+    private void OpenPeer(DesktopNearbyPeerSnapshot peer)
+    {
+        if (_openPeer is not null)
+        {
+            _openPeer(peer);
+            return;
+        }
+
+        var owner = peer.ownerPubkeyHex;
+        if (string.IsNullOrWhiteSpace(owner)) return;
+
+        if (App.CurrentManager.ChatList.Any(chat =>
+                chat.kind == ChatKind.Direct &&
+                string.Equals(chat.chatId, owner, StringComparison.OrdinalIgnoreCase)))
+        {
+            App.CurrentManager.OpenChat(owner);
+            return;
+        }
+
+        NearbyPeerProfileWindow.Show(Window.GetWindow(this), App.CurrentManager, peer);
     }
 
     private void OnLanChanged(object sender, RoutedEventArgs e)

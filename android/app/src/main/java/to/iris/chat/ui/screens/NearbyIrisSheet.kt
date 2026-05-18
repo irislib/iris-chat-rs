@@ -31,6 +31,7 @@ import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppState
+import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.proxiedImageUrl
 import to.iris.chat.ui.components.IrisAvatar
 import to.iris.chat.ui.components.IrisChatListRow
@@ -110,12 +111,13 @@ fun NearbyIrisSheet(
                                 peers = if (nearbyEnabled) snapshot.bluetoothPeers else emptyList(),
                                 onCheckedChange = onVisibleChange,
                                 onOpenPeer = { peer ->
-                                    peer.ownerPubkeyHex?.let {
-                                        // openChat (not createChat) navigates optimistically;
-                                        // otherwise the sheet dismissal races the Rust round-trip
-                                        // and leaves the user on the chat list.
-                                        appManager.openChat(it)
-                                        onDismiss()
+                                    peer.ownerPubkeyHex?.takeIf { it.isNotBlank() }?.let { owner ->
+                                        if (appState.hasKnownDirectChat(owner)) {
+                                            appManager.openChat(owner)
+                                            onDismiss()
+                                        } else {
+                                            onOpenPeerProfile(owner)
+                                        }
                                     }
                                 },
                                 onOpenPeerProfile = { peer ->
@@ -134,12 +136,13 @@ fun NearbyIrisSheet(
                                 peers = if (nearbyEnabled) snapshot.localNetworkPeers else emptyList(),
                                 onCheckedChange = onLocalNetworkVisibleChange,
                                 onOpenPeer = { peer ->
-                                    peer.ownerPubkeyHex?.let {
-                                        // openChat (not createChat) navigates optimistically;
-                                        // otherwise the sheet dismissal races the Rust round-trip
-                                        // and leaves the user on the chat list.
-                                        appManager.openChat(it)
-                                        onDismiss()
+                                    peer.ownerPubkeyHex?.takeIf { it.isNotBlank() }?.let { owner ->
+                                        if (appState.hasKnownDirectChat(owner)) {
+                                            appManager.openChat(owner)
+                                            onDismiss()
+                                        } else {
+                                            onOpenPeerProfile(owner)
+                                        }
                                     }
                                 },
                                 onOpenPeerProfile = { peer ->
@@ -369,6 +372,12 @@ private fun nearbyWifiStatusLabel(status: String): String =
         "Local network unavailable" -> "Wi-Fi unavailable"
         "Local network failed" -> "Wi-Fi failed"
         else -> status
+    }
+
+private fun AppState.hasKnownDirectChat(ownerPubkeyHex: String): Boolean =
+    chatList.any { chat ->
+        chat.kind == ChatKind.DIRECT &&
+            chat.chatId.equals(ownerPubkeyHex, ignoreCase = true)
     }
 
 @Composable
