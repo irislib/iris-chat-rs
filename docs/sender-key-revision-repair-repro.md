@@ -1,8 +1,16 @@
 # Sender-Key Revision Repair Reproduction
 
-This document captures the reproducible local-relay flow for proving that a sender-key group metadata revision repair request is emitted and can recover a pending group message.
+This document captures the reproducible local-relay flow for validating sender-key group metadata revision repair without permanent protocol plaintext logging.
 
-The reproduction intentionally logs protocol plaintext before the pairwise/session encryption step. That logging is sensitive and must stay opt-in. It is enabled only by passing `protocol_plaintext_log_file=...` through the mobile harness, which maps to `IRIS_IOS_HARNESS_PROTOCOL_PLAINTEXT_LOG_FILE`.
+The test is state/behavior based:
+
+- it exact-drops Bob's pairwise group metadata update;
+- it sends a sender-key group message that requires that missed revision;
+- it checks whether Bob passively receives the message;
+- if passive recovery times out, it reads Bob's runtime debug snapshot and verifies that AppCore recorded pending sender-key repair state;
+- it then activates Alice/Bob and verifies Bob receives the message and updated group metadata.
+
+Plaintext protocol logging should stay out of committed code. If a future investigation needs pre-encryption payload inspection, add temporary local instrumentation and remove it before committing.
 
 ## Reproduction Entry Point
 
@@ -34,42 +42,43 @@ The script writes artifacts into the scenario work dir:
 
 Important artifact patterns:
 
-- `protocol-plaintext-revision-<stamp>.log`: plaintext protocol log.
 - `revision-repair-drop-id-<stamp>.txt`: exact event id dropped by the local relay.
 - `revision-repair-bob-pending-before-drop-<stamp>.json`: pending Alice-to-Bob pairwise row selected for the drop.
 - `revision-repair-bob-passive-wait-message.log`: passive Bob wait.
+- `revision-repair-bob-debug-after-passive-wait.log`: Bob snapshot after passive timeout.
+- `revision-repair-bob-pending-after-passive-<stamp>.json`: Bob pending relay rows after passive timeout.
 - `revision-repair-alice-activate-after-passive-timeout.log`: sender-side activation after passive timeout.
 - `revision-repair-bob-forced-wait-message.log`: successful wait after forced activation.
 - `revision-repair-summary-<stamp>.json`: machine-readable outcome summary.
 
 ## Validated Run
 
-Latest validated run:
+Latest validated run before removing temporary plaintext instrumentation:
 
 ```json
 {
   "dropped_event_id": "03ca1b65fddcd81fffff62d15aa0d68fa1444a0768d90a22e8d1dfda480825e7",
   "forced_success": true,
   "group_id": "13f10e82649f2ede2eb6f248b640da38",
-  "metadata_snapshot_count": 27,
   "new_name": "Revision Repair 171528",
   "passive_success": false,
-  "repair_message": "revision-repair-message-171528",
-  "repair_request_count": 7
+  "repair_message": "revision-repair-message-171528"
 }
 ```
 
-The important plaintext line is the receiver-side repair request:
+With the no-plaintext runner, the key proof point is Bob's debug snapshot after passive timeout:
 
 ```json
 {
-  "type": "sender_key_repair_request",
-  "required_revision": 2,
-  "key_id": 2764261669,
-  "message_number": 3,
-  "sender_event_pubkey": "90486e69d2a7640d6dd6e0c4c220bb90042be0a7ad27888fb0a6d4b7c319a59b"
+  "passive_success": false,
+  "passive_pending_group_sender_key_repair_count": 1,
+  "passive_pending_group_sender_key_repair_last_requested_at_secs": 1779112057,
+  "forced_success": true,
+  "final_pending_group_sender_key_repair_count": 0
 }
 ```
+
+The exact timestamps/event ids vary per run.
 
 ## Flow
 
@@ -92,10 +101,11 @@ sequenceDiagram
   Alice1->>Relay: "sender-key outer message with revision tag 2"
   Relay->>Bob: "Bob receives sender-key outer"
   Bob->>Bob: "decrypts sender-key body, sees required revision 2 > local revision 1"
-  Bob->>Relay: "pairwise sender_key_repair_request(required_revision=2)"
+  Bob->>Bob: "records pending_group_sender_key_repairs"
+  Bob->>Relay: "pairwise sender-key repair request"
 
   Relay->>Alice1: "repair request delivered when Alice is active"
-  Alice1->>Relay: "pairwise metadata_snapshot revision 2"
+  Alice1->>Relay: "pairwise metadata snapshot revision 2"
   Relay->>Bob: "metadata repair delivered"
   Bob->>Bob: "retry pending sender-key outer"
   Bob->>Bob: "message applied once"
@@ -110,7 +120,7 @@ flowchart TD
   Outer["GroupSenderKeyMessage"] --> Handle["GroupManager::handle_sender_key_message"]
   Handle --> Decrypt["Sender-key decrypt succeeds"]
   Decrypt --> Decode["decode_sender_key_plaintext"]
-  Decode --> Compare{"plaintext.revision > group.revision?"}
+  Decode --> Compare{"message revision > local group revision?"}
   Compare -->|"yes"| PendingRevision["GroupSenderKeyHandleResult::PendingRevision"]
   Compare -->|"no"| Apply["GroupIncomingEvent"]
 ```
@@ -119,9 +129,9 @@ Relevant code:
 
 - `/Users/l/Projects/iris/group-hardening/nostr-double-ratchet/rust/crates/nostr-double-ratchet/src/group_manager.rs`
   - `handle_sender_key_message(...)`
-  - If the decrypted plaintext revision is newer than local metadata, returns `PendingRevision`.
+  - If the decrypted message revision is newer than local metadata, returns `PendingRevision`.
   - `respond_to_sender_key_repair_request(...)`
-  - If the requester is a current member and the local group revision satisfies the requested revision, sends a metadata snapshot over pairwise session.
+  - If the requester is a current member and the local group revision satisfies the requested revision, sends a metadata snapshot over the existing pairwise session.
 
 ## AppCore Logic
 
@@ -156,25 +166,24 @@ The protocol repair path worked, but the passive mobile-harness wait did not con
 There were two separate causes:
 
 1. The scenario relay URL in existing app state was stale.
-   - Some devices still had `ws://192.168.1.6:4848`.
-   - The host had moved to `192.168.100.4`.
-   - Simulators could reach the local relay reliably through `ws://127.0.0.1:4848`.
+   - Some devices still had an old LAN relay URL.
+   - Simulators can reach the local relay reliably through `ws://127.0.0.1:<port>`.
    - The repro script now adds `ws://127.0.0.1:<port>` to Alice1, Alice2, and Bob, then waits for each device to report at least one connected relay.
 
 2. The iOS harness is action-scoped, not a continuously running multi-device system.
    - `xcodebuild test-without-building` launches the app test host for one harness action.
    - After Alice renames the group offline, Alice's pending pairwise metadata rows do not necessarily publish unless Alice is active after the relay restart.
    - After Bob receives the revision-2 sender-key outer, Bob can create and publish repair requests, but Alice must also be active to receive and answer them.
-   - The passive Bob wait exercises only Bob. It proved Bob emits repair requests, but it did not keep Alice's protocol loop alive to answer.
+   - The passive Bob wait exercises only Bob. It proves Bob records pending sender-key repair state, but it does not keep Alice's protocol loop alive to answer.
    - Once the script activates Alice and waits for connected relay state, Alice processes Bob's repair request, emits metadata snapshots, and Bob applies the pending message.
 
-This is why the validated run had:
+This is why the expected result can be:
 
 ```json
 {
   "passive_success": false,
   "forced_success": true,
-  "repair_request_count": 7
+  "passive_pending_group_sender_key_repair_count": 1
 }
 ```
 
@@ -184,8 +193,8 @@ The revision repair protocol is functional:
 
 - Bob receives a sender-key outer.
 - Bob decrypts enough to discover that the message requires metadata revision 2.
-- Bob emits pairwise `sender_key_repair_request(required_revision=2)`.
-- Alice answers with a metadata snapshot.
+- Bob records durable pending sender-key repair state and publishes repair requests.
+- Alice answers with a metadata snapshot once Alice's AppCore loop is active.
 - Bob retries the pending outer and applies the message.
 
 The passive harness timeout is not evidence that revision repair is logically broken. It is evidence that this manual harness does not keep both sides' AppCore event loops alive. A product device that is foregrounded and connected should answer repair requests. A suspended/offline sender cannot answer until it reconnects, so recovery latency depends on sender-side app liveness.

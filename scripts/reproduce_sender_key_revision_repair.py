@@ -7,7 +7,6 @@ import re
 import subprocess
 import sys
 import time
-from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -94,7 +93,6 @@ def start_relay(config: Path, log_path: Path) -> None:
 def harness(
     state: dict[str, Any],
     work_dir: Path,
-    plaintext_log: Path,
     device_id: str,
     action: str,
     *,
@@ -115,8 +113,6 @@ def harness(
         device["run_id"],
         "--action",
         action,
-        "--arg",
-        f"protocol_plaintext_log_file={plaintext_log}",
     ]
     for key, value in (args or {}).items():
         command.extend(["--arg", f"{key}={value}"])
@@ -138,7 +134,7 @@ def status_summary(completed: subprocess.CompletedProcess[str]) -> dict[str, str
     return values
 
 
-def ensure_localhost_relay(state: dict[str, Any], work_dir: Path, plaintext_log: Path, port: int) -> None:
+def ensure_localhost_relay(state: dict[str, Any], work_dir: Path, port: int) -> None:
     relay_url = f"ws://127.0.0.1:{port}"
     for device_id in ("alice1", "alice2", "bob1"):
         print(f"Adding localhost relay to {device_id}: {relay_url}")
@@ -146,7 +142,6 @@ def ensure_localhost_relay(state: dict[str, Any], work_dir: Path, plaintext_log:
             harness(
                 state,
                 work_dir,
-                plaintext_log,
                 device_id,
                 "add_relay_from_args",
                 args={"relay_url": relay_url},
@@ -157,7 +152,6 @@ def ensure_localhost_relay(state: dict[str, Any], work_dir: Path, plaintext_log:
             harness(
                 state,
                 work_dir,
-                plaintext_log,
                 device_id,
                 "wait_for_connected_relay",
                 args={"timeout_secs": "45"},
@@ -199,34 +193,39 @@ def select_newest_pending_row(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return sorted(rows, key=lambda row: (row.get("created_at_secs") or 0, row["event_id"]))[-1]
 
 
-def parse_plaintext_log(path: Path, group_id: str) -> dict[str, Any]:
-    rows = []
-    if path.exists():
-        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                item = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            payload = item.get("payload") or {}
-            if payload.get("group_id") == group_id:
-                rows.append(payload)
-    counts = Counter(row.get("type") or "sender_key_plaintext_event" for row in rows)
-    repair_requests = [row for row in rows if row.get("type") == "sender_key_repair_request"]
-    metadata_snapshots = [row for row in rows if row.get("type") == "metadata_snapshot"]
-    sender_key_messages = [row for row in rows if row.get("type") is None]
-    return {
-        "counts": dict(counts),
-        "repair_requests": repair_requests,
-        "metadata_snapshots": metadata_snapshots,
-        "sender_key_messages": sender_key_messages,
-    }
+def list_pending_relay_rows(data_dir: str, output_path: Path) -> list[dict[str, Any]]:
+    completed = run(
+        [
+            sys.executable,
+            str(PENDING_PUBLISHES),
+            "list",
+            "--data-dir",
+            data_dir,
+            "--format",
+            "json",
+        ],
+        log_path=output_path.with_suffix(".log"),
+    )
+    output_path.write_text(completed.stdout, encoding="utf-8")
+    return json.loads(completed.stdout)
+
+
+def protocol_engine_debug(state: dict[str, Any], device_id: str) -> dict[str, Any]:
+    debug_path = Path(state["devices"][device_id]["data_dir"]) / "iris_chat_runtime_debug.json"
+    if not debug_path.exists():
+        return {}
+    try:
+        debug = json.loads(debug_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    protocol_engine = debug.get("protocol_engine")
+    return protocol_engine if isinstance(protocol_engine, dict) else {}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Reproduce sender-key metadata revision repair with a local relay exact drop. "
-            "Requires a build whose group codec honors protocol_plaintext_log_file."
+            "Reproduce sender-key metadata revision repair with a local relay exact drop."
         )
     )
     parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
@@ -244,8 +243,6 @@ def main() -> int:
     work_dir = scenario_work_dir(config)
     work_dir.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%H%M%S")
-    plaintext_log = work_dir / f"protocol-plaintext-revision-{stamp}.log"
-    plaintext_log.write_text("", encoding="utf-8")
 
     if args.setup:
         scenario_command(config, "setup", log_path=work_dir / f"revision-repair-setup-{stamp}.log")
@@ -254,11 +251,10 @@ def main() -> int:
     group = state["groups"][args.group_key]
     relay = state["relay"]
     alice = state["devices"]["alice1"]
-    alice2 = state["devices"]["alice2"]
     bob = state["devices"]["bob1"]
 
     start_relay(config, work_dir / f"revision-repair-start-relay-{stamp}.log")
-    ensure_localhost_relay(state, work_dir, plaintext_log, int(relay["port"]))
+    ensure_localhost_relay(state, work_dir, int(relay["port"]))
 
     baseline_message = f"revision-baseline-{stamp}"
     new_name = f"Revision Repair {stamp}"
@@ -272,7 +268,6 @@ def main() -> int:
             harness(
                 state,
                 work_dir,
-                plaintext_log,
                 "alice1",
                 "send_message_from_args",
                 args={
@@ -288,7 +283,6 @@ def main() -> int:
             harness(
                 state,
                 work_dir,
-                plaintext_log,
                 "bob1",
                 "wait_for_message_from_args",
                 args={
@@ -306,7 +300,6 @@ def main() -> int:
         harness(
             state,
             work_dir,
-            plaintext_log,
             "alice1",
             "update_group_name_from_args",
             args={
@@ -342,7 +335,6 @@ def main() -> int:
         harness(
             state,
             work_dir,
-            plaintext_log,
             "alice1",
             "wait_for_connected_relay",
             args={"timeout_secs": "45"},
@@ -354,7 +346,6 @@ def main() -> int:
         harness(
             state,
             work_dir,
-            plaintext_log,
             "alice2",
             "wait_for_group_name_from_args",
             args={"chat_id": group["chat_id"], "group_name": new_name},
@@ -367,7 +358,6 @@ def main() -> int:
         harness(
             state,
             work_dir,
-            plaintext_log,
             "alice1",
             "send_message_from_args",
             args={
@@ -384,7 +374,6 @@ def main() -> int:
     passive = harness(
         state,
         work_dir,
-        plaintext_log,
         "bob1",
         "wait_for_message_from_args",
         args={"chat_id": group["chat_id"], "message": repair_message, "direction": "incoming"},
@@ -394,13 +383,34 @@ def main() -> int:
     passive_success = passive.returncode == 0 and "INSTRUMENTATION_CODE: -1" in passive.stdout
     print(f"Passive Bob wait success: {passive_success}")
 
+    harness(
+        state,
+        work_dir,
+        "bob1",
+        "report_runtime_debug_snapshot",
+        log_suffix="bob-debug-after-passive-wait",
+    )
+    bob_protocol_after_passive = protocol_engine_debug(state, "bob1")
+    passive_pending_repair_count = int(
+        bob_protocol_after_passive.get("pending_group_sender_key_repair_count") or 0
+    )
+    passive_pending_repair_last_requested_at_secs = int(
+        bob_protocol_after_passive.get("pending_group_sender_key_repair_last_requested_at_secs")
+        or 0
+    )
+    bob_pending_after_passive = list_pending_relay_rows(
+        bob["data_dir"],
+        work_dir / f"revision-repair-bob-pending-after-passive-{stamp}.json",
+    )
+    print(f"Bob pending sender-key repair count after passive wait: {passive_pending_repair_count}")
+    print(f"Bob pending relay publish count after passive wait: {len(bob_pending_after_passive)}")
+
     forced_success = False
     if not passive_success and not args.skip_force_activation:
         print("Activating both sides and forcing connected-relay/liveness work.")
         harness(
             state,
             work_dir,
-            plaintext_log,
             "alice1",
             "report_runtime_debug_snapshot",
             log_suffix="alice-activate-after-passive-timeout",
@@ -408,7 +418,6 @@ def main() -> int:
         harness(
             state,
             work_dir,
-            plaintext_log,
             "alice1",
             "wait_for_connected_relay",
             args={"timeout_secs": "45"},
@@ -417,7 +426,6 @@ def main() -> int:
         harness(
             state,
             work_dir,
-            plaintext_log,
             "bob1",
             "wait_for_connected_relay",
             args={"timeout_secs": "45"},
@@ -427,7 +435,6 @@ def main() -> int:
         forced = harness(
             state,
             work_dir,
-            plaintext_log,
             "bob1",
             "wait_for_message_from_args",
             args={"chat_id": group["chat_id"], "message": repair_message, "direction": "incoming"},
@@ -440,7 +447,6 @@ def main() -> int:
                 harness(
                     state,
                     work_dir,
-                    plaintext_log,
                     "bob1",
                     "wait_for_group_name_from_args",
                     args={"chat_id": group["chat_id"], "group_name": new_name},
@@ -449,7 +455,14 @@ def main() -> int:
             )
         print(f"Forced activation success: {forced_success}")
 
-    parsed = parse_plaintext_log(plaintext_log, group["group_id"])
+    harness(
+        state,
+        work_dir,
+        "bob1",
+        "report_runtime_debug_snapshot",
+        log_suffix="bob-debug-final",
+    )
+    bob_protocol_final = protocol_engine_debug(state, "bob1")
     summary = {
         "stamp": stamp,
         "group_id": group["group_id"],
@@ -457,22 +470,29 @@ def main() -> int:
         "new_name": new_name,
         "repair_message": repair_message,
         "dropped_event_id": drop_row["event_id"],
-        "plaintext_log": str(plaintext_log),
         "passive_success": passive_success,
         "forced_success": forced_success,
-        "repair_request_count": len(parsed["repair_requests"]),
-        "metadata_snapshot_count": len(parsed["metadata_snapshots"]),
-        "plaintext_counts": parsed["counts"],
+        "passive_pending_group_sender_key_repair_count": passive_pending_repair_count,
+        "passive_pending_group_sender_key_repair_last_requested_at_secs": (
+            passive_pending_repair_last_requested_at_secs
+        ),
+        "passive_bob_pending_relay_publish_count": len(bob_pending_after_passive),
+        "final_pending_group_sender_key_repair_count": int(
+            bob_protocol_final.get("pending_group_sender_key_repair_count") or 0
+        ),
     }
     summary_path = work_dir / f"revision-repair-summary-{stamp}.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(summary, indent=2, sort_keys=True))
 
-    if summary["repair_request_count"] == 0:
-        print("No sender_key_repair_request was observed in the plaintext log.", file=sys.stderr)
+    if not passive_success and passive_pending_repair_count == 0:
+        print(
+            "Bob did not receive the message and did not record a pending sender-key repair.",
+            file=sys.stderr,
+        )
         return 2
     if not (passive_success or forced_success):
-        print("Repair request was observed, but Bob did not apply the message.", file=sys.stderr)
+        print("Revision repair state was observed, but Bob did not apply the message.", file=sys.stderr)
         return 3
     return 0
 
