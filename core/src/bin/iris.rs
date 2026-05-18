@@ -1,4 +1,7 @@
+use std::ffi::OsString;
 use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -52,6 +55,7 @@ Maintenance:
   privacy    Privacy tools
   update     Update iris
   help       Print help";
+const CLI_APP_DIR_NAME: &str = "Iris Chat CLI";
 
 #[derive(Parser)]
 #[command(name = "iris")]
@@ -496,8 +500,7 @@ fn main() {
 
 fn run(cli: Cli) -> Result<()> {
     let data_dir = cli.data_dir.unwrap_or_else(default_data_dir);
-    std::fs::create_dir_all(&data_dir)
-        .with_context(|| format!("create data dir {}", data_dir.display()))?;
+    ensure_private_data_dir(&data_dir)?;
     let command_name = command_name(&cli.command).to_string();
     let data = match cli.command {
         Commands::Messages(MessageTopCommands::Search { query, limit }) => {
@@ -1965,6 +1968,8 @@ fn account_bundle_path(data_dir: &Path) -> PathBuf {
 
 fn read_account_bundle(data_dir: &Path) -> Result<Option<AccountBundle>> {
     let path = account_bundle_path(data_dir);
+    ensure_private_data_dir(data_dir)?;
+    secure_account_bundle_file(&path)?;
     if !path.exists() {
         return Ok(None);
     }
@@ -1974,10 +1979,9 @@ fn read_account_bundle(data_dir: &Path) -> Result<Option<AccountBundle>> {
 }
 
 fn write_account_bundle(data_dir: &Path, bundle: &AccountBundle) -> Result<()> {
-    std::fs::create_dir_all(data_dir)?;
+    ensure_private_data_dir(data_dir)?;
     let path = account_bundle_path(data_dir);
-    std::fs::write(&path, serde_json::to_vec_pretty(bundle)?)
-        .with_context(|| format!("write account bundle {}", path.display()))
+    write_private_account_bundle_file(&path, &serde_json::to_vec_pretty(bundle)?)
 }
 
 fn remove_account_bundle(data_dir: &Path) -> Result<()> {
@@ -1996,11 +2000,247 @@ fn remove_account_bundle(data_dir: &Path) -> Result<()> {
 }
 
 fn default_data_dir() -> PathBuf {
-    if let Some(home) = std::env::var_os("HOME") {
-        return PathBuf::from(home)
-            .join("Library")
-            .join("Application Support")
-            .join("Iris Chat CLI");
+    default_data_dir_from_env(current_default_data_dir_platform(), |key| {
+        std::env::var_os(key)
+    })
+}
+
+#[derive(Clone, Copy)]
+enum DefaultDataDirPlatform {
+    #[cfg(any(target_os = "macos", test))]
+    Macos,
+    #[cfg(any(windows, test))]
+    Windows,
+    #[cfg(any(not(any(target_os = "macos", windows)), test))]
+    Xdg,
+}
+
+fn current_default_data_dir_platform() -> DefaultDataDirPlatform {
+    #[cfg(target_os = "macos")]
+    {
+        DefaultDataDirPlatform::Macos
     }
-    PathBuf::from(".iris-chat")
+    #[cfg(windows)]
+    {
+        DefaultDataDirPlatform::Windows
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        DefaultDataDirPlatform::Xdg
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        DefaultDataDirPlatform::Xdg
+    }
+}
+
+fn default_data_dir_from_env(
+    platform: DefaultDataDirPlatform,
+    mut env: impl FnMut(&str) -> Option<OsString>,
+) -> PathBuf {
+    let fallback = || PathBuf::from(".iris-chat");
+    match platform {
+        #[cfg(any(target_os = "macos", test))]
+        DefaultDataDirPlatform::Macos => env_path(&mut env, "HOME")
+            .map(|home| {
+                home.join("Library")
+                    .join("Application Support")
+                    .join(CLI_APP_DIR_NAME)
+            })
+            .unwrap_or_else(fallback),
+        #[cfg(any(windows, test))]
+        DefaultDataDirPlatform::Windows => env_path(&mut env, "APPDATA")
+            .or_else(|| env_path(&mut env, "LOCALAPPDATA"))
+            .or_else(|| {
+                env_path(&mut env, "USERPROFILE").map(|home| home.join("AppData").join("Roaming"))
+            })
+            .map(|base| base.join(CLI_APP_DIR_NAME))
+            .unwrap_or_else(fallback),
+        #[cfg(any(not(any(target_os = "macos", windows)), test))]
+        DefaultDataDirPlatform::Xdg => env_path(&mut env, "XDG_DATA_HOME")
+            .or_else(|| env_path(&mut env, "HOME").map(|home| home.join(".local").join("share")))
+            .map(|base| base.join(CLI_APP_DIR_NAME))
+            .unwrap_or_else(fallback),
+    }
+}
+
+fn env_path(env: &mut impl FnMut(&str) -> Option<OsString>, key: &str) -> Option<PathBuf> {
+    env(key)
+        .filter(|value| !value.as_os_str().is_empty())
+        .map(PathBuf::from)
+}
+
+#[cfg(unix)]
+fn ensure_private_data_dir(data_dir: &Path) -> Result<()> {
+    if data_dir.exists() {
+        if !data_dir.is_dir() {
+            anyhow::bail!("data dir {} is not a directory", data_dir.display());
+        }
+    } else {
+        if let Some(parent) = data_dir
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+        {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("create data dir parent {}", parent.display()))?;
+        }
+        let mut builder = std::fs::DirBuilder::new();
+        builder.mode(0o700);
+        match builder.create(data_dir) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("create data dir {}", data_dir.display()));
+            }
+        }
+    }
+    set_unix_mode(data_dir, 0o700, "secure data dir")
+}
+
+#[cfg(not(unix))]
+fn ensure_private_data_dir(data_dir: &Path) -> Result<()> {
+    std::fs::create_dir_all(data_dir)
+        .with_context(|| format!("create data dir {}", data_dir.display()))
+}
+
+#[cfg(unix)]
+fn secure_account_bundle_file(path: &Path) -> Result<()> {
+    if path.exists() {
+        set_unix_mode(path, 0o600, "secure account bundle")?;
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn secure_account_bundle_file(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
+#[cfg(unix)]
+fn write_private_account_bundle_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    secure_account_bundle_file(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).truncate(true).write(true).mode(0o600);
+    let mut file = options
+        .open(path)
+        .with_context(|| format!("write account bundle {}", path.display()))?;
+    file.write_all(bytes)
+        .with_context(|| format!("write account bundle {}", path.display()))?;
+    file.flush()
+        .with_context(|| format!("flush account bundle {}", path.display()))?;
+    drop(file);
+    secure_account_bundle_file(path)
+}
+
+#[cfg(not(unix))]
+fn write_private_account_bundle_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    std::fs::write(path, bytes).with_context(|| format!("write account bundle {}", path.display()))
+}
+
+#[cfg(unix)]
+fn set_unix_mode(path: &Path, mode: u32, action: &str) -> Result<()> {
+    match std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("{action} {}", path.display())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_data_dir_uses_xdg_data_home_on_linux() {
+        let path = default_data_dir_from_env(DefaultDataDirPlatform::Xdg, |key| match key {
+            "XDG_DATA_HOME" => Some(OsString::from("/tmp/iris-xdg")),
+            "HOME" => Some(OsString::from("/tmp/iris-home")),
+            _ => None,
+        });
+
+        assert_eq!(path, PathBuf::from("/tmp/iris-xdg").join(CLI_APP_DIR_NAME));
+    }
+
+    #[test]
+    fn default_data_dir_falls_back_to_local_share_on_linux() {
+        let path = default_data_dir_from_env(DefaultDataDirPlatform::Xdg, |key| match key {
+            "HOME" => Some(OsString::from("/tmp/iris-home")),
+            _ => None,
+        });
+
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/iris-home")
+                .join(".local")
+                .join("share")
+                .join(CLI_APP_DIR_NAME)
+        );
+    }
+
+    #[test]
+    fn default_data_dir_uses_application_support_on_macos() {
+        let path = default_data_dir_from_env(DefaultDataDirPlatform::Macos, |key| match key {
+            "HOME" => Some(OsString::from("/tmp/iris-home")),
+            _ => None,
+        });
+
+        assert_eq!(
+            path,
+            PathBuf::from("/tmp/iris-home")
+                .join("Library")
+                .join("Application Support")
+                .join(CLI_APP_DIR_NAME)
+        );
+    }
+
+    #[test]
+    fn default_data_dir_uses_appdata_on_windows() {
+        let path = default_data_dir_from_env(DefaultDataDirPlatform::Windows, |key| match key {
+            "APPDATA" => Some(OsString::from(r"C:\Users\iris\AppData\Roaming")),
+            "LOCALAPPDATA" => Some(OsString::from(r"C:\Users\iris\AppData\Local")),
+            _ => None,
+        });
+
+        assert_eq!(
+            path,
+            PathBuf::from(r"C:\Users\iris\AppData\Roaming").join(CLI_APP_DIR_NAME)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn account_bundle_permissions_are_private_and_repaired() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir()?;
+        let data_dir = temp.path().join(CLI_APP_DIR_NAME);
+        let bundle = AccountBundle {
+            owner_nsec: Some("nsec1owner".to_string()),
+            owner_pubkey_hex: "owner-hex".to_string(),
+            device_nsec: "nsec1device".to_string(),
+        };
+
+        write_account_bundle(&data_dir, &bundle)?;
+        let account_path = account_bundle_path(&data_dir);
+
+        assert_eq!(mode(&data_dir)?, 0o700);
+        assert_eq!(mode(&account_path)?, 0o600);
+
+        std::fs::set_permissions(&data_dir, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(&account_path, std::fs::Permissions::from_mode(0o644))?;
+
+        assert!(read_account_bundle(&data_dir)?.is_some());
+        assert_eq!(mode(&data_dir)?, 0o700);
+        assert_eq!(mode(&account_path)?, 0o600);
+
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    fn mode(path: &Path) -> Result<u32> {
+        use std::os::unix::fs::PermissionsExt;
+
+        Ok(std::fs::metadata(path)?.permissions().mode() & 0o777)
+    }
 }
