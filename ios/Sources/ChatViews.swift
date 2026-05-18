@@ -1253,6 +1253,7 @@ private enum SignalConversationLayout {
     static let reactionPillOverlap: CGFloat = 7
     static let reactionPillHorizontalInset: CGFloat = 6
     static let reactionPillProtrusion: CGFloat = reactionPillHeight - reactionPillOverlap
+    static let messageActionDockSpacing: CGFloat = 8
 }
 
 func irisGroupSenderNameColorHex(for senderKey: String, isDarkMode: Bool) -> UInt32 {
@@ -1917,23 +1918,20 @@ private struct ChatMessageRow: View, Equatable {
                                 )
                             }
                         }
-                        // Two macOS-only fixes: cap bubble width (without
-                        // this it stretches the full ~830pt pane), and
-                        // render the hover dock as an overlay (without
-                        // this its appearance reflows the bubble width).
-                        // iOS has no hover and phone widths self-limit.
 #if canImport(AppKit)
+                        // Keep the dock anchored to the drawn bubble, not
+                        // the invisible max-width frame that only caps long
+                        // messages. Alignment guides put the dock just
+                        // outside the bubble without hard-coding its width.
+                        .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
+                            actionDockOverlay(isOutgoing: message.isOutgoing)
+                        }
+                        // Cap bubble width on macOS; iOS has no hover and
+                        // phone widths self-limit.
                         .frame(
                             maxWidth: IrisLayout.chatBubbleMaxWidth,
                             alignment: message.isOutgoing ? .trailing : .leading
                         )
-                        .overlay(alignment: message.isOutgoing ? .leading : .trailing) {
-                            if showActionDock {
-                                actionDock()
-                                    .fixedSize()
-                                    .offset(x: message.isOutgoing ? -136 : 136)
-                            }
-                        }
 #endif
                         // The actual pan is owned by the timeline scroll view.
                         // This modifier only renders the offset/reveal state,
@@ -1959,6 +1957,25 @@ private struct ChatMessageRow: View, Equatable {
         return isFirstInCluster
             ? SignalConversationLayout.defaultMessageSpacing
             : SignalConversationLayout.compactMessageSpacing
+    }
+
+    @ViewBuilder
+    private func actionDockOverlay(isOutgoing: Bool) -> some View {
+        if showActionDock {
+            if isOutgoing {
+                actionDock()
+                    .fixedSize()
+                    .alignmentGuide(.leading) { dimensions in
+                        dimensions.width + SignalConversationLayout.messageActionDockSpacing
+                    }
+            } else {
+                actionDock()
+                    .fixedSize()
+                    .alignmentGuide(.trailing) { _ in
+                        -SignalConversationLayout.messageActionDockSpacing
+                    }
+            }
+        }
     }
 
     @ViewBuilder

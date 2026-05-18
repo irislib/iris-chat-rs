@@ -139,8 +139,20 @@ final class IrisChatUITests: XCTestCase {
         XCTAssertTrue(element(app, "messageActionsSheet").waitForExistence(timeout: 5))
 #else
         app.staticTexts["hello from ios ui test"].tap()
-        XCTAssertTrue(element(app, "messageMoreButton").waitForExistence(timeout: 5))
-        element(app, "messageMoreButton").tap()
+        let moreButton = element(app, "messageMoreButton")
+        XCTAssertTrue(moreButton.waitForExistence(timeout: 5))
+        let actionGap = messageText.frame.minX - moreButton.frame.maxX
+        XCTAssertGreaterThan(
+            actionGap,
+            0,
+            "Outgoing message action dock should sit to the left of the bubble"
+        )
+        XCTAssertLessThan(
+            actionGap,
+            90,
+            "Outgoing message action dock drifted \(actionGap)pt from the bubble"
+        )
+        moreButton.tap()
 #endif
         let messageInfoAction = app.buttons["Info"].firstMatch
         XCTAssertTrue(messageInfoAction.waitForExistence(timeout: 5))
