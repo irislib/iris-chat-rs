@@ -2346,6 +2346,7 @@ private struct DirectChatInfoScreen: View {
     @State private var showingReportConfirmation = false
     @State private var nicknameDraft = ""
     @State private var nicknameDraftLoadedKey: String?
+    @State private var editingNickname = false
 
     private var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
@@ -2702,34 +2703,29 @@ private struct DirectChatInfoScreen: View {
         let storedNickname = trimmedText(chat.nickname) ?? ""
         let normalizedDraft = nicknameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         let profileName = secondaryDisplayName(chat.profileName, primary: storedNickname.isEmpty ? chat.displayName : storedNickname)
+        let summary = storedNickname.isEmpty ? "Add nickname" : storedNickname
 
         IrisSectionCard {
-            CardHeader(title: "Nickname")
-
-            TextField("Nickname", text: $nicknameDraft)
-                .textFieldStyle(.plain)
-                .irisInputField()
-                .submitLabel(.done)
-                .onSubmit(saveNickname)
-                .accessibilityIdentifier("directChatNicknameField")
-
-            HStack(spacing: 10) {
-                Button("Save") {
-                    saveNickname()
+            Button {
+                editingNickname.toggle()
+            } label: {
+                HStack(spacing: 12) {
+                    Text("Nickname")
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                    Spacer(minLength: 0)
+                    Text(summary)
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(storedNickname.isEmpty ? palette.muted : palette.textPrimary)
+                        .lineLimit(1)
+                    Image(systemName: editingNickname ? "chevron.up" : "chevron.down")
+                        .font(.system(.footnote, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.muted)
                 }
-                .buttonStyle(IrisPrimaryButtonStyle(compact: true))
-                .disabled(normalizedDraft == storedNickname)
-                .accessibilityIdentifier("directChatSaveNicknameButton")
-
-                if !storedNickname.isEmpty {
-                    Button("Remove") {
-                        nicknameDraft = ""
-                        manager.dispatch(.setContactNickname(ownerPubkeyHex: chatId, nickname: ""))
-                    }
-                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-                    .accessibilityIdentifier("directChatRemoveNicknameButton")
-                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.irisPlain)
+            .accessibilityIdentifier("directChatNicknameRow")
 
             if let profileName {
                 Divider().overlay(palette.border)
@@ -2744,6 +2740,36 @@ private struct DirectChatInfoScreen: View {
                         .multilineTextAlignment(.trailing)
                 }
                 .accessibilityIdentifier("directChatProfileNameRow")
+            }
+
+            if editingNickname {
+                Divider().overlay(palette.border)
+
+                TextField("Nickname", text: $nicknameDraft)
+                    .textFieldStyle(.plain)
+                    .irisInputField()
+                    .submitLabel(.done)
+                    .onSubmit(saveNickname)
+                    .accessibilityIdentifier("directChatNicknameField")
+
+                HStack(spacing: 10) {
+                    Button("Save") {
+                        saveNickname()
+                    }
+                    .buttonStyle(IrisPrimaryButtonStyle(compact: true))
+                    .disabled(normalizedDraft == storedNickname)
+                    .accessibilityIdentifier("directChatSaveNicknameButton")
+
+                    if !storedNickname.isEmpty {
+                        Button("Remove") {
+                            nicknameDraft = ""
+                            editingNickname = false
+                            manager.dispatch(.setContactNickname(ownerPubkeyHex: chatId, nickname: ""))
+                        }
+                        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                        .accessibilityIdentifier("directChatRemoveNicknameButton")
+                    }
+                }
             }
         }
         .onAppear {
@@ -2804,6 +2830,7 @@ private struct DirectChatInfoScreen: View {
 
     private func saveNickname() {
         manager.dispatch(.setContactNickname(ownerPubkeyHex: chatId, nickname: nicknameDraft))
+        editingNickname = false
     }
 
     private func reportUser(_ chat: CurrentChatSnapshot, block: Bool) {

@@ -872,6 +872,7 @@ private fun DirectChatInfoScreen(
     var profileDebug by remember(chatId) { mutableStateOf<PeerProfileDebugSnapshot?>(null) }
     var commonGroups by remember(chatId) { mutableStateOf<List<ChatThreadSnapshot>>(emptyList()) }
     var nicknameDraft by remember(chatId) { mutableStateOf(chat.nickname.orEmpty()) }
+    var editingNickname by remember(chatId) { mutableStateOf(false) }
     val proxiedAvatarUrl =
         chat.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
@@ -983,11 +984,15 @@ private fun DirectChatInfoScreen(
                             appManager.dispatch(
                                 AppAction.SetContactNickname(chatId, nicknameDraft),
                             )
+                            editingNickname = false
                         },
                         onRemove = {
                             nicknameDraft = ""
+                            editingNickname = false
                             appManager.dispatch(AppAction.SetContactNickname(chatId, ""))
                         },
+                        editing = editingNickname,
+                        onToggleEditing = { editingNickname = !editingNickname },
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (commonGroups.isNotEmpty()) {
@@ -1181,6 +1186,8 @@ private fun ContactNicknameCard(
     onNicknameChange: (String) -> Unit,
     onSave: () -> Unit,
     onRemove: () -> Unit,
+    editing: Boolean,
+    onToggleEditing: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val storedNickname = chat.nickname?.trim().orEmpty()
@@ -1189,46 +1196,31 @@ private fun ContactNicknameCard(
         chat.profileName
             ?.trim()
             ?.takeIf { it.isNotEmpty() && !it.equals(primaryName, ignoreCase = true) }
+    val summary = storedNickname.ifEmpty { "Add nickname" }
 
     IrisSectionCard(modifier = modifier) {
-        Text(
-            text = "Nickname",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        TextField(
-            value = nicknameDraft,
-            onValueChange = onNicknameChange,
+        Row(
             modifier =
                 Modifier
                     .fillMaxWidth()
-                    .testTag("directChatNicknameField"),
-            label = { Text("Nickname") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            colors = irisTextFieldColors(),
-        )
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    .clickable(onClick = onToggleEditing)
+                    .testTag("directChatNicknameRow"),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IrisInlineAction(
-                text = "Save",
-                onClick = onSave,
-                modifier = Modifier.testTag("directChatSaveNicknameButton"),
-            ) {
-                Icon(imageVector = IrisIcons.Check, contentDescription = null)
-            }
-            if (storedNickname.isNotEmpty()) {
-                IrisInlineAction(
-                    text = "Remove",
-                    onClick = onRemove,
-                    modifier = Modifier.testTag("directChatRemoveNicknameButton"),
-                ) {
-                    Icon(imageVector = IrisIcons.Close, contentDescription = null)
-                }
-            }
+            Text(
+                text = "Nickname",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Text(
+                text = summary,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (storedNickname.isEmpty()) IrisTheme.palette.muted else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         profileName?.let { name ->
             IrisDivider()
@@ -1253,6 +1245,42 @@ private fun ContactNicknameCard(
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                 )
+            }
+        }
+        if (editing) {
+            IrisDivider()
+            TextField(
+                value = nicknameDraft,
+                onValueChange = onNicknameChange,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .testTag("directChatNicknameField"),
+                label = { Text("Nickname") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                colors = irisTextFieldColors(),
+            )
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IrisInlineAction(
+                    text = "Save",
+                    onClick = onSave,
+                    modifier = Modifier.testTag("directChatSaveNicknameButton"),
+                ) {
+                    Icon(imageVector = IrisIcons.Check, contentDescription = null)
+                }
+                if (storedNickname.isNotEmpty()) {
+                    IrisInlineAction(
+                        text = "Remove",
+                        onClick = onRemove,
+                        modifier = Modifier.testTag("directChatRemoveNicknameButton"),
+                    ) {
+                        Icon(imageVector = IrisIcons.Close, contentDescription = null)
+                    }
+                }
             }
         }
     }

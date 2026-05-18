@@ -457,57 +457,46 @@ public partial class ChatView : UserControl
             Margin = new Thickness(0, 0, 0, 12),
         };
         var stack = new StackPanel { Orientation = Orientation.Vertical };
-        stack.Children.Add(new TextBlock
+
+        var nicknameRow = new Grid();
+        nicknameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        nicknameRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        nicknameRow.Children.Add(new TextBlock
         {
             Text = "Nickname",
             FontWeight = FontWeights.SemiBold,
             Foreground = ResourceBrush("TextPrimary"),
-            Margin = new Thickness(0, 0, 0, 8),
+            VerticalAlignment = VerticalAlignment.Center,
         });
-
-        var input = new TextBox
+        var nicknameValue = new TextBlock
         {
-            Text = chat.nickname ?? string.Empty,
-            MinWidth = 240,
-            Margin = new Thickness(0, 0, 0, 8),
+            Text = string.IsNullOrWhiteSpace(chat.nickname) ? "Add nickname" : chat.nickname,
+            Foreground = ResourceBrush(string.IsNullOrWhiteSpace(chat.nickname) ? "TextMuted" : "TextPrimary"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(12, 0, 0, 0),
         };
-        stack.Children.Add(input);
+        Grid.SetColumn(nicknameValue, 1);
+        nicknameRow.Children.Add(nicknameValue);
 
-        var actions = new StackPanel
+        var editNickname = new Button
         {
-            Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 0, 0, string.IsNullOrWhiteSpace(chat.profileName) ? 0 : 10),
+            Background = Brushes.Transparent,
+            BorderThickness = new Thickness(0),
+            Content = nicknameRow,
+            Cursor = Cursors.Hand,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(0),
         };
-        var save = new Button
-        {
-            Content = "Save",
-            Padding = new Thickness(12, 7, 12, 7),
-            Margin = new Thickness(0, 0, 8, 0),
-        };
-        save.Click += (_, _) => App.CurrentManager.SetContactNickname(chat.chatId, input.Text ?? string.Empty);
-        actions.Children.Add(save);
-
-        if (!string.IsNullOrWhiteSpace(chat.nickname))
-        {
-            var remove = new Button
-            {
-                Content = "Remove",
-                Padding = new Thickness(12, 7, 12, 7),
-            };
-            remove.Click += (_, _) =>
-            {
-                input.Text = string.Empty;
-                App.CurrentManager.SetContactNickname(chat.chatId, string.Empty);
-            };
-            actions.Children.Add(remove);
-        }
-        stack.Children.Add(actions);
+        editNickname.Click += (_, _) => ShowNicknameEditor(chat);
+        stack.Children.Add(editNickname);
 
         var primaryName = string.IsNullOrWhiteSpace(chat.nickname) ? chat.displayName : chat.nickname;
         if (!string.IsNullOrWhiteSpace(chat.profileName)
             && !string.Equals(chat.profileName.Trim(), primaryName?.Trim(), StringComparison.OrdinalIgnoreCase))
         {
-            var profile = new Grid { Margin = new Thickness(0, 2, 0, 0) };
+            var profile = new Grid { Margin = new Thickness(0, 10, 0, 0) };
             profile.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             profile.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             profile.Children.Add(new TextBlock
@@ -531,6 +520,76 @@ public partial class ChatView : UserControl
 
         border.Child = stack;
         return border;
+    }
+
+    private static void ShowNicknameEditor(CurrentChatSnapshot chat)
+    {
+        var owner = Application.Current.Windows.OfType<Window>().FirstOrDefault(window => window.IsActive)
+            ?? Application.Current.MainWindow;
+        var dialog = new Window
+        {
+            Title = "Nickname",
+            Width = 360,
+            SizeToContent = SizeToContent.Height,
+            ResizeMode = ResizeMode.NoResize,
+            ShowInTaskbar = false,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = owner,
+            Background = ResourceBrush("Background"),
+        };
+        var stack = new StackPanel
+        {
+            Margin = new Thickness(18),
+            Orientation = Orientation.Vertical,
+        };
+        var input = new TextBox
+        {
+            Text = chat.nickname ?? string.Empty,
+            MinWidth = 260,
+            Margin = new Thickness(0, 0, 0, 14),
+        };
+        stack.Children.Add(input);
+
+        var actions = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+        };
+        var save = new Button
+        {
+            Content = "Save",
+            Padding = new Thickness(12, 7, 12, 7),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        save.Click += (_, _) =>
+        {
+            App.CurrentManager.SetContactNickname(chat.chatId, input.Text ?? string.Empty);
+            dialog.Close();
+        };
+        actions.Children.Add(save);
+
+        if (!string.IsNullOrWhiteSpace(chat.nickname))
+        {
+            var remove = new Button
+            {
+                Content = "Remove",
+                Padding = new Thickness(12, 7, 12, 7),
+            };
+            remove.Click += (_, _) =>
+            {
+                App.CurrentManager.SetContactNickname(chat.chatId, string.Empty);
+                dialog.Close();
+            };
+            actions.Children.Add(remove);
+        }
+        stack.Children.Add(actions);
+        dialog.Content = stack;
+        dialog.Loaded += (_, _) =>
+        {
+            input.Focus();
+            input.SelectAll();
+        };
+        dialog.ShowDialog();
     }
 
     private static FrameworkElement BuildCommonGroupsSection(

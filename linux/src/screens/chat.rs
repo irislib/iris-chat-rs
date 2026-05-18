@@ -14,6 +14,7 @@ use crate::app_manager::AppManager;
 use crate::screens::chat_list::{relative_time, unix_now};
 use crate::widgets::image_cache;
 
+#[derive(Clone)]
 pub struct ChatInfoSnapshot {
     pub chat_id: String,
     pub display_name: String,
@@ -267,50 +268,24 @@ fn linkified_about_markup(text: &str) -> String {
 fn nickname_card(info: &ChatInfoSnapshot, manager: Rc<AppManager>) -> gtk::Widget {
     let group = adw::PreferencesGroup::builder().title("Nickname").build();
 
-    let nickname_row = adw::EntryRow::builder().title("Nickname").build();
-    nickname_row.set_text(info.nickname.as_deref().unwrap_or(""));
-    let save = gtk::Button::with_label("Save");
-    save.add_css_class("suggested-action");
-    save.set_valign(gtk::Align::Center);
-    let manager_for_save = manager.clone();
-    let row_for_save = nickname_row.clone();
-    let chat_id_for_save = info.chat_id.clone();
-    save.connect_clicked(move |_| {
-        manager_for_save.dispatch(AppAction::SetContactNickname {
-            owner_pubkey_hex: chat_id_for_save.clone(),
-            nickname: row_for_save.text().trim().to_string(),
-        });
-    });
-    nickname_row.add_suffix(&save);
-
-    let manager_for_apply = manager.clone();
-    let chat_id_for_apply = info.chat_id.clone();
-    nickname_row.connect_apply(move |row| {
-        manager_for_apply.dispatch(AppAction::SetContactNickname {
-            owner_pubkey_hex: chat_id_for_apply.clone(),
-            nickname: row.text().trim().to_string(),
-        });
-    });
-
-    if info
+    let stored_nickname = info
         .nickname
         .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        let remove = gtk::Button::with_label("Remove");
-        remove.set_valign(gtk::Align::Center);
-        let manager_for_remove = manager.clone();
-        let row_for_remove = nickname_row.clone();
-        let chat_id_for_remove = info.chat_id.clone();
-        remove.connect_clicked(move |_| {
-            row_for_remove.set_text("");
-            manager_for_remove.dispatch(AppAction::SetContactNickname {
-                owner_pubkey_hex: chat_id_for_remove.clone(),
-                nickname: String::new(),
-            });
-        });
-        nickname_row.add_suffix(&remove);
-    }
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
+    let nickname_row = adw::ActionRow::builder()
+        .title("Nickname")
+        .subtitle(stored_nickname.as_deref().unwrap_or("Add nickname"))
+        .activatable(true)
+        .build();
+    let info_for_edit = info.clone();
+    nickname_row.connect_activated(move |row| {
+        let parent = row
+            .root()
+            .and_then(|root| root.downcast::<gtk::Window>().ok());
+        present_nickname_editor(parent.as_ref(), &info_for_edit, manager.clone());
+    });
 
     group.add(&nickname_row);
 
@@ -333,6 +308,65 @@ fn nickname_card(info: &ChatInfoSnapshot, manager: Rc<AppManager>) -> gtk::Widge
     }
 
     group.upcast()
+}
+
+fn present_nickname_editor(
+    parent: Option<&gtk::Window>,
+    info: &ChatInfoSnapshot,
+    manager: Rc<AppManager>,
+) {
+    let dialog = adw::Dialog::builder()
+        .title("Nickname")
+        .content_width(360)
+        .build();
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 12);
+    content.set_margin_top(16);
+    content.set_margin_bottom(16);
+    content.set_margin_start(16);
+    content.set_margin_end(16);
+
+    let nickname_row = adw::EntryRow::builder().title("Nickname").build();
+    nickname_row.set_text(info.nickname.as_deref().unwrap_or(""));
+    content.append(&nickname_row);
+
+    let actions = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let save = gtk::Button::with_label("Save");
+    save.add_css_class("suggested-action");
+    let manager_for_save = manager.clone();
+    let row_for_save = nickname_row.clone();
+    let dialog_for_save = dialog.clone();
+    let chat_id_for_save = info.chat_id.clone();
+    save.connect_clicked(move |_| {
+        manager_for_save.dispatch(AppAction::SetContactNickname {
+            owner_pubkey_hex: chat_id_for_save.clone(),
+            nickname: row_for_save.text().trim().to_string(),
+        });
+        dialog_for_save.close();
+    });
+    actions.append(&save);
+
+    if info
+        .nickname
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
+        let remove = gtk::Button::with_label("Remove");
+        let manager_for_remove = manager.clone();
+        let dialog_for_remove = dialog.clone();
+        let chat_id_for_remove = info.chat_id.clone();
+        remove.connect_clicked(move |_| {
+            manager_for_remove.dispatch(AppAction::SetContactNickname {
+                owner_pubkey_hex: chat_id_for_remove.clone(),
+                nickname: String::new(),
+            });
+            dialog_for_remove.close();
+        });
+        actions.append(&remove);
+    }
+    content.append(&actions);
+
+    dialog.set_child(Some(&content));
+    dialog.present(parent);
 }
 
 fn common_groups_card(
