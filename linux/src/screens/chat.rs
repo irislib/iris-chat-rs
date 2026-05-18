@@ -178,7 +178,11 @@ fn nickname_card(info: &ChatInfoSnapshot, manager: Rc<AppManager>) -> gtk::Widge
         });
     });
 
-    if info.nickname.as_deref().is_some_and(|value| !value.trim().is_empty()) {
+    if info
+        .nickname
+        .as_deref()
+        .is_some_and(|value| !value.trim().is_empty())
+    {
         let remove = gtk::Button::with_label("Remove");
         remove.set_valign(gtk::Align::Center);
         let manager_for_remove = manager.clone();

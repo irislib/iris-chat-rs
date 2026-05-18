@@ -1,14 +1,17 @@
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use iris_chat_core::{
-    proxied_image_url, AppAction, AppState, ChatKind, ChatThreadSnapshot, GroupDetailsSnapshot,
-    GroupMemberSnapshot,
+    is_valid_peer_input, normalize_peer_input, proxied_image_url, AppAction, AppState, ChatKind,
+    ChatThreadSnapshot, GroupDetailsSnapshot, GroupMemberSnapshot,
 };
 
 use crate::app_manager::AppManager;
 use crate::widgets::image_cache;
+
+const ADD_MEMBER_CANDIDATE_LIMIT: usize = 8;
 
 pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     let scrolled = gtk::ScrolledWindow::new();
@@ -322,7 +325,10 @@ fn add_members_card(
     state: &AppState,
     manager: &Rc<AppManager>,
 ) -> gtk::Widget {
-    let group = adw::PreferencesGroup::builder().title("Add member").build();
+    let group = adw::PreferencesGroup::builder()
+        .title("Add members")
+        .description("Search or paste a user ID.")
+        .build();
 
     let entry = adw::EntryRow::builder()
         .title("Search or paste user ID")
@@ -331,39 +337,8 @@ fn add_members_card(
     let add = gtk::Button::with_label(if busy { "Adding…" } else { "Add" });
     add.add_css_class("suggested-action");
     add.set_valign(gtk::Align::Center);
-    add.set_sensitive(!busy);
-
-    let manager_for_btn = manager.clone();
-    let row_for_btn = entry.clone();
-    let group_id_owned = group_id.to_string();
-    add.connect_clicked(move |btn| {
-        let value = row_for_btn.text().trim().to_string();
-        if value.is_empty() {
-            return;
-        }
-        btn.set_sensitive(false);
-        row_for_btn.set_text("");
-        manager_for_btn.dispatch(AppAction::AddGroupMembers {
-            group_id: group_id_owned.clone(),
-            member_inputs: vec![value],
-        });
-    });
+    add.set_sensitive(false);
     entry.add_suffix(&add);
-
-    let manager_for_apply = manager.clone();
-    let group_id_owned = group_id.to_string();
-    entry.connect_apply(move |row| {
-        let value = row.text().trim().to_string();
-        if value.is_empty() {
-            return;
-        }
-        row.set_text("");
-        manager_for_apply.dispatch(AppAction::AddGroupMembers {
-            group_id: group_id_owned.clone(),
-            member_inputs: vec![value],
-        });
-    });
-
     group.add(&entry);
 
     let local_owner_hex = state
@@ -376,6 +351,54 @@ fn add_members_card(
         .iter()
         .map(|m| m.owner_pubkey_hex.clone())
         .collect();
+    let selected_owners: Rc<RefCell<HashSet<String>>> = Rc::new(RefCell::new(HashSet::new()));
+
+    let update_add_button: Rc<dyn Fn()> = {
+        let add = add.clone();
+        let entry = entry.clone();
+        let selected_owners = selected_owners.clone();
+        let existing_member_hexes = existing_member_hexes.clone();
+        let local_owner_hex = local_owner_hex.clone();
+        Rc::new(move || {
+            let pending_count = pending_add_member_inputs(
+                &entry.text(),
+                &selected_owners.borrow(),
+                &existing_member_hexes,
+                &local_owner_hex,
+            )
+            .len();
+            add.set_label(&add_member_button_label(pending_count, busy));
+            add.set_sensitive(!busy && pending_count > 0);
+        })
+    };
+
+    {
+        let manager_for_btn = manager.clone();
+        let entry_for_btn = entry.clone();
+        let selected_owners_for_btn = selected_owners.clone();
+        let existing_member_hexes_for_btn = existing_member_hexes.clone();
+        let local_owner_hex_for_btn = local_owner_hex.clone();
+        let group_id_owned = group_id.to_string();
+        add.connect_clicked(move |btn| {
+            let inputs = pending_add_member_inputs(
+                &entry_for_btn.text(),
+                &selected_owners_for_btn.borrow(),
+                &existing_member_hexes_for_btn,
+                &local_owner_hex_for_btn,
+            );
+            if inputs.is_empty() {
+                return;
+            }
+            btn.set_sensitive(false);
+            entry_for_btn.set_text("");
+            selected_owners_for_btn.borrow_mut().clear();
+            manager_for_btn.dispatch(AppAction::AddGroupMembers {
+                group_id: group_id_owned.clone(),
+                member_inputs: inputs,
+            });
+        });
+    }
+
     let candidates: Vec<ChatThreadSnapshot> = state
         .chat_list
         .iter()
@@ -386,7 +409,20 @@ fn add_members_card(
         .collect();
 
     if !candidates.is_empty() {
-        let mut row_widgets: Vec<adw::ActionRow> = Vec::with_capacity(candidates.len());
+        let results_header = adw::ActionRow::builder()
+            .title("Known users")
+            .activatable(false)
+            .build();
+        let close = gtk::Button::from_icon_name("window-close-symbolic");
+        close.add_css_class("flat");
+        close.add_css_class("circular");
+        close.set_tooltip_text(Some("Close search results"));
+        close.set_valign(gtk::Align::Center);
+        results_header.add_suffix(&close);
+        group.add(&results_header);
+
+        let mut row_widgets: Vec<(ChatThreadSnapshot, adw::ActionRow)> =
+            Vec::with_capacity(candidates.len());
         for chat in &candidates {
             let title = if chat.display_name.trim().is_empty() {
                 "Iris user".to_string()
@@ -402,40 +438,139 @@ fn add_members_card(
             }
             let avatar = adw::Avatar::new(32, Some(&chat.display_name), true);
             row.add_prefix(&avatar);
-            let plus = gtk::Image::from_icon_name("list-add-symbolic");
-            plus.add_css_class("dim-label");
-            row.add_suffix(&plus);
+            let check = gtk::CheckButton::new();
+            check.set_valign(gtk::Align::Center);
+            check.set_sensitive(!busy);
+            row.add_suffix(&check);
 
-            let manager_for_row = manager.clone();
-            let group_id_for_row = group_id.to_string();
-            let chat_id_for_row = chat.chat_id.clone();
+            let selected_owners_for_check = selected_owners.clone();
+            let update_add_button_for_check = update_add_button.clone();
+            let chat_id_for_check = chat.chat_id.clone();
+            check.connect_toggled(move |check| {
+                if check.is_active() {
+                    selected_owners_for_check
+                        .borrow_mut()
+                        .insert(chat_id_for_check.clone());
+                } else {
+                    selected_owners_for_check
+                        .borrow_mut()
+                        .remove(&chat_id_for_check);
+                }
+                update_add_button_for_check();
+            });
+
+            let check_for_row = check.clone();
             row.connect_activated(move |_| {
-                manager_for_row.dispatch(AppAction::AddGroupMembers {
-                    group_id: group_id_for_row.clone(),
-                    member_inputs: vec![chat_id_for_row.clone()],
-                });
+                check_for_row.set_active(!check_for_row.is_active());
             });
             group.add(&row);
-            row_widgets.push(row);
+            row_widgets.push((chat.clone(), row));
         }
 
-        let candidates_for_filter = candidates.clone();
+        let row_widgets = Rc::new(row_widgets);
+        let results_visible = Rc::new(RefCell::new(true));
+        let update_results: Rc<dyn Fn()> = {
+            let entry = entry.clone();
+            let results_header = results_header.clone();
+            let row_widgets = row_widgets.clone();
+            let results_visible = results_visible.clone();
+            Rc::new(move || {
+                let visible = *results_visible.borrow();
+                let query = entry.text().to_lowercase();
+                let trimmed = query.trim();
+                results_header.set_title(if trimmed.is_empty() {
+                    "Known users"
+                } else {
+                    "Search results"
+                });
+
+                let mut shown = 0;
+                for (chat, row) in row_widgets.iter() {
+                    let matches = trimmed.is_empty()
+                        || chat.display_name.to_lowercase().contains(trimmed)
+                        || chat.chat_id.to_lowercase().contains(trimmed)
+                        || chat
+                            .subtitle
+                            .as_ref()
+                            .map(|s| s.to_lowercase().contains(trimmed))
+                            .unwrap_or(false);
+                    let show_row = visible && matches && shown < ADD_MEMBER_CANDIDATE_LIMIT;
+                    if show_row {
+                        shown += 1;
+                    }
+                    row.set_visible(show_row);
+                }
+                results_header.set_visible(visible && shown > 0);
+            })
+        };
+
+        {
+            let results_visible = results_visible.clone();
+            let update_results = update_results.clone();
+            close.connect_clicked(move |_| {
+                *results_visible.borrow_mut() = false;
+                update_results();
+            });
+        }
+
+        {
+            let results_visible = results_visible.clone();
+            let update_results = update_results.clone();
+            let update_add_button = update_add_button.clone();
+            entry.connect_changed(move |_| {
+                *results_visible.borrow_mut() = true;
+                update_results();
+                update_add_button();
+            });
+        }
+
+        update_results();
+    } else {
+        let update_add_button = update_add_button.clone();
         entry.connect_changed(move |entry| {
-            let query = entry.text().to_lowercase();
-            let trimmed = query.trim();
-            for (chat, row) in candidates_for_filter.iter().zip(row_widgets.iter()) {
-                let matches = trimmed.is_empty()
-                    || chat.display_name.to_lowercase().contains(trimmed)
-                    || chat.chat_id.to_lowercase().contains(trimmed)
-                    || chat
-                        .subtitle
-                        .as_ref()
-                        .map(|s| s.to_lowercase().contains(trimmed))
-                        .unwrap_or(false);
-                row.set_visible(matches);
-            }
+            let _ = entry;
+            update_add_button();
         });
     }
 
+    update_add_button();
     group.upcast()
+}
+
+fn pending_add_member_inputs(
+    raw_input: &str,
+    selected_owners: &HashSet<String>,
+    existing_member_hexes: &HashSet<String>,
+    local_owner_hex: &str,
+) -> Vec<String> {
+    let mut inputs: HashSet<String> = selected_owners
+        .iter()
+        .filter(|owner| {
+            !owner.eq_ignore_ascii_case(local_owner_hex) && !existing_member_hexes.contains(*owner)
+        })
+        .cloned()
+        .collect();
+
+    let normalized = normalize_peer_input(raw_input.to_string());
+    if !normalized.is_empty()
+        && is_valid_peer_input(normalized.clone())
+        && !normalized.eq_ignore_ascii_case(local_owner_hex)
+        && !existing_member_hexes.contains(&normalized)
+    {
+        inputs.insert(normalized);
+    }
+
+    let mut inputs: Vec<String> = inputs.into_iter().collect();
+    inputs.sort();
+    inputs
+}
+
+fn add_member_button_label(input_count: usize, busy: bool) -> String {
+    if busy {
+        "Adding…".to_string()
+    } else if input_count > 1 {
+        format!("Add {input_count}")
+    } else {
+        "Add".to_string()
+    }
 }
