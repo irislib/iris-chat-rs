@@ -352,10 +352,10 @@ build_macos() {
 # ---------- Windows ----------
 build_windows() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
-    note_skipped "windows: only wired for macOS hosts driving win11-dev over SSH"
+    note_skipped "windows: only wired for macOS hosts driving a Windows build host over SSH"
     return 0
   fi
-  local ssh_host="${IRIS_WINDOWS_SSH_HOST:-win11-dev}"
+  local ssh_host="${IRIS_WINDOWS_SSH_HOST:-windows-build}"
   local ssh_attempts="${IRIS_WINDOWS_SSH_RETRIES:-8}"
   local ssh_delay="${IRIS_WINDOWS_SSH_RETRY_DELAY_SECS:-10}"
   local ssh_ready=0
@@ -371,7 +371,7 @@ build_windows() {
     fi
   done
   if [[ "$ssh_ready" -ne 1 ]]; then
-    note_skipped "windows: ssh $ssh_host unreachable (bring the VM up over the Nostr VPN mesh, or set IRIS_WINDOWS_SSH_HOST)"
+    note_skipped "windows: ssh $ssh_host unreachable (bring the VM up, or set IRIS_WINDOWS_SSH_HOST)"
     return 0
   fi
 

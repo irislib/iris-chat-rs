@@ -10,7 +10,7 @@ up without a venv. Implements the bare minimum of RFC 6455 (text frames
 + ping/pong) + Nostr REQ/EVENT framing.
 
 Usage:
-  capture_relay_event.py --relay ws://192.168.178.81:4848 \
+  capture_relay_event.py --relay ws://127.0.0.1:4848 \
                          --kinds 1060 \
                          --p-tag <hex_recipient> \
                          --timeout-secs 60

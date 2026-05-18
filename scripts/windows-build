@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 #
-# Windows build harness driven from macOS over SSH to win11-dev.
+# Windows build harness driven from macOS over SSH to a Windows build host.
 #
 # Mirrors the iOS/Android pattern: the host runs the script, and the actual
-# Rust + .NET toolchain runs on the Windows VM. The Windows VM is the
-# `win11-dev` host reachable over the Nostr VPN mesh (see ~/.claude/CLAUDE.md);
-# we tar-pipe the working tree over SSH and run base64-encoded PowerShell
+# Rust + .NET toolchain runs on the Windows VM. Configure the SSH host with
+# IRIS_WINDOWS_SSH_HOST; we tar-pipe the working tree over SSH and run base64-encoded PowerShell
 # remotely.
 #
-# Build target: x86_64-pc-windows-msvc (production). The win11-dev VM is
+# Build target: x86_64-pc-windows-msvc (production). The Windows build host is
 # x86_64, so this matches without emulation.
 
 set -Eeuo pipefail
@@ -32,20 +31,20 @@ usage() {
 usage: ./scripts/windows-build <command>
 
 commands:
-  windows-doctor     Probe win11-dev for required toolchain pieces
-  windows-setup      Install normal Windows build tools on win11-dev
-  windows-sync       Tar-over-SSH the repo from the host into win11-dev
-  windows-rust       Build the Rust cdylib on win11-dev (x86_64-pc-windows-msvc)
-  windows-gen-cs     Generate C# bindings on win11-dev via uniffi-bindgen-cs
+  windows-doctor     Probe the Windows host for required toolchain pieces
+  windows-setup      Install normal Windows build tools on the Windows host
+  windows-sync       Tar-over-SSH the repo from the host into the Windows host
+  windows-rust       Build the Rust cdylib on the Windows host (x86_64-pc-windows-msvc)
+  windows-gen-cs     Generate C# bindings on the Windows host via uniffi-bindgen-cs
   windows-dotnet     Run dotnet publish for the WPF C# app
   windows-build      Full pipeline: sync, rust, bindings, dotnet publish
   windows-installer  Build a Release publish + NSIS x86_64 setup .exe
   windows-zip        Zip the latest Release publish directory into dist/windows
-  windows-run        Launch the freshly built .exe on win11-dev
+  windows-run        Launch the freshly built .exe on the Windows host
 
 env knobs:
-  IRIS_WINDOWS_SSH_HOST           SSH host running Windows (default: win11-dev)
-  IRIS_WINDOWS_GUEST_REPO_PATH    Repo path on win11-dev (default: C:\src\iris-chat-rs)
+  IRIS_WINDOWS_SSH_HOST           SSH host running Windows (default: windows-build)
+  IRIS_WINDOWS_GUEST_REPO_PATH    Repo path on the Windows host (default: C:\src\iris-chat-rs)
   IRIS_WINDOWS_TARGET             Rust target triple (default: x86_64-pc-windows-msvc)
   IRIS_WINDOWS_LLVM_BIN           LLVM bin dir for ring/sha2 cc-rs builds
   IRIS_WINDOWS_BINDGEN_CS_GIT_REF Tag/branch of NordSec/uniffi-bindgen-cs
@@ -61,19 +60,18 @@ err() {
 
 require_macos() {
   if [[ "$(uname -s)" != "Darwin" ]]; then
-    err "windows-build is intended to run on macOS (drives win11-dev over SSH)."
+    err "windows-build is intended to run on macOS (drives a Windows build host over SSH)."
     exit 1
   fi
 }
 
 # Returns the SSH host running Windows. We no longer auto-detect Parallels VMs;
-# the build is run against `win11-dev` (or whatever IRIS_WINDOWS_SSH_HOST points
-# at) — see ~/.claude/CLAUDE.md.
+# the build is run against IRIS_WINDOWS_SSH_HOST.
 detect_vm_name() {
-  printf '%s\n' "${IRIS_WINDOWS_SSH_HOST:-win11-dev}"
+  printf '%s\n' "${IRIS_WINDOWS_SSH_HOST:-windows-build}"
 }
 
-# Returns the working-tree path inside win11-dev. This is no longer a "shared
+# Returns the working-tree path inside the Windows host. This is no longer a "shared
 # folder" — it's a regular directory the script keeps in sync with `tar | ssh`.
 # Kept under this name so the rest of the script doesn't change.
 detect_shared_repo_path() {
@@ -81,7 +79,7 @@ detect_shared_repo_path() {
 }
 
 windows_git_remote_name() {
-  printf '%s\n' "${IRIS_WINDOWS_GIT_REMOTE:-win11-dev}"
+  printf '%s\n' "${IRIS_WINDOWS_GIT_REMOTE:-windows-build}"
 }
 
 git_current_branch() {
@@ -110,7 +108,7 @@ ensure_dist_dir() {
   mkdir -p "$DIST_DIR"
 }
 
-# Copy a built artifact off the win11-dev VM. With Parallels we shared
+# Copy a built artifact off the Windows build host. With Parallels we shared
 # C:\src\iris-chat-rs as a host folder so the artifact appeared on macOS
 # automatically; over SSH we have to fetch it ourselves.
 #

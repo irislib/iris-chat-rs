@@ -40,59 +40,7 @@ firebase_access_token() {
       gcloud auth print-access-token
     return 0
   fi
-  ssh -o BatchMode=yes -o ConnectTimeout=5 root@osiris \
-    'if command -v gcloud >/dev/null 2>&1; then
-       gcloud auth application-default print-access-token 2>/dev/null ||
-         gcloud auth print-access-token 2>/dev/null
-     elif [ -f /root/iris-backend/firebase-key.json ]; then
-       cd /root/iris-backend && python3 - <<'"'"'PY'"'"'
-import base64
-import json
-import os
-import subprocess
-import tempfile
-import time
-import urllib.parse
-import urllib.request
-
-with open("firebase-key.json", "r", encoding="utf-8") as handle:
-    key = json.load(handle)
-
-def b64url(raw: bytes) -> str:
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
-
-now = int(time.time())
-header = b64url(json.dumps({"alg": "RS256", "typ": "JWT"}, separators=(",", ":")).encode())
-claim = b64url(json.dumps({
-    "iss": key["client_email"],
-    "scope": "https://www.googleapis.com/auth/firebase.messaging",
-    "aud": "https://oauth2.googleapis.com/token",
-    "iat": now,
-    "exp": now + 3600,
-}, separators=(",", ":")).encode())
-unsigned = f"{header}.{claim}".encode("ascii")
-private_key_path = None
-try:
-    with tempfile.NamedTemporaryFile("w", delete=False, encoding="utf-8") as key_file:
-        key_file.write(key["private_key"])
-        private_key_path = key_file.name
-    signature = subprocess.check_output(
-        ["openssl", "dgst", "-sha256", "-sign", private_key_path],
-        input=unsigned,
-    )
-finally:
-    if private_key_path:
-        os.unlink(private_key_path)
-
-jwt = f"{header}.{claim}.{b64url(signature)}"
-data = urllib.parse.urlencode({
-    "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-    "assertion": jwt,
-}).encode()
-with urllib.request.urlopen("https://oauth2.googleapis.com/token", data=data, timeout=20) as response:
-    print(json.load(response)["access_token"])
-PY
-     fi'
+  return 1
 }
 
 run_instrumentation() {
