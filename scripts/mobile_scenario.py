@@ -631,7 +631,7 @@ class Scenario:
         return "link_url"
 
     def setup_accounts(self) -> None:
-        rebuild_next = True
+        rebuild_next = bool(self.config.get("ios", {}).get("build", True))
         for device in self.config.get("devices", []):
             if device.get("linked_to"):
                 continue
