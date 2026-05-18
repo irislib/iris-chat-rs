@@ -435,6 +435,32 @@ final class InteropHarnessTests: XCTestCase {
             )
             manager.dispatch(.sendMessage(chatId: chatID, text: message))
 
+            let waitForDeliveryRaw = (env["IRIS_IOS_HARNESS_WAIT_FOR_DELIVERY"] ?? "true")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            if ["0", "false", "no"].contains(waitForDeliveryRaw) {
+                let localDelivery = try await waitFor(label: "queued outgoing message \(message)", timeout: 10) {
+                    if let current = manager.state.currentChat,
+                       self.sameIdentifier(current.chatId, chatID),
+                       let messageEntry = current.messages.first(where: { $0.isOutgoing && $0.body == message }) {
+                        return String(describing: messageEntry.delivery)
+                    }
+                    if let delivery = self.splitPersistenceMessageDelivery(
+                        dataDir: dataDir,
+                        chatID: chatID,
+                        message: message,
+                        direction: "outgoing"
+                    ) {
+                        return delivery
+                    }
+                    return nil
+                }
+                status("chat_id", chatID)
+                status("message", message)
+                status("delivery", localDelivery)
+                break
+            }
+
             let finalizedDelivery = try await waitFor(label: "outgoing message \(message)", timeout: 180) {
                 if let current = manager.state.currentChat,
                    self.sameIdentifier(current.chatId, chatID),
