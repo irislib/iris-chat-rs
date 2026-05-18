@@ -11,6 +11,7 @@ namespace IrisChat.Chrome;
 
 public partial class DesktopShell : UserControl
 {
+    private const double NearbyRowContentHeight = 64;
     private readonly AppManager _manager;
     private Screen _activeScreen;
     private string? _renderedChatId;
@@ -337,6 +338,7 @@ public partial class DesktopShell : UserControl
         var grid = new Grid
         {
             Margin = new Thickness(10, 8, 10, 8),
+            Height = NearbyRowContentHeight,
             VerticalAlignment = VerticalAlignment.Top,
         };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
@@ -357,20 +359,17 @@ public partial class DesktopShell : UserControl
         Grid.SetColumn(leading, 0);
         grid.Children.Add(leading);
 
-        if (!active)
+        var text = new TextBlock
         {
-            var text = new TextBlock
-            {
-                Text = "Tap to enable",
-                Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
-                FontSize = 13,
-                Margin = new Thickness(12, 0, 0, 0),
-                VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis,
-            };
-            Grid.SetColumn(text, 1);
-            grid.Children.Add(text);
-        }
+            Text = active ? "No users nearby" : "Tap to enable",
+            Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
+            FontSize = 13,
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        };
+        Grid.SetColumn(text, 1);
+        grid.Children.Add(text);
 
         var button = new Button
         {
@@ -490,6 +489,7 @@ public partial class DesktopShell : UserControl
             HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
             VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
             Margin = new Thickness(12, 0, 0, 0),
+            Height = NearbyRowContentHeight,
             VerticalAlignment = VerticalAlignment.Top,
         };
     }

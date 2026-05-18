@@ -601,6 +601,7 @@ private fun SwipeableChatListRow(
 
 private val ChatSwipeActionsWidth = 176.dp
 private val NearbyActiveBlue = Color(0xFF2267F5)
+private val NearbyChatRowHeight = 88.dp
 
 @Composable
 private fun ChatSwipeActionButton(
@@ -651,7 +652,7 @@ private fun NearbyChatListItem(
         modifier =
             Modifier
                 .fillMaxWidth()
-                .heightIn(min = 84.dp)
+                .height(NearbyChatRowHeight)
                 .clickable(
                     interactionSource = interactionSource,
                     indication = null,
@@ -660,22 +661,25 @@ private fun NearbyChatListItem(
                 .padding(horizontal = 16.dp, vertical = 10.dp)
                 .testTag("nearbyChatRow"),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
-        verticalAlignment = if (snapshot.peers.isEmpty()) Alignment.CenterVertically else Alignment.Top,
+        verticalAlignment = Alignment.Top,
     ) {
         NearbyChatIcon(enabled = nearbyEnabled)
 
         if (snapshot.peers.isEmpty()) {
-            if (!nearbyEnabled) {
+            Box(
+                modifier =
+                    Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                contentAlignment = Alignment.CenterStart,
+            ) {
                 Text(
-                    text = "Tap to enable",
-                    modifier = Modifier.weight(1f),
+                    text = if (nearbyEnabled) "No users nearby" else "Tap to enable",
                     style = MaterialTheme.typography.bodyMedium,
                     color = IrisTheme.palette.muted,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            } else {
-                Spacer(modifier = Modifier.weight(1f))
             }
         } else {
             Row(

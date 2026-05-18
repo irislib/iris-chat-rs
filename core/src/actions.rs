@@ -9,10 +9,6 @@ pub enum AppAction {
         name: String,
         picture_url: Option<String>,
     },
-    SetContactNickname {
-        owner_pubkey_hex: String,
-        nickname: String,
-    },
     RestoreSession {
         owner_nsec: String,
     },
@@ -255,4 +251,11 @@ pub enum AppAction {
     /// Publish a blank owner metadata event so public profile name/photo are
     /// cleared before the shell removes local keys and data.
     DeleteProfileMetadata,
+    /// Set or clear a local nickname for a contact. Appended at the end of
+    /// the enum so adding it doesn't shift existing variants' uniffi tags
+    /// on still-stale bindings.
+    SetContactNickname {
+        owner_pubkey_hex: String,
+        nickname: String,
+    },
 }

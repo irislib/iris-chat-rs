@@ -2025,6 +2025,7 @@ private struct DesktopNearbyIrisRow: View {
                 avatarSize: 42,
                 horizontalPadding: 10,
                 verticalPadding: 8,
+                rowHeight: nil,
                 onOpenNearby: onOpen
             )
             .background(
@@ -4367,9 +4368,7 @@ private struct ChatListTableView: UIViewRepresentable {
         private func configureNearby(_ cell: UITableViewCell) {
             guard let manager else { return }
             cell.accessibilityIdentifier = "nearbyChatRow"
-            cell.accessibilityLabel = manager.nearbyIris.isNearbyActive
-                ? "Nearby"
-                : "Nearby, Tap to enable"
+            cell.accessibilityLabel = nearbyAccessibilityLabel(manager.nearbyIris)
             cell.accessibilityTraits = []
             cell.isAccessibilityElement = false
             cell.selectionStyle = .none
@@ -4730,6 +4729,14 @@ private extension UIColor {
 #endif
 
 #if os(iOS) || os(macOS)
+private let NearbyChatListRowHeight: CGFloat =
+    IrisChatListRowMetrics.avatarSize + IrisChatListRowMetrics.verticalPadding * 2 + 18
+
+private func nearbyAccessibilityLabel(_ service: IrisNearbyService) -> String {
+    if !service.peers.isEmpty { return "Nearby" }
+    return service.isNearbyActive ? "Nearby, No users nearby" : "Nearby, Tap to enable"
+}
+
 private struct NearbyChatListRow: View {
     @ObservedObject var manager: AppManager
     @ObservedObject var service: IrisNearbyService
@@ -4745,6 +4752,7 @@ private struct NearbyChatListRow: View {
                 avatarSize: IrisChatListRowMetrics.avatarSize,
                 horizontalPadding: IrisChatListRowMetrics.horizontalPadding,
                 verticalPadding: IrisChatListRowMetrics.verticalPadding,
+                rowHeight: NearbyChatListRowHeight,
                 onOpenNearby: onOpen
             )
             .accessibilityIdentifier("nearbyChatRow")
@@ -4756,28 +4764,30 @@ private struct NearbyEmptyRow: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var service: IrisNearbyService
     let onOpen: () -> Void
+    private var statusText: String {
+        service.isNearbyActive ? "No users nearby" : "Tap to enable"
+    }
 
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: IrisChatListRowMetrics.avatarTextSpacing) {
                 NearbyWirelessAvatar(active: service.isNearbyActive)
 
-                if !service.isNearbyActive {
-                    Text("Tap to enable")
-                        .font(.subheadline)
-                        .foregroundStyle(palette.muted)
-                        .lineLimit(1)
-                }
+                Text(statusText)
+                    .font(.subheadline)
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
 
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, IrisChatListRowMetrics.horizontalPadding)
             .padding(.vertical, IrisChatListRowMetrics.verticalPadding)
+            .frame(height: NearbyChatListRowHeight, alignment: .top)
             .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
         .accessibilityIdentifier("nearbyChatRow")
-        .accessibilityLabel(service.isNearbyActive ? "Nearby" : "Nearby, Tap to enable")
+        .accessibilityLabel(nearbyAccessibilityLabel(service))
     }
 }
 
@@ -4804,6 +4814,7 @@ private struct NearbyPeerStripRow: View {
     let avatarSize: CGFloat
     let horizontalPadding: CGFloat
     let verticalPadding: CGFloat
+    let rowHeight: CGFloat?
     let onOpenNearby: () -> Void
 
     var body: some View {
@@ -4849,6 +4860,7 @@ private struct NearbyPeerStripRow: View {
         }
         .padding(.leading, horizontalPadding)
         .padding(.vertical, verticalPadding)
+        .frame(height: rowHeight, alignment: .top)
         .contentShape(Rectangle())
     }
 }

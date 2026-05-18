@@ -375,6 +375,8 @@ fn message_hit_row(
 fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     let snapshot = manager.nearby_snapshot();
     let active = snapshot.visible;
+    const NEARBY_AVATAR_SIZE: i32 = 40;
+    const NEARBY_ROW_CONTENT_HEIGHT: i32 = NEARBY_AVATAR_SIZE + 22;
 
     let outer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     outer.set_margin_top(6);
@@ -382,30 +384,29 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     outer.set_margin_start(12);
     outer.set_margin_end(12);
     outer.set_hexpand(true);
+    outer.set_size_request(-1, NEARBY_ROW_CONTENT_HEIGHT);
     outer.set_valign(gtk::Align::Start);
 
     if !snapshot.peers.is_empty() {
-        outer.append(&nearby_icon_button(manager, active));
+        outer.append(&nearby_icon_button(manager, active, NEARBY_AVATAR_SIZE));
         outer.append(&nearby_avatar_strip(&snapshot.peers, manager));
         return outer.upcast();
     }
 
-    outer.append(&nearby_icon(active));
+    outer.append(&nearby_icon(active, NEARBY_AVATAR_SIZE));
 
-    if !active {
-        let label = gtk::Label::new(Some("Tap to enable"));
-        label.set_valign(gtk::Align::Center);
-        label.set_halign(gtk::Align::Start);
-        label.set_xalign(0.0);
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.add_css_class("dim-label");
-        label.set_hexpand(true);
-        outer.append(&label);
+    let label = gtk::Label::new(Some(if active {
+        "No users nearby"
     } else {
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        outer.append(&spacer);
-    }
+        "Tap to enable"
+    }));
+    label.set_valign(gtk::Align::Center);
+    label.set_halign(gtk::Align::Start);
+    label.set_xalign(0.0);
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.add_css_class("dim-label");
+    label.set_hexpand(true);
+    outer.append(&label);
 
     let button = gtk::Button::new();
     button.add_css_class("flat");
@@ -417,12 +418,12 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     button.upcast()
 }
 
-fn nearby_icon_button(manager: &Rc<AppManager>, active: bool) -> gtk::Button {
+fn nearby_icon_button(manager: &Rc<AppManager>, active: bool, size: i32) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("flat");
-    button.set_size_request(40, 40);
+    button.set_size_request(size, size);
     button.set_tooltip_text(Some("Nearby"));
-    button.set_child(Some(&nearby_icon(active)));
+    button.set_child(Some(&nearby_icon(active, size)));
     button.set_valign(gtk::Align::Start);
     let manager_for_click = manager.clone();
     button.connect_clicked(move |btn| {
@@ -431,9 +432,9 @@ fn nearby_icon_button(manager: &Rc<AppManager>, active: bool) -> gtk::Button {
     button
 }
 
-fn nearby_icon(active: bool) -> gtk::Box {
+fn nearby_icon(active: bool, size: i32) -> gtk::Box {
     let background = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    background.set_size_request(40, 40);
+    background.set_size_request(size, size);
     background.set_valign(gtk::Align::Start);
     background.set_halign(gtk::Align::Center);
     background.add_css_class("circular");
