@@ -28,19 +28,19 @@
 
                 <ItemsControl x:Name="SelectedMembersList" Margin="0,12,0,8" />
 
+                <Button x:Name="NextButton"
+                        Style="{StaticResource PrimaryButton}"
+                        Click="OnNext"
+                        Margin="0,8,0,8">
+                    <TextBlock x:Name="NextButtonText" Text="Next (0)" />
+                </Button>
+
                 <TextBlock x:Name="KnownUsersHeader"
                            Text="Known users"
                            Style="{StaticResource SectionTitleText}"
                            Margin="0,8,0,4"
                            Visibility="Collapsed" />
                 <ItemsControl x:Name="KnownUsersList" />
-
-                <Button x:Name="NextButton"
-                        Style="{StaticResource PrimaryButton}"
-                        Click="OnNext"
-                        Margin="0,16,0,0">
-                    <TextBlock x:Name="NextButtonText" Text="Next (0)" />
-                </Button>
             </StackPanel>
 
             <StackPanel x:Name="DetailsStep" Visibility="Collapsed">

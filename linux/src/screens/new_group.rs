@@ -100,6 +100,8 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         member_input.connect_changed(move |entry| add_member(entry.text().to_string()));
     }
 
+    members_step.append(&next);
+
     if !known_users.is_empty() {
         let known_label = gtk::Label::new(Some("Known users"));
         known_label.add_css_class("heading");
@@ -142,8 +144,6 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
             }
         });
     }
-
-    members_step.append(&next);
 
     let name = entry("Group name");
     let photo_label = gtk::Label::new(None);

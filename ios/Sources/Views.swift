@@ -5187,15 +5187,15 @@ struct NewGroupScreen: View {
                     .accessibilityIdentifier("newGroupMemberInput")
             }
 
-            if !filteredKnownChats.isEmpty {
-                knownUsersCard
-            }
-
             Button(selectedOwners.isEmpty ? "Next" : "Next (\(selectedOwners.count))") {
                 step = .details
             }
             .buttonStyle(IrisPrimaryButtonStyle())
             .accessibilityIdentifier("newGroupNextButton")
+
+            if !filteredKnownChats.isEmpty {
+                knownUsersCard
+            }
         }
     }
 

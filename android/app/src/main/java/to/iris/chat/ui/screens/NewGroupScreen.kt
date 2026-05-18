@@ -158,6 +158,21 @@ fun NewGroupScreen(
                     )
                 }
 
+                IrisPrimaryButton(
+                    text = if (selectedOwners.isEmpty()) "Next" else "Next (${selectedOwners.size})",
+                    onClick = { step = NewGroupStep.DETAILS },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .testTag("newGroupNextButton"),
+                    icon = {
+                        Icon(
+                            imageVector = IrisIcons.NewGroup,
+                            contentDescription = null,
+                        )
+                    },
+                )
+
                 if (filteredKnownChats.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
@@ -193,21 +208,6 @@ fun NewGroupScreen(
                         }
                     }
                 }
-
-                IrisPrimaryButton(
-                    text = if (selectedOwners.isEmpty()) "Next" else "Next (${selectedOwners.size})",
-                    onClick = { step = NewGroupStep.DETAILS },
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .testTag("newGroupNextButton"),
-                    icon = {
-                        Icon(
-                            imageVector = IrisIcons.NewGroup,
-                            contentDescription = null,
-                        )
-                    },
-                )
             } else {
                 Column(
                     modifier = Modifier.testTag("newGroupDetailsStep"),
