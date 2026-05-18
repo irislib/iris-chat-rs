@@ -74,9 +74,14 @@ semantic_version_code() {
 apple_marketing_version() {
   local version="$1"
   local core
+  local a b c rest
   core="${version%%[-+]*}"
-  IFS=. read -r a b c _rest <<< "$core"
-  printf '%s.%s.%s\n' "${a:-0}" "${b:-0}" "${c:-0}"
+  IFS=. read -r a b c rest <<< "$core"
+  if [[ -n "${rest:-}" ]]; then
+    printf '%s.%s.%s\n' "${a:-0}" "${b:-0}" "${c:-0}"
+    return
+  fi
+  printf '%s\n' "$core"
 }
 
 resolve_shared_build_metadata() {

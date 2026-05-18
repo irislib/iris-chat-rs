@@ -1,3 +1,8 @@
+# Iris Chat 2026.5.18.3
+
+- Nearby profiles now open as profiles instead of being mistaken for chats.
+- Profile nickname editing no longer shows a placeholder nickname as saved data.
+
 # Iris Chat 2026.5.18.2
 
 - Adding people to groups now asks for confirmation before sending invites.
