@@ -1924,26 +1924,21 @@ class RealRelayHarnessTest {
         val status =
             waitForState("relay publish drain", timeoutMs = timeoutMs) {
                 wakeRelay()
-                val pendingRuntimeOutboundCount =
-                    if (runtimeOnly) {
-                        pendingRelayPublishCount("runtime")
-                    } else {
-                        null
-                    }
+                val pendingDurablePublishCount = pendingRelayPublishCount()
                 appManager()
                     .state
                     .value
                     .networkStatus
                     ?.takeIf { status ->
                         (status.relayUrls.isEmpty() || status.connectedRelayCount > 0UL) &&
-                            (pendingRuntimeOutboundCount?.let { it == 0 } ?:
-                                (status.pendingOutboundCount == 0UL)) &&
+                            pendingDurablePublishCount == 0 &&
+                            (runtimeOnly || status.pendingOutboundCount == 0UL) &&
                             status.pendingGroupControlCount == 0UL
                     }
             }
         reportStatus(
             "pending_outbound_count" to status.pendingOutboundCount.toString(),
-            "pending_runtime_outbound_count" to pendingRelayPublishCount("runtime").toString(),
+            "pending_runtime_outbound_count" to pendingRelayPublishCount().toString(),
             "pending_group_control_count" to status.pendingGroupControlCount.toString(),
         )
     }

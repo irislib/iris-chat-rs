@@ -571,6 +571,14 @@ fn removing_authorized_device_advances_app_keys_timestamp() {
 }
 
 #[test]
+fn removing_authorized_device_beats_equal_timestamp_roster_merge() {
+    assert_eq!(account::next_removed_app_keys_created_at(100, 80, 90), 102);
+    assert_eq!(account::next_removed_app_keys_created_at(100, 110, 90), 111);
+    assert_eq!(account::next_removed_app_keys_created_at(100, 80, 120), 121);
+    assert_eq!(account::next_removed_app_keys_created_at(100, 100, 90), 102);
+}
+
+#[test]
 fn app_keys_runtime_storage_failure_does_not_mark_seen_or_mutate_app_cache() {
     let owner = Keys::generate();
     let device = Keys::generate();

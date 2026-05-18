@@ -974,9 +974,10 @@ impl AppCore {
             entry
                 .devices
                 .retain(|candidate| candidate.identity_pubkey_hex != device.to_hex());
-            entry.created_at_secs = next_app_keys_created_at(
+            entry.created_at_secs = next_removed_app_keys_created_at(
                 unix_now().get(),
-                entry.created_at_secs.max(latest_device_created_at),
+                entry.created_at_secs,
+                latest_device_created_at,
             );
         }
     }
@@ -1165,6 +1166,15 @@ fn next_app_keys_created_at(now: u64, current: u64) -> u64 {
         current.saturating_add(1)
     } else {
         now
+    }
+}
+
+pub(super) fn next_removed_app_keys_created_at(now: u64, current: u64, latest_device: u64) -> u64 {
+    let latest_known = current.max(latest_device);
+    if now >= latest_known {
+        now.saturating_add(2)
+    } else {
+        latest_known.saturating_add(1)
     }
 }
 
