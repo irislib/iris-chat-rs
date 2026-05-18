@@ -222,6 +222,7 @@ public partial class DesktopShell : UserControl
     private FrameworkElement BuildMainPane(Screen screen) => screen switch
     {
         Screen.Chat c => CreateChatPane(c.chatId),
+        Screen.DirectChatInfo c => CreateChatPane(c.chatId),
         Screen.GroupDetails g => new GroupDetailsView { GroupId = g.groupId },
         Screen.NewChat => new NewChatView(),
         Screen.NewGroup => new NewGroupView(),

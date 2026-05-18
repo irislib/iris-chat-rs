@@ -117,6 +117,7 @@ public partial class RootView : UserControl
             Screen.JoinInvite => new JoinInviteView(),
             Screen.Settings => new SettingsView(),
             Screen.Chat c => new ChatView { ChatId = c.chatId },
+            Screen.DirectChatInfo c => new ChatView { ChatId = c.chatId },
             Screen.GroupDetails g => new GroupDetailsView { GroupId = g.groupId },
             Screen.DeviceRoster => new DeviceRosterView(),
             _ => new TextBlock { Text = "Unknown screen", Margin = new Thickness(40) },
@@ -153,6 +154,7 @@ public partial class RootView : UserControl
         Screen.JoinInvite => "Join Chat",
         Screen.Settings => "Settings",
         Screen.Chat => "Chat",
+        Screen.DirectChatInfo => "Details",
         Screen.GroupDetails => "Group",
         Screen.DeviceRoster => "Manage Devices",
         Screen.AwaitingDeviceApproval => "Finish Linking",
@@ -163,6 +165,7 @@ public partial class RootView : UserControl
     public static string ScreenKey(Screen screen) => screen switch
     {
         Screen.Chat c => $"chat:{c.chatId}",
+        Screen.DirectChatInfo c => $"directChatInfo:{c.chatId}",
         Screen.GroupDetails g => $"group:{g.groupId}",
         _ => screen.GetType().Name,
     };

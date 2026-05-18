@@ -1535,6 +1535,15 @@ final class AppManager: ObservableObject {
         case .chat(let chatId):
             let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : [.chat(chatId: trimmed)]
+        case .directChatInfo(let chatId):
+            let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            var stack = state.router.screenStack
+            let infoScreen = Screen.directChatInfo(chatId: trimmed)
+            if stack.last != infoScreen {
+                stack.append(infoScreen)
+            }
+            return stack
         case .groupDetails(let groupId):
             let trimmed = groupId.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { return nil }
@@ -1610,7 +1619,14 @@ final class AppManager: ObservableObject {
     }
 
     private func loadInitialChatPageForActiveChat(in stack: [Screen]) {
-        guard case .chat(let chatId) = stack.last else { return }
+        let chatId: String?
+        switch stack.last {
+        case .chat(let value), .directChatInfo(let value):
+            chatId = value
+        default:
+            chatId = nil
+        }
+        guard let chatId else { return }
         loadInitialChatPage(chatId: chatId)
     }
 
@@ -1634,7 +1650,7 @@ final class AppManager: ObservableObject {
                 } else {
                     self.exhaustedOlderChatPages.remove(trimmedChat)
                 }
-                guard self.activeChatID(in: self.state) == page.chatId else {
+                guard self.activeChatSnapshotID(in: self.state) == page.chatId else {
                     return
                 }
                 var nextState = self.state
@@ -3140,6 +3156,13 @@ final class AppManager: ObservableObject {
                 rememberChatSnapshot(nextState.currentChat)
             }
             nextState.groupDetails = nil
+        case .directChatInfo(let chatId):
+            if nextState.currentChat?.chatId != chatId {
+                nextState.currentChat = cachedChatSnapshot(chatId: chatId)
+            } else {
+                rememberChatSnapshot(nextState.currentChat)
+            }
+            nextState.groupDetails = nil
         case .groupDetails(let groupId):
             if nextState.groupDetails?.groupId != groupId {
                 nextState.groupDetails = nil
@@ -3366,6 +3389,16 @@ final class AppManager: ObservableObject {
             return nil
         }
         return chatID
+    }
+
+    private func activeChatSnapshotID(in state: AppState) -> String? {
+        let screen = state.router.screenStack.last ?? state.router.defaultScreen
+        switch screen {
+        case .chat(let chatID), .directChatInfo(let chatID):
+            return chatID
+        default:
+            return nil
+        }
     }
 
     private func appChatID(_ openChatID: String, matches candidateChatID: String) -> Bool {

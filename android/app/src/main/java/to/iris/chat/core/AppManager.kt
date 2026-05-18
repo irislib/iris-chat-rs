@@ -913,6 +913,20 @@ class AppManager(
                 val trimmed = screen.chatId.trim()
                 if (trimmed.isEmpty()) null else listOf(Screen.Chat(trimmed))
             }
+            is Screen.DirectChatInfo -> {
+                val trimmed = screen.chatId.trim()
+                if (trimmed.isEmpty()) {
+                    null
+                } else {
+                    val currentStack = mutableState.value.router.screenStack
+                    val info = Screen.DirectChatInfo(trimmed)
+                    if (currentStack.lastOrNull() == info) {
+                        currentStack
+                    } else {
+                        currentStack + info
+                    }
+                }
+            }
             is Screen.GroupDetails -> {
                 val trimmed = screen.groupId.trim()
                 if (trimmed.isEmpty()) {
@@ -1450,6 +1464,21 @@ class AppManager(
                 if (groupDetails?.groupId != activeScreen.groupId) {
                     groupDetails = null
                 }
+            }
+            is Screen.DirectChatInfo -> {
+                if (currentChat?.chatId != activeScreen.chatId) {
+                    currentChat = runCatching {
+                        rust.chatSnapshot(activeScreen.chatId, CHAT_PAGE_SIZE)
+                    }.getOrElse { error ->
+                        logFfiFailure(
+                            category = "ffi.chat_snapshot.failed",
+                            detail = activeScreen.chatId,
+                            error = error,
+                        )
+                        null
+                    }
+                }
+                groupDetails = null
             }
             else -> {
                 currentChat = null

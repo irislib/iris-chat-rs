@@ -447,6 +447,21 @@ impl AppManager {
                     }])
                 }
             }
+            Screen::DirectChatInfo { chat_id } => {
+                let trimmed = chat_id.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    let mut stack = state.router.screen_stack.clone();
+                    let info = Screen::DirectChatInfo {
+                        chat_id: trimmed.to_string(),
+                    };
+                    if stack.last() != Some(&info) {
+                        stack.push(info);
+                    }
+                    Some(stack)
+                }
+            }
             Screen::GroupDetails { group_id } => {
                 let trimmed = group_id.trim();
                 if trimmed.is_empty() {
@@ -533,6 +548,19 @@ impl AppManager {
         };
         match active {
             Screen::Chat { chat_id } => {
+                if base_state
+                    .current_chat
+                    .as_ref()
+                    .map_or(true, |chat| chat.chat_id != chat_id)
+                {
+                    base_state.current_chat =
+                        self.catch_ffi_logged("ffiapp.chat_snapshot", None, || {
+                            self.ffi.chat_snapshot(chat_id, ROUTE_CHAT_SNAPSHOT_LIMIT)
+                        });
+                }
+                base_state.group_details = None;
+            }
+            Screen::DirectChatInfo { chat_id } => {
                 if base_state
                     .current_chat
                     .as_ref()

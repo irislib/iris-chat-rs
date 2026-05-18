@@ -477,7 +477,7 @@ struct RootView: View {
         switch manager.activeScreen {
         case .welcome, .createAccount, .restoreAccount, .addDevice, .awaitingDeviceApproval, .deviceRevoked:
             return false
-        case .chatList, .newChat, .newGroup, .createInvite, .joinInvite, .settings, .chat, .groupDetails, .deviceRoster:
+        case .chatList, .newChat, .newGroup, .createInvite, .joinInvite, .settings, .chat, .directChatInfo, .groupDetails, .deviceRoster:
             return true
         }
     }
@@ -543,6 +543,16 @@ struct RootView: View {
             SettingsScreen(manager: manager, focusedSection: $settingsFocus)
         case .chat(let chatId):
             ChatScreen(manager: manager, chatId: chatId)
+        case .directChatInfo(let chatId):
+            DirectChatInfoScreen(
+                manager: manager,
+                chatId: chatId,
+                onClose: manager.navigateBack,
+                showMessageAction: true,
+                onMessage: {
+                    manager.dispatch(.openChat(chatId: chatId))
+                }
+            )
         case .groupDetails(let groupId):
             GroupDetailsScreen(manager: manager, groupId: groupId)
         case .deviceRoster:
@@ -717,6 +727,8 @@ struct RootView: View {
         case .settings: return "Settings"
         case .chat:
             return manager.state.currentChat?.displayName ?? "Chat"
+        case .directChatInfo:
+            return manager.state.currentChat?.displayName ?? "Details"
         case .groupDetails:
             return "Group"
         case .deviceRoster:
@@ -747,9 +759,8 @@ struct RootView: View {
 
 #if os(iOS) || os(macOS)
     private func openNearbyPeerProfile(_ ownerPubkeyHex: String) {
-        directChatInfoChatId = ownerPubkeyHex
         showingNearbyIris = false
-        manager.dispatch(.openChat(chatId: ownerPubkeyHex))
+        manager.dispatch(.pushScreen(screen: .directChatInfo(chatId: ownerPubkeyHex)))
     }
 #endif
 }
@@ -1277,6 +1288,8 @@ private struct NavigationRoute: Equatable {
             return "settings"
         case .chat(let chatId):
             return "chat:\(chatId)"
+        case .directChatInfo(let chatId):
+            return "directChatInfo:\(chatId)"
         case .groupDetails(let groupId):
             return "groupDetails:\(groupId)"
         case .deviceRoster:
@@ -1724,6 +1737,17 @@ private struct DesktopChatShell: View {
                 ChatScreen(manager: manager, chatId: chatId)
                     .id(chatId)
             }
+        case .directChatInfo(let chatId):
+            DesktopPaneTopBar(title: manager.state.currentChat?.displayName ?? "Details", canGoBack: true, onBack: manager.navigateBack)
+            DirectChatInfoScreen(
+                manager: manager,
+                chatId: chatId,
+                onClose: manager.navigateBack,
+                showMessageAction: true,
+                onMessage: {
+                    manager.dispatch(.openChat(chatId: chatId))
+                }
+            )
         case .groupDetails(let groupId):
             DesktopPaneTopBar(title: "Group", canGoBack: true, onBack: manager.navigateBack)
             GroupDetailsScreen(manager: manager, groupId: groupId)
@@ -2340,6 +2364,8 @@ private struct DirectChatInfoScreen: View {
     @ObservedObject var manager: AppManager
     let chatId: String
     let onClose: () -> Void
+    var showMessageAction = false
+    var onMessage: () -> Void = {}
     @State private var advancedExpanded = false
     @State private var profileDebug: PeerProfileDebugSnapshot?
     @State private var loadedProfileDebugFor: String?
@@ -2382,6 +2408,27 @@ private struct DirectChatInfoScreen: View {
                     }
 
                     nicknameCard(chat)
+
+                    if showMessageAction {
+                        IrisSectionCard {
+                            Button {
+                                onMessage()
+                            } label: {
+                                HStack(spacing: 12) {
+                                    Image(systemName: "bubble.left.and.bubble.right.fill")
+                                        .frame(width: 24)
+                                    Text("Message")
+                                        .font(.system(.body, design: .rounded, weight: .semibold))
+                                    Spacer(minLength: 0)
+                                }
+                                .foregroundStyle(palette.textPrimary)
+                                .padding(.vertical, 2)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.irisPlain)
+                            .accessibilityIdentifier("directChatMessageButton")
+                        }
+                    }
 
                     if !commonGroups.isEmpty {
                         IrisSectionCard {

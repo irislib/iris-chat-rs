@@ -660,7 +660,7 @@ fn disappearing_label(seconds: u64) -> String {
 }
 
 fn chat_title(screen: &Screen, state: &AppState) -> Option<String> {
-    if matches!(screen, Screen::Chat { .. }) {
+    if matches!(screen, Screen::Chat { .. } | Screen::DirectChatInfo { .. }) {
         if let Some(chat) = state.current_chat.as_ref() {
             return Some(chat.display_name.clone());
         }

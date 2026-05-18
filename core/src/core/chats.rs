@@ -1280,6 +1280,7 @@ impl AppCore {
         }
         self.screen_stack.retain(|screen| match screen {
             Screen::Chat { chat_id } => chat_id != &normalized,
+            Screen::DirectChatInfo { chat_id } => chat_id != &normalized,
             Screen::GroupDetails { group_id } => {
                 parse_group_id_from_chat_id(&normalized).as_deref() != Some(group_id.as_str())
             }

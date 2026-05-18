@@ -13,6 +13,7 @@ pub enum Screen {
     JoinInvite,
     Settings,
     Chat { chat_id: String },
+    DirectChatInfo { chat_id: String },
     GroupDetails { group_id: String },
     DeviceRoster,
     AwaitingDeviceApproval,

@@ -855,10 +855,12 @@ private fun TimelineDaySeparator(
 }
 
 @Composable
-private fun DirectChatInfoScreen(
+fun DirectChatInfoScreen(
     appManager: AppManager,
     chatId: String,
     onBack: () -> Unit,
+    showMessageAction: Boolean = false,
+    onMessage: () -> Unit = { appManager.openChat(chatId) },
 ) {
     val currentChat by appManager.currentChat.collectAsStateWithLifecycle()
     val preferences by appManager.preferences.collectAsStateWithLifecycle()
@@ -987,6 +989,15 @@ private fun DirectChatInfoScreen(
                         onToggleEditing = { editingNickname = !editingNickname },
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    if (showMessageAction) {
+                        IrisInlineAction(
+                            text = "Message",
+                            onClick = onMessage,
+                            modifier = Modifier.testTag("directChatMessageButton"),
+                        ) {
+                            Icon(imageVector = IrisIcons.NewChat, contentDescription = null)
+                        }
+                    }
                     if (commonGroups.isNotEmpty()) {
                         CommonGroupsCard(
                             appManager = appManager,

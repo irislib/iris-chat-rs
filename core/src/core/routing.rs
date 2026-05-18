@@ -84,6 +84,21 @@ impl AppCore {
                 self.open_chat(&chat_id);
                 return;
             }
+            Screen::DirectChatInfo { chat_id } => {
+                let Some(chat_id) = self.normalize_chat_id(&chat_id) else {
+                    return;
+                };
+                if !matches!(chat_kind_for_id(&chat_id), ChatKind::Direct) {
+                    return;
+                }
+                self.ensure_thread_record(&chat_id, unix_now().get());
+                if !matches!(
+                    self.screen_stack.last(),
+                    Some(Screen::DirectChatInfo { chat_id: current }) if current == &chat_id
+                ) {
+                    self.screen_stack.push(Screen::DirectChatInfo { chat_id });
+                }
+            }
             Screen::GroupDetails { group_id } => {
                 let Some(group_id) = normalize_group_id(&group_id) else {
                     return;
@@ -183,6 +198,16 @@ impl AppCore {
                     if self.can_use_chats() {
                         if let Some(chat_id) = self.normalize_chat_id(&chat_id) {
                             normalized_stack.push(Screen::Chat { chat_id });
+                        }
+                    }
+                }
+                Screen::DirectChatInfo { chat_id } => {
+                    if self.can_use_chats() {
+                        if let Some(chat_id) = self.normalize_chat_id(&chat_id) {
+                            if matches!(chat_kind_for_id(&chat_id), ChatKind::Direct) {
+                                self.ensure_thread_record(&chat_id, unix_now().get());
+                                normalized_stack.push(Screen::DirectChatInfo { chat_id });
+                            }
                         }
                     }
                 }

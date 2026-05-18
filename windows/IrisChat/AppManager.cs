@@ -899,6 +899,16 @@ public sealed class AppManager : INotifyPropertyChanged
                 var trimmed = chat.chatId.Trim();
                 return string.IsNullOrEmpty(trimmed) ? null : new Screen[] { new Screen.Chat(trimmed) };
             }
+            case Screen.DirectChatInfo info:
+            {
+                var trimmed = info.chatId.Trim();
+                if (string.IsNullOrEmpty(trimmed)) return null;
+                var infoScreen = new Screen.DirectChatInfo(trimmed);
+                var stack = _state.router.screenStack ?? Array.Empty<Screen>();
+                return stack.LastOrDefault()?.Equals(infoScreen) == true
+                    ? stack
+                    : stack.Append(infoScreen).ToArray();
+            }
             case Screen.GroupDetails details:
             {
                 var groupId = details.groupId.Trim();
@@ -975,6 +985,13 @@ public sealed class AppManager : INotifyPropertyChanged
                 if (currentChat?.chatId != chat.chatId)
                 {
                     currentChat = SafeChatSnapshot(chat.chatId, RouteChatSnapshotLimit);
+                }
+                groupDetails = null;
+                break;
+            case Screen.DirectChatInfo info:
+                if (currentChat?.chatId != info.chatId)
+                {
+                    currentChat = SafeChatSnapshot(info.chatId, RouteChatSnapshotLimit);
                 }
                 groupDetails = null;
                 break;

@@ -87,6 +87,7 @@ import to.iris.chat.ui.components.LocalIrisOfflineBannerState
 import to.iris.chat.ui.components.rememberIrisHapticFeedback
 import to.iris.chat.ui.theme.IrisTheme
 import to.iris.chat.ui.screens.ChatListScreen
+import to.iris.chat.ui.screens.DirectChatInfoScreen
 import to.iris.chat.ui.screens.ChatScreen
 import to.iris.chat.ui.screens.CreateAccountScreen
 import to.iris.chat.ui.screens.CreateInviteScreen
@@ -134,7 +135,6 @@ fun NdrApp(
     val pendingShare by appManager.pendingShare.collectAsStateWithLifecycle()
     val context = LocalContext.current
     var showingNearbyIris by remember { mutableStateOf(false) }
-    var pendingDirectChatInfoOwner by remember { mutableStateOf<String?>(null) }
     var offlineNowSecs by remember { mutableStateOf(System.currentTimeMillis() / 1_000L) }
     val shareNearbySnapshot by rememberNearbySnapshotState(container.nearbyIrisService)
     val nearbySnapshotProvider =
@@ -145,9 +145,8 @@ fun NdrApp(
         showingNearbyIris = true
     }
     val openNearbyProfile = { ownerPubkeyHex: String ->
-        pendingDirectChatInfoOwner = ownerPubkeyHex
         showingNearbyIris = false
-        appManager.openChat(ownerPubkeyHex)
+        appManager.pushScreen(Screen.DirectChatInfo(ownerPubkeyHex))
     }
 
     LaunchedEffect(preferences.nearbyEnabled, preferences.nearbyBluetoothEnabled) {
@@ -385,8 +384,16 @@ fun NdrApp(
                                     appManager = appManager,
                                     chatId = screen.chatId,
                                     nearbyService = container.nearbyIrisService,
-                                    openInfoOnStart = pendingDirectChatInfoOwner == screen.chatId,
-                                    onInfoOpenConsumed = { pendingDirectChatInfoOwner = null },
+                                )
+                            }
+
+                            is Screen.DirectChatInfo -> {
+                                DirectChatInfoScreen(
+                                    appManager = appManager,
+                                    chatId = screen.chatId,
+                                    onBack = { appManager.navigateBack() },
+                                    showMessageAction = true,
+                                    onMessage = { appManager.openChat(screen.chatId) },
                                 )
                             }
 
@@ -551,6 +558,7 @@ private fun screenRouteKey(screen: Screen): String =
         Screen.AwaitingDeviceApproval -> "awaitingDeviceApproval"
         Screen.DeviceRevoked -> "deviceRevoked"
         is Screen.Chat -> "chat:${screen.chatId}"
+        is Screen.DirectChatInfo -> "directChatInfo:${screen.chatId}"
         is Screen.GroupDetails -> "groupDetails:${screen.groupId}"
     }
 

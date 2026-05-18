@@ -358,9 +358,14 @@ impl AppCore {
             })
             .collect();
 
-        self.state.current_chat = self
-            .active_chat_id
-            .as_ref()
+        let current_chat_id = self.active_chat_id.as_ref().or_else(|| {
+            self.screen_stack.last().and_then(|screen| match screen {
+                Screen::DirectChatInfo { chat_id } => Some(chat_id),
+                _ => None,
+            })
+        });
+
+        self.state.current_chat = current_chat_id
             .and_then(|chat_id| self.threads.get(chat_id))
             .map(|thread| {
                 let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
