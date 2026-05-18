@@ -318,26 +318,24 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     let snapshot = manager.nearby_snapshot();
     let subtitle = if !snapshot.visible {
         "Click to enable".to_string()
-    } else if !snapshot.peers.is_empty() {
-        nearby_summary(&snapshot.peers)
     } else {
         wifi_status_label(&snapshot.status)
     };
 
-    // Custom row instead of adw::ActionRow because we need an inline
-    // avatar stack rendered next to the subtitle text — the avatars
-    // belong on the same line as the "Boromir nearby" label, not in
-    // the prefix slot where they'd replace the wireless icon.
     let outer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     outer.set_margin_top(6);
     outer.set_margin_bottom(6);
     outer.set_margin_start(12);
     outer.set_margin_end(12);
+    outer.set_hexpand(true);
 
-    let icon = gtk::Image::from_icon_name("network-wireless-symbolic");
-    icon.set_pixel_size(24);
-    icon.set_valign(gtk::Align::Center);
-    outer.append(&icon);
+    if !snapshot.peers.is_empty() {
+        outer.append(&nearby_icon_button(manager));
+        outer.append(&nearby_avatar_strip(&snapshot.peers, manager));
+        return outer.upcast();
+    }
+
+    outer.append(&nearby_icon());
 
     let text_col = gtk::Box::new(gtk::Orientation::Vertical, 2);
     text_col.set_valign(gtk::Align::Center);
@@ -348,20 +346,13 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     title_label.add_css_class("heading");
     text_col.append(&title_label);
 
-    let subtitle_row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    subtitle_row.set_halign(gtk::Align::Start);
-    if !snapshot.peers.is_empty() {
-        subtitle_row.append(&nearby_avatar_stack(&snapshot.peers, manager));
-    }
     let subtitle_label = gtk::Label::new(Some(&subtitle));
     subtitle_label.set_halign(gtk::Align::Start);
     subtitle_label.set_xalign(0.0);
     subtitle_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     subtitle_label.add_css_class("dim-label");
     subtitle_label.add_css_class("caption");
-    subtitle_row.append(&subtitle_label);
-    text_col.append(&subtitle_row);
-
+    text_col.append(&subtitle_label);
     outer.append(&text_col);
 
     let button = gtk::Button::new();
@@ -369,28 +360,46 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     button.set_child(Some(&outer));
     let manager_for_click = manager.clone();
     button.connect_clicked(move |btn| {
-        let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-        crate::screens::present_nearby(parent.as_ref(), manager_for_click.clone());
+        present_nearby_from_button(btn, manager_for_click.clone());
     });
     button.upcast()
 }
 
-fn nearby_avatar_stack(
+fn nearby_icon_button(manager: &Rc<AppManager>) -> gtk::Button {
+    let button = gtk::Button::new();
+    button.add_css_class("flat");
+    button.set_size_request(40, 40);
+    button.set_tooltip_text(Some("Nearby"));
+    button.set_child(Some(&nearby_icon()));
+    let manager_for_click = manager.clone();
+    button.connect_clicked(move |btn| {
+        present_nearby_from_button(btn, manager_for_click.clone());
+    });
+    button
+}
+
+fn nearby_icon() -> gtk::Image {
+    let icon = gtk::Image::from_icon_name("network-wireless-symbolic");
+    icon.set_pixel_size(24);
+    icon.set_valign(gtk::Align::Center);
+    icon.set_size_request(40, 40);
+    icon
+}
+
+fn present_nearby_from_button(button: &gtk::Button, manager: Rc<AppManager>) {
+    let parent = button.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+    crate::screens::present_nearby(parent.as_ref(), manager);
+}
+
+fn nearby_avatar_strip(
     peers: &[DesktopNearbyPeerSnapshot],
     manager: &Rc<AppManager>,
 ) -> gtk::Widget {
-    let take = peers.len().min(3);
-    // Match the caption-style subtitle line height — keeps the row's
-    // overall height stable when the avatar stack toggles in/out.
-    let avatar_size: i32 = 14;
-    let overlap: i32 = 6;
-    let stride = avatar_size - overlap;
-    let stack_width = stride * (take as i32 - 1) + avatar_size;
-    let overlay = gtk::Fixed::new();
-    overlay.set_size_request(stack_width, avatar_size);
-    overlay.set_valign(gtk::Align::Center);
+    let avatar_size: i32 = 40;
+    let strip = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    strip.set_valign(gtk::Align::Center);
     let prefs = manager.current_state().preferences.clone();
-    for (index, peer) in peers.iter().take(take).enumerate() {
+    for peer in peers {
         let avatar = adw::Avatar::new(avatar_size, Some(&peer.name), true);
         if let Some(url) = peer.picture_url.as_ref() {
             let proxied = proxied_image_url(
@@ -402,9 +411,33 @@ fn nearby_avatar_stack(
             );
             image_cache::fetch_into_avatar(&avatar, &proxied);
         }
-        overlay.put(&avatar, (stride * index as i32) as f64, 0.0);
+        let button = gtk::Button::new();
+        button.add_css_class("flat");
+        button.set_child(Some(&avatar));
+        button.set_tooltip_text(Some(if peer.name.trim().is_empty() {
+            "Nearby user"
+        } else {
+            peer.name.as_str()
+        }));
+        if let Some(owner) = peer.owner_pubkey_hex.clone() {
+            let manager_for_click = manager.clone();
+            button.connect_clicked(move |_| {
+                manager_for_click.dispatch(AppAction::OpenChat {
+                    chat_id: owner.clone(),
+                });
+            });
+        } else {
+            button.set_sensitive(false);
+        }
+        strip.append(&button);
     }
-    overlay.upcast()
+
+    let scrolled = gtk::ScrolledWindow::new();
+    scrolled.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
+    scrolled.set_hexpand(true);
+    scrolled.set_min_content_height(avatar_size);
+    scrolled.set_child(Some(&strip));
+    scrolled.upcast()
 }
 
 fn row_for(
@@ -607,33 +640,6 @@ fn context_button_with_widget(label: &str, action: impl Fn(&gtk::Button) + 'stat
 
 fn escape(s: &str) -> String {
     glib::markup_escape_text(s).to_string()
-}
-
-fn nearby_summary(peers: &[iris_chat_core::DesktopNearbyPeerSnapshot]) -> String {
-    match peers.len() {
-        0 => "Visible".to_string(),
-        1 => format!("{} nearby", summary_name(&peers[0].name)),
-        2 => format!(
-            "{} and {} nearby",
-            summary_name(&peers[0].name),
-            summary_name(&peers[1].name)
-        ),
-        count => format!(
-            "{}, {} and {} others nearby",
-            summary_name(&peers[0].name),
-            summary_name(&peers[1].name),
-            count - 2
-        ),
-    }
-}
-
-fn summary_name(name: &str) -> &str {
-    let trimmed = name.trim();
-    if trimmed.is_empty() {
-        "Someone"
-    } else {
-        trimmed
-    }
 }
 
 fn wifi_status_label(status: &str) -> String {

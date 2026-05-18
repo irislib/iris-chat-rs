@@ -274,16 +274,22 @@ public partial class DesktopShell : UserControl
         var snapshot = _manager.NearbySnapshot;
         var subtitle = !snapshot.visible
             ? "Click to enable"
-            : snapshot.peers.Length > 0
-                ? NearbySummary(snapshot.peers)
-                : WifiStatusLabel(snapshot.status);
+            : WifiStatusLabel(snapshot.status);
 
-        // Match the regular ChatRow layout: 44px wireless badge in the
-        // leading slot, 12px gutter, then title + subtitle stack with an
-        // inline avatar group sitting next to the "Boromir nearby" label.
         var grid = new Grid { Margin = new Thickness(10, 8, 10, 8) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        if (snapshot.peers.Length > 0)
+        {
+            var iconButton = BuildWirelessIconButton();
+            Grid.SetColumn(iconButton, 0);
+            var strip = BuildNearbyAvatarStrip(snapshot.peers);
+            Grid.SetColumn(strip, 1);
+            grid.Children.Add(iconButton);
+            grid.Children.Add(strip);
+            return grid;
+        }
 
         var leading = BuildWirelessIcon();
         Grid.SetColumn(leading, 0);
@@ -303,30 +309,15 @@ public partial class DesktopShell : UserControl
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
 
-        var subtitleRow = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-            Margin = new Thickness(0, 2, 0, 0),
-            VerticalAlignment = VerticalAlignment.Center,
-            // Pin the height so the row doesn't grow vertically when the
-            // avatar stack toggles in/out — the subtitle text alone is
-            // ~17px, and the 16px avatars below fit inside that.
-            MinHeight = 18,
-        };
-        if (snapshot.peers.Length > 0)
-        {
-            subtitleRow.Children.Add(BuildNearbyAvatarStack(snapshot.peers));
-        }
-        subtitleRow.Children.Add(new TextBlock
+        text.Children.Add(new TextBlock
         {
             Text = subtitle,
             Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
             FontSize = 13,
-            Margin = new Thickness(snapshot.peers.Length > 0 ? 6 : 0, 0, 0, 0),
+            Margin = new Thickness(0, 2, 0, 0),
             VerticalAlignment = VerticalAlignment.Center,
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
-        text.Children.Add(subtitleRow);
         Grid.SetColumn(text, 1);
 
         grid.Children.Add(leading);
@@ -370,37 +361,65 @@ public partial class DesktopShell : UserControl
         };
     }
 
-    // Small inline avatar group rendered next to the subtitle text, so
-    // when peers are around their faces show up alongside their names
-    // ("Boromir nearby"). Up to three avatars overlap by ~6px each.
-    private static FrameworkElement BuildNearbyAvatarStack(DesktopNearbyPeerSnapshot[] peers)
+    private Button BuildWirelessIconButton()
     {
-        const double AvatarSize = 16;
-        const double Overlap = 6;
-        var stride = AvatarSize - Overlap;
-        var take = Math.Min(peers.Length, 3);
-        var stackWidth = (take - 1) * stride + AvatarSize;
-        var canvas = new System.Windows.Controls.Canvas
+        var button = new Button
         {
-            Width = stackWidth,
-            Height = AvatarSize,
-            Background = System.Windows.Media.Brushes.Transparent,
+            Style = (Style)FindResource("GhostButton"),
+            Padding = new Thickness(0),
+            Width = 44,
+            Height = 44,
+            Content = BuildWirelessIcon(),
+            ToolTip = "Nearby",
+        };
+        button.Click += OnNearby;
+        return button;
+    }
+
+    private FrameworkElement BuildNearbyAvatarStrip(DesktopNearbyPeerSnapshot[] peers)
+    {
+        const double AvatarSize = 44;
+        var panel = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
             VerticalAlignment = VerticalAlignment.Center,
         };
-        for (var i = 0; i < take; i++)
+
+        foreach (var peer in peers)
         {
-            var peer = peers[i];
-            var avatar = new Avatar
+            var name = string.IsNullOrWhiteSpace(peer.name) ? "Nearby user" : peer.name.Trim();
+            var button = new Button
             {
-                Size = AvatarSize,
-                Label = string.IsNullOrEmpty(peer.name) ? "?" : peer.name,
-                PictureUrl = peer.pictureUrl,
+                Style = (Style)FindResource("GhostButton"),
+                Padding = new Thickness(0),
+                Margin = new Thickness(0, 0, 10, 0),
+                Width = AvatarSize,
+                Height = AvatarSize,
+                ToolTip = name,
+                IsEnabled = !string.IsNullOrWhiteSpace(peer.ownerPubkeyHex),
+                Content = new Avatar
+                {
+                    Size = AvatarSize,
+                    Label = string.IsNullOrEmpty(peer.name) ? "?" : peer.name,
+                    PictureUrl = peer.pictureUrl,
+                },
             };
-            System.Windows.Controls.Canvas.SetLeft(avatar, i * stride);
-            System.Windows.Controls.Canvas.SetTop(avatar, 0);
-            canvas.Children.Add(avatar);
+            if (!string.IsNullOrWhiteSpace(peer.ownerPubkeyHex))
+            {
+                var owner = peer.ownerPubkeyHex!;
+                button.Click += (_, _) => _manager.OpenChat(owner);
+            }
+            panel.Children.Add(button);
         }
-        return canvas;
+
+        return new ScrollViewer
+        {
+            Content = panel,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Auto,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Margin = new Thickness(12, 0, 0, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
     }
 
     private ContextMenu BuildChatContextMenu(ChatThreadSnapshot chat)
@@ -441,19 +460,6 @@ public partial class DesktopShell : UserControl
         var item = new MenuItem { Header = header };
         item.Click += (_, _) => action();
         return item;
-    }
-
-    private static string NearbySummary(DesktopNearbyPeerSnapshot[] peers)
-    {
-        static string Name(DesktopNearbyPeerSnapshot peer) =>
-            string.IsNullOrWhiteSpace(peer.name) ? "Someone" : peer.name.Trim();
-
-        return peers.Length switch
-        {
-            1 => $"{Name(peers[0])} nearby",
-            2 => $"{Name(peers[0])} and {Name(peers[1])} nearby",
-            _ => $"{Name(peers[0])}, {Name(peers[1])} and {peers.Length - 2} others nearby",
-        };
     }
 
     private void OnNearby(object sender, RoutedEventArgs e)

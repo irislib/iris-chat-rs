@@ -1799,7 +1799,7 @@ private struct DesktopChatSidebar: View {
                     .accessibilityIdentifier("desktopNewChatRow")
 
                     #if os(macOS)
-                    DesktopNearbyIrisRow(service: manager.nearbyIris, onOpen: onOpenNearby)
+                    DesktopNearbyIrisRow(manager: manager, service: manager.nearbyIris, onOpen: onOpenNearby)
                         .accessibilityIdentifier("desktopNearbyRow")
                     #endif
 
@@ -1919,17 +1919,33 @@ private struct DesktopSidebarActionRow: View {
 
 #if os(macOS)
 private struct DesktopNearbyIrisRow: View {
+    @ObservedObject var manager: AppManager
     @ObservedObject var service: IrisNearbyService
     let onOpen: () -> Void
 
     var body: some View {
-        DesktopSidebarActionRow(
-            title: "Nearby",
-            subtitle: service.sidebarSubtitle,
-            systemImage: "dot.radiowaves.left.and.right",
-            selected: false
-        ) {
-            onOpen()
+        if service.peers.isEmpty {
+            DesktopSidebarActionRow(
+                title: "Nearby",
+                subtitle: service.sidebarSubtitle,
+                systemImage: "dot.radiowaves.left.and.right",
+                selected: false
+            ) {
+                onOpen()
+            }
+        } else {
+            NearbyPeerStripRow(
+                manager: manager,
+                peers: service.peers,
+                avatarSize: 42,
+                horizontalPadding: 10,
+                verticalPadding: 8,
+                onOpenNearby: onOpen
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color.clear)
+            )
         }
     }
 }
@@ -2186,6 +2202,8 @@ private struct DirectChatInfoScreen: View {
     @State private var showingBlockConfirmation = false
     @State private var showingUnblockConfirmation = false
     @State private var showingReportConfirmation = false
+    @State private var nicknameDraft = ""
+    @State private var nicknameDraftLoadedKey: String?
 
     private var chat: CurrentChatSnapshot? {
         manager.state.currentChat?.chatId == chatId ? manager.state.currentChat : nil
@@ -2210,6 +2228,8 @@ private struct DirectChatInfoScreen: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.top, 22)
+
+                    nicknameCard(chat)
 
                     if !commonGroups.isEmpty {
                         IrisSectionCard {
@@ -2505,6 +2525,74 @@ private struct DirectChatInfoScreen: View {
         guard commonGroupsLoadedFor != chatId else { return }
         commonGroupsLoadedFor = chatId
         commonGroups = manager.mutualGroups(ownerInput: chatId)
+    }
+
+    @ViewBuilder
+    private func nicknameCard(_ chat: CurrentChatSnapshot) -> some View {
+        let storedNickname = trimmedText(chat.nickname) ?? ""
+        let normalizedDraft = nicknameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let profileName = secondaryDisplayName(chat.profileName, primary: storedNickname.isEmpty ? chat.displayName : storedNickname)
+
+        IrisSectionCard {
+            CardHeader(title: "Nickname")
+
+            TextField("Nickname", text: $nicknameDraft)
+                .textFieldStyle(.plain)
+                .irisInputField()
+                .submitLabel(.done)
+                .onSubmit(saveNickname)
+                .accessibilityIdentifier("directChatNicknameField")
+
+            HStack(spacing: 10) {
+                Button("Save") {
+                    saveNickname()
+                }
+                .buttonStyle(IrisPrimaryButtonStyle(compact: true))
+                .disabled(normalizedDraft == storedNickname)
+                .accessibilityIdentifier("directChatSaveNicknameButton")
+
+                if !storedNickname.isEmpty {
+                    Button("Remove") {
+                        nicknameDraft = ""
+                        manager.dispatch(.setContactNickname(ownerPubkeyHex: chatId, nickname: ""))
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                    .accessibilityIdentifier("directChatRemoveNicknameButton")
+                }
+            }
+
+            if let profileName {
+                Divider().overlay(palette.border)
+                HStack(spacing: 12) {
+                    Text("Profile name")
+                        .font(.system(.body, design: .rounded, weight: .semibold))
+                        .foregroundStyle(palette.textPrimary)
+                    Spacer(minLength: 0)
+                    Text(profileName)
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .multilineTextAlignment(.trailing)
+                }
+                .accessibilityIdentifier("directChatProfileNameRow")
+            }
+        }
+        .onAppear {
+            syncNicknameDraft(chat)
+        }
+        .irisOnChange(of: "\(chat.chatId)|\(chat.nickname ?? "")") { _ in
+            syncNicknameDraft(chat)
+        }
+    }
+
+    private func syncNicknameDraft(_ chat: CurrentChatSnapshot) {
+        let key = "\(chat.chatId)|\(chat.nickname ?? "")"
+        guard nicknameDraftLoadedKey != key else { return }
+        nicknameDraft = chat.nickname ?? ""
+        nicknameDraftLoadedKey = key
+    }
+
+    private func saveNickname() {
+        manager.dispatch(.setContactNickname(ownerPubkeyHex: chatId, nickname: nicknameDraft))
     }
 
     private func reportUser(_ chat: CurrentChatSnapshot, block: Bool) {
@@ -3988,7 +4076,10 @@ private struct ChatListTableView: UIViewRepresentable {
         let expanded = expandedSearchSections.map(\.rawValue).sorted().joined(separator: ",")
         var values = [
             "search:\(isSearchActive):\(searchText):\(messageLimit):\(expanded)",
-            "nearby:\(manager.nearbyIris.sidebarSubtitle):\(manager.nearbyIris.peers.count)",
+            "nearby:\(manager.nearbyIris.sidebarSubtitle):" +
+                manager.nearbyIris.peers.map {
+                    "\($0.id):\($0.name):\($0.pictureURL ?? ""):\($0.ownerPubkeyHex ?? "")"
+                }.joined(separator: "\u{1E}"),
         ]
         if let cachedSearchResults {
             values.append(
@@ -4084,7 +4175,9 @@ private struct ChatListTableView: UIViewRepresentable {
             tableView.deselectRow(at: indexPath, animated: true)
             switch item(at: indexPath) {
             case .nearby:
-                onOpenNearby?()
+                if manager?.nearbyIris.peers.isEmpty != false {
+                    onOpenNearby?()
+                }
             case .empty, .searchResults:
                 break
             case let .chat(chat):
@@ -4187,25 +4280,41 @@ private struct ChatListTableView: UIViewRepresentable {
 
         private func configureNearby(_ cell: UITableViewCell) {
             guard let manager else { return }
+            let hasPeers = !manager.nearbyIris.peers.isEmpty
             cell.accessibilityIdentifier = "nearbyChatRow"
             cell.accessibilityLabel = "Nearby, \(manager.nearbyIris.sidebarSubtitle)"
-            cell.accessibilityTraits = [.button]
-            cell.selectionStyle = .default
+            cell.accessibilityTraits = hasPeers ? [] : [.button]
+            cell.isAccessibilityElement = !hasPeers
+            cell.selectionStyle = hasPeers ? .none : .default
             cell.contentConfiguration = UIHostingConfiguration {
-                ChatListTableRowContent(
-                    title: "Nearby",
-                    preview: manager.nearbyIris.sidebarSubtitle,
-                    subtitle: nil,
-                    timeLabel: nil,
-                    unreadCount: 0,
-                    preferences: manager.state.preferences,
-                    manager: manager,
-                    leading: AnyView(NearbyWirelessAvatar()),
-                    previewLeading: nearbyPreviewLeading(service: manager.nearbyIris, manager: manager)
-                )
-                .accessibilityHidden(true)
-                .environment(\.irisPalette, palette)
+                if hasPeers {
+                    NearbyPeerStripRow(
+                        manager: manager,
+                        peers: manager.nearbyIris.peers,
+                        avatarSize: IrisChatListRowMetrics.avatarSize,
+                        horizontalPadding: IrisChatListRowMetrics.horizontalPadding,
+                        verticalPadding: IrisChatListRowMetrics.verticalPadding,
+                        onOpenNearby: { [weak self] in
+                            self?.onOpenNearby?()
+                        }
+                    )
+                    .accessibilityIdentifier("nearbyChatRow")
+                } else {
+                    ChatListTableRowContent(
+                        title: "Nearby",
+                        preview: manager.nearbyIris.sidebarSubtitle,
+                        subtitle: nil,
+                        timeLabel: nil,
+                        unreadCount: 0,
+                        preferences: manager.state.preferences,
+                        manager: manager,
+                        leading: AnyView(NearbyWirelessAvatar()),
+                        previewLeading: nil
+                    )
+                    .accessibilityHidden(true)
+                }
             }
+            .environment(\.irisPalette, palette)
             .margins(.all, 0)
         }
 
@@ -4277,17 +4386,6 @@ private struct ChatListTableView: UIViewRepresentable {
                 .environment(\.irisPalette, palette)
             }
             .margins(.all, 0)
-        }
-
-        private func nearbyPreviewLeading(service: IrisNearbyService, manager: AppManager) -> AnyView? {
-            guard !service.peers.isEmpty else { return nil }
-            return AnyView(
-                NearbyAvatarStack(
-                    peers: Array(service.peers.prefix(3)),
-                    preferences: manager.state.preferences,
-                    manager: manager
-                )
-            )
         }
 
         private func contextualAction(
@@ -4572,38 +4670,40 @@ private struct NearbyChatListRow: View {
     let onOpen: () -> Void
 
     var body: some View {
-        IrisChatRow(
-            title: "Nearby",
-            preview: service.sidebarSubtitle,
-            subtitle: nil,
-            timeLabel: nil,
-            unreadCount: 0,
-            pictureUrl: nil,
-            preferences: manager.state.preferences,
-            manager: manager,
-            leading: AnyView(NearbyWirelessAvatar()),
-            previewLeading: previewLeading,
-            onTap: {
-                onOpen()
-            }
-        )
-        .accessibilityIdentifier("nearbyChatRow")
-    }
-
-    private var previewLeading: AnyView? {
-        guard !service.peers.isEmpty else { return nil }
-        return AnyView(
-            NearbyAvatarStack(
-                peers: Array(service.peers.prefix(3)),
+        if service.peers.isEmpty {
+            IrisChatRow(
+                title: "Nearby",
+                preview: service.sidebarSubtitle,
+                subtitle: nil,
+                timeLabel: nil,
+                unreadCount: 0,
+                pictureUrl: nil,
                 preferences: manager.state.preferences,
-                manager: manager
+                manager: manager,
+                leading: AnyView(NearbyWirelessAvatar()),
+                previewLeading: nil,
+                onTap: {
+                    onOpen()
+                }
             )
-        )
+            .accessibilityIdentifier("nearbyChatRow")
+        } else {
+            NearbyPeerStripRow(
+                manager: manager,
+                peers: service.peers,
+                avatarSize: IrisChatListRowMetrics.avatarSize,
+                horizontalPadding: IrisChatListRowMetrics.horizontalPadding,
+                verticalPadding: IrisChatListRowMetrics.verticalPadding,
+                onOpenNearby: onOpen
+            )
+            .accessibilityIdentifier("nearbyChatRow")
+        }
     }
 }
 
 private struct NearbyWirelessAvatar: View {
     @Environment(\.irisPalette) private var palette
+    var size: CGFloat = IrisChatListRowMetrics.avatarSize
 
     var body: some View {
         ZStack {
@@ -4613,42 +4713,61 @@ private struct NearbyWirelessAvatar: View {
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
         }
-        .frame(width: IrisChatListRowMetrics.avatarSize, height: IrisChatListRowMetrics.avatarSize)
+        .frame(width: size, height: size)
     }
 }
 
-private struct NearbyAvatarStack: View {
-    @Environment(\.irisPalette) private var palette
+private struct NearbyPeerStripRow: View {
+    @ObservedObject var manager: AppManager
     let peers: [IrisNearbyPeer]
-    let preferences: PreferencesSnapshot?
-    let manager: AppManager?
-    // Stays smaller than the subheadline line height so the row's preview
-    // HStack doesn't grow taller when the stack appears.
-    var avatarSize: CGFloat = 16
-
-    private var stride: CGFloat { avatarSize - 6 }
+    let avatarSize: CGFloat
+    let horizontalPadding: CGFloat
+    let verticalPadding: CGFloat
+    let onOpenNearby: () -> Void
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            ForEach(Array(peers.enumerated()), id: \.element.id) { index, peer in
-                IrisAvatar(
-                    label: peer.name.isEmpty ? "?" : peer.name,
-                    size: avatarSize,
-                    pictureUrl: peer.pictureURL,
-                    preferences: preferences,
-                    manager: manager
-                )
-                .overlay(Circle().stroke(palette.background, lineWidth: 1.5))
-                .offset(x: CGFloat(index) * stride)
+        HStack(spacing: IrisChatListRowMetrics.avatarTextSpacing) {
+            Button(action: onOpenNearby) {
+                NearbyWirelessAvatar(size: avatarSize)
             }
-        }
-        .frame(width: stackWidth, height: avatarSize, alignment: .leading)
-    }
+            .buttonStyle(.irisPlain)
+            .accessibilityIdentifier("nearbyOpenButton")
+            .accessibilityLabel("Nearby")
 
-    private var stackWidth: CGFloat {
-        guard !peers.isEmpty else { return avatarSize }
-        return CGFloat(peers.count - 1) * stride + avatarSize
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(peers) { peer in
+                        Button {
+                            openNearbyPeer(peer, manager: manager)
+                        } label: {
+                            IrisAvatar(
+                                label: peer.name.isEmpty ? "?" : peer.name,
+                                size: avatarSize,
+                                pictureUrl: peer.pictureURL,
+                                preferences: manager.state.preferences,
+                                manager: manager
+                            )
+                        }
+                        .buttonStyle(.irisPlain)
+                        .disabled(peer.ownerPubkeyHex == nil)
+                        .accessibilityIdentifier("nearbyPeer-\(String(peer.id.prefix(12)))")
+                        .accessibilityLabel(peer.name.isEmpty ? "Nearby user" : peer.name)
+                    }
+                }
+                .padding(.trailing, horizontalPadding)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.leading, horizontalPadding)
+        .padding(.vertical, verticalPadding)
+        .contentShape(Rectangle())
     }
+}
+
+@MainActor
+private func openNearbyPeer(_ peer: IrisNearbyPeer, manager: AppManager) {
+    guard let ownerPubkeyHex = peer.ownerPubkeyHex else { return }
+    manager.dispatch(.openChat(chatId: ownerPubkeyHex))
 }
 
 private struct NearbyIrisScreen: View {
