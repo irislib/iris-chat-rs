@@ -41,7 +41,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
-import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -1079,7 +1078,7 @@ private fun ProfileHero(
                             Modifier
                                 .clickable(
                                     interactionSource = profilePictureInteractionSource,
-                                    indication = ripple(bounded = false, radius = 42.dp),
+                                    indication = null,
                                     onClick = onOpenPicture,
                                 )
                                 .testTag("myProfilePictureButton")
