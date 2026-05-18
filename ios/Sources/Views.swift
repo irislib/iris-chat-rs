@@ -8335,61 +8335,85 @@ private struct ProfileEditorCard: View {
     #endif
 
     var body: some View {
-        IrisSectionCard(accent: true) {
-            VStack(spacing: 10) {
-                profileAvatar
-                Text(account.displayName.isEmpty ? "Profile" : account.displayName)
-                    .font(.system(.title2, design: .rounded, weight: .bold))
+        VStack(spacing: 14) {
+            IrisSectionCard {
+                VStack(spacing: 12) {
+                    profileAvatar
+
+                    Button(manager.state.busy.uploadingAttachment ? "Uploading..." : "Edit photo") {
+                        presentProfilePictureSource()
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                    .disabled(!account.hasOwnerSigningAuthority || manager.state.busy.uploadingAttachment)
+                    .accessibilityIdentifier("myProfileUploadPictureButton")
+                }
+                .frame(maxWidth: .infinity)
+                .onAppear {
+                    profileName = account.displayName
+                    profileAbout = account.about ?? ""
+                }
+                .irisOnChange(of: account.displayName) { value in
+                    profileName = value
+                }
+                .irisOnChange(of: account.about) { value in
+                    profileAbout = value ?? ""
+                }
+            }
+
+            IrisSectionCard {
+                ProfileEditorInputRow(systemImage: "person", title: "Name") {
+                    TextField("Name", text: $profileName)
+                        .textFieldStyle(.plain)
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.textPrimary)
+                        .disabled(!account.hasOwnerSigningAuthority)
+                        .accessibilityIdentifier("myProfileDisplayNameInput")
+                }
+
+                Divider().overlay(palette.border)
+
+                ProfileEditorInputRow(systemImage: "text.alignleft", title: "About", alignment: .top) {
+                    TextField("About", text: $profileAbout, axis: .vertical)
+                        .lineLimit(2...5)
+                        .textFieldStyle(.plain)
+                        .font(.system(.body, design: .rounded))
+                        .foregroundStyle(palette.textPrimary)
+                        .disabled(!account.hasOwnerSigningAuthority)
+                        .accessibilityIdentifier("myProfileAboutInput")
+                }
+
+                if profileMetadataChanged {
+                    Button("Save") {
+                        manager.updateProfileMetadata(name: profileName, pictureURL: account.pictureUrl, about: profileAbout)
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle())
+                    .disabled(!account.hasOwnerSigningAuthority || normalizedProfileName.isEmpty)
+                    .accessibilityIdentifier("myProfileSaveProfileButton")
+                }
+            }
+
+            IrisSectionCard {
+                Button {
+                    showQrCode()
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "qrcode")
+                            .frame(width: 24)
+                        Text("Show QR code")
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(.footnote, weight: .semibold))
+                            .foregroundStyle(palette.muted)
+                    }
+                    .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(2)
-            }
-            .frame(maxWidth: .infinity)
-            .onAppear {
-                profileName = account.displayName
-                profileAbout = account.about ?? ""
-            }
-            .irisOnChange(of: account.displayName) { value in
-                profileName = value
-            }
-            .irisOnChange(of: account.about) { value in
-                profileAbout = value ?? ""
-            }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.irisPlain)
+                .accessibilityIdentifier("myProfileQrButton")
 
-            TextField("Display name", text: $profileName)
-                .textFieldStyle(.roundedBorder)
-                .disabled(!account.hasOwnerSigningAuthority)
-                .accessibilityIdentifier("myProfileDisplayNameInput")
+                Divider().overlay(palette.border)
 
-            TextField("About", text: $profileAbout, axis: .vertical)
-                .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
-                .disabled(!account.hasOwnerSigningAuthority)
-                .accessibilityIdentifier("myProfileAboutInput")
-
-            Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Upload profile photo") {
-                presentProfilePictureSource()
-            }
-            .buttonStyle(IrisSecondaryButtonStyle())
-            .disabled(!account.hasOwnerSigningAuthority || manager.state.busy.uploadingAttachment)
-            .accessibilityIdentifier("myProfileUploadPictureButton")
-
-            Button("Save profile") {
-                manager.updateProfileMetadata(name: profileName, pictureURL: account.pictureUrl, about: profileAbout)
-            }
-            .buttonStyle(IrisSecondaryButtonStyle())
-            .disabled(!account.hasOwnerSigningAuthority || normalizedProfileName.isEmpty || !profileMetadataChanged)
-            .accessibilityIdentifier("myProfileSaveProfileButton")
-
-            Button {
-                showQrCode()
-            } label: {
-                Label("Show QR code", systemImage: "qrcode")
-            }
-            .buttonStyle(IrisSecondaryButtonStyle())
-            .accessibilityIdentifier("myProfileQrButton")
-
-            VStack(spacing: 4) {
                 IrisCopyButton(
                     label: "Copy user ID",
                     value: account.npub,
@@ -8482,8 +8506,8 @@ private struct ProfileEditorCard: View {
             } label: {
                 IrisAvatar(
                     label: label,
-                    size: 96,
-                    emphasize: true,
+                    size: 104,
+                    emphasize: false,
                     pictureUrl: account.pictureUrl,
                     preferences: manager.state.preferences,
                     manager: manager,
@@ -8496,8 +8520,8 @@ private struct ProfileEditorCard: View {
         } else {
             IrisAvatar(
                 label: label,
-                size: 96,
-                emphasize: true,
+                size: 104,
+                emphasize: false,
                 pictureUrl: account.pictureUrl,
                 preferences: manager.state.preferences,
                 manager: manager,
@@ -8517,6 +8541,45 @@ private struct ProfileEditorCard: View {
 
     private var normalizedProfileAbout: String {
         profileAbout.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private struct ProfileEditorInputRow<Content: View>: View {
+    @Environment(\.irisPalette) private var palette
+    let systemImage: String
+    let title: String
+    var alignment: VerticalAlignment = .center
+    let content: () -> Content
+
+    init(
+        systemImage: String,
+        title: String,
+        alignment: VerticalAlignment = .center,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self.systemImage = systemImage
+        self.title = title
+        self.alignment = alignment
+        self.content = content
+    }
+
+    var body: some View {
+        HStack(alignment: alignment, spacing: 14) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(palette.muted)
+                .frame(width: 24, height: 24)
+                .padding(.top, alignment == .top ? 2 : 0)
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text(title)
+                    .font(.system(.footnote, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.muted)
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
