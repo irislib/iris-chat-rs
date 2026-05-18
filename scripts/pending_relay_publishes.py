@@ -231,7 +231,7 @@ def main() -> int:
             print(row["event_id"])
     else:
         print_table(rows)
-    return 0 if rows else 1
+    return 0
 
 
 if __name__ == "__main__":
