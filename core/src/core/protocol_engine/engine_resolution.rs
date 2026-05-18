@@ -195,6 +195,7 @@ impl ProtocolEngine {
                 created_at,
                 vec![AuthorizedDevice::new(self.local_device, created_at)],
             ));
+            self.invalidate_known_message_author_cache();
         }
     }
 

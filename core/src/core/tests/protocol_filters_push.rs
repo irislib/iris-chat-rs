@@ -497,6 +497,22 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
         authors.contains(&skipped_sender.public_key()),
         "skipped sender author must be backfilled for out-of-order relay delivery"
     );
+    assert_eq!(
+        engine.known_message_author_cache_build_count_for_test(),
+        0
+    );
+    assert!(engine.is_known_message_author(current_sender.public_key()));
+    assert_eq!(
+        engine.known_message_author_cache_build_count_for_test(),
+        1
+    );
+    assert!(engine.is_known_message_author(next_sender.public_key()));
+    assert!(!engine.is_known_message_author(Keys::generate().public_key()));
+    assert_eq!(
+        engine.known_message_author_cache_build_count_for_test(),
+        1,
+        "known author membership should reuse the cached author set"
+    );
 }
 
 #[test]

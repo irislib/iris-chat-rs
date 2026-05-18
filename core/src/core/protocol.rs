@@ -87,13 +87,7 @@ impl AppCore {
         reason: &'static str,
         batch: ProtocolRetryBatch,
     ) {
-        if batch.direct_results.is_empty()
-            && batch.group_result.events.is_empty()
-            && batch.group_result.effects.is_empty()
-            && batch.group_result.queued_targets.is_empty()
-            && batch.direct_messages.is_empty()
-            && batch.effects.is_empty()
-        {
+        if batch.is_empty() {
             return;
         }
         let mut published = 0usize;

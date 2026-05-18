@@ -109,7 +109,9 @@ impl ProtocolEngine {
                 let retry = self.retry_pending_group_inputs(NdrUnixSeconds(unix_now().get()))?;
                 events.extend(retry.events);
                 let mut effects = retry.effects;
-                effects.extend(self.retry_pending_group_fanouts(NdrUnixSeconds(unix_now().get()))?);
+                let fanout_retry =
+                    self.retry_pending_group_fanouts(NdrUnixSeconds(unix_now().get()))?;
+                effects.extend(fanout_retry.effects);
                 self.persist()?;
                 Ok(ProtocolGroupIncomingResult {
                     events,
@@ -160,6 +162,8 @@ impl ProtocolEngine {
         let pending = std::mem::take(&mut self.pending_outbound);
         let mut still_pending = Vec::new();
         let mut results = Vec::new();
+        let mut persist_needed = false;
+        let mut session_changed = false;
 
         for mut pending in pending {
             if pending.next_retry_at_secs > now.get() {
@@ -169,7 +173,10 @@ impl ProtocolEngine {
 
             let recipient_owner = match PublicKey::parse(&pending.recipient_owner_hex) {
                 Ok(pubkey) => ndr_owner(pubkey),
-                Err(_) => continue,
+                Err(_) => {
+                    persist_needed = true;
+                    continue;
+                }
             };
             if pending.probe_local_sibling_roster
                 && now.get().saturating_sub(pending.created_at_secs)
@@ -187,11 +194,14 @@ impl ProtocolEngine {
 
             if remote_targets.is_empty() && local_targets.is_empty() {
                 let queued_targets = self.pending_target_hexes(&pending);
+                let mut requeued = false;
                 if (pending.waits_for_remote_protocol_state() || pending.probe_local_sibling_roster)
                     && !queued_targets.is_empty()
                 {
-                    pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                    pending.next_retry_at_secs =
+                        next_pending_retry_at_secs(pending.created_at_secs, now);
                     still_pending.push(pending.clone());
+                    requeued = true;
                     let effects =
                         self.protocol_backfill_effects_for_pending_outbound(&pending, now, "retry");
                     results.push(ProtocolRetryResult {
@@ -201,6 +211,9 @@ impl ProtocolEngine {
                         effects,
                         queued_targets,
                     });
+                }
+                if !requeued {
+                    persist_needed = true;
                 }
                 continue;
             }
@@ -218,6 +231,9 @@ impl ProtocolEngine {
                     remote_targets,
                     pending.remote_payload.clone(),
                 )?;
+                if !remote.deliveries.is_empty() || !remote.invite_responses.is_empty() {
+                    session_changed = true;
+                }
                 pending
                     .delivered_remote_device_hexes
                     .extend(delivered_device_hexes(&remote));
@@ -236,6 +252,9 @@ impl ProtocolEngine {
                         local_targets,
                         local_payload,
                     )?;
+                    if !local.deliveries.is_empty() || !local.invite_responses.is_empty() {
+                        session_changed = true;
+                    }
                     pending
                         .delivered_local_device_hexes
                         .extend(delivered_device_hexes(&local));
@@ -258,7 +277,8 @@ impl ProtocolEngine {
                 if !gaps.is_empty() {
                     pending.reason = pending_reason_from_gaps(&gaps);
                 }
-                pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                pending.next_retry_at_secs =
+                    next_pending_retry_at_secs(pending.created_at_secs, now);
                 still_pending.push(pending.clone());
             }
             if !event_ids.is_empty() || !effects.is_empty() || !queued_targets.is_empty() {
@@ -276,7 +296,13 @@ impl ProtocolEngine {
         }
 
         self.pending_outbound = still_pending;
-        self.persist()?;
+        if session_changed {
+            persist_needed = true;
+            self.invalidate_known_message_author_cache();
+        }
+        if persist_needed {
+            self.persist()?;
+        }
         Ok(results)
     }
 
@@ -284,13 +310,16 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolRetryBatch> {
-        self.last_backfill_attempt_secs = now.get();
         let direct_results = self.retry_pending_outbound(now)?;
         let group_result = self.retry_pending_group_inputs(now)?;
-        let group_effects = self.retry_pending_group_fanouts(now)?;
+        let group_fanout_result = self.retry_pending_group_fanouts(now)?;
         let mut group_result = group_result;
-        group_result.effects.extend(group_effects);
-        group_result.queued_targets = self.queued_group_targets();
+        group_result.effects.extend(group_fanout_result.effects);
+        group_result
+            .queued_targets
+            .extend(group_fanout_result.queued_targets);
+        group_result.queued_targets.sort();
+        group_result.queued_targets.dedup();
         self.append_queued_protocol_backfill(
             &mut group_result.effects,
             &group_result.queued_targets,
@@ -304,14 +333,17 @@ impl ProtocolEngine {
             .map(ProtocolDecryptedMessage::from)
             .collect::<Vec<_>>();
         direct_messages.extend(self.retry_pending_inbound_direct_events(now)?);
-        self.subscription_generation = self.subscription_generation.wrapping_add(1);
-        self.persist()?;
-        Ok(ProtocolRetryBatch {
+        let batch = ProtocolRetryBatch {
             direct_results,
             group_result,
             direct_messages,
             effects: Vec::new(),
-        })
+        };
+        if !batch.is_empty() {
+            self.last_backfill_attempt_secs = now.get();
+            self.subscription_generation = self.subscription_generation.wrapping_add(1);
+        }
+        Ok(batch)
     }
 
     pub(super) fn ack_pending_decrypted_deliveries(&mut self) -> anyhow::Result<()> {
@@ -340,7 +372,8 @@ impl ProtocolEngine {
             match self.decrypt_pending_direct_message_event(&pending)? {
                 Some(message) => messages.push(message),
                 None => {
-                    pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                    pending.next_retry_at_secs =
+                        next_pending_retry_at_secs(pending.created_at_secs, now);
                     still_pending.push(pending);
                 }
             }
@@ -388,6 +421,7 @@ impl ProtocolEngine {
         else {
             return Ok(None);
         };
+        self.invalidate_known_message_author_cache();
         let (conversation_owner, payload) = decode_local_sibling_payload(&received.payload)
             .map(|(owner, payload)| (Some(owner), payload))
             .unwrap_or((None, received.payload));
@@ -415,7 +449,7 @@ impl ProtocolEngine {
 
         let pairwise = std::mem::take(&mut self.pending_group_pairwise_payloads);
         let mut still_pairwise = Vec::new();
-        let mut pairwise_changed = false;
+        let mut persist_needed = false;
         for mut pending in pairwise {
             if pending.next_retry_at_secs > now.get() {
                 still_pairwise.push(pending);
@@ -427,12 +461,12 @@ impl ProtocolEngine {
                 ProtocolSenderOwnerResolution::Verified { owner }
                 | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { owner } => owner,
                 ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } => {
-                    pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                    pending.next_retry_at_secs =
+                        next_pending_retry_at_secs(pending.created_at_secs, now);
                     result
                         .queued_targets
                         .push(format!("owner:{}", claimed_owner.to_hex()));
                     still_pairwise.push(pending);
-                    pairwise_changed = true;
                     continue;
                 }
             };
@@ -449,15 +483,15 @@ impl ProtocolEngine {
             match outcome {
                 Ok(Some(event)) => {
                     result.events.push(event);
-                    pairwise_changed = true;
+                    persist_needed = true;
                 }
                 Ok(None) => {
-                    pairwise_changed = true;
+                    persist_needed = true;
                 }
                 Err(_) => {
-                    pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                    pending.next_retry_at_secs =
+                        next_pending_retry_at_secs(pending.created_at_secs, now);
                     still_pairwise.push(pending);
-                    pairwise_changed = true;
                 }
             }
         }
@@ -467,7 +501,6 @@ impl ProtocolEngine {
 
         let sender_keys = std::mem::take(&mut self.pending_group_sender_key_messages);
         let mut still_sender_keys = Vec::new();
-        let mut sender_keys_changed = false;
         for parsed in sender_keys {
             let Some(message) = self.group_sender_key_message_from_parsed(&parsed) else {
                 still_sender_keys.push(parsed);
@@ -477,17 +510,13 @@ impl ProtocolEngine {
             if outcome.pending {
                 still_sender_keys.push(parsed);
             } else {
-                sender_keys_changed = true;
+                persist_needed = true;
             }
             result.events.extend(outcome.events);
             result.effects.extend(outcome.effects);
         }
         self.pending_group_sender_key_messages = still_sender_keys;
-        if pairwise_changed
-            || sender_keys_changed
-            || !result.events.is_empty()
-            || !result.effects.is_empty()
-        {
+        if persist_needed || !result.events.is_empty() || !result.effects.is_empty() {
             self.persist()?;
         }
         Ok(result)
@@ -496,18 +525,27 @@ impl ProtocolEngine {
     fn retry_pending_group_fanouts(
         &mut self,
         now: NdrUnixSeconds,
-    ) -> anyhow::Result<Vec<ProtocolEffect>> {
+    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         if self.pending_group_fanouts.is_empty() {
-            return Ok(Vec::new());
+            return Ok(ProtocolGroupIncomingResult::default());
         }
         let pending = std::mem::take(&mut self.pending_group_fanouts);
         let mut still_pending = Vec::new();
         let mut effects = Vec::new();
+        let mut queued_targets = Vec::new();
+        let mut persist_needed = false;
+        let mut session_changed = false;
         for mut pending in pending {
             if pending.next_retry_at_secs > now.get() {
                 still_pending.push(pending);
                 continue;
             }
+            let queued_target = match &pending.fanout {
+                GroupPendingFanout::Remote {
+                    recipient_owner, ..
+                } => recipient_owner.to_hex(),
+                GroupPendingFanout::LocalSiblings { .. } => self.local_owner.to_hex(),
+            };
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(now, &mut rng);
             let prepared = match &pending.fanout {
@@ -528,9 +566,20 @@ impl ProtocolEngine {
                     }),
             };
             let prepared = match prepared {
-                Ok(prepared) => prepared,
+                Ok(prepared) => {
+                    if !prepared.deliveries.is_empty()
+                        || !prepared.invite_responses.is_empty()
+                        || !prepared.sender_key_messages.is_empty()
+                    {
+                        session_changed = true;
+                        persist_needed = true;
+                    }
+                    prepared
+                }
                 Err(_) => {
-                    pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                    pending.next_retry_at_secs =
+                        next_pending_retry_at_secs(pending.created_at_secs, now);
+                    queued_targets.push(queued_target);
                     still_pending.push(pending);
                     continue;
                 }
@@ -543,13 +592,26 @@ impl ProtocolEngine {
                 &mut event_ids,
             )?);
             if still_has_gap {
-                pending.next_retry_at_secs = now.get().saturating_add(PENDING_RETRY_DELAY_SECS);
+                pending.next_retry_at_secs =
+                    next_pending_retry_at_secs(pending.created_at_secs, now);
+                queued_targets.push(queued_target);
                 still_pending.push(pending);
             }
         }
         self.pending_group_fanouts = still_pending;
-        self.persist()?;
-        Ok(effects)
+        queued_targets.sort();
+        queued_targets.dedup();
+        if session_changed {
+            self.invalidate_known_message_author_cache();
+        }
+        if persist_needed {
+            self.persist()?;
+        }
+        Ok(ProtocolGroupIncomingResult {
+            effects,
+            queued_targets,
+            ..Default::default()
+        })
     }
 
 }

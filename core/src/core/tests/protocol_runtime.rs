@@ -42,6 +42,45 @@ impl StorageAdapter for SwitchableFailStorage {
     }
 }
 
+#[derive(Clone)]
+struct CountingStorage {
+    inner: nostr_double_ratchet_runtime::InMemoryStorage,
+    put_count: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl CountingStorage {
+    fn new() -> Self {
+        Self {
+            inner: nostr_double_ratchet_runtime::InMemoryStorage::new(),
+            put_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }
+    }
+
+    fn put_count(&self) -> usize {
+        self.put_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+impl StorageAdapter for CountingStorage {
+    fn get(&self, key: &str) -> nostr_double_ratchet_runtime::Result<Option<String>> {
+        self.inner.get(key)
+    }
+
+    fn put(&self, key: &str, value: String) -> nostr_double_ratchet_runtime::Result<()> {
+        self.put_count
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.put(key, value)
+    }
+
+    fn del(&self, key: &str) -> nostr_double_ratchet_runtime::Result<()> {
+        self.inner.del(key)
+    }
+
+    fn list(&self, prefix: &str) -> nostr_double_ratchet_runtime::Result<Vec<String>> {
+        self.inner.list(prefix)
+    }
+}
+
 fn protocol_plan_for_test(
     message_authors: Vec<PublicKey>,
     group_sender_key_authors: Vec<PublicKey>,
@@ -1786,6 +1825,245 @@ fn appcore_protocol_engine_retry_before_peer_discovery_keeps_missing_roster_pend
     let snapshot = engine.debug_snapshot();
     assert_eq!(snapshot.pending_outbound_count, 1);
     assert!(snapshot.pending_outbound_targets.contains(&owner_marker));
+}
+
+#[test]
+fn protocol_retry_before_next_due_does_not_rewrite_persisted_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let storage = Arc::new(CountingStorage::new());
+    let mut engine =
+        test_protocol_engine_with_storage(&owner, &device, storage.clone() as Arc<dyn StorageAdapter>);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let send = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "queued",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    assert!(
+        !send.queued_targets.is_empty(),
+        "test needs a pending send that waits for peer protocol state"
+    );
+
+    let before = storage.put_count();
+    let batch = engine
+        .retry_pending_protocol(NdrUnixSeconds(4))
+        .expect("retry before next due");
+
+    assert!(batch.direct_results.is_empty());
+    assert!(batch.group_result.events.is_empty());
+    assert!(batch.group_result.effects.is_empty());
+    assert!(batch.group_result.queued_targets.is_empty());
+    assert!(batch.direct_messages.is_empty());
+    assert!(batch.effects.is_empty());
+    assert_eq!(
+        storage.put_count(),
+        before,
+        "future-due retry checks must not serialize the full protocol snapshot"
+    );
+
+    let due_before = storage.put_count();
+    let batch = engine
+        .retry_pending_protocol(NdrUnixSeconds(10_000))
+        .expect("retry when pending protocol state is still missing");
+
+    assert_eq!(batch.direct_results.len(), 1);
+    assert!(
+        batch.direct_results[0]
+            .effects
+            .iter()
+            .any(|effect| matches!(effect, ProtocolEffect::FetchProtocolState { .. })),
+        "due missing-state retries should still ask relays for protocol state"
+    );
+    assert_eq!(
+        storage.put_count(),
+        due_before,
+        "timer-only requeues must not serialize the full protocol snapshot"
+    );
+
+    let generation_after_due = engine.debug_snapshot().subscription_generation;
+    let backoff_before = storage.put_count();
+    let backoff_batch = engine
+        .retry_pending_protocol(NdrUnixSeconds(10_030))
+        .expect("retry before stale pending outbound backoff expires");
+    assert!(
+        backoff_batch.is_empty(),
+        "stale missing-state retries must back off instead of polling every two seconds"
+    );
+    assert_eq!(
+        engine.debug_snapshot().subscription_generation,
+        generation_after_due,
+        "stale missing-state backoff must not churn subscription generations"
+    );
+    assert_eq!(
+        storage.put_count(),
+        backoff_before,
+        "stale missing-state backoff must not serialize unchanged ratchet state"
+    );
+}
+
+#[test]
+fn protocol_retry_missing_target_state_does_not_rewrite_persisted_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let peer_device = Keys::generate();
+    let storage = Arc::new(CountingStorage::new());
+    let mut engine =
+        test_protocol_engine_with_storage(&owner, &device, storage.clone() as Arc<dyn StorageAdapter>);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    engine
+        .ingest_app_keys_snapshot(
+            peer_owner.public_key(),
+            AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]),
+            1,
+        )
+        .expect("peer appkeys without invite");
+
+    let send = engine
+        .send_direct_text(
+            peer_owner.public_key(),
+            &peer_owner.public_key().to_hex(),
+            "queued",
+            None,
+            UnixSeconds(3),
+        )
+        .expect("direct send");
+    assert!(
+        send.queued_targets
+            .contains(&peer_device.public_key().to_hex()),
+        "test needs a pending device target with no invite/session"
+    );
+
+    let before = storage.put_count();
+    let batch = engine
+        .retry_pending_protocol(NdrUnixSeconds(10_000))
+        .expect("retry missing device invite");
+
+    assert_eq!(batch.direct_results.len(), 1);
+    assert!(
+        batch.direct_results[0]
+            .queued_targets
+            .contains(&peer_device.public_key().to_hex())
+    );
+    assert_eq!(
+        storage.put_count(),
+        before,
+        "missing-invite retries must not serialize unchanged ratchet state"
+    );
+}
+
+#[test]
+fn group_fanout_retry_missing_roster_does_not_rewrite_persisted_state() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate();
+    let storage = Arc::new(CountingStorage::new());
+    let mut engine =
+        test_protocol_engine_with_storage(&owner, &device, storage.clone() as Arc<dyn StorageAdapter>);
+    observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+
+    let create = engine
+        .create_group(
+            "Queued group".to_string(),
+            vec![peer_owner.public_key()],
+            UnixSeconds(3),
+        )
+        .expect("create group");
+    assert!(
+        create
+            .queued_targets
+            .contains(&peer_owner.public_key().to_hex()),
+        "test needs a queued fanout for a peer with no roster"
+    );
+    assert!(
+        engine.debug_snapshot().pending_group_fanout_count > 0,
+        "test must exercise durable pending group fanout retry"
+    );
+
+    let retry_now = unix_now().get();
+    let due_retry_at = retry_now.saturating_add(180);
+
+    let quiet_before = storage.put_count();
+    let quiet_batch = engine
+        .retry_pending_protocol(NdrUnixSeconds(retry_now))
+        .expect("retry before group fanout is due");
+    assert!(
+        quiet_batch.is_empty(),
+        "future-due group fanouts must not refresh protocol subscriptions"
+    );
+    assert_eq!(
+        storage.put_count(),
+        quiet_before,
+        "future-due group fanouts must not serialize unchanged ratchet state"
+    );
+
+    let generation_before_due = engine.debug_snapshot().subscription_generation;
+    let before = storage.put_count();
+    let batch = engine
+        .retry_pending_protocol(NdrUnixSeconds(due_retry_at))
+        .expect("retry missing group roster");
+
+    assert!(
+        batch
+            .group_result
+            .queued_targets
+            .contains(&peer_owner.public_key().to_hex())
+    );
+    assert_eq!(
+        storage.put_count(),
+        before,
+        "missing-roster group retries must not serialize unchanged ratchet state"
+    );
+
+    let generation_after_due = engine.debug_snapshot().subscription_generation;
+    assert!(
+        generation_after_due > generation_before_due,
+        "due group fanout retries should refresh protocol subscriptions once"
+    );
+    let quiet_after_due = storage.put_count();
+    let quiet_batch = engine
+        .retry_pending_protocol(NdrUnixSeconds(due_retry_at.saturating_add(1)))
+        .expect("retry before requeued group fanout is due");
+    assert!(
+        quiet_batch.is_empty(),
+        "requeued group fanouts must stay quiet until their next retry time"
+    );
+    assert_eq!(
+        engine.debug_snapshot().subscription_generation,
+        generation_after_due,
+        "quiet group retry checks must not churn subscription generations"
+    );
+    assert_eq!(
+        storage.put_count(),
+        quiet_after_due,
+        "quiet group retry checks must not serialize unchanged ratchet state"
+    );
+
+    let quiet_later = storage.put_count();
+    let quiet_batch = engine
+        .retry_pending_protocol(NdrUnixSeconds(due_retry_at.saturating_add(30)))
+        .expect("retry before stale group fanout backoff expires");
+    assert!(
+        quiet_batch.is_empty(),
+        "stale group fanouts must back off instead of polling every two seconds"
+    );
+    assert_eq!(
+        engine.debug_snapshot().subscription_generation,
+        generation_after_due,
+        "stale group fanout backoff must not churn subscription generations"
+    );
+    assert_eq!(
+        storage.put_count(),
+        quiet_later,
+        "stale group fanout backoff must not serialize unchanged ratchet state"
+    );
 }
 
 #[test]

@@ -87,8 +87,6 @@ final class IrisNearbyService: NSObject, ObservableObject {
 
         mutating func insert(_ id: String, limit: Int) -> Bool {
             if ids.contains(id) {
-                recentIDs.removeAll { $0 == id }
-                recentIDs.append(id)
                 return false
             }
             ids.insert(id)
@@ -1551,7 +1549,7 @@ final class IrisNearbyService: NSObject, ObservableObject {
                 ownerPubkeyHex: ownerPubkeyHex,
                 profileEventID: sanitizedEventID(object["profile_event_id"] as? String)
             )
-            sendInventoryAfterHelloIfNeeded(remotePeerID: peerID, force: true)
+            sendInventoryAfterHelloIfNeeded(remotePeerID: peerID, force: false)
             return true
         }
         return false

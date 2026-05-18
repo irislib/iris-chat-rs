@@ -31,6 +31,9 @@ impl ProtocolEngine {
                         pending_group_pairwise_payloads: state.pending_group_pairwise_payloads,
                         pending_group_sender_key_messages: state.pending_group_sender_key_messages,
                         pending_decrypted_deliveries: state.pending_decrypted_deliveries,
+                        known_message_author_cache: std::cell::RefCell::new(None),
+                        #[cfg(test)]
+                        known_message_author_cache_build_count: std::cell::Cell::new(0),
                         subscription_generation: state.subscription_generation,
                         last_backfill_attempt_secs: state.last_backfill_attempt_secs,
                     }
@@ -95,6 +98,9 @@ impl ProtocolEngine {
             pending_group_pairwise_payloads: Vec::new(),
             pending_group_sender_key_messages: Vec::new(),
             pending_decrypted_deliveries: Vec::new(),
+            known_message_author_cache: std::cell::RefCell::new(None),
+            #[cfg(test)]
+            known_message_author_cache_build_count: std::cell::Cell::new(0),
             subscription_generation: 0,
             last_backfill_attempt_secs: 0,
         })
@@ -118,6 +124,9 @@ impl ProtocolEngine {
     }
 
     fn prune_untracked_pending_inbound(&mut self) {
+        if self.pending_inbound.is_empty() {
+            return;
+        }
         let known_authors = self.known_message_author_hexes();
         self.pending_inbound.retain(|pending| {
             pending_inbound_sender_pubkey_hex(pending)
@@ -280,7 +289,7 @@ impl ProtocolEngine {
     }
 
     pub(super) fn known_message_author_pubkeys(&self) -> Vec<PublicKey> {
-        self.message_author_pubkeys_filtered(|_| true)
+        self.with_known_message_author_cache(|cache| cache.pubkeys.clone())
     }
 
     /// Walks every session and returns its expected event-author
@@ -316,14 +325,49 @@ impl ProtocolEngine {
     }
 
     pub(super) fn is_known_message_author(&self, author: PublicKey) -> bool {
-        self.known_message_author_pubkeys().contains(&author)
+        self.with_known_message_author_cache(|cache| cache.pubkey_set.contains(&author))
     }
 
     fn known_message_author_hexes(&self) -> HashSet<String> {
-        self.known_message_author_pubkeys()
-            .into_iter()
-            .map(|pubkey| pubkey.to_hex())
-            .collect()
+        self.with_known_message_author_cache(|cache| cache.hexes.clone())
+    }
+
+    fn with_known_message_author_cache<T>(
+        &self,
+        read: impl FnOnce(&KnownMessageAuthorCache) -> T,
+    ) -> T {
+        if self.known_message_author_cache.borrow().is_none() {
+            let cache = self.build_known_message_author_cache();
+            *self.known_message_author_cache.borrow_mut() = Some(cache);
+        }
+        let cache = self.known_message_author_cache.borrow();
+        read(cache
+            .as_ref()
+            .expect("known message author cache must be populated"))
+    }
+
+    fn build_known_message_author_cache(&self) -> KnownMessageAuthorCache {
+        #[cfg(test)]
+        self.known_message_author_cache_build_count
+            .set(self.known_message_author_cache_build_count.get() + 1);
+
+        let mut pubkeys = self.message_author_pubkeys_filtered(|_| true);
+        pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
+        pubkeys.dedup();
+        KnownMessageAuthorCache {
+            pubkey_set: pubkeys.iter().copied().collect(),
+            hexes: pubkeys.iter().map(|pubkey| pubkey.to_hex()).collect(),
+            pubkeys,
+        }
+    }
+
+    fn invalidate_known_message_author_cache(&self) {
+        self.known_message_author_cache.borrow_mut().take();
+    }
+
+    #[cfg(test)]
+    pub(super) fn known_message_author_cache_build_count_for_test(&self) -> u64 {
+        self.known_message_author_cache_build_count.get()
     }
 
     pub(super) fn known_group_sender_event_pubkeys(&self) -> Vec<PublicKey> {
@@ -535,6 +579,7 @@ impl ProtocolEngine {
         self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
         self.subscription_generation = checkpoint.subscription_generation;
         self.last_backfill_attempt_secs = checkpoint.last_backfill_attempt_secs;
+        self.invalidate_known_message_author_cache();
     }
 
     fn with_state_checkpoint<T>(
@@ -543,7 +588,10 @@ impl ProtocolEngine {
     ) -> anyhow::Result<T> {
         let checkpoint = self.state_checkpoint();
         match operation(self) {
-            Ok(value) => Ok(value),
+            Ok(value) => {
+                self.invalidate_known_message_author_cache();
+                Ok(value)
+            }
             Err(error) => {
                 self.restore_checkpoint(checkpoint);
                 Err(error)

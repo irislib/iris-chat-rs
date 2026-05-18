@@ -41,6 +41,7 @@ impl ProtocolEngine {
             self.session_manager
                 .observe_peer_roster(ndr_owner(owner_pubkey), roster);
         }
+        self.invalidate_known_message_author_cache();
         self.wake_pending_protocol_for_owner(ndr_owner(owner_pubkey));
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
@@ -49,6 +50,7 @@ impl ProtocolEngine {
             self.pending_inbound = pending_inbound_checkpoint;
             self.pending_group_fanouts = pending_group_fanouts_checkpoint;
             self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
+            self.invalidate_known_message_author_cache();
             return Err(error);
         }
         self.retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
@@ -70,6 +72,7 @@ impl ProtocolEngine {
         if invite.inviter_device_pubkey != self.local_device {
             self.session_manager
                 .observe_device_invite(invite_owner, invite)?;
+            self.invalidate_known_message_author_cache();
             self.wake_pending_protocol_for_owner(invite_owner);
         }
         if let Err(error) = self.persist() {
@@ -78,6 +81,7 @@ impl ProtocolEngine {
             self.pending_inbound = pending_inbound_checkpoint;
             self.pending_group_fanouts = pending_group_fanouts_checkpoint;
             self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
+            self.invalidate_known_message_author_cache();
             return Err(error);
         }
         self.retry_pending_protocol(NdrUnixSeconds(event.created_at.as_secs()))
@@ -110,6 +114,7 @@ impl ProtocolEngine {
         let processed = self
             .session_manager
             .observe_invite_response(&mut ctx, &envelope)?;
+        self.invalidate_known_message_author_cache();
         if let Some(processed) = processed.as_ref() {
             self.wake_pending_protocol_for_owner(
                 processed
@@ -123,6 +128,7 @@ impl ProtocolEngine {
             self.pending_inbound = pending_inbound_checkpoint;
             self.pending_group_fanouts = pending_group_fanouts_checkpoint;
             self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
+            self.invalidate_known_message_author_cache();
             return Err(error);
         }
         self.retry_pending_protocol(ctx.now)
@@ -156,6 +162,7 @@ impl ProtocolEngine {
                 )],
             ),
         );
+        self.invalidate_known_message_author_cache();
         // Bootstrap the session by sending a typing rumor with an
         // already-elapsed expiration. We need the inner kind-1060 publish to
         // make the inviter create their side of the session (otherwise the
@@ -198,6 +205,7 @@ impl ProtocolEngine {
             state,
             NdrUnixSeconds(now.get()),
         );
+        self.invalidate_known_message_author_cache();
         self.persist()?;
         self.retry_pending_protocol(NdrUnixSeconds(now.get()))
     }

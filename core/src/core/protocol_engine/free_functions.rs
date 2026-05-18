@@ -103,6 +103,20 @@ fn sort_dedup_protocol_pubkeys(pubkeys: &mut Vec<PublicKey>) {
     pubkeys.dedup();
 }
 
+fn pending_retry_delay_secs(created_at_secs: u64, now: NdrUnixSeconds) -> u64 {
+    let age_secs = now.get().saturating_sub(created_at_secs);
+    match age_secs {
+        0..=29 => PENDING_RETRY_DELAY_SECS,
+        30..=119 => 15,
+        _ => 60,
+    }
+}
+
+fn next_pending_retry_at_secs(created_at_secs: u64, now: NdrUnixSeconds) -> u64 {
+    now.get()
+        .saturating_add(pending_retry_delay_secs(created_at_secs, now))
+}
+
 fn group_publish_from_prepared_send(
     prepared: PreparedSend,
     fanout: GroupPendingFanout,

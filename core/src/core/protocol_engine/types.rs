@@ -165,6 +165,13 @@ struct ProtocolPendingDecryptedDelivery {
     created_at_secs: u64,
 }
 
+#[derive(Clone, Debug)]
+struct KnownMessageAuthorCache {
+    pubkeys: Vec<PublicKey>,
+    pubkey_set: HashSet<PublicKey>,
+    hexes: HashSet<String>,
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct ProtocolDirectSendResult {
     pub(super) message_id: String,
@@ -206,6 +213,17 @@ pub(super) struct ProtocolRetryBatch {
     pub(super) group_result: ProtocolGroupIncomingResult,
     pub(super) direct_messages: Vec<ProtocolDecryptedMessage>,
     pub(super) effects: Vec<ProtocolEffect>,
+}
+
+impl ProtocolRetryBatch {
+    pub(super) fn is_empty(&self) -> bool {
+        self.direct_results.is_empty()
+            && self.group_result.events.is_empty()
+            && self.group_result.effects.is_empty()
+            && self.group_result.queued_targets.is_empty()
+            && self.direct_messages.is_empty()
+            && self.effects.is_empty()
+    }
 }
 
 #[allow(dead_code)]
@@ -332,6 +350,9 @@ pub(super) struct ProtocolEngine {
     pending_group_sender_key_messages:
         Vec<nostr_double_ratchet_nostr::nostr_codec::ParsedGroupSenderKeyMessageEvent>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
+    known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
+    #[cfg(test)]
+    known_message_author_cache_build_count: std::cell::Cell<u64>,
     subscription_generation: u64,
     last_backfill_attempt_secs: u64,
 }
