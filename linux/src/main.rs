@@ -228,6 +228,22 @@ entry:focus {{
     border-color: @iris_accent;
 }}
 
+textview.composer-input {{
+    background-color: @iris_panel_alt;
+    color: @iris_text_primary;
+    border: 1px solid @iris_border;
+    border-radius: 20px;
+}}
+
+textview.composer-input:focus {{
+    border-color: @iris_accent;
+}}
+
+textview.composer-input text {{
+    background-color: transparent;
+    color: @iris_text_primary;
+}}
+
 button.flat {{
     background-color: transparent;
     color: @iris_text_primary;

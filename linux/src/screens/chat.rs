@@ -2219,19 +2219,47 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     });
     row.append(&attach);
 
-    let entry = gtk::Entry::new();
-    entry.set_placeholder_text(Some("Message"));
-    entry.set_hexpand(true);
-    entry.set_height_request(40);
+    let buffer = gtk::TextBuffer::new(None);
+    let input = gtk::TextView::with_buffer(&buffer);
+    input.add_css_class("composer-input");
+    input.set_accepts_tab(false);
+    input.set_hexpand(true);
+    input.set_wrap_mode(gtk::WrapMode::WordChar);
+    input.set_top_margin(9);
+    input.set_bottom_margin(9);
+    input.set_left_margin(12);
+    input.set_right_margin(12);
+
+    let input_scroll = gtk::ScrolledWindow::new();
+    input_scroll.set_hexpand(true);
+    input_scroll.set_min_content_height(40);
+    input_scroll.set_max_content_height(132);
+    input_scroll.set_propagate_natural_height(true);
+    input_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
+    input_scroll.set_vscrollbar_policy(gtk::PolicyType::Automatic);
+    input_scroll.set_child(Some(&input));
+
+    let input_overlay = gtk::Overlay::new();
+    input_overlay.set_hexpand(true);
+    input_overlay.set_child(Some(&input_scroll));
+
+    let placeholder = gtk::Label::new(Some("Message"));
+    placeholder.add_css_class("dim-label");
+    placeholder.set_halign(gtk::Align::Start);
+    placeholder.set_valign(gtk::Align::Start);
+    placeholder.set_margin_start(13);
+    placeholder.set_margin_top(10);
+    placeholder.set_can_target(false);
+    input_overlay.add_overlay(&placeholder);
+
     // Seed the composer with the persisted draft so unsent text
-    // survives navigation + relaunch. set_text is silent vs.
-    // user-typed `connect_changed` for our purposes because the core
-    // dedups on the draft string anyway.
+    // survives navigation + relaunch. The core dedups identical draft
+    // writes, so doing this before wiring `connect_changed` is fine.
     if !chat.draft.is_empty() {
-        entry.set_text(&chat.draft);
-        entry.set_position(-1);
+        buffer.set_text(&chat.draft);
     }
-    row.append(&entry);
+    placeholder.set_visible(chat.draft.is_empty());
+    row.append(&input_overlay);
 
     let emoji_btn = gtk::Button::from_icon_name("face-smile-symbolic");
     emoji_btn.add_css_class("flat");
@@ -2240,12 +2268,11 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     let emoji_chooser = gtk::EmojiChooser::new();
     emoji_chooser.set_parent(&emoji_btn);
     {
-        let entry_for_emoji = entry.clone();
+        let buffer_for_emoji = buffer.clone();
+        let input_for_emoji = input.clone();
         emoji_chooser.connect_emoji_picked(move |_, emoji_text| {
-            let mut position = entry_for_emoji.position();
-            entry_for_emoji.insert_text(emoji_text, &mut position);
-            entry_for_emoji.set_position(position);
-            entry_for_emoji.grab_focus_without_selecting();
+            buffer_for_emoji.insert_at_cursor(emoji_text);
+            input_for_emoji.grab_focus();
         });
     }
     {
@@ -2255,17 +2282,19 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     row.append(&emoji_btn);
 
     if manager.should_focus_composer(&chat.chat_id) {
-        let entry_for_focus = entry.clone();
+        let input_for_focus = input.clone();
         gtk::glib::idle_add_local_once(move || {
-            entry_for_focus.grab_focus();
+            input_for_focus.grab_focus();
         });
     }
 
     {
         let manager_for_typing = manager.clone();
         let chat_id_for_typing = chat.chat_id.clone();
-        entry.connect_changed(move |e| {
-            let text = e.text().to_string();
+        let placeholder_for_typing = placeholder.clone();
+        buffer.connect_changed(move |buffer| {
+            let text = composer_buffer_text(buffer);
+            placeholder_for_typing.set_visible(text.is_empty());
             if text.is_empty() {
                 manager_for_typing.dispatch(AppAction::StopTyping {
                     chat_id: chat_id_for_typing.clone(),
@@ -2298,41 +2327,77 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
     let chat_id = chat.chat_id.clone();
     let ttl = chat.message_ttl_seconds;
     let manager_for_click = manager.clone();
-    let entry_for_click = entry.clone();
+    let buffer_for_click = buffer.clone();
     let preview_row_for_send = preview_row.clone();
     let preview_scroll_for_send = preview_scroll.clone();
     send.connect_clicked(move |btn| {
-        let text = entry_for_click.text().trim().to_string();
-        let staged = manager_for_click.staged_attachments(&chat_id);
-        if text.is_empty() && staged.is_empty() {
-            return;
+        if submit_composer(
+            &manager_for_click,
+            &chat_id,
+            &buffer_for_click,
+            ttl,
+            &preview_row_for_send,
+            &preview_scroll_for_send,
+        ) {
+            btn.set_sensitive(false);
         }
-        btn.set_sensitive(false);
-        entry_for_click.set_text("");
-        dispatch_send(&manager_for_click, &chat_id, text, ttl);
-        rebuild_attachment_previews(&preview_row_for_send, &manager_for_click, &chat_id);
-        preview_scroll_for_send.set_visible(preview_row_for_send.first_child().is_some());
     });
 
     let chat_id = chat.chat_id.clone();
     let ttl = chat.message_ttl_seconds;
     let manager_for_enter = manager.clone();
+    let buffer_for_enter = buffer.clone();
     let preview_row_for_enter = preview_row.clone();
     let preview_scroll_for_enter = preview_scroll.clone();
-    entry.connect_activate(move |entry| {
-        let text = entry.text().trim().to_string();
-        let staged = manager_for_enter.staged_attachments(&chat_id);
-        if text.is_empty() && staged.is_empty() {
-            return;
+    let key_controller = gtk::EventControllerKey::new();
+    key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+    key_controller.connect_key_pressed(move |_, keyval, _, state| {
+        if !matches!(keyval, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter)
+            || state.contains(gtk::gdk::ModifierType::SHIFT_MASK)
+        {
+            return glib::Propagation::Proceed;
         }
-        entry.set_text("");
-        dispatch_send(&manager_for_enter, &chat_id, text, ttl);
-        rebuild_attachment_previews(&preview_row_for_enter, &manager_for_enter, &chat_id);
-        preview_scroll_for_enter.set_visible(preview_row_for_enter.first_child().is_some());
+
+        submit_composer(
+            &manager_for_enter,
+            &chat_id,
+            &buffer_for_enter,
+            ttl,
+            &preview_row_for_enter,
+            &preview_scroll_for_enter,
+        );
+        glib::Propagation::Stop
     });
+    input.add_controller(key_controller);
 
     outer.append(&row);
     outer.upcast()
+}
+
+fn composer_buffer_text(buffer: &gtk::TextBuffer) -> String {
+    let (start, end) = buffer.bounds();
+    buffer.text(&start, &end, true).to_string()
+}
+
+fn submit_composer(
+    manager: &Rc<AppManager>,
+    chat_id: &str,
+    buffer: &gtk::TextBuffer,
+    ttl_seconds: Option<u64>,
+    preview_row: &gtk::Box,
+    preview_scroll: &gtk::ScrolledWindow,
+) -> bool {
+    let text = composer_buffer_text(buffer).trim().to_string();
+    let staged = manager.staged_attachments(chat_id);
+    if text.is_empty() && staged.is_empty() {
+        return false;
+    }
+
+    buffer.set_text("");
+    dispatch_send(manager, chat_id, text, ttl_seconds);
+    rebuild_attachment_previews(preview_row, manager, chat_id);
+    preview_scroll.set_visible(preview_row.first_child().is_some());
+    true
 }
 
 fn rebuild_attachment_previews(row: &gtk::Box, manager: &Rc<AppManager>, chat_id: &str) {

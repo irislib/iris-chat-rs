@@ -74,7 +74,7 @@
                                     CornerRadius="{StaticResource InputRadius}">
                                 <ScrollViewer x:Name="PART_ContentHost"
                                               Padding="{TemplateBinding Padding}"
-                                              VerticalAlignment="Center" />
+                                              VerticalAlignment="{TemplateBinding VerticalContentAlignment}" />
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsKeyboardFocused" Value="True">

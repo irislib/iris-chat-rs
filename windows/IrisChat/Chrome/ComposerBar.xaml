@@ -82,9 +82,15 @@
 
                 <TextBox x:Name="Input"
                          Grid.Column="2"
-                         AcceptsReturn="False"
+                         AcceptsReturn="True"
                          KeyDown="OnInputKeyDown"
                          TextChanged="OnInputTextChanged"
+                         TextWrapping="Wrap"
+                         VerticalScrollBarVisibility="Auto"
+                         MinHeight="38"
+                         MaxHeight="126"
+                         MaxLines="5"
+                         VerticalContentAlignment="Top"
                          FontSize="14" />
 
                 <Button x:Name="SendButton"
