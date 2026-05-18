@@ -574,6 +574,7 @@ impl AppCore {
         let inner_event_id = runtime_rumor.id.clone();
         match runtime_rumor.kind {
             CHAT_MESSAGE_KIND => {
+                let receipt_message_id = inner_event_id.clone();
                 self.apply_runtime_text_message(
                     sender_owner,
                     Some(chat_id.to_string()),
@@ -583,6 +584,12 @@ impl AppCore {
                     Some(inner_event_id.clone()),
                     Some(inner_event_id),
                 );
+                if !is_outgoing
+                    && self.preferences.send_read_receipts
+                    && !self.thread_is_message_request(chat_id)
+                {
+                    self.send_receipt(chat_id, "delivered", vec![receipt_message_id]);
+                }
             }
             REACTION_KIND => {
                 let sender_hex = sender_owner.to_hex();

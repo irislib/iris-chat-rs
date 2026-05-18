@@ -1780,6 +1780,163 @@ fn group_runtime_chat_message_is_persisted() {
 }
 
 #[test]
+fn group_delivered_receipt_is_queued_directly_to_message_author() {
+    let alice_owner = Keys::generate();
+    let alice_device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+    let mut alice = logged_in_test_core(
+        "group-delivered-author-only-alice",
+        &alice_owner,
+        &alice_device,
+    );
+    alice.handle_action(AppAction::CreatePublicInvite);
+    let invite_url = alice
+        .state
+        .public_invite
+        .as_ref()
+        .expect("alice invite")
+        .url
+        .clone();
+
+    let mut bob =
+        logged_in_test_core("group-delivered-author-only-bob", &bob_owner, &bob_device);
+    bob.handle_action(AppAction::AcceptInvite {
+        invite_input: invite_url,
+    });
+    bob.pending_relay_publishes.clear();
+
+    let group_id = "group-delivered-author-only".to_string();
+    let chat_id = group_chat_id(&group_id);
+    let (payload, rumor_id) = runtime_rumor_json(
+        alice_owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "author-only delivered receipt",
+        1_777_159_483,
+        vec![vec!["l".to_string(), group_id.clone()]],
+    );
+
+    bob.apply_group_decrypted_event(GroupIncomingEvent::Message(
+        nostr_double_ratchet::GroupReceivedMessage {
+            group_id,
+            sender_owner: ndr_owner_pubkey(alice_owner.public_key()),
+            sender_device: Some(ndr_device_pubkey(alice_device.public_key())),
+            body: payload.into_bytes(),
+            revision: 1,
+        },
+    ));
+
+    let debug = bob
+        .protocol_engine
+        .as_ref()
+        .expect("protocol engine")
+        .debug_snapshot();
+    assert_eq!(debug.pending_group_fanout_count, 0);
+    assert!(
+        debug.pending_outbound_details.iter().any(|pending| {
+            pending.recipient_owner_hex == alice_owner.public_key().to_hex()
+                && pending.chat_id == chat_id
+        }),
+        "delivered receipt for group message {rumor_id} should be queued as a direct payload to the message author"
+    );
+}
+
+#[test]
+fn group_seen_receipt_sent_directly_to_author_updates_sender_copy() {
+    let alice_owner = Keys::generate();
+    let alice_device = Keys::generate();
+    let bob_owner = Keys::generate();
+    let bob_device = Keys::generate();
+
+    let mut alice = logged_in_test_core("group-seen-author-alice", &alice_owner, &alice_device);
+    alice.pending_relay_publishes.clear();
+    alice.handle_action(AppAction::CreatePublicInvite);
+    let invite_url = alice
+        .state
+        .public_invite
+        .as_ref()
+        .expect("alice invite")
+        .url
+        .clone();
+
+    let mut bob = logged_in_test_core("group-seen-author-bob", &bob_owner, &bob_device);
+    bob.pending_relay_publishes.clear();
+    bob.handle_action(AppAction::AcceptInvite {
+        invite_input: invite_url,
+    });
+    bob.handle_action(AppAction::SendMessage {
+        chat_id: alice_owner.public_key().to_hex(),
+        text: "direct bootstrap".to_string(),
+    });
+    for event in pending_events_with_kind(&bob, INVITE_RESPONSE_KIND) {
+        alice.handle_relay_event(event);
+    }
+    for event in pending_events_with_kind(&bob, MESSAGE_EVENT_KIND) {
+        alice.handle_relay_event(event);
+    }
+    alice.pending_relay_publishes.clear();
+    bob.pending_relay_publishes.clear();
+
+    let group_id = "group-seen-author-only".to_string();
+    let chat_id = group_chat_id(&group_id);
+    let message_id = "group-message-seen-author-only".to_string();
+    alice.push_outgoing_message_with_id(
+        message_id.clone(),
+        &chat_id,
+        "seen receipt should be private".to_string(),
+        1_777_159_483,
+        None,
+        DeliveryState::Sent,
+    );
+    bob.push_incoming_message_from(
+        &chat_id,
+        Some(message_id.clone()),
+        "seen receipt should be private".to_string(),
+        1_777_159_483,
+        None,
+        Some("Alice".to_string()),
+        Some(alice_owner.public_key().to_hex()),
+        Some("group-outer".to_string()),
+    );
+
+    bob.mark_messages_seen(&chat_id, std::slice::from_ref(&message_id));
+
+    let receipt_publishes = bob
+        .pending_relay_publishes
+        .values()
+        .filter(|pending| {
+            pending.target_owner_pubkey_hex.as_deref()
+                == Some(alice_owner.public_key().to_hex().as_str())
+        })
+        .count();
+    assert_eq!(receipt_publishes, 1);
+    for event in pending_events_with_kind(&bob, MESSAGE_EVENT_KIND) {
+        alice.handle_relay_event(event);
+    }
+
+    let message = alice
+        .threads
+        .get(&chat_id)
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
+        .expect("alice group message");
+    assert_eq!(message.delivery, DeliveryState::Seen);
+    assert_eq!(message.recipient_deliveries.len(), 1);
+    assert_eq!(
+        message.recipient_deliveries[0].owner_pubkey_hex,
+        bob_owner.public_key().to_hex()
+    );
+    assert_eq!(
+        message.recipient_deliveries[0].delivery,
+        DeliveryState::Seen
+    );
+}
+
+#[test]
 fn group_rumor_id_dedupes_pairwise_fanout_copies() {
     let owner = Keys::generate();
     let device = Keys::generate();

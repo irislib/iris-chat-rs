@@ -107,25 +107,106 @@ impl AppCore {
             return;
         };
         if is_group_chat_id(chat_id) {
-            let tags = message_ids
-                .into_iter()
-                .map(|id| vec!["e".to_string(), id])
-                .collect();
-            self.send_group_event(chat_id, RECEIPT_KIND, receipt_type, tags, None);
+            self.send_group_author_receipts(owner_pubkey, chat_id, receipt_type, message_ids);
         } else if let Ok((_, peer)) = parse_peer_input(chat_id) {
-            let now = unix_now();
-            let receipt_type_for_pairwise = match receipt_type {
-                "seen" => pairwise_codec::ReceiptType::Seen,
-                _ => pairwise_codec::ReceiptType::Delivered,
-            };
-            if let Ok(unsigned) = pairwise_codec::receipt_event(
+            self.send_pairwise_receipt(
                 owner_pubkey,
-                receipt_type_for_pairwise,
-                message_ids.clone(),
-                pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
-            ) {
-                self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "receipt");
+                peer,
+                chat_id,
+                receipt_type,
+                message_ids,
+                None,
+            );
+        }
+    }
+
+    fn send_group_author_receipts(
+        &mut self,
+        owner_pubkey: PublicKey,
+        chat_id: &str,
+        receipt_type: &str,
+        message_ids: Vec<String>,
+    ) {
+        let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
+            return;
+        };
+        let local_owner_hex = owner_pubkey.to_hex();
+        for (author_hex, author_message_ids) in
+            self.group_receipt_message_ids_by_author(chat_id, message_ids)
+        {
+            if author_hex == local_owner_hex {
+                continue;
             }
+            let Ok(author) = PublicKey::parse(&author_hex) else {
+                continue;
+            };
+            self.send_pairwise_receipt(
+                owner_pubkey,
+                author,
+                chat_id,
+                receipt_type,
+                author_message_ids,
+                Some(&group_id),
+            );
+        }
+    }
+
+    fn group_receipt_message_ids_by_author(
+        &self,
+        chat_id: &str,
+        message_ids: Vec<String>,
+    ) -> BTreeMap<String, Vec<String>> {
+        let requested = message_ids.into_iter().collect::<HashSet<_>>();
+        let mut by_author = BTreeMap::<String, Vec<String>>::new();
+        let Some(thread) = self.threads.get(chat_id) else {
+            return by_author;
+        };
+        for message in &thread.messages {
+            if message.is_outgoing || !requested.contains(&message.id) {
+                continue;
+            }
+            let Some(author_hex) = group_message_author_hex(message) else {
+                continue;
+            };
+            by_author
+                .entry(author_hex.to_string())
+                .or_default()
+                .push(message.id.clone());
+        }
+        by_author
+    }
+
+    fn send_pairwise_receipt(
+        &mut self,
+        owner_pubkey: PublicKey,
+        peer: PublicKey,
+        chat_id: &str,
+        receipt_type: &str,
+        message_ids: Vec<String>,
+        group_id: Option<&str>,
+    ) {
+        if message_ids.is_empty() {
+            return;
+        }
+        let now = unix_now();
+        let receipt_type_for_pairwise = match receipt_type {
+            "seen" => pairwise_codec::ReceiptType::Seen,
+            _ => pairwise_codec::ReceiptType::Delivered,
+        };
+        if let Ok(mut unsigned) = pairwise_codec::receipt_event(
+            owner_pubkey,
+            receipt_type_for_pairwise,
+            message_ids,
+            pairwise_codec::EncodeOptions::new(now.get(), now.get().saturating_mul(1000)),
+        ) {
+            if let Some(group_id) = group_id {
+                if let Ok(group_tag) = nostr::Tag::parse(["l", group_id]) {
+                    unsigned.tags.push(group_tag);
+                    unsigned.id = None;
+                    unsigned.ensure_id();
+                }
+            }
+            self.send_protocol_engine_unsigned_event(peer, chat_id, unsigned, "receipt");
         }
     }
 
@@ -206,4 +287,12 @@ fn delivery_rank(state: &DeliveryState) -> u8 {
         DeliveryState::Seen => 4,
         DeliveryState::Failed => 0,
     }
+}
+
+fn group_message_author_hex(message: &ChatMessageSnapshot) -> Option<&str> {
+    message.author_owner_pubkey_hex.as_deref().or_else(|| {
+        PublicKey::parse(&message.author)
+            .ok()
+            .map(|_| message.author.as_str())
+    })
 }
