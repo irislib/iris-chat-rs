@@ -1,3 +1,7 @@
+# Iris Chat 2026.5.18.1
+
+- Group photos now persist and appear in chats, chat lists, and group details.
+
 # Iris Chat 2026.5.17.1
 
 - Linked devices now show clearer app, OS, and device labels where available.

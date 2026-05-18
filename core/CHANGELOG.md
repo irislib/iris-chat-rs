@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.26
+
+- Add group photo persistence and projection so group pictures survive restart and appear in chat lists, open chats, and group details.
+
 ## 0.1.25
 
 - Publish clearer linked-device labels from every native platform so device lists show the app, OS, and device family where available.
