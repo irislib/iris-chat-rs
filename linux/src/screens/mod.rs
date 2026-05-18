@@ -172,6 +172,66 @@ pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc
     dialog.present(parent);
 }
 
+pub(crate) fn confirm_delete_chat(
+    parent: Option<&gtk::Window>,
+    manager: &Rc<AppManager>,
+    chat_id: String,
+) {
+    let dialog = adw::Dialog::builder()
+        .title("Delete chat?")
+        .content_width(340)
+        .build();
+
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    content.set_margin_top(24);
+    content.set_margin_bottom(20);
+    content.set_margin_start(20);
+    content.set_margin_end(20);
+
+    let title = gtk::Label::new(Some("Delete chat?"));
+    title.add_css_class("title-2");
+    title.set_halign(gtk::Align::Start);
+    content.append(&title);
+
+    let message = gtk::Label::new(Some("This removes messages from this device."));
+    message.set_wrap(true);
+    message.set_xalign(0.0);
+    message.add_css_class("dim-label");
+    content.append(&message);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+    buttons.set_halign(gtk::Align::End);
+
+    let cancel = gtk::Button::with_label("Cancel");
+    cancel.add_css_class("pill");
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| {
+            dialog.close();
+        });
+    }
+    buttons.append(&cancel);
+
+    let delete = gtk::Button::with_label("Delete");
+    delete.add_css_class("pill");
+    delete.add_css_class("destructive-action");
+    {
+        let manager = manager.clone();
+        let dialog = dialog.clone();
+        delete.connect_clicked(move |_| {
+            manager.dispatch(AppAction::DeleteChat {
+                chat_id: chat_id.clone(),
+            });
+            dialog.close();
+        });
+    }
+    buttons.append(&delete);
+
+    content.append(&buttons);
+    dialog.set_child(Some(&content));
+    dialog.present(parent);
+}
+
 pub(crate) fn dispatch_on_click<F>(button: &gtk::Button, manager: &Rc<AppManager>, action: F)
 where
     F: Fn() -> iris_chat_core::AppAction + 'static,

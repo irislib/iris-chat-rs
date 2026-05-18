@@ -1941,6 +1941,7 @@ private struct DesktopSidebarChatRow: View {
     let chat: ChatThreadSnapshot
     let timeLabel: String?
     let selected: Bool
+    @State private var confirmingDelete = false
 
     private var preview: String {
         if chat.isTyping {
@@ -2025,13 +2026,31 @@ private struct DesktopSidebarChatRow: View {
         }
         .buttonStyle(.irisPlain)
         .contextMenu {
-            chatListItemContextMenu(manager: manager, chat: chat)
+            chatListItemContextMenu(manager: manager, chat: chat) {
+                confirmingDelete = true
+            }
+        }
+        .confirmationDialog(
+            "Delete chat?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                manager.dispatch(.deleteChat(chatId: chat.chatId))
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes messages from this device.")
         }
     }
 }
 
 @ViewBuilder
-private func chatListItemContextMenu(manager: AppManager, chat: ChatThreadSnapshot) -> some View {
+private func chatListItemContextMenu(
+    manager: AppManager,
+    chat: ChatThreadSnapshot,
+    onDeleteRequest: @escaping () -> Void
+) -> some View {
     Button {
         manager.dispatch(.setChatUnread(chatId: chat.chatId, unread: chat.unreadCount == 0))
     } label: {
@@ -2059,9 +2078,7 @@ private func chatListItemContextMenu(manager: AppManager, chat: ChatThreadSnapsh
         )
     }
 
-    Button(role: .destructive) {
-        manager.dispatch(.deleteChat(chatId: chat.chatId))
-    } label: {
+    Button(role: .destructive, action: onDeleteRequest) {
         Label("Delete", systemImage: "trash.fill")
     }
 }
@@ -3769,6 +3786,7 @@ private struct ChatListRowContainer: View {
     let chat: ChatThreadSnapshot
     let timeLabel: String?
     let preferences: PreferencesSnapshot
+    @State private var confirmingDelete = false
 
     @ViewBuilder
     var body: some View {
@@ -3776,7 +3794,21 @@ private struct ChatListRowContainer: View {
 
 #if os(macOS)
         row.contextMenu {
-            chatListItemContextMenu(manager: manager, chat: chat)
+            chatListItemContextMenu(manager: manager, chat: chat) {
+                confirmingDelete = true
+            }
+        }
+        .confirmationDialog(
+            "Delete chat?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                manager.dispatch(.deleteChat(chatId: chat.chatId))
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes messages from this device.")
         }
 #else
         row

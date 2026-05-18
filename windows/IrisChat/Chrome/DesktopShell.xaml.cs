@@ -419,8 +419,21 @@ public partial class DesktopShell : UserControl
             () => _manager.SetChatMuted(chat.chatId, !chat.isMuted)
         ));
         menu.Items.Add(new Separator());
-        menu.Items.Add(MenuItem("Delete", () => _manager.DeleteChat(chat.chatId)));
+        menu.Items.Add(MenuItem("Delete", () => ConfirmDeleteChat(chat)));
         return menu;
+    }
+
+    private void ConfirmDeleteChat(ChatThreadSnapshot chat)
+    {
+        var result = MessageBox.Show(
+            Window.GetWindow(this),
+            "This removes messages from this device.",
+            "Delete chat?",
+            MessageBoxButton.OKCancel,
+            MessageBoxImage.Warning
+        );
+        if (result == MessageBoxResult.OK)
+            _manager.DeleteChat(chat.chatId);
     }
 
     private static MenuItem MenuItem(string header, Action action)

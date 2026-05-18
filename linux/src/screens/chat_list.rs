@@ -8,6 +8,7 @@ use iris_chat_core::{
 };
 
 use crate::app_manager::{AppManager, SearchUiState};
+use crate::screens::confirm_delete_chat;
 use crate::widgets::image_cache;
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
@@ -567,13 +568,14 @@ fn chat_context_popover(chat: &ChatThreadSnapshot, manager: &Rc<AppManager>) -> 
     ));
 
     column.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-    let delete = context_button("Delete", {
+    let delete = context_button_with_widget("Delete", {
         let manager = manager.clone();
         let chat_id = chat.chat_id.clone();
-        move || {
-            manager.dispatch(AppAction::DeleteChat {
-                chat_id: chat_id.clone(),
-            });
+        move |button| {
+            let parent = button
+                .root()
+                .and_then(|root| root.downcast::<gtk::Window>().ok());
+            confirm_delete_chat(parent.as_ref(), &manager, chat_id.clone());
         }
     });
     delete.add_css_class("destructive-action");
@@ -584,11 +586,15 @@ fn chat_context_popover(chat: &ChatThreadSnapshot, manager: &Rc<AppManager>) -> 
 }
 
 fn context_button(label: &str, action: impl Fn() + 'static) -> gtk::Button {
+    context_button_with_widget(label, move |_| action())
+}
+
+fn context_button_with_widget(label: &str, action: impl Fn(&gtk::Button) + 'static) -> gtk::Button {
     let button = gtk::Button::with_label(label);
     button.add_css_class("flat");
     button.set_halign(gtk::Align::Fill);
     button.connect_clicked(move |button| {
-        action();
+        action(button);
         if let Some(popover) = button
             .ancestor(gtk::Popover::static_type())
             .and_then(|widget| widget.downcast::<gtk::Popover>().ok())
