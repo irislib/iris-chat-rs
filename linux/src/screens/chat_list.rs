@@ -10,6 +10,7 @@ use iris_chat_core::{
 use crate::app_manager::{AppManager, SearchUiState};
 use crate::screens::chat::{present_chat_info, ChatInfoSnapshot};
 use crate::screens::confirm_delete_chat;
+use crate::widgets::clickable::PointerCursorExt;
 use crate::widgets::image_cache;
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
@@ -284,6 +285,7 @@ fn shortcut_row(shortcut: &ChatInputShortcut, manager: &Rc<AppManager>) -> gtk::
         .subtitle(escape(&subtitle))
         .activatable(true)
         .build();
+    row.show_pointer_cursor();
     let icon = gtk::Image::from_icon_name(icon_name);
     icon.set_pixel_size(28);
     row.add_prefix(&icon);
@@ -346,6 +348,7 @@ fn message_hit_row(
         .subtitle(escape(&hit.body))
         .activatable(true)
         .build();
+    row.show_pointer_cursor();
     let avatar = adw::Avatar::new(40, Some(&hit.chat_display_name), true);
     if let Some(url) = hit.chat_picture_url.as_ref() {
         let proxied = proxied_image_url(url.clone(), prefs.clone(), Some(80), Some(80), true);
@@ -419,6 +422,7 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
 
     let button = gtk::Button::new();
     button.add_css_class("flat");
+    button.show_pointer_cursor();
     button.set_child(Some(&outer));
     let manager_for_click = manager.clone();
     button.connect_clicked(move |btn| {
@@ -430,6 +434,7 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
 fn nearby_icon_button(manager: &Rc<AppManager>, active: bool, size: i32) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("flat");
+    button.show_pointer_cursor();
     button.set_size_request(size, size);
     button.set_tooltip_text(Some("Nearby"));
     button.set_child(Some(&nearby_icon(active, size)));
@@ -507,6 +512,7 @@ fn nearby_avatar_strip(
 
         let button = gtk::Button::new();
         button.add_css_class("flat");
+        button.show_pointer_cursor();
         button.set_child(Some(&column));
         button.set_tooltip_text(Some(&name));
         if let Some(owner) = peer.owner_pubkey_hex.clone() {
@@ -629,6 +635,7 @@ fn row_for(
         .title(escape(&chat.display_name))
         .activatable(true)
         .build();
+    row.show_pointer_cursor();
 
     let avatar = adw::Avatar::new(40, Some(&chat.display_name), true);
     if let Some(url) = chat.picture_url.as_ref() {

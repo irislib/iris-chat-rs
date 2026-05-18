@@ -244,6 +244,7 @@
             <Style TargetType="{x:Type CheckBox}">
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
                 <Setter Property="FontSize" Value="14" />
+                <Setter Property="Cursor" Value="Hand" />
                 <Setter Property="VerticalContentAlignment" Value="Center" />
                 <Setter Property="Template">
                     <Setter.Value>

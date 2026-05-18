@@ -6,6 +6,7 @@ use iris_chat_core::{AppAction, ChatKind, DesktopNearbyPeerSnapshot, DesktopNear
 
 use crate::app_manager::AppManager;
 use crate::screens::chat::{present_chat_info, ChatInfoSnapshot};
+use crate::widgets::clickable::PointerCursorExt;
 
 pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
     let dialog = adw::Dialog::builder()
@@ -179,6 +180,9 @@ fn peer_row(peer: &DesktopNearbyPeerSnapshot, manager: &Rc<AppManager>) -> adw::
         .title(title.as_str())
         .activatable(peer.owner_pubkey_hex.is_some())
         .build();
+    if peer.owner_pubkey_hex.is_some() {
+        row.show_pointer_cursor();
+    }
     let icon = gtk::Image::from_icon_name("avatar-default-symbolic");
     row.add_prefix(&icon);
     if let Some(owner) = peer.owner_pubkey_hex.clone() {
