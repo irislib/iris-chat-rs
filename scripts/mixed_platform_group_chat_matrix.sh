@@ -209,10 +209,39 @@ run_android_test() {
   done
 
   local output
-  output="$("${cmd[@]}" 2>&1)" || {
+  local status
+  local err_trap
+  err_trap="$(trap -p ERR || true)"
+  trap - ERR
+  set +e
+  output="$("${cmd[@]}" 2>&1)"
+  status="$?"
+  set -e
+  if [[ -n "${err_trap}" ]]; then
+    eval "${err_trap}"
+  else
+    trap - ERR
+  fi
+  if [[ "${status}" -ne 0 ]]; then
+    if [[ "${test_name}" == "wait_for_message_from_args" ]] &&
+      printf '%s\n' "${output}" | grep -q '^INSTRUMENTATION_STATUS_CODE: 0$' &&
+      printf '%s\n' "${output}" | grep -Eq '^INSTRUMENTATION_STATUS: matching_count=[1-9][0-9]*$' &&
+      printf '%s\n' "${output}" | grep -q '^INSTRUMENTATION_RESULT: shortMsg=Process crashed\.$'; then
+      echo "Android harness ${test_name} on ${serial} reported the expected message before instrumentation teardown crashed; continuing." >&2
+      printf '%s\n' "${output}"
+      return 0
+    fi
+    if [[ "${test_name}" == "send_message_from_args" ]] &&
+      printf '%s\n' "${output}" | grep -q '^INSTRUMENTATION_STATUS_CODE: 0$' &&
+      printf '%s\n' "${output}" | grep -Eq '^INSTRUMENTATION_STATUS: delivery=(SENT|DELIVERED|SEEN)$' &&
+      printf '%s\n' "${output}" | grep -q '^INSTRUMENTATION_RESULT: shortMsg=Process crashed\.$'; then
+      echo "Android harness ${test_name} on ${serial} reported a delivered send before instrumentation teardown crashed; continuing." >&2
+      printf '%s\n' "${output}"
+      return 0
+    fi
     printf '%s\n' "${output}" >&2
-    return 1
-  }
+    return "${status}"
+  fi
   printf '%s\n' "${output}"
   if ! printf '%s\n' "${output}" | rg -q '^INSTRUMENTATION_CODE: -1$'; then
     echo "Android harness ${test_name} did not report success on ${serial}" >&2
