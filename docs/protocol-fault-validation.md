@@ -73,7 +73,7 @@ Each case answers the same questions:
 
 ## Cases
 
-Default `--all` runs the first ten cases:
+Default `--all` runs the core sender-key repair matrix:
 
 1. `sender_key_revision_repair`
    - Drops Bob's pairwise group metadata update.
@@ -85,39 +85,63 @@ Default `--all` runs the first ten cases:
    - Drops Bob's rotated sender-key distribution.
    - Verifies Bob repairs the missing key and applies the message.
 
-3. `sender_key_repair_after_receiver_restart`
+3. `sender_key_distribution_repair_after_receiver_restart`
+   - Records missing sender-key distribution repair state on Bob.
+   - Restarts Bob before repair completes.
+   - Verifies the missing-key repair survives and converges.
+
+4. `sender_key_distribution_repair_after_sender_restart`
+   - Records missing sender-key distribution repair state on Bob.
+   - Restarts Alice before she answers.
+   - Verifies Alice answers from persisted distribution repair snapshots.
+
+5. `sender_key_distribution_duplicate_replay_idempotent`
+   - Exercises distribution repair and repeatedly waits/replays the visible path.
+   - Verifies Bob has exactly one visible copy.
+
+6. `sender_key_distribution_multiple_messages`
+   - Drops one rotated sender-key distribution and sends multiple sender-key
+     messages behind it.
+   - Verifies one repair makes every valid pending message visible exactly once.
+
+7. `sender_key_repair_after_receiver_restart`
    - Records pending repair on Bob.
    - Restarts Bob through a new harness action.
    - Verifies the pending repair survives and converges.
 
-4. `sender_key_repair_after_sender_restart`
+8. `sender_key_repair_after_sender_restart`
    - Records pending repair on Bob.
    - Restarts Alice before she answers.
    - Verifies Alice answers from persisted sender-side state.
 
-5. `sender_key_duplicate_replay_idempotent`
+9. `sender_key_duplicate_replay_idempotent`
    - Exercises repair and then waits for the same message repeatedly.
    - Verifies Bob has exactly one visible copy.
 
-6. `sender_key_removed_member_repair_denied`
+10. `sender_key_removed_member_repair_denied`
    - Removes Bob, drops his removal metadata, sends a future group message, and
      verifies Bob never receives future content.
 
-7. `sender_key_late_member_post_add_repair`
+11. `sender_key_late_member_post_add_repair`
    - Adds Carol, lets her learn current sender-key state, then drops a later
      post-add rotated sender-key distribution and verifies repair.
 
-8. `sender_key_late_member_pre_add_denied`
+12. `sender_key_late_member_pre_add_denied`
    - Verifies a late member does not receive pre-add group messages while still
      receiving post-add messages.
 
-9. `group_metadata_drop_then_multiple_messages`
+13. `group_metadata_drop_then_multiple_messages`
    - Drops one metadata revision and sends multiple group messages.
    - Verifies repair lets all valid pending messages apply once.
 
-10. `relay_offline_outbox_then_repair`
+14. `relay_offline_outbox_then_repair`
    - Queues group metadata and messages while the relay is stopped.
    - Restarts with an exact drop and verifies outbox drain plus repair.
+
+The distribution restart, replay, and multi-message cases mirror the reliability
+shape used by mature encrypted messengers: missing key state must be repairable
+after process restarts, replay must be idempotent, and a single key repair must
+unlock a backlog without duplicating visible messages.
 
 Additional named case:
 

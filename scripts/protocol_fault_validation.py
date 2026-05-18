@@ -26,6 +26,10 @@ STATUS_PATTERN = re.compile(r"^INSTRUMENTATION_STATUS: ([^=]+)=(.*)$")
 DEFAULT_CASES = [
     "sender_key_revision_repair",
     "sender_key_distribution_repair",
+    "sender_key_distribution_repair_after_receiver_restart",
+    "sender_key_distribution_repair_after_sender_restart",
+    "sender_key_distribution_duplicate_replay_idempotent",
+    "sender_key_distribution_multiple_messages",
     "sender_key_repair_after_receiver_restart",
     "sender_key_repair_after_sender_restart",
     "sender_key_duplicate_replay_idempotent",
@@ -157,6 +161,16 @@ class ProtocolFaultValidation:
             "sender_key_late_member_post_add_repair": self.case_sender_key_late_member_post_add_repair,
             "sender_key_removed_member_repair_denied": self.case_sender_key_removed_member_repair_denied,
             "sender_key_late_member_pre_add_denied": self.case_sender_key_late_member_pre_add_denied,
+            "sender_key_distribution_repair_after_receiver_restart": (
+                self.case_sender_key_distribution_repair_after_receiver_restart
+            ),
+            "sender_key_distribution_repair_after_sender_restart": (
+                self.case_sender_key_distribution_repair_after_sender_restart
+            ),
+            "sender_key_distribution_duplicate_replay_idempotent": (
+                self.case_sender_key_distribution_duplicate_replay_idempotent
+            ),
+            "sender_key_distribution_multiple_messages": self.case_sender_key_distribution_multiple_messages,
         }
 
     def prepare_config(self, source_config: Path) -> Path:
@@ -906,6 +920,7 @@ class ProtocolFaultValidation:
         case_dir: Path,
         *,
         label: str,
+        message_count: int = 1,
         receiver_restart: bool = False,
         sender_restart: bool = False,
     ) -> CaseResult:
@@ -914,7 +929,7 @@ class ProtocolFaultValidation:
         chat_id = group["chat_id"]
         group_id = group["group_id"]
         baseline = f"{label}-baseline-{stamp}"
-        message = f"{label}-after-rotation-{stamp}"
+        messages = [f"{label}-after-rotation-{stamp}-{index}" for index in range(1, message_count + 1)]
 
         self.send_message(case_dir, "alice1", chat_id, baseline, suffix="baseline-send")
         self.wait_message(case_dir, "bob1", chat_id, baseline, suffix="baseline-wait-bob")
@@ -945,12 +960,13 @@ class ProtocolFaultValidation:
         self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-after-remove")
         self.wait_member_count(case_dir, "bob1", chat_id, 2, suffix="bob-sees-removal")
 
-        self.send_message(case_dir, "alice1", chat_id, message, suffix="send-after-rotation")
+        for message in messages:
+            self.send_message(case_dir, "alice1", chat_id, message, suffix=f"send-after-rotation-{message}")
         passive_ok = self.wait_message(
             case_dir,
             "bob1",
             chat_id,
-            message,
+            messages[-1],
             check=False,
             suffix="bob-passive-wait-rotated-message",
         )
@@ -971,10 +987,15 @@ class ProtocolFaultValidation:
 
         self.activate_connected(case_dir, "alice1", drain=True, suffix="alice-force")
         self.activate_connected(case_dir, "bob1", drain=False, suffix="bob-force")
-        self.wait_message(case_dir, "bob1", chat_id, message, suffix="bob-final-message")
-        self.assert_message_absent(case_dir, "carol1", chat_id, message, suffix="carol-removed-absent")
+        for message in messages:
+            self.wait_message(case_dir, "bob1", chat_id, message, suffix=f"bob-final-message-{message}")
+            self.assert_message_absent(case_dir, "carol1", chat_id, message, suffix=f"carol-removed-absent-{message}")
         final_debug = self.report_protocol_debug(case_dir, "bob1", "bob-debug-final")
         final_pending = self.pending_repair_count(final_debug)
+        for message in messages:
+            count = self.visible_message_count("bob1", chat_id, message)
+            if count != 1:
+                raise ValidationFailure(f"expected Bob to have exactly one `{message}`, found {count}")
 
         return CaseResult(
             case="",
@@ -987,7 +1008,7 @@ class ProtocolFaultValidation:
             details={
                 "group_chat_id": chat_id,
                 "group_id": group_id,
-                "message": message,
+                "messages": messages,
                 "passive_success": passive_ok,
                 "passive_pending_repair_count": passive_pending,
             },
@@ -1034,6 +1055,39 @@ class ProtocolFaultValidation:
 
     def case_sender_key_distribution_repair(self, case_dir: Path) -> CaseResult:
         return self.run_distribution_repair_flow(case_dir, label="distribution-repair")
+
+    def case_sender_key_distribution_repair_after_receiver_restart(self, case_dir: Path) -> CaseResult:
+        return self.run_distribution_repair_flow(
+            case_dir,
+            label="distribution-receiver-restart",
+            receiver_restart=True,
+        )
+
+    def case_sender_key_distribution_repair_after_sender_restart(self, case_dir: Path) -> CaseResult:
+        return self.run_distribution_repair_flow(
+            case_dir,
+            label="distribution-sender-restart",
+            sender_restart=True,
+        )
+
+    def case_sender_key_distribution_duplicate_replay_idempotent(self, case_dir: Path) -> CaseResult:
+        result = self.run_distribution_repair_flow(case_dir, label="distribution-duplicate")
+        chat_id = result.details["group_chat_id"]
+        message = result.details["messages"][0]
+        self.wait_message(case_dir, "bob1", chat_id, message, suffix="bob-rewait-distribution-message")
+        self.report_protocol_debug(case_dir, "bob1", "bob-debug-after-distribution-rewait")
+        count = self.visible_message_count("bob1", chat_id, message)
+        if count != 1:
+            raise ValidationFailure(f"duplicate distribution repair replay should leave one message, found {count}")
+        result.details["bob_message_count_after_rewait"] = count
+        return result
+
+    def case_sender_key_distribution_multiple_messages(self, case_dir: Path) -> CaseResult:
+        return self.run_distribution_repair_flow(
+            case_dir,
+            label="distribution-multi-message",
+            message_count=3,
+        )
 
     def case_sender_key_late_member_post_add_repair(self, case_dir: Path) -> CaseResult:
         stamp = case_stamp()
