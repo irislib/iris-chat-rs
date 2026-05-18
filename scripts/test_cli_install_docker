@@ -5,11 +5,13 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/release_common.sh"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/docker_stage_common.sh"
 
 load_release_env "$ROOT"
 
-IMAGE="${IRIS_CLI_INSTALL_TEST_IMAGE:-debian:bookworm-slim}"
-PLATFORM="${IRIS_CLI_INSTALL_TEST_PLATFORM:-linux/amd64}"
+IMAGE="${IRIS_CLI_INSTALL_TEST_IMAGE:-$(docker_cli_runtime_image)}"
+PLATFORM="${IRIS_CLI_INSTALL_TEST_PLATFORM:-$(docker_default_platform)}"
 INSTALL_URL="${IRIS_CLI_INSTALL_URL:-https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/install.sh}"
 
 usage() {
@@ -29,6 +31,8 @@ Environment:
   IRIS_CLI_INSTALL_TEST_IMAGE
   IRIS_CLI_INSTALL_TEST_PLATFORM
   IRIS_CLI_INSTALL_URL
+  IRIS_CLI_DOCKER_IMAGE
+  IRIS_DOCKER_PLATFORM
 EOF
 }
 

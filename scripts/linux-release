@@ -15,6 +15,8 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/release_common.sh"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/docker_stage_common.sh"
 
 load_release_env "$ROOT"
 resolve_shared_build_metadata "$ROOT"
@@ -22,8 +24,8 @@ resolve_shared_build_metadata "$ROOT"
 REPO_BASENAME="$(basename "$ROOT")"
 LINUX_DIR="$ROOT/linux"
 DIST_DIR="$ROOT/dist/linux"
-IMAGE="${IRIS_LINUX_BUILD_IMAGE:-iris-chat-linux-dev:latest}"
-DOCKER_PLATFORM="${IRIS_LINUX_DOCKER_PLATFORM:-linux/amd64}"
+IMAGE="${IRIS_LINUX_BUILD_IMAGE:-$(docker_linux_dev_image)}"
+DOCKER_PLATFORM="${IRIS_LINUX_DOCKER_PLATFORM:-$(docker_default_platform)}"
 SKIP_DOCKER_BUILD=0
 KEEP_CONTAINER=0
 

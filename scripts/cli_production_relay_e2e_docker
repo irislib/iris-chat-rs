@@ -2,36 +2,59 @@
 
 set -Eeuo pipefail
 
-IMAGE="${IRIS_CLI_PRODUCTION_E2E_IMAGE:-debian:bookworm-slim}"
-PLATFORM="${IRIS_CLI_PRODUCTION_E2E_PLATFORM:-linux/amd64}"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SRC_ROOT="$(cd "${ROOT_DIR}/.." && pwd)"
+# shellcheck disable=SC1091
+source "${ROOT_DIR}/scripts/docker_stage_common.sh"
+
+IMAGE="${IRIS_CLI_PRODUCTION_E2E_IMAGE:-$(docker_cli_runtime_image)}"
+BUILD_IMAGE="${IRIS_CLI_PRODUCTION_E2E_BUILD_IMAGE:-$(docker_rust_build_image)}"
+PLATFORM="${IRIS_CLI_PRODUCTION_E2E_PLATFORM:-$(docker_default_platform)}"
 INSTALL_URL="${IRIS_CLI_INSTALL_URL:-https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/install.sh}"
+STAGE_DIR="${IRIS_CLI_PRODUCTION_E2E_STAGE_DIR:-$(docker_stage_dir iris-cli-linux-amd64-debug)}"
 PREFIX="${IRIS_CLI_PRODUCTION_E2E_PREFIX:-iris-cli-prod-e2e}"
 CONTAINER_A="${PREFIX}-a"
 CONTAINER_B="${PREFIX}-b"
 KEEP="${IRIS_CLI_PRODUCTION_E2E_KEEP:-0}"
 TIMEOUT_ATTEMPTS="${IRIS_CLI_PRODUCTION_E2E_ATTEMPTS:-24}"
 LOCAL_BIN="${IRIS_CLI_BIN:-}"
+INSTALL_MODE="${IRIS_CLI_PRODUCTION_E2E_MODE:-source}"
+REBUILD="${IRIS_CLI_PRODUCTION_E2E_REBUILD:-0}"
 
 usage() {
   cat <<EOF
 usage: ./scripts/cli_production_relay_e2e_docker [options]
 
-Starts two fresh Linux Docker containers, installs iris, and verifies direct
-messages both ways through the default production message servers.
+Builds iris from the current checkout, starts two fresh Linux Docker
+containers, and verifies direct messages both ways through the default
+production message servers.
 
 Options:
   --image <image>       Docker image (default: ${IMAGE})
+  --build-image <image> Docker builder image (default: ${BUILD_IMAGE})
   --platform <platform> Docker platform (default: ${PLATFORM})
-  --install-url <url>   Install script URL (default: irischat.org CLI install URL)
-  --local-bin <path>    Copy a prebuilt Linux iris binary instead of installing release
+  --from-source         Build iris from the current checkout (default)
+  --release-install     Install published release with irischat.org install URL
+  --install-url <url>   Release install script URL
+  --local-bin <path>    Copy a prebuilt Linux iris binary
+  --stage-dir <dir>     Source-build cache/staging directory (default: ${STAGE_DIR})
+  --rebuild             Clear staged source-build cache before building
   --keep                Keep containers after the run
   -h, --help            Show this help
 
 Environment:
   IRIS_CLI_BIN                         Prebuilt Linux iris binary to copy in
   IRIS_CLI_INSTALL_URL                 Install script URL override
+  IRIS_CLI_PRODUCTION_E2E_MODE=source|release|local-bin
+  IRIS_CLI_PRODUCTION_E2E_STAGE_DIR
+  IRIS_CLI_PRODUCTION_E2E_REBUILD=1
   IRIS_CLI_PRODUCTION_E2E_IMAGE
+  IRIS_CLI_PRODUCTION_E2E_BUILD_IMAGE
   IRIS_CLI_PRODUCTION_E2E_PLATFORM
+  IRIS_CLI_DOCKER_IMAGE                Shared CLI runtime image default
+  IRIS_RUST_DOCKER_IMAGE               Shared Rust builder image default
+  IRIS_DOCKER_PLATFORM                 Shared Docker platform default
+  IRIS_DOCKER_STAGE_ROOT               Shared Docker staging root
   IRIS_CLI_PRODUCTION_E2E_KEEP=1
   IRIS_CLI_PRODUCTION_E2E_ATTEMPTS=24
 EOF
@@ -40,9 +63,14 @@ EOF
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --image) IMAGE="$2"; shift 2 ;;
+    --build-image) BUILD_IMAGE="$2"; shift 2 ;;
     --platform) PLATFORM="$2"; shift 2 ;;
+    --from-source) INSTALL_MODE=source; shift ;;
+    --release-install) INSTALL_MODE=release; shift ;;
     --install-url) INSTALL_URL="$2"; shift 2 ;;
-    --local-bin) LOCAL_BIN="$2"; shift 2 ;;
+    --local-bin) LOCAL_BIN="$2"; INSTALL_MODE=local-bin; shift 2 ;;
+    --stage-dir) STAGE_DIR="$2"; shift 2 ;;
+    --rebuild) REBUILD=1; shift ;;
     --keep) KEEP=1; shift ;;
     -h|--help|help) usage; exit 0 ;;
     *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
@@ -63,6 +91,11 @@ trap cleanup EXIT
 
 docker rm -f "${CONTAINER_A}" "${CONTAINER_B}" >/dev/null 2>&1 || true
 
+build_current_iris() {
+  docker_stage_build_iris_cli "${STAGE_DIR}" "${PLATFORM}" "${BUILD_IMAGE}" "${REBUILD}" "${SRC_ROOT}"
+  LOCAL_BIN="${DOCKER_STAGE_IRIS_CLI_BIN}"
+}
+
 start_container() {
   local name="$1"
   docker run -d --name "${name}" --platform "${PLATFORM}" "${IMAGE}" sleep infinity >/dev/null
@@ -76,15 +109,18 @@ start_container() {
 
 install_iris() {
   local name="$1"
-  if [[ -n "${LOCAL_BIN}" ]]; then
+  if [[ "${INSTALL_MODE}" == "source" || "${INSTALL_MODE}" == "local-bin" ]]; then
     docker cp "${LOCAL_BIN}" "${name}:/usr/local/bin/iris"
     docker exec "${name}" sh -lc 'chmod +x /usr/local/bin/iris'
-  else
+  elif [[ "${INSTALL_MODE}" == "release" ]]; then
     docker exec -e INSTALL_URL="${INSTALL_URL}" "${name}" sh -lc '
       set -eu
       export PATH="/usr/local/bin:/root/.local/bin:$PATH"
       curl -fsSL "$INSTALL_URL" | sh
     '
+  else
+    echo "Unknown install mode: ${INSTALL_MODE}" >&2
+    exit 2
   fi
   docker exec "${name}" sh -lc 'export PATH="/usr/local/bin:/root/.local/bin:$PATH"; command -v iris; iris --version'
 }
@@ -127,10 +163,17 @@ wait_for_message() {
 }
 
 echo "Starting fresh Linux containers"
+if [[ "${INSTALL_MODE}" == "source" ]]; then
+  build_current_iris
+elif [[ "${INSTALL_MODE}" == "local-bin" && ! -x "${LOCAL_BIN}" ]]; then
+  echo "--local-bin must point to an executable Linux iris binary" >&2
+  exit 2
+fi
+
 start_container "${CONTAINER_A}"
 start_container "${CONTAINER_B}"
 
-echo "Installing iris"
+echo "Installing iris (${INSTALL_MODE})"
 install_iris "${CONTAINER_A}"
 install_iris "${CONTAINER_B}"
 

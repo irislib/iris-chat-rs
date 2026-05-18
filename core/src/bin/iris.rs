@@ -767,7 +767,11 @@ fn handle_account_command(
 ) -> Result<Value> {
     match command {
         AccountCommands::Create { name } => {
-            cli.dispatch_and_wait(AppAction::CreateAccount { name }, Duration::from_secs(4))?;
+            cli.dispatch_and_wait_network(
+                AppAction::CreateAccount { name },
+                Duration::from_secs(8),
+            )?;
+            let _ = cli.wait_for_network_runtime_ready(Duration::from_secs(4), true)?;
             let state = cli.app.state();
             fail_on_toast(&state)?;
             Ok(account_json(&require_account(&state)?))
@@ -1620,6 +1624,31 @@ fn spawn_background_sync(data_dir: &Path) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
+
+    #[cfg(unix)]
+    {
+        let script = r#"sleep 0.2
+for _ in 1 2 3; do
+  "$1" --data-dir "$2" sync --wait-ms 8000 >/dev/null 2>&1 && exit 0
+  sleep 0.5
+done
+exit 0
+"#;
+        let _ = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(script)
+            .arg("iris-background-sync")
+            .arg(exe)
+            .arg(data_dir)
+            .env("IRIS_CLI_BACKGROUND_SYNC", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        return;
+    }
+
+    #[cfg(not(unix))]
     let _ = std::process::Command::new(exe)
         .arg("--data-dir")
         .arg(data_dir)
