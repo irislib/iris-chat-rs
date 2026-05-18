@@ -173,8 +173,9 @@ fn is_wifi_blocking_status(status: &str) -> bool {
 }
 
 fn peer_row(peer: &DesktopNearbyPeerSnapshot, manager: &Rc<AppManager>) -> adw::ActionRow {
+    let title = nearby_peer_resolved_name(peer, manager, "Nearby user");
     let row = adw::ActionRow::builder()
-        .title(peer.name.as_str())
+        .title(title.as_str())
         .activatable(peer.owner_pubkey_hex.is_some())
         .build();
     let icon = gtk::Image::from_icon_name("avatar-default-symbolic");
@@ -212,14 +213,10 @@ fn nearby_peer_chat_info(
     owner: &str,
     manager: &Rc<AppManager>,
 ) -> ChatInfoSnapshot {
-    let name = peer.name.trim();
+    let name = nearby_peer_resolved_name(peer, manager, "Nearby user");
     ChatInfoSnapshot {
         chat_id: owner.to_string(),
-        display_name: if name.is_empty() {
-            "Nearby user".to_string()
-        } else {
-            name.to_string()
-        },
+        display_name: name,
         nickname: None,
         profile_name: None,
         subtitle: None,
@@ -228,5 +225,29 @@ fn nearby_peer_chat_info(
         is_muted: false,
         show_message_action: true,
         preferences: manager.current_state().preferences,
+    }
+}
+
+fn nearby_peer_resolved_name(
+    peer: &DesktopNearbyPeerSnapshot,
+    manager: &Rc<AppManager>,
+    fallback: &str,
+) -> String {
+    if let Some(owner) = peer.owner_pubkey_hex.as_deref() {
+        let state = manager.current_state();
+        if let Some(chat) = state.chat_list.iter().find(|chat| {
+            matches!(chat.kind, ChatKind::Direct) && chat.chat_id.eq_ignore_ascii_case(owner)
+        }) {
+            let name = chat.display_name.trim();
+            if !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+    let name = peer.name.trim();
+    if name.is_empty() {
+        fallback.to_string()
+    } else {
+        name.to_string()
     }
 }

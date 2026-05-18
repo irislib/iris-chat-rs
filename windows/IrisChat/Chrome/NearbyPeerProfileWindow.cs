@@ -17,7 +17,7 @@ public static class NearbyPeerProfileWindow
         if (string.IsNullOrWhiteSpace(peer.ownerPubkeyHex)) return;
 
         var ownerPubkeyHex = peer.ownerPubkeyHex!;
-        var displayName = string.IsNullOrWhiteSpace(peer.name) ? "Nearby user" : peer.name.Trim();
+        var displayName = NearbyPeerNames.Resolve(manager, peer);
         var window = new Window
         {
             Title = displayName,

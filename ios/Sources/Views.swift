@@ -783,7 +783,7 @@ private struct ShareTargetSheet: View {
             return peers
         }
         return peers.filter { peer in
-            peer.name.lowercased().contains(query)
+            nearbyPeerResolvedName(peer, manager: manager).lowercased().contains(query)
                 || (peer.ownerPubkeyHex?.lowercased().contains(query) ?? false)
         }
     }
@@ -802,7 +802,7 @@ private struct ShareTargetSheet: View {
             guard let owner = peer.ownerPubkeyHex, selectedChatIds.contains(owner) else {
                 return nil
             }
-            return nearbyPeerDisplayName(peer.name)
+            return nearbyPeerDisplayName(peer, manager: manager)
         }
         return (chatNames + nearbyNames).joined(separator: ", ")
     }
@@ -1039,6 +1039,7 @@ private struct ShareTargetSheet: View {
             return AnyView(EmptyView())
         }
         let selected = selectedChatIds.contains(owner)
+        let name = nearbyPeerResolvedName(peer, manager: manager, fallback: "Nearby user")
         return AnyView(
             Button {
                 if selected {
@@ -1049,7 +1050,7 @@ private struct ShareTargetSheet: View {
             } label: {
                 HStack(spacing: 12) {
                     IrisAvatar(
-                        label: peer.name.isEmpty ? "?" : peer.name,
+                        label: name,
                         size: 40,
                         emphasize: false,
                         pictureUrl: peer.pictureURL,
@@ -1057,7 +1058,7 @@ private struct ShareTargetSheet: View {
                         manager: manager
                     )
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(nearbyPeerDisplayName(peer.name))
+                        Text(nearbyPeerDisplayName(name))
                             .font(.system(size: 17, weight: .regular))
                             .foregroundStyle(palette.textPrimary)
                             .lineLimit(1)
@@ -1078,7 +1079,7 @@ private struct ShareTargetSheet: View {
             .listRowInsets(EdgeInsets(top: 0, leading: 16, bottom: 0, trailing: 16))
             .listRowBackground(palette.panel)
             .listRowSeparator(.hidden)
-            .accessibilityLabel("\(peer.name.isEmpty ? "Nearby user" : peer.name), \(selected ? "selected" : "not selected")")
+            .accessibilityLabel("\(name), \(selected ? "selected" : "not selected")")
             .accessibilityValue(selected ? "Selected" : "Not selected")
         )
     }
@@ -5105,15 +5106,16 @@ private struct NearbyPeerStripRow: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(peers) { peer in
+                        let name = nearbyPeerResolvedName(peer, manager: manager, fallback: "Nearby user")
                         VStack(spacing: 4) {
                             IrisAvatar(
-                                label: peer.name.isEmpty ? "?" : peer.name,
+                                label: name,
                                 size: avatarSize,
                                 pictureUrl: peer.pictureURL,
                                 preferences: manager.state.preferences,
                                 manager: manager
                             )
-                            Text(nearbyPeerDisplayName(peer.name))
+                            Text(nearbyPeerDisplayName(name))
                                 .font(.caption2.weight(.medium))
                                 .foregroundStyle(Color.secondary)
                                 .lineLimit(1)
@@ -5133,7 +5135,7 @@ private struct NearbyPeerStripRow: View {
                         }
                         .accessibilityAddTraits(.isButton)
                         .accessibilityIdentifier("nearbyPeer-\(String(peer.id.prefix(12)))")
-                        .accessibilityLabel(peer.name.isEmpty ? "Nearby user" : peer.name)
+                        .accessibilityLabel(name)
                     }
                 }
                 .padding(.trailing, horizontalPadding)
@@ -5152,6 +5154,29 @@ private func nearbyPeerDisplayName(_ name: String) -> String {
     guard !trimmed.isEmpty else { return "Nearby" }
     if trimmed.count <= 14 { return trimmed }
     return String(trimmed.prefix(13)) + "…"
+}
+
+@MainActor
+private func nearbyPeerDisplayName(_ peer: IrisNearbyPeer, manager: AppManager) -> String {
+    nearbyPeerDisplayName(nearbyPeerResolvedName(peer, manager: manager))
+}
+
+@MainActor
+private func nearbyPeerResolvedName(
+    _ peer: IrisNearbyPeer,
+    manager: AppManager,
+    fallback: String = "Nearby"
+) -> String {
+    if let owner = peer.ownerPubkeyHex,
+       let chat = manager.state.chatList.first(where: { chat in
+           chat.kind == .direct &&
+               chat.chatId.caseInsensitiveCompare(owner) == .orderedSame
+       }) {
+        let name = chat.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { return name }
+    }
+    let name = peer.name.trimmingCharacters(in: .whitespacesAndNewlines)
+    return name.isEmpty ? fallback : name
 }
 
 @MainActor
@@ -5421,15 +5446,16 @@ private struct NearbyIrisScreen: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(peers) { peer in
+                        let name = nearbyPeerResolvedName(peer, manager: manager, fallback: "Nearby user")
                         VStack(spacing: 6) {
                             IrisAvatar(
-                                label: peer.name,
+                                label: name,
                                 size: 42,
                                 pictureUrl: peer.pictureURL,
                                 preferences: manager.state.preferences,
                                 manager: manager
                             )
-                            Text(peer.name)
+                            Text(name)
                                 .font(.system(.caption, design: .rounded, weight: .semibold))
                                 .foregroundStyle(palette.textPrimary)
                                 .lineLimit(1)

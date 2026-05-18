@@ -480,7 +480,7 @@ public partial class DesktopShell : UserControl
 
         foreach (var peer in peers)
         {
-            var name = string.IsNullOrWhiteSpace(peer.name) ? "Nearby user" : peer.name.Trim();
+            var name = NearbyPeerNames.Resolve(_manager, peer);
             var stack = new StackPanel
             {
                 Orientation = Orientation.Vertical,
@@ -490,13 +490,13 @@ public partial class DesktopShell : UserControl
             stack.Children.Add(new Avatar
             {
                 Size = AvatarSize,
-                Label = string.IsNullOrEmpty(peer.name) ? "?" : peer.name,
+                Label = name,
                 PictureUrl = peer.pictureUrl,
                 HorizontalAlignment = HorizontalAlignment.Center,
             });
             stack.Children.Add(new TextBlock
             {
-                Text = NearbyPeerDisplayName(peer.name),
+                Text = NearbyPeerNames.Short(name),
                 Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
                 FontSize = 11,
                 TextTrimming = TextTrimming.CharacterEllipsis,
@@ -532,12 +532,6 @@ public partial class DesktopShell : UserControl
             Height = NearbyRowContentHeight,
             VerticalAlignment = VerticalAlignment.Top,
         };
-    }
-
-    private static string NearbyPeerDisplayName(string? name)
-    {
-        var trimmed = string.IsNullOrWhiteSpace(name) ? "Nearby" : name.Trim();
-        return trimmed.Length <= 14 ? trimmed : trimmed[..13] + "…";
     }
 
     private void OpenNearbyPeer(DesktopNearbyPeerSnapshot peer)

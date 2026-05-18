@@ -351,7 +351,7 @@ fun ChatListScreen(
                         NearbyChatListItem(
                             appManager = appManager,
                             nearbyEnabled = appState.preferences.nearbyEnabled,
-                            knownDirectChatIds = appState.knownDirectChatIds(),
+                            knownDirectChatNames = appState.knownDirectChatNames(),
                             service = nearby,
                             onClick = onNearbyClick,
                             onLongClick = onNearbyLongClick,
@@ -652,7 +652,7 @@ private fun ChatSwipeActionButton(
 private fun NearbyChatListItem(
     appManager: AppManager,
     nearbyEnabled: Boolean,
-    knownDirectChatIds: Set<String>,
+    knownDirectChatNames: Map<String, String>,
     service: IrisNearbyService,
     onClick: () -> Unit,
     onLongClick: () -> Unit,
@@ -718,13 +718,15 @@ private fun NearbyChatListItem(
                 verticalAlignment = Alignment.Top,
             ) {
                 visiblePeers.forEach { peer ->
+                    val displayName = nearbyPeerResolvedName(peer, knownDirectChatNames)
                     NearbyPeerAvatar(
                         peer = peer,
+                        displayName = displayName,
                         onClick = {
                             peer.ownerPubkeyHex
                                 ?.takeIf { it.isNotBlank() }
                                 ?.let { owner ->
-                                    if (owner.lowercase() in knownDirectChatIds) {
+                                    if (owner.lowercase() in knownDirectChatNames) {
                                         appManager.openChat(owner)
                                     } else {
                                         onPeerLongClick(owner)
@@ -813,10 +815,11 @@ private fun ChatListConversationRow(
 @OptIn(ExperimentalFoundationApi::class)
 private fun NearbyPeerAvatar(
     peer: IrisNearbyService.Peer,
+    displayName: String,
     onClick: () -> Unit,
     onLongClick: (String) -> Unit,
 ) {
-    val name = nearbyPeerDisplayName(peer.name)
+    val name = nearbyPeerDisplayName(displayName)
     val interactionSource = remember(peer.id) { MutableInteractionSource() }
     val ownerPubkeyHex = peer.ownerPubkeyHex?.takeIf { it.isNotBlank() }
     Column(
@@ -838,7 +841,7 @@ private fun NearbyPeerAvatar(
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         IrisAvatar(
-            label = peer.name.ifBlank { "?" },
+            label = displayName,
             size = 48.dp,
             imageUrl = peer.pictureUrl,
         )
@@ -876,12 +879,22 @@ private fun nearbyPeerDisplayName(name: String): String {
     return if (trimmed.length <= 14) trimmed else trimmed.take(13) + "…"
 }
 
-private fun AppState.knownDirectChatIds(): Set<String> =
+private fun AppState.knownDirectChatNames(): Map<String, String> =
     chatList
         .asSequence()
         .filter { it.kind == ChatKind.DIRECT }
-        .map { it.chatId.lowercase() }
-        .toSet()
+        .associate { it.chatId.lowercase() to it.displayName.trim().ifEmpty { "Nearby" } }
+
+private fun nearbyPeerResolvedName(
+    peer: IrisNearbyService.Peer,
+    knownDirectChatNames: Map<String, String>,
+): String {
+    val owner = peer.ownerPubkeyHex?.trim()?.lowercase()
+    if (owner != null) {
+        knownDirectChatNames[owner]?.let { return it }
+    }
+    return peer.name.trim().ifEmpty { "Nearby" }
+}
 
 @Composable
 internal fun rememberNhashImageData(

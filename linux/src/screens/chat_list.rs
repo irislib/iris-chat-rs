@@ -479,7 +479,8 @@ fn nearby_avatar_strip(
     strip.set_valign(gtk::Align::Start);
     let prefs = manager.current_state().preferences.clone();
     for peer in peers {
-        let avatar = adw::Avatar::new(avatar_size, Some(&peer.name), true);
+        let name = nearby_peer_resolved_name(peer, manager, "Nearby user");
+        let avatar = adw::Avatar::new(avatar_size, Some(&name), true);
         if let Some(url) = peer.picture_url.as_ref() {
             let proxied = proxied_image_url(
                 url.clone(),
@@ -495,7 +496,7 @@ fn nearby_avatar_strip(
         column.set_halign(gtk::Align::Center);
         column.set_valign(gtk::Align::Start);
         column.append(&avatar);
-        let label = gtk::Label::new(Some(&nearby_peer_display_name(&peer.name)));
+        let label = gtk::Label::new(Some(&nearby_peer_display_name(&name)));
         label.add_css_class("caption");
         label.add_css_class("dim-label");
         label.set_max_width_chars(9);
@@ -507,11 +508,7 @@ fn nearby_avatar_strip(
         let button = gtk::Button::new();
         button.add_css_class("flat");
         button.set_child(Some(&column));
-        button.set_tooltip_text(Some(if peer.name.trim().is_empty() {
-            "Nearby user"
-        } else {
-            peer.name.as_str()
-        }));
+        button.set_tooltip_text(Some(&name));
         if let Some(owner) = peer.owner_pubkey_hex.clone() {
             let manager_for_click = manager.clone();
             let peer_for_click = peer.clone();
@@ -551,6 +548,30 @@ fn nearby_peer_display_name(name: &str) -> String {
     }
 }
 
+fn nearby_peer_resolved_name(
+    peer: &DesktopNearbyPeerSnapshot,
+    manager: &Rc<AppManager>,
+    fallback: &str,
+) -> String {
+    if let Some(owner) = peer.owner_pubkey_hex.as_deref() {
+        let state = manager.current_state();
+        if let Some(chat) = state.chat_list.iter().find(|chat| {
+            matches!(chat.kind, ChatKind::Direct) && chat.chat_id.eq_ignore_ascii_case(owner)
+        }) {
+            let name = chat.display_name.trim();
+            if !name.is_empty() {
+                return name.to_string();
+            }
+        }
+    }
+    let name = peer.name.trim();
+    if name.is_empty() {
+        fallback.to_string()
+    } else {
+        name.to_string()
+    }
+}
+
 fn open_nearby_peer_from_widget(
     widget: &gtk::Button,
     peer: &DesktopNearbyPeerSnapshot,
@@ -583,14 +604,10 @@ fn nearby_peer_chat_info(
     owner: &str,
     manager: &Rc<AppManager>,
 ) -> ChatInfoSnapshot {
-    let name = peer.name.trim();
+    let name = nearby_peer_resolved_name(peer, manager, "Nearby user");
     ChatInfoSnapshot {
         chat_id: owner.to_string(),
-        display_name: if name.is_empty() {
-            "Nearby user".to_string()
-        } else {
-            name.to_string()
-        },
+        display_name: name,
         nickname: None,
         profile_name: None,
         subtitle: None,

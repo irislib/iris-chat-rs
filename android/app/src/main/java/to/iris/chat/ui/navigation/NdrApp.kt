@@ -571,14 +571,18 @@ private fun ShareTargetDialog(
     val haptics = rememberIrisHapticFeedback()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val availableChatIds = remember(chats) { chats.mapTo(mutableSetOf()) { it.chatId } }
+    val directChatNames =
+        remember(chats) {
+            chats.associate { it.chatId.lowercase() to it.displayName.trim().ifEmpty { "Nearby" } }
+        }
     val nearbyTargets =
-        remember(nearbyPeers, query) {
+        remember(nearbyPeers, directChatNames, query) {
             val normalized = query.trim().lowercase()
             nearbyPeers
                 .filter { !it.ownerPubkeyHex.isNullOrBlank() }
                 .filter { peer ->
                     normalized.isEmpty() ||
-                        peer.name.lowercase().contains(normalized) ||
+                        nearbyPeerResolvedName(peer, directChatNames).lowercase().contains(normalized) ||
                         peer.ownerPubkeyHex?.lowercase()?.contains(normalized) == true
                 }
         }
@@ -598,12 +602,12 @@ private fun ShareTargetDialog(
         }
     val hasSelection = selectedChatIds.isNotEmpty()
     val selectedNames =
-        remember(chats, nearbyPeers, selectedChatIds) {
+        remember(chats, nearbyPeers, directChatNames, selectedChatIds) {
             val chatNames = chats.filter { chat -> chat.chatId in selectedChatIds }.map { it.displayName }
             val nearbyNames =
                 nearbyPeers.mapNotNull { peer ->
                     val owner = peer.ownerPubkeyHex?.trim()?.takeIf(String::isNotEmpty) ?: return@mapNotNull null
-                    if (owner in selectedChatIds) nearbyPeerDisplayName(peer.name) else null
+                    if (owner in selectedChatIds) nearbyPeerDisplayName(nearbyPeerResolvedName(peer, directChatNames)) else null
                 }
             chatNames + nearbyNames
         }
@@ -675,6 +679,7 @@ private fun ShareTargetDialog(
                             val selected = owner in selectedChatIds
                             ShareNearbyTargetRow(
                                 peer = peer,
+                                displayName = nearbyPeerResolvedName(peer, directChatNames),
                                 selected = selected,
                                 onClick = {
                                     haptics.press()
@@ -853,6 +858,7 @@ private fun ShareTargetSectionHeader(title: String) {
 @Composable
 private fun ShareNearbyTargetRow(
     peer: IrisNearbyService.Peer,
+    displayName: String,
     selected: Boolean,
     onClick: () -> Unit,
 ) {
@@ -871,7 +877,7 @@ private fun ShareNearbyTargetRow(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         IrisAvatar(
-            label = peer.name.ifBlank { "?" },
+            label = displayName,
             size = 40.dp,
             imageUrl = peer.pictureUrl,
         )
@@ -882,7 +888,7 @@ private fun ShareNearbyTargetRow(
                     .padding(start = 16.dp, end = 16.dp),
         ) {
             Text(
-                text = nearbyPeerDisplayName(peer.name),
+                text = nearbyPeerDisplayName(displayName),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyLarge,
@@ -1138,6 +1144,17 @@ private fun ChatThreadSnapshot.matchesShareQuery(query: String): Boolean =
 private fun nearbyPeerDisplayName(name: String): String {
     val trimmed = name.trim().ifEmpty { "Nearby" }
     return if (trimmed.length <= 14) trimmed else trimmed.take(13) + "..."
+}
+
+private fun nearbyPeerResolvedName(
+    peer: IrisNearbyService.Peer,
+    directChatNames: Map<String, String>,
+): String {
+    val owner = peer.ownerPubkeyHex?.trim()?.lowercase()
+    if (owner != null) {
+        directChatNames[owner]?.let { return it }
+    }
+    return peer.name.trim().ifEmpty { "Nearby" }
 }
 
 private fun nearbyWifiEnabled(snapshot: IrisNearbyService.Snapshot): Boolean =

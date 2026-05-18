@@ -81,7 +81,7 @@ public partial class NearbyView : UserControl
 
     private FrameworkElement PeerRow(DesktopNearbyPeerSnapshot peer)
     {
-        var name = string.IsNullOrWhiteSpace(peer.name) ? "Iris" : peer.name.Trim();
+        var name = NearbyPeerNames.Resolve(App.CurrentManager, peer);
         var button = new Button
         {
             Style = (Style)FindResource("GhostButton"),

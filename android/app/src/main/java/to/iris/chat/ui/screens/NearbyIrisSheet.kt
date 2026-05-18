@@ -380,6 +380,17 @@ private fun AppState.hasKnownDirectChat(ownerPubkeyHex: String): Boolean =
             chat.chatId.equals(ownerPubkeyHex, ignoreCase = true)
     }
 
+private fun AppState.nearbyPeerResolvedName(peer: IrisNearbyService.Peer): String {
+    val owner = peer.ownerPubkeyHex?.trim()
+    if (!owner.isNullOrEmpty()) {
+        chatList.firstOrNull { chat ->
+            chat.kind == ChatKind.DIRECT &&
+                chat.chatId.equals(owner, ignoreCase = true)
+        }?.displayName?.trim()?.takeIf { it.isNotEmpty() }?.let { return it }
+    }
+    return peer.name.trim().ifEmpty { "Nearby user" }
+}
+
 @Composable
 private fun NearbyPeerRow(
     appManager: AppManager,
@@ -388,6 +399,7 @@ private fun NearbyPeerRow(
     onOpenChat: () -> Unit,
     onOpenProfile: () -> Unit,
 ) {
+    val displayName = appState.nearbyPeerResolvedName(peer)
     val avatarData by rememberNhashImageData(appManager, peer.pictureUrl)
     val avatarUrl =
         peer.pictureUrl
@@ -402,7 +414,7 @@ private fun NearbyPeerRow(
                 )
             }
     IrisChatListRow(
-        title = peer.name,
+        title = displayName,
         preview = null,
         timeLabel = null,
         unreadCount = 0,
@@ -412,7 +424,7 @@ private fun NearbyPeerRow(
         onLongClick = onOpenProfile,
         leadingContent = {
             IrisAvatar(
-                label = peer.name,
+                label = displayName,
                 size = 42.dp,
                 imageUrl = avatarUrl,
                 imageData = avatarData,
