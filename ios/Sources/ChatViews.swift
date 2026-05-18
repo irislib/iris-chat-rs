@@ -1900,6 +1900,21 @@ private struct ChatMessageRow: View, Equatable {
                                 )
                             }
                         )
+                        .padding(.bottom, reactions.isEmpty ? 0 : SignalConversationLayout.reactionPillProtrusion)
+                        .overlay(alignment: message.isOutgoing ? .bottomLeading : .bottomTrailing) {
+                            if !reactions.isEmpty {
+                                ReactionRow(
+                                    reactions: reactions,
+                                    onTap: onShowReactors
+                                )
+                                .fixedSize()
+                                .offset(
+                                    x: message.isOutgoing
+                                        ? SignalConversationLayout.reactionPillHorizontalInset
+                                        : -SignalConversationLayout.reactionPillHorizontalInset
+                                )
+                            }
+                        }
                         // Two macOS-only fixes: cap bubble width (without
                         // this it stretches the full ~830pt pane), and
                         // render the hover dock as an overlay (without
@@ -1918,21 +1933,6 @@ private struct ChatMessageRow: View, Equatable {
                             }
                         }
 #endif
-                        .padding(.bottom, reactions.isEmpty ? 0 : SignalConversationLayout.reactionPillProtrusion)
-                        .overlay(alignment: message.isOutgoing ? .bottomLeading : .bottomTrailing) {
-                            if !reactions.isEmpty {
-                                ReactionRow(
-                                    reactions: reactions,
-                                    onTap: onShowReactors
-                                )
-                                .fixedSize()
-                                .offset(
-                                    x: message.isOutgoing
-                                        ? SignalConversationLayout.reactionPillHorizontalInset
-                                        : -SignalConversationLayout.reactionPillHorizontalInset
-                                )
-                            }
-                        }
                         // The actual pan is owned by the timeline scroll view.
                         // This modifier only renders the offset/reveal state,
                         // keeping vertical flicks on bubbles in the scroll path.

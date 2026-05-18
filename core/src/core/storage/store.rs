@@ -259,6 +259,18 @@ impl AppStore {
         load_recent_messages(&conn, chat_id, limit)
     }
 
+    pub(crate) fn load_thread(
+        &self,
+        chat_id: &str,
+        limit: usize,
+    ) -> anyhow::Result<Option<PersistedThread>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        load_thread(&conn, chat_id, limit)
+    }
+
     #[cfg(test)]
     pub(crate) fn load_messages_before(
         &self,
@@ -1268,6 +1280,55 @@ fn load_threads(
         .into_iter()
         .filter_map(|chat_id| by_chat.remove(&chat_id))
         .collect())
+}
+
+fn load_thread(
+    conn: &rusqlite::Connection,
+    chat_id: &str,
+    limit: usize,
+) -> anyhow::Result<Option<PersistedThread>> {
+    let metadata = conn
+        .query_row(
+            "SELECT unread_count, updated_at_secs, draft FROM threads WHERE chat_id = ?1",
+            [chat_id],
+            |row| {
+                Ok((
+                    row.get::<_, i64>(0)? as u64,
+                    row.get::<_, i64>(1)? as u64,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    let messages = load_recent_messages(conn, chat_id, limit)?;
+    let Some((unread_count, updated_at_secs, draft)) = metadata else {
+        if messages.is_empty() {
+            return Ok(None);
+        }
+        let updated_at_secs = messages
+            .iter()
+            .map(|message| message.created_at_secs)
+            .max()
+            .unwrap_or(0);
+        let unread_count = messages
+            .iter()
+            .filter(|message| !message.is_outgoing)
+            .count() as u64;
+        return Ok(Some(PersistedThread {
+            chat_id: chat_id.to_string(),
+            unread_count,
+            updated_at_secs,
+            messages,
+            draft: String::new(),
+        }));
+    };
+    Ok(Some(PersistedThread {
+        chat_id: chat_id.to_string(),
+        unread_count,
+        updated_at_secs,
+        messages,
+        draft,
+    }))
 }
 
 #[derive(Clone, Debug)]

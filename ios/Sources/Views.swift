@@ -62,6 +62,80 @@ private func hasHashtreePicture(_ url: String?) -> Bool {
     return trimmed.hasPrefix("htree://") || trimmed.hasPrefix("nhash://")
 }
 
+#if os(iOS)
+private struct IrisCameraImagePicker: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPick: onPick, dismiss: dismiss)
+    }
+
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController()
+        picker.sourceType = .camera
+        picker.mediaTypes = ["public.image"]
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        private let onPick: (URL) -> Void
+        private let dismiss: DismissAction
+
+        init(onPick: @escaping (URL) -> Void, dismiss: DismissAction) {
+            self.onPick = onPick
+            self.dismiss = dismiss
+        }
+
+        func imagePickerController(
+            _ picker: UIImagePickerController,
+            didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]
+        ) {
+            defer { dismiss() }
+            guard let image = info[.originalImage] as? UIImage,
+                  let data = image.jpegData(compressionQuality: 0.92) else {
+                return
+            }
+            let directory = FileManager.default.temporaryDirectory
+                .appendingPathComponent("iris-camera-picks", isDirectory: true)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let url = directory.appendingPathComponent("\(UUID().uuidString).jpg")
+            do {
+                try data.write(to: url, options: [.atomic])
+                onPick(url)
+            } catch {}
+        }
+
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            dismiss()
+        }
+    }
+}
+#endif
+
+#if canImport(PhotosUI)
+private func loadPickedPhotoItem(_ item: PhotosPickerItem, directoryName: String) async -> URL? {
+    guard let data = try? await item.loadTransferable(type: Data.self) else {
+        return nil
+    }
+    let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent(directoryName, isDirectory: true)
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+    do {
+        try data.write(to: url, options: [.atomic])
+        return url
+    } catch {
+        return nil
+    }
+}
+#endif
+
 private func irisMailtoURL(to email: String, subject: String, body: String) -> URL? {
     var components = URLComponents()
     components.scheme = "mailto"
@@ -1520,8 +1594,16 @@ private struct DesktopChatShell: View {
                 } ?? AnyView(EmptyView()),
                 trailing: AnyView(EmptyView())
             )
-            ChatScreen(manager: manager, chatId: chatId)
-                .id(chatId)
+            if directChatInfoChatId == chatId {
+                DirectChatInfoScreen(
+                    manager: manager,
+                    chatId: chatId,
+                    onClose: { directChatInfoChatId = nil }
+                )
+            } else {
+                ChatScreen(manager: manager, chatId: chatId)
+                    .id(chatId)
+            }
         case .groupDetails(let groupId):
             DesktopPaneTopBar(title: "Group", canGoBack: true, onBack: manager.navigateBack)
             GroupDetailsScreen(manager: manager, groupId: groupId)
@@ -2361,6 +2443,7 @@ private struct DirectChatInfoScreen: View {
     private func commonGroupRow(_ group: ChatThreadSnapshot) -> some View {
         Button {
             if let groupId = groupId(from: group.chatId) {
+                onClose()
                 manager.dispatch(.pushScreen(screen: .groupDetails(groupId: groupId)))
             }
         } label: {
@@ -2388,6 +2471,7 @@ private struct DirectChatInfoScreen: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
+        .accessibilityIdentifier("directChatCommonGroup-\(String(group.chatId.prefix(12)))")
     }
 
     private func loadProfileDebugIfNeeded() {
@@ -5111,7 +5195,15 @@ struct NewGroupScreen: View {
     @State private var memberInput = ""
     @State private var selectedOwners = Set<String>()
     @State private var showingGroupPicturePicker = false
+    @State private var showingGroupPictureSourceMenu = false
     @State private var groupPhoto: StagedAttachment?
+    #if os(iOS)
+    @State private var showingGroupPictureCamera = false
+    #endif
+    #if canImport(PhotosUI)
+    @State private var showingGroupPicturePhotoPicker = false
+    @State private var pickedGroupPicturePhotos: [PhotosPickerItem] = []
+    #endif
     @FocusState private var isNameFocused: Bool
 
     private var normalizedMemberInput: String {
@@ -5177,6 +5269,41 @@ struct NewGroupScreen: View {
             }
             groupPhoto = manager.stageGroupPicture(fileURL: url)
         }
+        .confirmationDialog(
+            "Choose a group photo",
+            isPresented: $showingGroupPictureSourceMenu,
+            titleVisibility: .hidden
+        ) {
+            #if os(iOS)
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take Photo") { showingGroupPictureCamera = true }
+            }
+            #endif
+            #if canImport(PhotosUI)
+            Button("Photo Library") { showingGroupPicturePhotoPicker = true }
+            #endif
+            Button("Files") { showingGroupPicturePicker = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        #if os(iOS)
+        .sheet(isPresented: $showingGroupPictureCamera) {
+            IrisCameraImagePicker { url in
+                groupPhoto = manager.stageGroupPicture(fileURL: url)
+            }
+            .ignoresSafeArea()
+        }
+        #endif
+        #if canImport(PhotosUI)
+        .photosPicker(
+            isPresented: $showingGroupPicturePhotoPicker,
+            selection: $pickedGroupPicturePhotos,
+            maxSelectionCount: 1,
+            matching: .images
+        )
+        .irisOnChange(of: pickedGroupPicturePhotos) { items in
+            handlePickedGroupPicturePhotos(items)
+        }
+        #endif
         .irisOnChange(of: memberInput) { _ in
             addMemberInputIfReady()
         }
@@ -5233,7 +5360,7 @@ struct NewGroupScreen: View {
 
                     VStack(alignment: .leading, spacing: 8) {
                         Button(groupPhoto == nil ? "Photo" : "Change photo") {
-                            showingGroupPicturePicker = true
+                            presentGroupPictureSource()
                         }
                         .buttonStyle(IrisSecondaryButtonStyle(compact: true))
                         .accessibilityIdentifier("newGroupPhotoButton")
@@ -5353,6 +5480,27 @@ struct NewGroupScreen: View {
         selectedOwners.insert(normalized)
         memberInput = ""
     }
+
+    private func presentGroupPictureSource() {
+        #if canImport(PhotosUI)
+        showingGroupPictureSourceMenu = true
+        #else
+        showingGroupPicturePicker = true
+        #endif
+    }
+
+    #if canImport(PhotosUI)
+    private func handlePickedGroupPicturePhotos(_ items: [PhotosPickerItem]) {
+        guard let item = items.first else { return }
+        pickedGroupPicturePhotos = []
+        Task {
+            guard let url = await loadPickedPhotoItem(item, directoryName: "iris-group-picks") else { return }
+            await MainActor.run {
+                groupPhoto = manager.stageGroupPicture(fileURL: url)
+            }
+        }
+    }
+    #endif
 }
 
 struct GroupDetailsScreen: View {
@@ -5364,7 +5512,15 @@ struct GroupDetailsScreen: View {
     @State private var memberInput = ""
     @State private var showingScanner = false
     @State private var showingGroupPicturePicker = false
+    @State private var showingGroupPictureSourceMenu = false
     @State private var groupPictureViewerItem: IrisProfilePictureViewerItem?
+    #if os(iOS)
+    @State private var showingGroupPictureCamera = false
+    #endif
+    #if canImport(PhotosUI)
+    @State private var showingGroupPicturePhotoPicker = false
+    @State private var pickedGroupPicturePhotos: [PhotosPickerItem] = []
+    #endif
 
     private var normalizedMemberInput: String {
         normalizePeerInput(input: memberInput)
@@ -5387,7 +5543,7 @@ struct GroupDetailsScreen: View {
                         groupAvatar(details)
                         if details.canManage {
                             Button(manager.state.busy.uploadingAttachment ? "Uploading…" : "Change photo") {
-                                showingGroupPicturePicker = true
+                                presentGroupPictureSource()
                             }
                             .buttonStyle(IrisSecondaryButtonStyle(compact: true))
                             .disabled(manager.state.busy.uploadingAttachment)
@@ -5637,7 +5793,63 @@ struct GroupDetailsScreen: View {
                 manager.updateGroupPicture(groupId: groupId, fileURL: url)
             }
         }
+        .confirmationDialog(
+            "Choose a group photo",
+            isPresented: $showingGroupPictureSourceMenu,
+            titleVisibility: .hidden
+        ) {
+            #if os(iOS)
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take Photo") { showingGroupPictureCamera = true }
+            }
+            #endif
+            #if canImport(PhotosUI)
+            Button("Photo Library") { showingGroupPicturePhotoPicker = true }
+            #endif
+            Button("Files") { showingGroupPicturePicker = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        #if os(iOS)
+        .sheet(isPresented: $showingGroupPictureCamera) {
+            IrisCameraImagePicker { url in
+                manager.updateGroupPicture(groupId: groupId, fileURL: url)
+            }
+            .ignoresSafeArea()
+        }
+        #endif
+        #if canImport(PhotosUI)
+        .photosPicker(
+            isPresented: $showingGroupPicturePhotoPicker,
+            selection: $pickedGroupPicturePhotos,
+            maxSelectionCount: 1,
+            matching: .images
+        )
+        .irisOnChange(of: pickedGroupPicturePhotos) { items in
+            handlePickedGroupPicturePhotos(items)
+        }
+        #endif
     }
+
+    private func presentGroupPictureSource() {
+        #if canImport(PhotosUI)
+        showingGroupPictureSourceMenu = true
+        #else
+        showingGroupPicturePicker = true
+        #endif
+    }
+
+    #if canImport(PhotosUI)
+    private func handlePickedGroupPicturePhotos(_ items: [PhotosPickerItem]) {
+        guard let item = items.first else { return }
+        pickedGroupPicturePhotos = []
+        Task {
+            guard let url = await loadPickedPhotoItem(item, directoryName: "iris-group-picks") else { return }
+            await MainActor.run {
+                manager.updateGroupPicture(groupId: groupId, fileURL: url)
+            }
+        }
+    }
+    #endif
 
     @ViewBuilder
     private func groupAvatar(_ details: GroupDetailsSnapshot) -> some View {
@@ -7593,6 +7805,9 @@ private struct ProfileEditorCard: View {
     let showQrCode: () -> Void
     @State private var showingProfilePicturePicker = false
     @State private var showingProfilePictureSourceMenu = false
+    #if os(iOS)
+    @State private var showingProfilePictureCamera = false
+    #endif
     #if canImport(PhotosUI)
     @State private var showingProfilePicturePhotoPicker = false
     @State private var pickedProfilePicturePhotos: [PhotosPickerItem] = []
@@ -7670,12 +7885,25 @@ private struct ProfileEditorCard: View {
             isPresented: $showingProfilePictureSourceMenu,
             titleVisibility: .hidden
         ) {
+            #if os(iOS)
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Take Photo") { showingProfilePictureCamera = true }
+            }
+            #endif
             #if canImport(PhotosUI)
             Button("Photo Library") { showingProfilePicturePhotoPicker = true }
             #endif
             Button("Files") { showingProfilePicturePicker = true }
             Button("Cancel", role: .cancel) {}
         }
+        #if os(iOS)
+        .sheet(isPresented: $showingProfilePictureCamera) {
+            IrisCameraImagePicker { url in
+                manager.uploadProfilePicture(fileURL: url)
+            }
+            .ignoresSafeArea()
+        }
+        #endif
         #if canImport(PhotosUI)
         .photosPicker(
             isPresented: $showingProfilePicturePhotoPicker,
@@ -7707,27 +7935,10 @@ private struct ProfileEditorCard: View {
         guard let item = items.first else { return }
         pickedProfilePicturePhotos = []
         Task {
-            guard let url = await loadPickedProfilePicture(item) else { return }
+            guard let url = await loadPickedPhotoItem(item, directoryName: "iris-profile-picks") else { return }
             await MainActor.run {
                 manager.uploadProfilePicture(fileURL: url)
             }
-        }
-    }
-
-    private func loadPickedProfilePicture(_ item: PhotosPickerItem) async -> URL? {
-        guard let data = try? await item.loadTransferable(type: Data.self) else {
-            return nil
-        }
-        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("iris-profile-picks", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
-        do {
-            try data.write(to: url, options: [.atomic])
-            return url
-        } catch {
-            return nil
         }
     }
     #endif

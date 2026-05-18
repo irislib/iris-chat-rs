@@ -1,6 +1,7 @@
 package to.iris.chat.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -14,10 +15,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -67,12 +70,14 @@ fun NewGroupScreen(
     var memberInput by remember { mutableStateOf("") }
     var selectedOwners by remember { mutableStateOf(setOf<String>()) }
     var groupPhoto by remember { mutableStateOf<PickedAttachment?>(null) }
+    var showGroupPhotoSourceMenu by remember { mutableStateOf(false) }
+    var pendingCameraPhoto by remember { mutableStateOf<PendingCameraImage?>(null) }
     val localOwner = appState.account?.publicKeyHex
     val existingDirectChats =
         appState.chatList.filter { it.kind == ChatKind.DIRECT && it.chatId != localOwner }
     val filteredKnownChats = existingDirectChats.filterByQuery(memberInput)
     val canCreate = name.isNotBlank() && !appState.busy.creatingGroup
-    val picturePicker =
+    val pictureFilePicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) {
                 return@rememberLauncherForActivityResult
@@ -84,6 +89,32 @@ fun NewGroupScreen(
                     }
             }
         }
+    val pictureLibraryPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            if (uri == null) {
+                return@rememberLauncherForActivityResult
+            }
+            coroutineScope.launch {
+                groupPhoto =
+                    withContext(Dispatchers.IO) {
+                        copyAttachmentToCache(context, uri)
+                    }
+            }
+        }
+    val pictureCameraPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { didTakePhoto ->
+            val pending = pendingCameraPhoto
+            pendingCameraPhoto = null
+            if (didTakePhoto && pending != null) {
+                groupPhoto = pending.attachment
+            }
+        }
+
+    fun takeGroupPhoto() {
+        val pending = createPendingCameraImage(context) ?: return
+        pendingCameraPhoto = pending
+        pictureCameraPicker.launch(pending.uri)
+    }
 
     LaunchedEffect(step) {
         if (step == NewGroupStep.DETAILS) {
@@ -228,7 +259,7 @@ fun NewGroupScreen(
                         ) {
                             IrisSecondaryButton(
                                 text = if (groupPhoto == null) "Photo" else "Change photo",
-                                onClick = { picturePicker.launch(arrayOf("image/*")) },
+                                onClick = { showGroupPhotoSourceMenu = true },
                                 modifier = Modifier.testTag("newGroupPhotoButton"),
                             )
                             if (groupPhoto != null) {
@@ -309,6 +340,48 @@ fun NewGroupScreen(
         }
     }
 
+    if (showGroupPhotoSourceMenu) {
+        AlertDialog(
+            onDismissRequest = { showGroupPhotoSourceMenu = false },
+            confirmButton = {},
+            title = { Text("Choose a group photo") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            showGroupPhotoSourceMenu = false
+                            takeGroupPhoto()
+                        },
+                    ) {
+                        Text("Take Photo")
+                    }
+                    TextButton(
+                        onClick = {
+                            showGroupPhotoSourceMenu = false
+                            pictureLibraryPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                    ) {
+                        Text("Photo Library")
+                    }
+                    TextButton(
+                        onClick = {
+                            showGroupPhotoSourceMenu = false
+                            pictureFilePicker.launch(arrayOf("image/*"))
+                        },
+                    ) {
+                        Text("Files")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGroupPhotoSourceMenu = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
 }
 
 private enum class NewGroupStep {
@@ -343,6 +416,7 @@ private fun SelectedMemberChips(
             }
         }
     }
+
 }
 
 private data class OwnerPresentation(

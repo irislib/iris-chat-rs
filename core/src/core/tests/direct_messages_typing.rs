@@ -810,6 +810,68 @@ fn open_chat_populates_current_chat_for_preview_only_thread() {
 }
 
 #[test]
+fn duplicate_persisted_incoming_message_surfaces_missing_chat_row() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("incoming-duplicate-missing-row", &owner, &device);
+    let chat_id = peer.public_key().to_hex();
+    let outer_event_id = "1".repeat(64);
+    let created_at_secs = 1_777_159_501;
+    let (content, inner_id) = runtime_rumor_json(
+        peer.public_key(),
+        CHAT_MESSAGE_KIND,
+        "hidden until manual open",
+        created_at_secs,
+        Vec::new(),
+    );
+
+    let preview = ChatMessageSnapshot {
+        id: inner_id.clone(),
+        chat_id: chat_id.clone(),
+        kind: ChatMessageKind::User,
+        author: peer.public_key().to_hex(),
+        author_owner_pubkey_hex: Some(peer.public_key().to_hex()),
+        author_picture_url: None,
+        body: "hidden until manual open".to_string(),
+        attachments: Vec::new(),
+        reactions: Vec::new(),
+        reactors: Vec::new(),
+        is_outgoing: false,
+        created_at_secs,
+        expires_at_secs: None,
+        delivery: DeliveryState::Received,
+        recipient_deliveries: Vec::new(),
+        delivery_trace: Default::default(),
+        source_event_id: Some(outer_event_id.clone()),
+    };
+    core.app_store
+        .upsert_notification_preview_message(&chat_id, 1, created_at_secs, &preview)
+        .expect("preview upsert");
+    assert!(
+        core.threads.get(&chat_id).is_none(),
+        "precondition: live core has no chat row yet"
+    );
+
+    core.apply_decrypted_runtime_message(
+        peer.public_key(),
+        None,
+        content,
+        Some(outer_event_id),
+    );
+    core.rebuild_state();
+
+    let row = core
+        .state
+        .chat_list
+        .iter()
+        .find(|row| row.chat_id == chat_id)
+        .expect("duplicate persisted message still creates a visible chat row");
+    assert_eq!(row.last_message_preview.as_deref(), Some("hidden until manual open"));
+    assert_eq!(row.unread_count, 1);
+}
+
+#[test]
 fn open_chat_preserves_same_second_message_insert_order() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -1792,4 +1854,3 @@ fn group_runtime_rumor_pubkey_must_match_authenticated_sender() {
         .get(&chat_id)
         .is_some_and(|thread| thread.messages.iter().any(|message| message.id == rumor_id)));
 }
-

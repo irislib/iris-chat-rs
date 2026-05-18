@@ -5,9 +5,9 @@ use std::sync::{Mutex, OnceLock};
 use adw::prelude::*;
 use iris_chat_core::{
     peer_input_to_npub, proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind,
-    ChatMessageSnapshot, CurrentChatSnapshot, DeliveryState, MessageAttachmentSnapshot,
-    MessageReactionSnapshot, MessageReactor, MessageRecipientDeliverySnapshot, OutgoingAttachment,
-    PreferencesSnapshot,
+    ChatMessageSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
+    MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
+    MessageRecipientDeliverySnapshot, OutgoingAttachment, PreferencesSnapshot,
 };
 
 use crate::app_manager::AppManager;
@@ -106,6 +106,11 @@ pub fn present_chat_info(
     header_row.append(&text_column);
     content.append(&header_row);
 
+    let common_groups = manager.mutual_groups(&info.chat_id);
+    if !common_groups.is_empty() {
+        content.append(&common_groups_card(common_groups, &dialog, manager.clone()));
+    }
+
     let mute = gtk::Button::with_label(if info.is_muted {
         "Unmute chat"
     } else {
@@ -139,6 +144,67 @@ pub fn present_chat_info(
 
     dialog.set_child(Some(&content));
     dialog.present(parent);
+}
+
+fn common_groups_card(
+    groups: Vec<ChatThreadSnapshot>,
+    dialog: &adw::Dialog,
+    manager: Rc<AppManager>,
+) -> gtk::Widget {
+    let section = adw::PreferencesGroup::builder()
+        .title("Groups in common")
+        .build();
+
+    for group in groups {
+        let title = if group.display_name.trim().is_empty() {
+            "Group".to_string()
+        } else {
+            group.display_name.clone()
+        };
+        let row = adw::ActionRow::builder()
+            .title(title)
+            .activatable(true)
+            .build();
+        row.set_subtitle(&format!("{} people", group.member_count));
+        let avatar = adw::Avatar::new(32, Some(&group.display_name), true);
+        row.add_prefix(&avatar);
+        let chevron = gtk::Image::from_icon_name("go-next-symbolic");
+        chevron.add_css_class("dim-label");
+        row.add_suffix(&chevron);
+
+        let manager_for_row = manager.clone();
+        let dialog_for_row = dialog.clone();
+        let chat_id = group.chat_id.clone();
+        row.connect_activated(move |_| {
+            let Some(group_id) = group_id_from_chat_id(&chat_id) else {
+                return;
+            };
+            dialog_for_row.close();
+            manager_for_row.dispatch(AppAction::PushScreen {
+                screen: iris_chat_core::Screen::GroupDetails { group_id },
+            });
+        });
+        section.add(&row);
+    }
+
+    section.upcast()
+}
+
+fn group_id_from_chat_id(chat_id: &str) -> Option<String> {
+    let trimmed = chat_id.trim();
+    let prefix = "group:";
+    let starts_with_group = trimmed
+        .get(..prefix.len())
+        .is_some_and(|candidate| candidate.eq_ignore_ascii_case(prefix));
+    if !starts_with_group {
+        return None;
+    }
+    let group_id = trimmed[prefix.len()..].trim();
+    if group_id.is_empty() {
+        None
+    } else {
+        Some(group_id.to_string())
+    }
 }
 
 fn present_message_info(
@@ -1961,8 +2027,26 @@ fn image_album(
         2 => {
             let row = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
             let cell_w = (ALBUM_WIDTH - GAP) / 2;
-            row.append(&cell(&attachments[0], prefs, manager, attachments, 0, cell_w, 150, None));
-            row.append(&cell(&attachments[1], prefs, manager, attachments, 1, cell_w, 150, None));
+            row.append(&cell(
+                &attachments[0],
+                prefs,
+                manager,
+                attachments,
+                0,
+                cell_w,
+                150,
+                None,
+            ));
+            row.append(&cell(
+                &attachments[1],
+                prefs,
+                manager,
+                attachments,
+                1,
+                cell_w,
+                150,
+                None,
+            ));
             container.append(&row);
         }
         3 => {
@@ -1971,26 +2055,89 @@ fn image_album(
             let right_w = (ALBUM_WIDTH as f32 * 0.42) as i32 - GAP / 2;
             let tall = (ALBUM_WIDTH as f32 * 0.86) as i32;
             let small = (tall - GAP) / 2;
-            row.append(&cell(&attachments[0], prefs, manager, attachments, 0, left_w, tall, None));
+            row.append(&cell(
+                &attachments[0],
+                prefs,
+                manager,
+                attachments,
+                0,
+                left_w,
+                tall,
+                None,
+            ));
             let stack = gtk::Box::new(gtk::Orientation::Vertical, GAP);
-            stack.append(&cell(&attachments[1], prefs, manager, attachments, 1, right_w, small, None));
-            stack.append(&cell(&attachments[2], prefs, manager, attachments, 2, right_w, small, None));
+            stack.append(&cell(
+                &attachments[1],
+                prefs,
+                manager,
+                attachments,
+                1,
+                right_w,
+                small,
+                None,
+            ));
+            stack.append(&cell(
+                &attachments[2],
+                prefs,
+                manager,
+                attachments,
+                2,
+                right_w,
+                small,
+                None,
+            ));
             row.append(&stack);
             container.append(&row);
         }
         _ => {
             let cell_size = (ALBUM_WIDTH - GAP) / 2;
             let row1 = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
-            row1.append(&cell(&attachments[0], prefs, manager, attachments, 0, cell_size, cell_size, None));
-            row1.append(&cell(&attachments[1], prefs, manager, attachments, 1, cell_size, cell_size, None));
+            row1.append(&cell(
+                &attachments[0],
+                prefs,
+                manager,
+                attachments,
+                0,
+                cell_size,
+                cell_size,
+                None,
+            ));
+            row1.append(&cell(
+                &attachments[1],
+                prefs,
+                manager,
+                attachments,
+                1,
+                cell_size,
+                cell_size,
+                None,
+            ));
             let row2 = gtk::Box::new(gtk::Orientation::Horizontal, GAP);
-            row2.append(&cell(&attachments[2], prefs, manager, attachments, 2, cell_size, cell_size, None));
+            row2.append(&cell(
+                &attachments[2],
+                prefs,
+                manager,
+                attachments,
+                2,
+                cell_size,
+                cell_size,
+                None,
+            ));
             let overflow = if attachments.len() > 4 {
                 Some(attachments.len() - 4)
             } else {
                 None
             };
-            row2.append(&cell(&attachments[3], prefs, manager, attachments, 3, cell_size, cell_size, overflow));
+            row2.append(&cell(
+                &attachments[3],
+                prefs,
+                manager,
+                attachments,
+                3,
+                cell_size,
+                cell_size,
+                overflow,
+            ));
             container.append(&row1);
             container.append(&row2);
         }
@@ -2218,32 +2365,30 @@ fn present_image_viewer(
     let load_current_for_keys = load_current.clone();
     let update_nav_for_keys = update_nav.clone();
     let album_len_for_keys = album.len();
-    key_controller.connect_key_pressed(move |_, keyval, _, _| {
-        match keyval {
-            gtk::gdk::Key::Escape => {
-                dialog_for_keys.close();
-                glib::Propagation::Stop
-            }
-            gtk::gdk::Key::Left => {
-                let mut idx = current_index_for_keys.borrow_mut();
-                if *idx > 0 {
-                    *idx -= 1;
-                    load_current_for_keys(*idx);
-                    update_nav_for_keys(*idx);
-                }
-                glib::Propagation::Stop
-            }
-            gtk::gdk::Key::Right => {
-                let mut idx = current_index_for_keys.borrow_mut();
-                if *idx + 1 < album_len_for_keys {
-                    *idx += 1;
-                    load_current_for_keys(*idx);
-                    update_nav_for_keys(*idx);
-                }
-                glib::Propagation::Stop
-            }
-            _ => glib::Propagation::Proceed,
+    key_controller.connect_key_pressed(move |_, keyval, _, _| match keyval {
+        gtk::gdk::Key::Escape => {
+            dialog_for_keys.close();
+            glib::Propagation::Stop
         }
+        gtk::gdk::Key::Left => {
+            let mut idx = current_index_for_keys.borrow_mut();
+            if *idx > 0 {
+                *idx -= 1;
+                load_current_for_keys(*idx);
+                update_nav_for_keys(*idx);
+            }
+            glib::Propagation::Stop
+        }
+        gtk::gdk::Key::Right => {
+            let mut idx = current_index_for_keys.borrow_mut();
+            if *idx + 1 < album_len_for_keys {
+                *idx += 1;
+                load_current_for_keys(*idx);
+                update_nav_for_keys(*idx);
+            }
+            glib::Propagation::Stop
+        }
+        _ => glib::Propagation::Proceed,
     });
     dialog.add_controller(key_controller);
 
@@ -2328,7 +2473,8 @@ fn composer(chat: &CurrentChatSnapshot, state: &AppState, manager: &Rc<AppManage
         progress.add_css_class("osd");
         if let Some(upload) = state.busy.upload_progress.as_ref() {
             if upload.total_bytes > 0 {
-                let fraction = (upload.bytes_uploaded as f64 / upload.total_bytes as f64).clamp(0.0, 1.0);
+                let fraction =
+                    (upload.bytes_uploaded as f64 / upload.total_bytes as f64).clamp(0.0, 1.0);
                 progress.set_fraction(fraction);
             } else {
                 progress.pulse();

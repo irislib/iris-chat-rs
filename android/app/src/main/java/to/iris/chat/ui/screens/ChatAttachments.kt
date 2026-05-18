@@ -302,6 +302,11 @@ internal data class PickedAttachment(
     val filename: String,
 )
 
+internal data class PendingCameraImage(
+    val uri: Uri,
+    val attachment: PickedAttachment,
+)
+
 private enum class ChatAttachmentType(
     val label: String,
     val icon: ImageVector,
@@ -383,6 +388,23 @@ internal fun copyAttachmentToCache(
         PickedAttachment(outputFile.absolutePath, displayName)
     }.onFailure { error ->
         Log.w(ChatAttachmentsLogTag, "failed to copy attachment", error)
+    }.getOrNull()
+}
+
+internal fun createPendingCameraImage(context: Context): PendingCameraImage? {
+    val outputDir = File(context.cacheDir, "attachments/outgoing").apply { mkdirs() }
+    val displayName = "photo-${UUID.randomUUID()}.jpg"
+    val outputFile = File(outputDir, displayName)
+    return runCatching {
+        val uri =
+            FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                outputFile,
+            )
+        PendingCameraImage(uri, PickedAttachment(outputFile.absolutePath, displayName))
+    }.onFailure { error ->
+        Log.w(ChatAttachmentsLogTag, "failed to create camera image", error)
     }.getOrNull()
 }
 

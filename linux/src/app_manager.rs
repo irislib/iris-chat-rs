@@ -3,11 +3,13 @@ use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, Instant};
 
 use iris_chat_core::{
-    AppAction, AppReconciler, AppState, AppUpdate, DesktopNearbyObserver, DesktopNearbySnapshot,
-    FfiApp, FfiDesktopNearby, OutgoingAttachment, Router, Screen, SearchResultSnapshot,
+    AppAction, AppReconciler, AppState, AppUpdate, ChatThreadSnapshot, DesktopNearbyObserver,
+    DesktopNearbySnapshot, FfiApp, FfiDesktopNearby, OutgoingAttachment, Router, Screen,
+    SearchResultSnapshot,
 };
 use serde::Serialize;
 
@@ -223,6 +225,12 @@ impl AppManager {
             SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone()),
             || self.ffi.search(query, scope_chat_id, limit),
         )
+    }
+
+    pub fn mutual_groups(&self, owner_input: &str) -> Vec<ChatThreadSnapshot> {
+        self.catch_ffi_logged("ffiapp.mutual_groups", Vec::new(), || {
+            self.ffi.mutual_groups(owner_input.to_string()).groups
+        })
     }
 
     /// Re-emit the current `AppState` on the UI update channel so the
@@ -611,11 +619,22 @@ impl AppManager {
         created_at_secs: u64,
         event_json: String,
     ) {
-        let _ = self.catch_ffi_logged("desktop_nearby.publish", false, || {
-            self.nearby
-                .publish(event_id, kind, created_at_secs, event_json);
-            true
-        });
+        let nearby = self.nearby.clone();
+        if let Err(error) = thread::Builder::new()
+            .name("iris-nearby-publish".to_string())
+            .spawn(move || {
+                if let Err(payload) = catch_unwind(AssertUnwindSafe(|| {
+                    nearby.publish(event_id, kind, created_at_secs, event_json);
+                })) {
+                    eprintln!(
+                        "Iris Chat FFI call failed (desktop_nearby.publish): {}",
+                        panic_payload_message(payload.as_ref())
+                    );
+                }
+            })
+        {
+            self.log_client_failure("desktop_nearby.publish", &format!("spawn failed: {error}"));
+        }
     }
 
     pub fn export_support_bundle_json(&self) -> String {

@@ -34,7 +34,7 @@ websocket_healthcheck() {
   local websocket_key='bmRyLWRlbW8taGVhbHRoLWNoZWNr'
   local line
 
-  if ! exec 3<>"/dev/tcp/${host}/${port}" 2>/dev/null; then
+  if ! { exec 3<>"/dev/tcp/${host}/${port}"; } 2>/dev/null; then
     return 1
   fi
 

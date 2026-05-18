@@ -13,6 +13,8 @@ import androidx.datastore.preferences.preferencesDataStoreFile
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +44,7 @@ import to.iris.chat.rust.BusyState
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageKind
 import to.iris.chat.rust.ChatMessageSnapshot
+import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.CurrentChatSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.DeliveryState
@@ -204,7 +207,47 @@ class AppManagerContractTest {
             ),
         )
 
-        assertEquals("Action failed. Copy support bundle in Settings.", appManager.state.value.toast)
+        waitFor("nearby failure toast") {
+            appManager.state.value.toast == "Action failed. Copy support bundle in Settings."
+        }
+    }
+
+    @Test
+    fun nearby_publish_does_not_block_reconciler_callback() {
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        val publisherEntered = CountDownLatch(1)
+        val releasePublisher = CountDownLatch(1)
+        appManager.setNearbyEventPublisher {
+            publisherEntered.countDown()
+            releasePublisher.await(5, TimeUnit.SECONDS)
+        }
+
+        val callbackReturned = CountDownLatch(1)
+        val callbackThread =
+            Thread {
+                rust.emit(
+                    AppUpdate.NearbyPublishedEvent(
+                        eventId = "b".repeat(64),
+                        kind = 14u,
+                        createdAtSecs = 43u,
+                        eventJson = """{"id":"${"b".repeat(64)}"}""",
+                    ),
+                )
+                callbackReturned.countDown()
+            }
+
+        callbackThread.start()
+        try {
+            assertTrue("nearby publisher did not start", publisherEntered.await(1, TimeUnit.SECONDS))
+            assertTrue(
+                "nearby publish blocked the reconciler callback",
+                callbackReturned.await(250, TimeUnit.MILLISECONDS),
+            )
+        } finally {
+            releasePublisher.countDown()
+            callbackThread.join(1_000)
+        }
     }
 
     @Test
@@ -910,6 +953,8 @@ private class MockRustAppClient(
             }
         }
     }
+
+    override fun mutualGroups(ownerInput: String): List<ChatThreadSnapshot> = emptyList()
 
     override fun chatSnapshot(chatId: String, limit: UInt): CurrentChatSnapshot? {
         val trimmed = chatId.trim()

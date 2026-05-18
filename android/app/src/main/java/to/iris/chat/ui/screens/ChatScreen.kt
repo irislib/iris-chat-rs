@@ -74,6 +74,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -87,6 +88,7 @@ import to.iris.chat.core.AppManager
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageSnapshot
+import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.DeliveryState
 import to.iris.chat.rust.OutgoingAttachment
 import to.iris.chat.rust.PeerProfileDebugSnapshot
@@ -100,6 +102,7 @@ import to.iris.chat.ui.components.IrisInlineAction
 import to.iris.chat.ui.components.IrisSearchViewMoreRow
 import to.iris.chat.ui.components.IrisSectionCard
 import to.iris.chat.ui.components.IrisChatListRow
+import to.iris.chat.ui.components.IrisDivider
 import to.iris.chat.ui.components.IrisTopBar
 import to.iris.chat.ui.components.formatRelativeTime
 import androidx.compose.foundation.lazy.items
@@ -846,6 +849,7 @@ private fun DirectChatInfoScreen(
     val avatarBytes by rememberNhashImageData(appManager, chat.pictureUrl)
     var advancedOpen by remember(chatId) { mutableStateOf(false) }
     var profileDebug by remember(chatId) { mutableStateOf<PeerProfileDebugSnapshot?>(null) }
+    var commonGroups by remember(chatId) { mutableStateOf<List<ChatThreadSnapshot>>(emptyList()) }
     val proxiedAvatarUrl =
         chat.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
@@ -863,6 +867,9 @@ private fun DirectChatInfoScreen(
         if (advancedOpen && profileDebug == null) {
             profileDebug = appManager.peerProfileDebug(chatId)
         }
+    }
+    LaunchedEffect(chatId) {
+        commonGroups = appManager.mutualGroups(chatId)
     }
 
     BackHandler {
@@ -935,6 +942,13 @@ private fun DirectChatInfoScreen(
                         }
                     }
                     val clipboard = rememberIrisClipboard()
+                    if (commonGroups.isNotEmpty()) {
+                        CommonGroupsCard(
+                            appManager = appManager,
+                            groups = commonGroups,
+                            onBack = onBack,
+                        )
+                    }
                     IrisInlineAction(
                         text = "Copy user ID",
                         onClick = { clipboard.setText("User ID", peerInputToNpub(chatId)) },
@@ -990,6 +1004,97 @@ private fun DirectChatInfoScreen(
             }
         }
     }
+}
+
+@Composable
+private fun CommonGroupsCard(
+    appManager: AppManager,
+    groups: List<ChatThreadSnapshot>,
+    onBack: () -> Unit,
+) {
+    IrisSectionCard {
+        Text(
+            text = "Groups in common",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        groups.forEachIndexed { index, group ->
+            CommonGroupRow(
+                appManager = appManager,
+                group = group,
+                onBack = onBack,
+            )
+            if (index < groups.lastIndex) {
+                IrisDivider(modifier = Modifier.padding(start = 50.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun CommonGroupRow(
+    appManager: AppManager,
+    group: ChatThreadSnapshot,
+    onBack: () -> Unit,
+) {
+    val haptics = rememberIrisHapticFeedback()
+    Row(
+        modifier =
+            Modifier
+                .fillMaxWidth()
+                .clickable {
+                    val groupId = groupIdFromChatId(group.chatId) ?: return@clickable
+                    haptics.press()
+                    onBack()
+                    appManager.dispatch(AppAction.PushScreen(Screen.GroupDetails(groupId)))
+                }
+                .padding(vertical = 2.dp)
+                .testTag("directChatCommonGroup-${group.chatId.take(12)}"),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IrisAvatar(
+            label = group.displayName,
+            size = 38.dp,
+            imageUrl = group.pictureUrl,
+        )
+        Column(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Text(
+                text = group.displayName,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = "${group.memberCount} people",
+                style = MaterialTheme.typography.bodyMedium,
+                color = IrisTheme.palette.muted,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            imageVector = IrisIcons.ChevronRight,
+            contentDescription = null,
+            tint = IrisTheme.palette.muted,
+            modifier = Modifier.size(22.dp),
+        )
+    }
+}
+
+private fun groupIdFromChatId(chatId: String): String? {
+    val trimmed = chatId.trim()
+    val prefix = "group:"
+    if (!trimmed.startsWith(prefix, ignoreCase = true)) {
+        return null
+    }
+    return trimmed.drop(prefix.length).trim().takeIf { it.isNotEmpty() }
 }
 
 @Composable

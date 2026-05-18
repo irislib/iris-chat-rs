@@ -228,6 +228,19 @@ public sealed class AppManager : INotifyPropertyChanged
         NavigateOptimistically(stack, new AppAction.PushScreen(screen));
     }
 
+    public ChatThreadSnapshot[] MutualGroups(string ownerInput)
+    {
+        try
+        {
+            return _ffi.MutualGroups(ownerInput.Trim()).groups ?? Array.Empty<ChatThreadSnapshot>();
+        }
+        catch (Exception error)
+        {
+            LogFfiFailure("ffiapp.mutual_groups", error);
+            return Array.Empty<ChatThreadSnapshot>();
+        }
+    }
+
     // ───────────────────────────── account ────────────────────────────────────
 
     public void CreateAccount(string name)
@@ -792,7 +805,7 @@ public sealed class AppManager : INotifyPropertyChanged
                 break;
 
             case AppUpdate.NearbyPublishedEvent nearby:
-                PublishNearbySafely(nearby);
+                _ = Task.Run(() => PublishNearbySafely(nearby));
                 break;
         }
     }

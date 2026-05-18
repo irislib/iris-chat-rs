@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
@@ -84,6 +86,8 @@ interface RustAppClient {
         beforeLimit: UInt,
         afterLimit: UInt,
     ): CurrentChatSnapshot?
+
+    fun mutualGroups(ownerInput: String): List<ChatThreadSnapshot>
 
     fun ingestNearbyEventJson(eventJson: String): Boolean
 
@@ -153,6 +157,9 @@ private class LiveRustAppClient(
             beforeLimit = beforeLimit,
             afterLimit = afterLimit,
         )
+
+    override fun mutualGroups(ownerInput: String): List<ChatThreadSnapshot> =
+        ffi.mutualGroups(ownerInput = ownerInput).groups
 
     override fun ingestNearbyEventJson(eventJson: String): Boolean = ffi.ingestNearbyEventJson(eventJson)
 
@@ -352,6 +359,7 @@ class AppManager(
     private var rustGeneration: Long = 0
     @Volatile
     private var nearbyEventPublisher: ((NearbyPublishedEvent) -> Unit)? = null
+    private val nearbyPublishMutex = Mutex()
     @Volatile
     private var appInForeground: Boolean = false
 
@@ -1185,6 +1193,18 @@ class AppManager(
             }
         }
 
+    suspend fun mutualGroups(ownerInput: String): List<ChatThreadSnapshot> =
+        withContext(ioDispatcher) {
+            runCatching { rust.mutualGroups(ownerInput) }.getOrElse { error ->
+                logFfiFailure(
+                    category = "ffi.mutual_groups.failed",
+                    detail = "input_len=${ownerInput.length}",
+                    error = error,
+                )
+                emptyList()
+            }
+        }
+
     fun resetAppState() {
         logout()
     }
@@ -1244,14 +1264,7 @@ class AppManager(
                 }
             }
             is AppUpdate.NearbyPublishedEvent -> {
-                nearbyEventPublisher?.invoke(
-                    NearbyPublishedEvent(
-                        eventId = update.eventId,
-                        kind = update.kind,
-                        createdAtSecs = update.createdAtSecs,
-                        eventJson = update.eventJson,
-                    ),
-                )
+                publishNearbyEventAsync(update)
             }
             is AppUpdate.FullState -> {
                 // Rust owns authoritative state. The shell only accepts the newest full snapshot.
@@ -1272,6 +1285,30 @@ class AppManager(
                 )
                 publishState(reconciledState)
                 scheduleMobilePushSyncIfNeeded(reconciledState, cachedAccountBundle?.ownerNsec)
+            }
+        }
+    }
+
+    private fun publishNearbyEventAsync(update: AppUpdate.NearbyPublishedEvent) {
+        val publisher = nearbyEventPublisher ?: return
+        val event =
+            NearbyPublishedEvent(
+                eventId = update.eventId,
+                kind = update.kind,
+                createdAtSecs = update.createdAtSecs,
+                eventJson = update.eventJson,
+            )
+        applicationScope.launch(ioDispatcher) {
+            try {
+                nearbyPublishMutex.withLock {
+                    publisher(event)
+                }
+            } catch (error: Throwable) {
+                if (isFatalJvmError(error)) {
+                    throw error
+                }
+                logFfiFailure("ffi.update_callback.failed", "NearbyPublishedEvent", error)
+                publishShellToast(DISPATCH_FAILURE_TOAST)
             }
         }
     }

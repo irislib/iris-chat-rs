@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using IrisChat.Bindings;
 using IrisChat.Chrome;
 
@@ -210,6 +211,10 @@ public partial class ChatView : UserControl
         {
             App.CurrentManager.Push(new Screen.GroupDetails(gid));
         }
+        else if (chat?.kind == ChatKind.Direct)
+        {
+            ShowDirectChatInfo(chat);
+        }
         e.Handled = true;
     }
 
@@ -226,6 +231,233 @@ public partial class ChatView : UserControl
         if (chat == null) return;
         App.CurrentManager.SetChatMuted(chat.chatId, !chat.isMuted);
     }
+
+    private void ShowDirectChatInfo(CurrentChatSnapshot chat)
+    {
+        var window = new Window
+        {
+            Title = chat.displayName,
+            Width = 420,
+            Height = 520,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ShowInTaskbar = false,
+            ResizeMode = ResizeMode.CanResize,
+            Owner = Window.GetWindow(this),
+            Background = ResourceBrush("Background"),
+        };
+
+        var scroll = new ScrollViewer
+        {
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+            HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+            Padding = new Thickness(20, 18, 20, 18),
+        };
+        var stack = new StackPanel { Orientation = Orientation.Vertical };
+        stack.Children.Add(BuildDirectInfoHeader(chat));
+
+        var commonGroups = App.CurrentManager.MutualGroups(chat.chatId);
+        if (commonGroups.Length > 0)
+        {
+            stack.Children.Add(BuildCommonGroupsSection(commonGroups, window));
+        }
+
+        stack.Children.Add(BuildDirectInfoButton(
+            chat.isMuted ? "Unmute chat" : "Mute chat",
+            () => App.CurrentManager.SetChatMuted(chat.chatId, !chat.isMuted)
+        ));
+        stack.Children.Add(BuildDirectInfoButton(
+            "Delete chat",
+            () =>
+            {
+                App.CurrentManager.DeleteChat(chat.chatId);
+                window.Close();
+            },
+            destructive: true
+        ));
+
+        scroll.Content = stack;
+        window.Content = scroll;
+        window.ShowDialog();
+    }
+
+    private static FrameworkElement BuildDirectInfoHeader(CurrentChatSnapshot chat)
+    {
+        var row = new Grid { Margin = new Thickness(0, 0, 0, 14) };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+        var avatar = new Avatar
+        {
+            Label = chat.displayName,
+            PictureUrl = chat.pictureUrl,
+            Size = 64,
+            Margin = new Thickness(0, 0, 14, 0),
+        };
+        Grid.SetColumn(avatar, 0);
+        row.Children.Add(avatar);
+
+        var text = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        text.Children.Add(new TextBlock
+        {
+            Text = chat.displayName,
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ResourceBrush("TextPrimary"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        if (!string.IsNullOrWhiteSpace(chat.subtitle))
+        {
+            text.Children.Add(new TextBlock
+            {
+                Text = chat.subtitle,
+                FontSize = 13,
+                Foreground = ResourceBrush("TextMuted"),
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                Margin = new Thickness(0, 4, 0, 0),
+            });
+        }
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
+        return row;
+    }
+
+    private static FrameworkElement BuildCommonGroupsSection(
+        IEnumerable<ChatThreadSnapshot> groups,
+        Window window
+    )
+    {
+        var border = new Border
+        {
+            Background = ResourceBrush("Panel"),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14, 12, 14, 10),
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        var stack = new StackPanel { Orientation = Orientation.Vertical };
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Groups in common",
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ResourceBrush("TextPrimary"),
+            Margin = new Thickness(0, 0, 0, 8),
+        });
+
+        foreach (var group in groups)
+        {
+            stack.Children.Add(BuildCommonGroupRow(group, window));
+        }
+
+        border.Child = stack;
+        return border;
+    }
+
+    private static FrameworkElement BuildCommonGroupRow(ChatThreadSnapshot group, Window window)
+    {
+        var button = new Button
+        {
+            Style = Application.Current.TryFindResource("GhostButton") as Style,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            Padding = new Thickness(0),
+            Margin = new Thickness(0, 2, 0, 2),
+            Cursor = Cursors.Hand,
+        };
+
+        var row = new Grid { MinHeight = 42 };
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+        var title = string.IsNullOrWhiteSpace(group.displayName) ? "Group" : group.displayName;
+        var avatar = new Avatar
+        {
+            Label = title,
+            PictureUrl = group.pictureUrl,
+            Size = 34,
+            Margin = new Thickness(0, 0, 10, 0),
+        };
+        Grid.SetColumn(avatar, 0);
+        row.Children.Add(avatar);
+
+        var labels = new StackPanel
+        {
+            Orientation = Orientation.Vertical,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        labels.Children.Add(new TextBlock
+        {
+            Text = title,
+            Foreground = ResourceBrush("TextPrimary"),
+            FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        labels.Children.Add(new TextBlock
+        {
+            Text = $"{group.memberCount} people",
+            Foreground = ResourceBrush("TextMuted"),
+            FontSize = 12,
+            TextTrimming = TextTrimming.CharacterEllipsis,
+        });
+        Grid.SetColumn(labels, 1);
+        row.Children.Add(labels);
+
+        var chevron = new TextBlock
+        {
+            Text = "\uE974",
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            Foreground = ResourceBrush("TextMuted"),
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(10, 0, 0, 0),
+        };
+        Grid.SetColumn(chevron, 2);
+        row.Children.Add(chevron);
+
+        button.Content = row;
+        button.Click += (_, _) =>
+        {
+            var groupId = GroupIdFromChatId(group.chatId);
+            if (string.IsNullOrEmpty(groupId)) return;
+            window.Close();
+            App.CurrentManager.Push(new Screen.GroupDetails(groupId));
+        };
+        return button;
+    }
+
+    private static FrameworkElement BuildDirectInfoButton(
+        string title,
+        Action action,
+        bool destructive = false
+    )
+    {
+        var button = new Button
+        {
+            Content = title,
+            Padding = new Thickness(12, 8, 12, 8),
+            HorizontalAlignment = HorizontalAlignment.Left,
+            Margin = new Thickness(0, 0, 0, 8),
+        };
+        if (destructive)
+        {
+            button.Foreground = ResourceBrush("Danger");
+        }
+        button.Click += (_, _) => action();
+        return button;
+    }
+
+    private static string? GroupIdFromChatId(string chatId)
+    {
+        var trimmed = chatId.Trim();
+        const string prefix = "group:";
+        if (!trimmed.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+        var groupId = trimmed[prefix.Length..].Trim();
+        return string.IsNullOrEmpty(groupId) ? null : groupId;
+    }
+
+    private static Brush ResourceBrush(string key) =>
+        (Brush)Application.Current.Resources[key];
 
     private static string DisappearingLabel(ulong seconds)
     {

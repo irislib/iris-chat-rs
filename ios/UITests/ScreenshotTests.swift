@@ -161,7 +161,7 @@ final class ScreenshotTests: XCTestCase {
     }
 
     private func capture(_ app: XCUIApplication, named name: String) {
-        let attachment = XCTAttachment(screenshot: app.screenshot())
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = "screenshot-\(name)"
         attachment.lifetime = .keepAlways
         add(attachment)

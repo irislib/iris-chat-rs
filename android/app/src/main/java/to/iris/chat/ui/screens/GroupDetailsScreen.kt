@@ -1,6 +1,7 @@
 package to.iris.chat.ui.screens
 
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -13,11 +14,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -66,6 +69,8 @@ fun GroupDetailsScreen(
     var renameValue by remember(groupId, details?.name) { mutableStateOf(details?.name.orEmpty()) }
     var memberInput by remember(groupId) { mutableStateOf("") }
     var showScanner by remember { mutableStateOf(false) }
+    var showGroupPhotoSourceMenu by remember { mutableStateOf(false) }
+    var pendingCameraPhoto by remember { mutableStateOf<PendingCameraImage?>(null) }
     val normalizedInput = normalizePeerInput(memberInput)
     val localOwnerHex = appState.account?.publicKeyHex
     val existingMemberHexes =
@@ -83,7 +88,7 @@ fun GroupDetailsScreen(
         details
             ?.pictureUrl
             ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-    val picturePicker =
+    val pictureFilePicker =
         rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             if (uri == null) {
                 return@rememberLauncherForActivityResult
@@ -98,6 +103,35 @@ fun GroupDetailsScreen(
                 }
             }
         }
+    val pictureLibraryPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+            if (uri == null) {
+                return@rememberLauncherForActivityResult
+            }
+            coroutineScope.launch {
+                val picked =
+                    withContext(Dispatchers.IO) {
+                        copyAttachmentToCache(context, uri)
+                    }
+                if (picked != null) {
+                    appManager.updateGroupPicture(groupId, picked.path, picked.filename)
+                }
+            }
+        }
+    val pictureCameraPicker =
+        rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { didTakePhoto ->
+            val pending = pendingCameraPhoto
+            pendingCameraPhoto = null
+            if (didTakePhoto && pending != null) {
+                appManager.updateGroupPicture(groupId, pending.attachment.path, pending.attachment.filename)
+            }
+        }
+
+    fun takeGroupPhoto() {
+        val pending = createPendingCameraImage(context) ?: return
+        pendingCameraPhoto = pending
+        pictureCameraPicker.launch(pending.uri)
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -170,7 +204,7 @@ fun GroupDetailsScreen(
                 if (details.canManage) {
                     IrisSecondaryButton(
                         text = if (appState.busy.uploadingAttachment) "Uploading…" else "Change photo",
-                        onClick = { picturePicker.launch(arrayOf("image/*")) },
+                        onClick = { showGroupPhotoSourceMenu = true },
                         enabled = !appState.busy.uploadingAttachment,
                         modifier = Modifier.testTag("groupDetailsChangePictureButton"),
                         icon = {
@@ -504,6 +538,49 @@ fun GroupDetailsScreen(
                 }
             }
         }
+    }
+
+    if (showGroupPhotoSourceMenu) {
+        AlertDialog(
+            onDismissRequest = { showGroupPhotoSourceMenu = false },
+            confirmButton = {},
+            title = { Text("Choose a group photo") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(
+                        onClick = {
+                            showGroupPhotoSourceMenu = false
+                            takeGroupPhoto()
+                        },
+                    ) {
+                        Text("Take Photo")
+                    }
+                    TextButton(
+                        onClick = {
+                            showGroupPhotoSourceMenu = false
+                            pictureLibraryPicker.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                    ) {
+                        Text("Photo Library")
+                    }
+                    TextButton(
+                        onClick = {
+                            showGroupPhotoSourceMenu = false
+                            pictureFilePicker.launch(arrayOf("image/*"))
+                        },
+                    ) {
+                        Text("Files")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showGroupPhotoSourceMenu = false }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 
     if (showScanner) {

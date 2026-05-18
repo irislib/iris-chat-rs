@@ -362,6 +362,86 @@ impl AppCore {
         thread.messages = page;
     }
 
+    fn hydrate_thread_from_storage(&mut self, chat_id: &str) -> bool {
+        let persisted = match self
+            .app_store
+            .load_thread(chat_id, OPEN_CHAT_MESSAGES_PER_PAGE)
+        {
+            Ok(Some(thread)) => thread,
+            Ok(None) => return false,
+            Err(error) => {
+                self.push_debug_log(
+                    "storage.thread.hydrate.error",
+                    format!("chat_id={chat_id} error={error}"),
+                );
+                return false;
+            }
+        };
+        self.merge_persisted_thread(persisted)
+    }
+
+    fn merge_persisted_thread(&mut self, persisted: PersistedThread) -> bool {
+        let chat_id = persisted.chat_id.clone();
+        let mut changed = false;
+        let persisted_updated_at_secs = persisted.updated_at_secs.max(
+            persisted
+                .messages
+                .iter()
+                .map(|message| message.created_at_secs)
+                .max()
+                .unwrap_or(0),
+        );
+        let messages = persisted
+            .messages
+            .iter()
+            .map(chat_message_from_persisted)
+            .collect::<Vec<_>>();
+        let thread = self.threads.entry(chat_id.clone()).or_insert_with(|| {
+            changed = true;
+            ThreadRecord {
+                chat_id: chat_id.clone(),
+                unread_count: persisted.unread_count,
+                updated_at_secs: persisted_updated_at_secs,
+                messages: Vec::new(),
+                draft: persisted.draft.clone(),
+            }
+        });
+        if persisted.unread_count > thread.unread_count {
+            thread.unread_count = persisted.unread_count;
+            changed = true;
+        }
+        if persisted_updated_at_secs > thread.updated_at_secs {
+            thread.updated_at_secs = persisted_updated_at_secs;
+            changed = true;
+        }
+        if thread.draft.is_empty() && !persisted.draft.is_empty() {
+            thread.draft = persisted.draft;
+            changed = true;
+        }
+        for message in messages {
+            let duplicate = thread.messages.iter().any(|existing| {
+                existing.id == message.id
+                    || message
+                        .source_event_id
+                        .as_ref()
+                        .is_some_and(|source_event_id| {
+                            existing.source_event_id.as_ref() == Some(source_event_id)
+                        })
+            });
+            if !duplicate {
+                thread.insert_message_sorted(message);
+                changed = true;
+            }
+        }
+        if let Some(latest) = thread.messages.last() {
+            self.typing_floor_secs
+                .entry(chat_id)
+                .and_modify(|floor| *floor = (*floor).max(latest.created_at_secs))
+                .or_insert(latest.created_at_secs);
+        }
+        changed
+    }
+
     pub(super) fn send_message(&mut self, chat_id: &str, text: &str, expires_at_secs: Option<u64>) {
         let trimmed = text.trim();
         if trimmed.is_empty() {
@@ -987,7 +1067,12 @@ impl AppCore {
             .app_store
             .message_exists(chat_id, message_id_ref, source_event_id_ref)
         {
-            Ok(true) => return,
+            Ok(true) => {
+                if !self.threads.contains_key(chat_id) {
+                    self.hydrate_thread_from_storage(chat_id);
+                }
+                return;
+            }
             Ok(false) => {}
             Err(error) => self.push_debug_log(
                 "storage.message.exists.error",

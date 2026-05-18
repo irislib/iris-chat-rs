@@ -214,7 +214,9 @@ fn device_row(
     let title = if device.is_current_device {
         "This device".to_string()
     } else {
-        non_empty(device.device_label.as_deref()).unwrap_or("Linked device").to_string()
+        non_empty(device.device_label.as_deref())
+            .unwrap_or("Linked device")
+            .to_string()
     };
     let row = adw::ActionRow::builder().title(title).build();
     let mut subtitles = Vec::new();

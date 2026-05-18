@@ -32,6 +32,19 @@ uniffi::setup_scaffolding!();
 
 pub(crate) const CORE_RESTART_TOAST: &str = "Iris needs restart. Copy support bundle in Settings.";
 
+fn enqueue_update_for_delivery(
+    update: AppUpdate,
+    latest_full_state: &mut Option<AppUpdate>,
+    before_full_state: &mut Vec<AppUpdate>,
+    after_full_state: &mut Vec<AppUpdate>,
+) {
+    match update {
+        full @ AppUpdate::FullState(_) => *latest_full_state = Some(full),
+        nearby @ AppUpdate::NearbyPublishedEvent { .. } => after_full_state.push(nearby),
+        other => before_full_state.push(other),
+    }
+}
+
 #[uniffi::export(callback_interface)]
 pub trait AppReconciler: Send + Sync + 'static {
     fn reconcile(&self, update: AppUpdate);
@@ -728,21 +741,34 @@ impl FfiApp {
                 // a UI update, so we never collapse those — every one must run.
                 while let Ok(first) = update_rx.recv() {
                     let mut latest_full_state: Option<AppUpdate> = None;
-                    let mut sidecar: Vec<AppUpdate> = Vec::new();
+                    let mut before_full_state: Vec<AppUpdate> = Vec::new();
+                    let mut after_full_state: Vec<AppUpdate> = Vec::new();
                     let process = |update: AppUpdate,
                                    latest: &mut Option<AppUpdate>,
-                                   side: &mut Vec<AppUpdate>| {
+                                   before: &mut Vec<AppUpdate>,
+                                   after: &mut Vec<AppUpdate>| {
                         recovery.remember_update(&update);
-                        match update {
-                            full @ AppUpdate::FullState(_) => *latest = Some(full),
-                            other => side.push(other),
-                        }
+                        enqueue_update_for_delivery(update, latest, before, after);
                     };
-                    process(first, &mut latest_full_state, &mut sidecar);
+                    process(
+                        first,
+                        &mut latest_full_state,
+                        &mut before_full_state,
+                        &mut after_full_state,
+                    );
                     while let Ok(next) = update_rx.try_recv() {
-                        process(next, &mut latest_full_state, &mut sidecar);
+                        process(
+                            next,
+                            &mut latest_full_state,
+                            &mut before_full_state,
+                            &mut after_full_state,
+                        );
                     }
-                    for update in sidecar.into_iter().chain(latest_full_state) {
+                    for update in before_full_state
+                        .into_iter()
+                        .chain(latest_full_state)
+                        .chain(after_full_state)
+                    {
                         let kind = match &update {
                             AppUpdate::FullState(_) => "FullState",
                             AppUpdate::PersistAccountBundle { .. } => "PersistAccountBundle",
@@ -1784,6 +1810,65 @@ mod ffi_hardening_tests {
             }
             other => panic!("unexpected restore action: {other:?}"),
         }
+    }
+
+    #[test]
+    fn nearby_published_events_wait_behind_latest_state_in_drained_batch() {
+        let mut latest_full_state = None;
+        let mut before_full_state = Vec::new();
+        let mut after_full_state = Vec::new();
+
+        enqueue_update_for_delivery(
+            AppUpdate::NearbyPublishedEvent {
+                event_id: "a".repeat(64),
+                kind: 14,
+                created_at_secs: 1,
+                event_json: "{}".to_string(),
+            },
+            &mut latest_full_state,
+            &mut before_full_state,
+            &mut after_full_state,
+        );
+        let mut stale = AppState::empty();
+        stale.rev = 1;
+        enqueue_update_for_delivery(
+            AppUpdate::FullState(stale),
+            &mut latest_full_state,
+            &mut before_full_state,
+            &mut after_full_state,
+        );
+        enqueue_update_for_delivery(
+            AppUpdate::PersistAccountBundle {
+                rev: 2,
+                owner_nsec: None,
+                owner_pubkey_hex: "owner".to_string(),
+                device_nsec: "device".to_string(),
+            },
+            &mut latest_full_state,
+            &mut before_full_state,
+            &mut after_full_state,
+        );
+        let mut latest = AppState::empty();
+        latest.rev = 3;
+        enqueue_update_for_delivery(
+            AppUpdate::FullState(latest),
+            &mut latest_full_state,
+            &mut before_full_state,
+            &mut after_full_state,
+        );
+
+        let order = before_full_state
+            .into_iter()
+            .chain(latest_full_state)
+            .chain(after_full_state)
+            .map(|update| match update {
+                AppUpdate::PersistAccountBundle { .. } => "persist".to_string(),
+                AppUpdate::FullState(state) => format!("state:{}", state.rev),
+                AppUpdate::NearbyPublishedEvent { .. } => "nearby".to_string(),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(order, vec!["persist", "state:3", "nearby"]);
     }
 
     #[test]
