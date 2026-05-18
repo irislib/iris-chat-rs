@@ -199,6 +199,9 @@ release-gate:
 test-homebrew-tap:
     ./scripts/test_homebrew_tap
 
+test-cli-install-docker:
+    ./scripts/test_cli_install_docker
+
 test-android:
     ./scripts/test-android
 

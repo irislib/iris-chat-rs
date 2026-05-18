@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+source "$ROOT/scripts/release_common.sh"
+
+load_release_env "$ROOT"
+
+IMAGE="${IRIS_CLI_INSTALL_TEST_IMAGE:-debian:bookworm-slim}"
+PLATFORM="${IRIS_CLI_INSTALL_TEST_PLATFORM:-linux/amd64}"
+INSTALL_URL="${IRIS_CLI_INSTALL_URL:-https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/install.sh}"
+
+usage() {
+  cat <<EOF
+usage: ./scripts/test_cli_install_docker [options]
+
+Installs the public iris CLI release in a fresh Docker container and verifies
+that the installed binary starts.
+
+Options:
+  --image <image>       Docker image (default: ${IMAGE})
+  --platform <platform> Docker platform (default: ${PLATFORM})
+  --install-url <url>   Install script URL (default: latest htree release)
+  -h, --help            Show this help
+
+Environment:
+  IRIS_CLI_INSTALL_TEST_IMAGE
+  IRIS_CLI_INSTALL_TEST_PLATFORM
+  IRIS_CLI_INSTALL_URL
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image) IMAGE="$2"; shift ;;
+    --platform) PLATFORM="$2"; shift ;;
+    --install-url) INSTALL_URL="$2"; shift ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is required" >&2
+  exit 1
+fi
+
+docker run \
+  --rm \
+  --platform "$PLATFORM" \
+  -e INSTALL_URL="$INSTALL_URL" \
+  "$IMAGE" \
+  sh -lc '
+    set -eu
+
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends ca-certificates curl tar
+
+    curl -fsSL "$INSTALL_URL" | sh -s -- /usr/local/bin
+
+    command -v iris
+    iris --version
+    iris --help >/tmp/iris-help.txt
+    test -s /tmp/iris-help.txt
+  '

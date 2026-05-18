@@ -903,7 +903,7 @@ build_cli_darwin_target() {
 build_cli_linux_target() {
   local target="$1"
   local target_dir="$ROOT/target/cli-release/linux-x64"
-  local image="${IRIS_LINUX_BUILD_IMAGE:-iris-chat-linux-dev:latest}"
+  local image="${IRIS_CLI_LINUX_BUILD_IMAGE:-rust:1-bookworm}"
   local repo_basename
   repo_basename="$(basename "$ROOT")"
 
@@ -915,22 +915,16 @@ build_cli_linux_target() {
     note_skipped "cli ${target}: docker not available"
     return 0
   fi
-  if ! docker image inspect "$image" >/dev/null 2>&1; then
-    docker build \
-      --platform linux/amd64 \
-      --build-arg INSTALL_CARGO_WATCH=0 \
-      -f "$ROOT/linux/Dockerfile" \
-      -t "$image" \
-      "$ROOT/.."
-  fi
+  rm -rf "$target_dir"
   docker run \
     --platform linux/amd64 \
     --rm \
     -v "$ROOT/..:/workspace:cached" \
     -w "/workspace/$repo_basename/core" \
     -e CARGO_TARGET_DIR="/workspace/$repo_basename/target/cli-release/linux-x64" \
+    -e PATH="/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     --entrypoint /bin/bash \
-    "$image" -lc 'set -Eeuo pipefail; cargo build --release --bin iris --locked'
+    "$image" -c 'set -Eeuo pipefail; cargo build --release --bin iris --locked'
   package_cli_unix_target "$target" "$target_dir/release/iris"
 }
 
