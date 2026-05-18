@@ -86,6 +86,15 @@ final class InteropHarnessTests: XCTestCase {
             let snapshot = try await ensureLoggedIn(manager: manager, env: env)
             try await waitForRelayDrainIfRequested(manager: manager, env: env)
             reportIdentity(snapshot)
+        case "update_profile_metadata_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let displayName = try requiredEnv("IRIS_IOS_HARNESS_DISPLAY_NAME", env: env)
+            manager.updateProfileMetadata(name: displayName, pictureURL: env["IRIS_IOS_HARNESS_PICTURE_URL"])
+            let updated = try await waitFor(label: "profile metadata applied", timeout: 60) {
+                manager.state.account?.displayName == displayName ? manager.state.account : nil
+            }
+            status("display_name", updated.displayName)
+            status("public_key_hex", updated.publicKeyHex)
         case "start_linked_device_and_report_identity":
             let ownerInput = env["IRIS_IOS_HARNESS_OWNER_INPUT"] ?? ""
             manager.startLinkedDevice(ownerInput: ownerInput)
@@ -388,6 +397,25 @@ final class InteropHarnessTests: XCTestCase {
             status("peer_owner_hex", peerOwnerHex)
             status("source", readiness.source)
             status("users", readiness.users)
+        case "wait_for_peer_profile_name_from_args":
+            _ = try await ensureLoggedIn(manager: manager, env: env)
+            let peerInput = env["IRIS_IOS_HARNESS_PEER_INPUT"] ?? env["IRIS_IOS_HARNESS_PEER_PUBKEY_HEX"] ?? ""
+            let peerOwnerHex = resolvePeerOwnerHex(manager: manager, peerInput: peerInput)
+            let expectedName = try requiredEnv("IRIS_IOS_HARNESS_DISPLAY_NAME", env: env)
+            let resolvedName = try await waitFor(label: "peer profile \(peerOwnerHex) == \(expectedName)", timeout: 60) {
+                if let current = manager.state.currentChat,
+                   self.sameIdentifier(current.chatId, peerOwnerHex),
+                   current.displayName == expectedName {
+                    return current.displayName
+                }
+                if let thread = manager.state.chatList.first(where: { self.sameIdentifier($0.chatId, peerOwnerHex) }),
+                   thread.displayName == expectedName {
+                    return thread.displayName
+                }
+                return nil
+            }
+            status("peer_pubkey_hex", peerOwnerHex)
+            status("display_name", resolvedName)
         case "create_chat_from_args":
             let rawPeer = try requiredEnv("IRIS_IOS_HARNESS_PEER_INPUT", env: env)
             let chatID = try await ensureChatOpen(manager: manager, dataDir: dataDir, chatID: nil, peerInput: rawPeer)
