@@ -198,11 +198,30 @@ pub(crate) fn decrypt_mobile_push_notification(
         Err(_) => return fallback(),
     };
 
-    if outer_event.kind.as_u16() as u64 == MOBILE_PUSH_INVITE_RESPONSE_KIND {
-        return invite_acceptance_push_resolution(payload_object, outer_event);
+    let outer_event_id = outer_event.id.to_string();
+    let is_invite_response = outer_event.kind.as_u16() as u64 == MOBILE_PUSH_INVITE_RESPONSE_KIND;
+    if is_invite_response {
+        let owner_pubkey = match nostr::PublicKey::parse(owner_pubkey_hex.trim()) {
+            Ok(pubkey) => pubkey,
+            Err(_) => return suppressed_resolution(),
+        };
+        let device_keys = match nostr::Keys::parse(device_nsec.trim()) {
+            Ok(keys) => keys,
+            Err(_) => return suppressed_resolution(),
+        };
+        return match pending_invite_response_owner(
+            &data_dir,
+            owner_pubkey,
+            &device_keys,
+            &outer_event,
+        ) {
+            Some(chat_id) => {
+                invite_acceptance_push_resolution(payload_object, outer_event, chat_id)
+            }
+            None => suppressed_resolution(),
+        };
     }
 
-    let outer_event_id = outer_event.id.to_string();
     // When NDR decrypt fails (the foreground app already advanced
     // the ratchet past this event) we look up the message body the
     // foreground stored in SQLite. If even that misses we suppress
@@ -684,6 +703,44 @@ fn lookup_group_name(data_dir: &str, group_id: &str) -> Option<String> {
     (!trimmed.is_empty()).then_some(trimmed)
 }
 
+fn pending_invite_response_owner(
+    data_dir: &str,
+    owner_pubkey: PublicKey,
+    device_keys: &Keys,
+    event: &nostr::Event,
+) -> Option<String> {
+    let shared_conn = super::storage::open_database(Path::new(data_dir)).ok()?;
+    let storage = super::storage::SqliteStorageAdapter::new(
+        shared_conn,
+        owner_pubkey.to_hex(),
+        device_keys.public_key().to_hex(),
+    );
+    let device_secret = device_keys.secret_key().to_secret_bytes();
+    let mut invites = Vec::new();
+
+    let device_id = device_keys.public_key().to_hex();
+    if let Some(serialized) = storage
+        .get(&format!("device-invite/{device_id}"))
+        .ok()
+        .flatten()
+    {
+        if let Ok(mut invite) = Invite::deserialize(&serialized) {
+            invite.owner_public_key = Some(owner_pubkey);
+            invites.push(invite);
+        }
+    }
+    if let Ok(private_invites) = super::invites::load_private_chat_invites(&storage) {
+        invites.extend(private_invites.into_values());
+    }
+
+    invites.into_iter().find_map(|invite| {
+        nostr_double_ratchet_nostr::process_invite_response_event(&invite, event, device_secret)
+            .ok()
+            .flatten()
+            .map(|response| response.resolved_owner_pubkey().to_hex())
+    })
+}
+
 pub(crate) fn resolve_mobile_push_notification(
     raw_payload_json: String,
 ) -> MobilePushNotificationResolution {
@@ -700,7 +757,7 @@ pub(crate) fn resolve_mobile_push_notification(
         first_normalized_payload_event_kind(&payload, MOBILE_PUSH_OUTER_EVENT_PAYLOAD_KEYS);
 
     if inner_kind.is_none() && outer_kind == Some(MOBILE_PUSH_INVITE_RESPONSE_KIND) {
-        return invite_acceptance_fallback_resolution(payload);
+        return suppressed_resolution();
     }
 
     if inner_kind.is_some_and(|kind| !should_show_mobile_push_kind(kind)) {
@@ -1117,6 +1174,7 @@ fn event_content(value: Option<&String>) -> Option<String> {
 fn invite_acceptance_push_resolution(
     payload_object: &serde_json::Map<String, serde_json::Value>,
     event: nostr::Event,
+    chat_id: String,
 ) -> MobilePushNotificationResolution {
     let title = "Invite accepted".to_string();
     let body = "Someone joined your chat".to_string();
@@ -1137,6 +1195,7 @@ fn invite_acceptance_push_resolution(
         "invite_response_event_id".to_string(),
         serde_json::Value::String(event.id.to_hex()),
     );
+    resolved_payload.insert("chat_id".to_string(), serde_json::Value::String(chat_id));
 
     MobilePushNotificationResolution {
         should_show: true,
@@ -1144,26 +1203,6 @@ fn invite_acceptance_push_resolution(
         body,
         payload_json: serde_json::to_string(&serde_json::Value::Object(resolved_payload))
             .unwrap_or_else(|_| "{}".to_string()),
-    }
-}
-
-fn invite_acceptance_fallback_resolution(
-    mut payload: BTreeMap<String, String>,
-) -> MobilePushNotificationResolution {
-    let title = "Invite accepted".to_string();
-    let body = "Someone joined your chat".to_string();
-    payload.insert("title".to_string(), title.clone());
-    payload.insert("body".to_string(), body.clone());
-    payload.insert(
-        "inner_kind".to_string(),
-        MOBILE_PUSH_INVITE_RESPONSE_KIND.to_string(),
-    );
-
-    MobilePushNotificationResolution {
-        should_show: true,
-        title,
-        body,
-        payload_json: serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string()),
     }
 }
 

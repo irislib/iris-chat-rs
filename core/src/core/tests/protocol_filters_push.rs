@@ -2040,7 +2040,7 @@ fn mobile_push_fallback_allows_chat_message_kind() {
 }
 
 #[test]
-fn mobile_push_fallback_renders_invite_acceptance() {
+fn mobile_push_fallback_suppresses_unverified_invite_acceptance() {
     let keys = Keys::generate();
     let p_tag_pubkey = "a".repeat(64);
     let event = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "ciphertext")
@@ -2056,9 +2056,109 @@ fn mobile_push_fallback_renders_invite_acceptance() {
 
     let resolution = resolve_mobile_push_notification(payload);
 
+    assert!(!resolution.should_show);
+    assert_eq!(resolution.title, "");
+    assert_eq!(resolution.body, "");
+}
+
+#[test]
+fn mobile_push_decrypt_renders_matching_pending_invite_response_with_chat_id() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let mut core = logged_in_test_core("mobile-push-invite-response-match", &owner, &device);
+    core.handle_action(AppAction::CreatePublicInvite);
+    let invite = core
+        .private_chat_invites
+        .values()
+        .next()
+        .expect("private invite")
+        .clone();
+    let (_session, response) = invite
+        .accept_with_owner(
+            peer.public_key(),
+            peer.secret_key().to_secret_bytes(),
+            Some(peer.public_key().to_hex()),
+            Some(peer.public_key()),
+        )
+        .expect("accept invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+    let payload = serde_json::json!({
+        "event": serde_json::to_string(&response_event).expect("event json"),
+        "title": "Iris Chat",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let resolution = decrypt_mobile_push_notification(
+        core.data_dir.to_string_lossy().to_string(),
+        owner.public_key().to_hex(),
+        device
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| device.secret_key().to_secret_hex()),
+        payload,
+    );
+
     assert!(resolution.should_show);
     assert_eq!(resolution.title, "Invite accepted");
     assert_eq!(resolution.body, "Someone joined your chat");
+    let resolved: serde_json::Value =
+        serde_json::from_str(&resolution.payload_json).expect("payload json");
+    let peer_chat_id = peer.public_key().to_hex();
+    assert_eq!(
+        resolved.get("chat_id").and_then(|value| value.as_str()),
+        Some(peer_chat_id.as_str())
+    );
+    assert_eq!(
+        resolved
+            .get("inner_kind")
+            .and_then(|value| value.as_str())
+            .and_then(|value| value.parse::<u64>().ok()),
+        Some(INVITE_RESPONSE_KIND as u64)
+    );
+}
+
+#[test]
+fn mobile_push_decrypt_suppresses_unmatched_invite_response() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let core = logged_in_test_core("mobile-push-invite-response-miss", &owner, &device);
+    let missing_invite =
+        Invite::create_new(device.public_key(), Some(device.public_key().to_hex()), Some(1))
+            .expect("missing invite");
+    let (_session, response) = missing_invite
+        .accept_with_owner(
+            peer.public_key(),
+            peer.secret_key().to_secret_bytes(),
+            Some(peer.public_key().to_hex()),
+            Some(peer.public_key()),
+        )
+        .expect("accept invite");
+    let response_event = nostr_double_ratchet_nostr::invite_response_event(&response)
+        .expect("invite response event");
+    let payload = serde_json::json!({
+        "event": serde_json::to_string(&response_event).expect("event json"),
+        "title": "Iris Chat",
+        "body": "New activity",
+    })
+    .to_string();
+
+    let resolution = decrypt_mobile_push_notification(
+        core.data_dir.to_string_lossy().to_string(),
+        owner.public_key().to_hex(),
+        device
+            .secret_key()
+            .to_bech32()
+            .unwrap_or_else(|_| device.secret_key().to_secret_hex()),
+        payload,
+    );
+
+    assert!(!resolution.should_show);
+    assert_eq!(resolution.title, "");
+    assert_eq!(resolution.body, "");
 }
 
 #[test]
