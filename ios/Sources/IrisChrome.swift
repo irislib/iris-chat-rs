@@ -1052,8 +1052,14 @@ struct IrisCopyButton: View {
         case .menuRow:
             Button(action: copy) {
                 HStack(spacing: 12) {
-                    Image(systemName: copied ? (copiedSystemImage ?? "checkmark") : (systemImage ?? "doc.on.doc"))
-                        .frame(width: 24)
+                    ZStack {
+                        Image(systemName: systemImage ?? "doc.on.doc")
+                            .opacity(copied ? 0 : 1)
+                        Image(systemName: copiedSystemImage ?? "checkmark")
+                            .opacity(copied ? 1 : 0)
+                            .accessibilityHidden(true)
+                    }
+                    .frame(width: 24, height: 24)
                     // Keep the row width stable across the copy/copied
                     // swap so adjacent rows don't shift — overlay the
                     // two labels at the same leading edge.
@@ -1065,6 +1071,7 @@ struct IrisCopyButton: View {
                             .accessibilityHidden(true)
                     }
                     .font(.system(.body, design: .rounded, weight: .semibold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     Spacer(minLength: 0)
                 }
                 .foregroundStyle(palette.textPrimary)
