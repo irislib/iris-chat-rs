@@ -6,7 +6,7 @@ use adw::prelude::*;
 use iris_chat_core::{
     peer_input_to_npub, proxied_image_url, AppAction, AppState, ChatKind, ChatMessageKind,
     ChatMessageSnapshot, ChatThreadSnapshot, CurrentChatSnapshot, DeliveryState,
-    MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
+    DesktopNearbyPeerSnapshot, MessageAttachmentSnapshot, MessageReactionSnapshot, MessageReactor,
     MessageRecipientDeliverySnapshot, OutgoingAttachment, PreferencesSnapshot,
 };
 
@@ -118,6 +118,10 @@ pub fn present_chat_info(
         content.append(&profile_about_card(about));
     }
 
+    if let Some(card) = nearby_status_card(&info, &manager) {
+        content.append(&card);
+    }
+
     let common_groups = manager.mutual_groups(&info.chat_id);
     if !common_groups.is_empty() {
         content.append(&common_groups_card(common_groups, &dialog, manager.clone()));
@@ -158,6 +162,37 @@ pub fn present_chat_info(
 
     dialog.set_child(Some(&content));
     dialog.present(parent);
+}
+
+fn nearby_status_card(info: &ChatInfoSnapshot, manager: &Rc<AppManager>) -> Option<gtk::Widget> {
+    if !manager.current_state().preferences.nearby_enabled {
+        return None;
+    }
+    let snapshot = manager.nearby_snapshot();
+    if !snapshot.visible
+        || !snapshot
+            .peers
+            .iter()
+            .any(|peer| is_nearby_match(peer, &info.chat_id))
+    {
+        return None;
+    }
+
+    let group = adw::PreferencesGroup::new();
+    let row = adw::ActionRow::builder()
+        .title("Nearby now")
+        .subtitle("Wi-Fi")
+        .build();
+    let icon = gtk::Image::from_icon_name("network-wireless-symbolic");
+    row.add_prefix(&icon);
+    group.add(&row);
+    Some(group.upcast())
+}
+
+fn is_nearby_match(peer: &DesktopNearbyPeerSnapshot, chat_id: &str) -> bool {
+    peer.owner_pubkey_hex
+        .as_deref()
+        .is_some_and(|owner| owner.eq_ignore_ascii_case(chat_id))
 }
 
 fn profile_about_card(about: &str) -> gtk::Widget {

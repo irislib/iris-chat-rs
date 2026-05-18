@@ -1031,7 +1031,6 @@ final class AppManager: ObservableObject {
         qos: .userInitiated
     )
     private static let supportBundleQueue = DispatchQueue(label: "to.iris.chat.support-bundle", qos: .utility)
-    private static let nearbyFirstOpenAttemptedKey = "nearbyFirstOpenAttempted"
     private static let nearbyLanPermissionPromptAttemptedKey = "nearbyLanPermissionPromptAttempted"
     private static let nearbyLanPermissionGrantedKey = "nearbyLanPermissionGranted"
 
@@ -2173,25 +2172,27 @@ final class AppManager: ObservableObject {
 
     func setNearbyBluetoothEnabled(_ enabled: Bool) {
 #if os(iOS) || os(macOS)
-        if enabled, nearbyIris.bluetoothPermissionNeedsSettings {
+        let canStartTransport = state.preferences.nearbyEnabled
+        if enabled && canStartTransport && nearbyIris.bluetoothPermissionNeedsSettings {
             showNearbySettingsHint("Allow Bluetooth in Settings")
             return
         }
-        nearbyIris.setVisible(enabled)
+        nearbyIris.setVisible(enabled && canStartTransport)
         dispatchToRust(.setNearbyBluetoothEnabled(enabled: enabled))
 #endif
     }
 
     func setNearbyLanEnabled(_ enabled: Bool) {
 #if os(iOS) || os(macOS)
-        if enabled, nearbyIris.lanPermissionNeedsSettings {
+        let canStartTransport = state.preferences.nearbyEnabled
+        if enabled && canStartTransport && nearbyIris.lanPermissionNeedsSettings {
             showNearbySettingsHint("Allow Wi-Fi in Settings")
             return
         }
-        if enabled {
+        if enabled && canStartTransport {
             markNearbyLanPermissionPromptAttempted()
         }
-        nearbyIris.setLanVisible(enabled)
+        nearbyIris.setLanVisible(enabled && canStartTransport)
         dispatchToRust(.setNearbyLanEnabled(enabled: enabled))
 #endif
     }
@@ -2204,21 +2205,6 @@ final class AppManager: ObservableObject {
         }
 #endif
         dispatchToRust(.setNearbyEnabled(enabled: enabled))
-    }
-
-    func prepareNearbyForUserTap() {
-#if os(iOS) || os(macOS)
-        let firstNearbyOpen = !UserDefaults.standard.bool(forKey: Self.nearbyFirstOpenAttemptedKey)
-        if firstNearbyOpen {
-            UserDefaults.standard.set(true, forKey: Self.nearbyFirstOpenAttemptedKey)
-        }
-        if state.preferences.nearbyBluetoothEnabled || firstNearbyOpen || nearbyIris.shouldShowBluetoothPermissionPrompt {
-            setNearbyBluetoothEnabled(true)
-        }
-        if state.preferences.nearbyLanEnabled || firstNearbyOpen || shouldRequestLanPermissionOnNearbyTap {
-            setNearbyLanEnabled(true)
-        }
-#endif
     }
 
     deinit {
@@ -2268,12 +2254,14 @@ final class AppManager: ObservableObject {
             nearbyIris.refreshBluetoothAuthorizationStatus()
             nearbyIris.clearLanPermissionSettingsHint()
         }
-        if state.preferences.nearbyBluetoothEnabled,
+        if state.preferences.nearbyEnabled,
+           state.preferences.nearbyBluetoothEnabled,
            !nearbyIris.isVisible,
            nearbyIris.bluetoothPermissionGranted {
             nearbyIris.setVisible(true)
         }
-        if state.preferences.nearbyLanEnabled,
+        if state.preferences.nearbyEnabled,
+           state.preferences.nearbyLanEnabled,
            canAutoStartNearbyLan,
            (!nearbyIris.isLanVisible || nearbyIris.shouldRestartLanAfterFailure) {
             nearbyIris.setLanVisible(true)
@@ -2341,11 +2329,6 @@ final class AppManager: ObservableObject {
     }
 
 #if os(iOS) || os(macOS)
-    private var shouldRequestLanPermissionOnNearbyTap: Bool {
-        !nearbyLanPermissionPromptAttempted &&
-            !nearbyIris.lanPermissionNeedsSettings
-    }
-
     private var canAutoStartNearbyLan: Bool {
         nearbyLanPermissionGranted
     }
@@ -3209,26 +3192,26 @@ final class AppManager: ObservableObject {
 
 #if os(iOS) || os(macOS)
     private func syncNearbyBluetoothPreference(from oldState: AppState, to nextState: AppState) {
-        let wasEnabled = oldState.preferences.nearbyBluetoothEnabled
-        let isEnabled = nextState.preferences.nearbyBluetoothEnabled
-        if isEnabled {
+        let wasVisible = oldState.preferences.nearbyEnabled && oldState.preferences.nearbyBluetoothEnabled
+        let shouldBeVisible = nextState.preferences.nearbyEnabled && nextState.preferences.nearbyBluetoothEnabled
+        if shouldBeVisible {
             if !nearbyIris.isVisible, nearbyIris.bluetoothPermissionGranted {
                 nearbyIris.setVisible(true)
             }
-        } else if wasEnabled, nearbyIris.isVisible {
+        } else if wasVisible || nearbyIris.isVisible {
             nearbyIris.setVisible(false)
         }
     }
 
     private func syncNearbyLanPreference(from oldState: AppState, to nextState: AppState) {
-        let wasEnabled = oldState.preferences.nearbyLanEnabled
-        let isEnabled = nextState.preferences.nearbyLanEnabled
-        if isEnabled {
+        let wasVisible = oldState.preferences.nearbyEnabled && oldState.preferences.nearbyLanEnabled
+        let shouldBeVisible = nextState.preferences.nearbyEnabled && nextState.preferences.nearbyLanEnabled
+        if shouldBeVisible {
             if canAutoStartNearbyLan,
                (!nearbyIris.isLanVisible || nearbyIris.shouldRestartLanAfterFailure) {
                 nearbyIris.setLanVisible(true)
             }
-        } else if wasEnabled, nearbyIris.isLanVisible {
+        } else if wasVisible || nearbyIris.isLanVisible {
             nearbyIris.setLanVisible(false)
         }
     }

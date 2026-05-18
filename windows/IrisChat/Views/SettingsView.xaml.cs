@@ -68,7 +68,8 @@ public partial class SettingsView : UserControl
         StartupToggle.IsChecked = prefs.startupAtLoginEnabled;
         NearbyEnabledToggle.IsChecked = prefs.nearbyEnabled;
         NearbyLanToggle.IsChecked = prefs.nearbyLanEnabled;
-        NearbyLanToggle.Visibility = prefs.nearbyEnabled ? Visibility.Visible : Visibility.Collapsed;
+        NearbyLanToggle.Visibility = Visibility.Visible;
+        NearbyLanToggle.IsEnabled = prefs.nearbyEnabled;
         ImageProxyToggle.IsChecked = prefs.imageProxyEnabled;
         AutoCheckUpdatesToggle.IsChecked = App.CurrentManager.AutoCheckUpdates;
         AutoInstallUpdatesToggle.IsChecked = App.CurrentManager.AutoInstallUpdates;

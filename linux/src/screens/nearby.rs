@@ -7,8 +7,6 @@ use iris_chat_core::{AppAction, DesktopNearbyPeerSnapshot, DesktopNearbySnapshot
 use crate::app_manager::AppManager;
 
 pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
-    manager.prepare_nearby_for_user_tap();
-
     let dialog = adw::Dialog::builder()
         .title("Nearby")
         .content_width(360)
@@ -20,8 +18,21 @@ pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
     content.set_margin_start(18);
     content.set_margin_end(18);
 
+    let prefs = manager.current_state().preferences;
+
+    let master = adw::SwitchRow::builder().title("Nearby").build();
+    master.set_active(prefs.nearby_enabled);
+    {
+        let manager = manager.clone();
+        master.connect_active_notify(move |row| {
+            manager.set_nearby_enabled(row.is_active());
+        });
+    }
+    content.append(&master);
+
     let lan = adw::SwitchRow::builder().title("Wi-Fi").build();
-    lan.set_active(manager.current_state().preferences.nearby_lan_enabled);
+    lan.set_active(prefs.nearby_lan_enabled);
+    lan.set_sensitive(prefs.nearby_enabled);
     {
         let manager = manager.clone();
         lan.connect_active_notify(move |row| {
@@ -41,7 +52,8 @@ pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
              so they keep moving where there's no internet.",
         )
         .build();
-    mailbag.set_active(manager.current_state().preferences.nearby_mailbag_enabled);
+    mailbag.set_active(prefs.nearby_mailbag_enabled);
+    mailbag.set_sensitive(prefs.nearby_enabled);
     {
         let manager = manager.clone();
         mailbag.connect_active_notify(move |row| {
@@ -62,16 +74,31 @@ pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
     list.add_css_class("boxed-list");
     content.append(&list);
 
-    refresh(&list, &status, &manager.nearby_snapshot(), &manager);
+    refresh(
+        &list,
+        &status,
+        manager.current_state().preferences.nearby_enabled,
+        &manager.nearby_snapshot(),
+        &manager,
+    );
 
     let list_for_updates = list.clone();
     let status_for_updates = status.clone();
+    let lan_for_updates = lan.clone();
+    let mailbag_for_updates = mailbag.clone();
     let manager_for_updates = manager.clone();
     glib::timeout_add_seconds_local(1, move || {
         let snapshot = manager_for_updates.nearby_snapshot();
+        let nearby_enabled = manager_for_updates
+            .current_state()
+            .preferences
+            .nearby_enabled;
+        lan_for_updates.set_sensitive(nearby_enabled);
+        mailbag_for_updates.set_sensitive(nearby_enabled);
         refresh(
             &list_for_updates,
             &status_for_updates,
+            nearby_enabled,
             &snapshot,
             &manager_for_updates,
         );
@@ -85,6 +112,7 @@ pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
 fn refresh(
     list: &gtk::ListBox,
     status: &gtk::Label,
+    nearby_enabled: bool,
     snapshot: &DesktopNearbySnapshot,
     manager: &Rc<AppManager>,
 ) {
@@ -92,7 +120,10 @@ fn refresh(
         list.remove(&child);
     }
 
-    let status_text = if snapshot.visible && is_wifi_blocking_status(snapshot.status.as_str()) {
+    let status_text = if nearby_enabled
+        && snapshot.visible
+        && is_wifi_blocking_status(snapshot.status.as_str())
+    {
         wifi_status_label(snapshot.status.as_str())
     } else {
         String::new()
@@ -100,16 +131,26 @@ fn refresh(
     status.set_label(&status_text);
     status.set_visible(!status_text.is_empty());
 
-    if snapshot.peers.is_empty() {
+    let peers: Vec<DesktopNearbyPeerSnapshot> = if nearby_enabled {
+        snapshot.peers.clone()
+    } else {
+        Vec::new()
+    };
+
+    if peers.is_empty() {
         let row = adw::ActionRow::builder()
-            .title("No users nearby")
+            .title(if nearby_enabled {
+                "No users nearby"
+            } else {
+                "Off"
+            })
             .sensitive(false)
             .build();
         list.append(&row);
         return;
     }
 
-    for peer in &snapshot.peers {
+    for peer in &peers {
         list.append(&peer_row(peer, manager));
     }
 }

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Threading;
 using IrisChat.Bindings;
 using IrisChat.Views;
 
@@ -99,7 +100,7 @@ public partial class DesktopShell : UserControl
 
         if (query.Length == 0)
         {
-            var showNearby = _manager.Preferences.nearbyEnabled;
+            var showNearby = true;
             var pinned = chats.Where(chat => chat.isPinned).ToArray();
             var unpinned = chats.Where(chat => !chat.isPinned).ToArray();
             var sectionCount = (showNearby ? 1 : 0)
@@ -333,7 +334,9 @@ public partial class DesktopShell : UserControl
     private FrameworkElement BuildNearbyRow()
     {
         var snapshot = _manager.NearbySnapshot;
-        var active = snapshot.visible;
+        var nearbyEnabled = _manager.Preferences.nearbyEnabled;
+        var active = nearbyEnabled && snapshot.visible;
+        var peers = nearbyEnabled ? snapshot.peers : Array.Empty<DesktopNearbyPeerSnapshot>();
 
         var grid = new Grid
         {
@@ -344,11 +347,11 @@ public partial class DesktopShell : UserControl
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
 
-        if (snapshot.peers.Length > 0)
+        if (peers.Length > 0)
         {
             var iconButton = BuildWirelessIconButton(active);
             Grid.SetColumn(iconButton, 0);
-            var strip = BuildNearbyAvatarStrip(snapshot.peers);
+            var strip = BuildNearbyAvatarStrip(peers);
             Grid.SetColumn(strip, 1);
             grid.Children.Add(iconButton);
             grid.Children.Add(strip);
@@ -361,7 +364,7 @@ public partial class DesktopShell : UserControl
 
         var text = new TextBlock
         {
-            Text = active ? "No users nearby" : "Tap to enable",
+            Text = !nearbyEnabled ? "Off" : active ? "No users nearby" : "Tap to enable",
             Foreground = (System.Windows.Media.Brush)FindResource("TextMuted"),
             FontSize = 13,
             Margin = new Thickness(12, 0, 0, 0),
@@ -380,6 +383,7 @@ public partial class DesktopShell : UserControl
             Content = grid,
         };
         button.Click += OnNearby;
+        AttachLongPress(button, ToggleNearbyMaster);
         return button;
     }
 
@@ -427,7 +431,42 @@ public partial class DesktopShell : UserControl
             VerticalAlignment = VerticalAlignment.Top,
         };
         button.Click += OnNearby;
+        AttachLongPress(button, ToggleNearbyMaster);
         return button;
+    }
+
+    private void ToggleNearbyMaster() =>
+        _manager.SetNearbyEnabled(!_manager.Preferences.nearbyEnabled);
+
+    private static void AttachLongPress(Button button, Action action)
+    {
+        DispatcherTimer? timer = null;
+        var fired = false;
+
+        button.PreviewMouseLeftButtonDown += (_, _) =>
+        {
+            fired = false;
+            timer?.Stop();
+            timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+            timer.Tick += (_, _) =>
+            {
+                timer?.Stop();
+                fired = true;
+                action();
+            };
+            timer.Start();
+        };
+        button.PreviewMouseLeftButtonUp += (_, e) =>
+        {
+            timer?.Stop();
+            timer = null;
+            if (fired) e.Handled = true;
+        };
+        button.MouseLeave += (_, _) =>
+        {
+            timer?.Stop();
+            timer = null;
+        };
     }
 
     private FrameworkElement BuildNearbyAvatarStrip(DesktopNearbyPeerSnapshot[] peers)
@@ -543,7 +582,6 @@ public partial class DesktopShell : UserControl
     private void OnNearby(object sender, RoutedEventArgs e)
     {
         _showingNearby = true;
-        _manager.PrepareNearbyForUserTap();
         _renderedScreenKey = null;
         Refresh();
     }

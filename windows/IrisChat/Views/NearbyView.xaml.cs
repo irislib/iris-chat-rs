@@ -31,20 +31,28 @@ public partial class NearbyView : UserControl
         var snapshot = manager.NearbySnapshot;
 
         _suppressToggleDispatch = true;
+        NearbyEnabledToggle.IsChecked = prefs.nearbyEnabled;
         LanToggle.IsChecked = prefs.nearbyLanEnabled;
+        MailbagToggle.IsChecked = prefs.nearbyMailbagEnabled;
         _suppressToggleDispatch = false;
 
-        var statusText = snapshot.visible && IsWifiBlockingStatus(snapshot.status)
+        LanToggle.IsEnabled = prefs.nearbyEnabled;
+        MailbagToggle.IsEnabled = prefs.nearbyEnabled;
+
+        var statusText = prefs.nearbyEnabled && snapshot.visible && IsWifiBlockingStatus(snapshot.status)
             ? WifiStatusLabel(snapshot.status)
             : "";
         StatusText.Text = statusText;
         StatusText.Visibility = string.IsNullOrWhiteSpace(statusText)
             ? Visibility.Collapsed
             : Visibility.Visible;
-        RebuildPeers(snapshot.peers ?? Array.Empty<DesktopNearbyPeerSnapshot>());
+        RebuildPeers(
+            prefs.nearbyEnabled,
+            prefs.nearbyEnabled ? snapshot.peers ?? Array.Empty<DesktopNearbyPeerSnapshot>() : Array.Empty<DesktopNearbyPeerSnapshot>()
+        );
     }
 
-    private void RebuildPeers(DesktopNearbyPeerSnapshot[] peers)
+    private void RebuildPeers(bool nearbyEnabled, DesktopNearbyPeerSnapshot[] peers)
     {
         PeersList.Items.Clear();
         if (peers.Length == 0)
@@ -56,7 +64,7 @@ public partial class NearbyView : UserControl
                 Padding = new Thickness(16, 12, 16, 12),
                 Child = new TextBlock
                 {
-                    Text = "No users nearby",
+                    Text = nearbyEnabled ? "No users nearby" : "Off",
                     Foreground = (Brush)FindResource("TextMuted"),
                 },
             });
@@ -105,6 +113,18 @@ public partial class NearbyView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetNearbyLanEnabled(LanToggle.IsChecked == true);
+    }
+
+    private void OnNearbyEnabledChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetNearbyEnabled(NearbyEnabledToggle.IsChecked == true);
+    }
+
+    private void OnMailbagChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetNearbyMailbagEnabled(MailbagToggle.IsChecked == true);
     }
 
     private static string WifiStatusLabel(string status) =>

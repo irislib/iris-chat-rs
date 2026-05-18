@@ -40,7 +40,6 @@ public sealed class AppManager : INotifyPropertyChanged
     private readonly HashtreeAttachmentCache _cache;
     private readonly UpdateService _updateService = new();
     private readonly string _dataDir;
-    private readonly string _nearbyFirstOpenPath;
     private readonly FfiDesktopNearby? _nearby;
     private readonly Dispatcher _ui;
     private readonly object _toastLock = new();
@@ -78,7 +77,6 @@ public sealed class AppManager : INotifyPropertyChanged
         _ffi = new FfiApp(dataDir, "", version);
         _state = SafeState();
         _lastRevApplied = _state.rev;
-        _nearbyFirstOpenPath = Path.Combine(dataDir, "nearby-first-open");
         _nearby = CreateNearbySafely();
         _nearbySnapshot = SafeNearbySnapshot();
 
@@ -577,24 +575,17 @@ public sealed class AppManager : INotifyPropertyChanged
         catch { }
     }
 
-    public void PrepareNearbyForUserTap()
-    {
-        var firstOpen = !File.Exists(_nearbyFirstOpenPath);
-        if (firstOpen)
-        {
-            try { File.WriteAllText(_nearbyFirstOpenPath, "1"); } catch { }
-        }
-
-        if (_state.preferences.nearbyLanEnabled || firstOpen)
-            SetNearbyLanEnabled(true);
-    }
-
     public void SetNearbyLanEnabled(bool enabled)
     {
         if (enabled)
-            StartNearbySafely(showToastOnFailure: true);
+        {
+            if (_state.preferences.nearbyEnabled)
+                StartNearbySafely(showToastOnFailure: true);
+        }
         else
+        {
             StopNearbySafely(showToastOnFailure: true);
+        }
 
         DispatchToRust(new AppAction.SetNearbyLanEnabled(enabled));
     }
@@ -606,6 +597,9 @@ public sealed class AppManager : INotifyPropertyChanged
 
         DispatchToRust(new AppAction.SetNearbyEnabled(enabled));
     }
+
+    public void SetNearbyMailbagEnabled(bool enabled) =>
+        DispatchToRust(new AppAction.SetNearbyMailbagEnabled(enabled));
 
     public void AddNostrRelay(string url) =>
         DispatchToRust(new AppAction.AddNostrRelay(url.Trim()));
@@ -878,11 +872,11 @@ public sealed class AppManager : INotifyPropertyChanged
 
     private void SyncNearbyPreference(AppState old, AppState next)
     {
-        var wasEnabled = old.preferences.nearbyLanEnabled;
-        var isEnabled = next.preferences.nearbyLanEnabled;
-        if (isEnabled && !NearbySnapshot.visible)
+        var wasVisible = old.preferences.nearbyEnabled && old.preferences.nearbyLanEnabled;
+        var shouldBeVisible = next.preferences.nearbyEnabled && next.preferences.nearbyLanEnabled;
+        if (shouldBeVisible && !NearbySnapshot.visible)
             StartNearbySafely(showToastOnFailure: false);
-        else if (!isEnabled && (wasEnabled || NearbySnapshot.visible))
+        else if (!shouldBeVisible && (wasVisible || NearbySnapshot.visible))
             StopNearbySafely(showToastOnFailure: false);
     }
 

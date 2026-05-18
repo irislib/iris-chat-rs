@@ -12,10 +12,20 @@
                     Padding="18"
                     Margin="0,0,0,14">
                 <StackPanel>
+                    <CheckBox x:Name="NearbyEnabledToggle"
+                              Content="Nearby"
+                              Checked="OnNearbyEnabledChanged"
+                              Unchecked="OnNearbyEnabledChanged"
+                              Margin="0,0,0,10" />
                     <CheckBox x:Name="LanToggle"
                               Content="Wi-Fi"
                               Checked="OnLanChanged"
-                              Unchecked="OnLanChanged" />
+                              Unchecked="OnLanChanged"
+                              Margin="0,0,0,10" />
+                    <CheckBox x:Name="MailbagToggle"
+                              Content="Mailbag"
+                              Checked="OnMailbagChanged"
+                              Unchecked="OnMailbagChanged" />
                     <TextBlock x:Name="StatusText"
                                Style="{StaticResource MutedText}"
                                Margin="0,8,0,0" />

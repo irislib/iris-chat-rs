@@ -34,7 +34,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         body.set_margin_end(12);
 
         let now = unix_now();
-        let show_nearby = state.preferences.nearby_enabled;
+        let show_nearby = true;
         let pinned: Vec<&ChatThreadSnapshot> = state
             .chat_list
             .iter()
@@ -374,7 +374,13 @@ fn message_hit_row(
 
 fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     let snapshot = manager.nearby_snapshot();
-    let active = snapshot.visible;
+    let nearby_enabled = manager.current_state().preferences.nearby_enabled;
+    let active = nearby_enabled && snapshot.visible;
+    let peers = if nearby_enabled {
+        snapshot.peers.as_slice()
+    } else {
+        &[]
+    };
     const NEARBY_AVATAR_SIZE: i32 = 40;
     const NEARBY_ROW_CONTENT_HEIGHT: i32 = NEARBY_AVATAR_SIZE + 22;
 
@@ -387,15 +393,17 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     outer.set_size_request(-1, NEARBY_ROW_CONTENT_HEIGHT);
     outer.set_valign(gtk::Align::Start);
 
-    if !snapshot.peers.is_empty() {
+    if !peers.is_empty() {
         outer.append(&nearby_icon_button(manager, active, NEARBY_AVATAR_SIZE));
-        outer.append(&nearby_avatar_strip(&snapshot.peers, manager));
+        outer.append(&nearby_avatar_strip(peers, manager));
         return outer.upcast();
     }
 
     outer.append(&nearby_icon(active, NEARBY_AVATAR_SIZE));
 
-    let label = gtk::Label::new(Some(if active {
+    let label = gtk::Label::new(Some(if !nearby_enabled {
+        "Off"
+    } else if active {
         "No users nearby"
     } else {
         "Tap to enable"

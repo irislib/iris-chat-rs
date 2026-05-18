@@ -260,6 +260,11 @@ public partial class ChatView : UserControl
         {
             stack.Children.Add(BuildAboutSection(chat.about!));
         }
+        var nearbyStatus = BuildNearbyStatusSection(chat.chatId);
+        if (nearbyStatus is not null)
+        {
+            stack.Children.Add(nearbyStatus);
+        }
 
         var commonGroups = App.CurrentManager.MutualGroups(chat.chatId);
         if (commonGroups.Length > 0)
@@ -365,6 +370,57 @@ public partial class ChatView : UserControl
         Grid.SetColumn(text, 1);
         row.Children.Add(text);
 
+        border.Child = row;
+        return border;
+    }
+
+    private static FrameworkElement? BuildNearbyStatusSection(string chatId)
+    {
+        var manager = App.CurrentManager;
+        if (!manager.Preferences.nearbyEnabled || !manager.NearbySnapshot.visible)
+            return null;
+
+        var isNearby = manager.NearbySnapshot.peers.Any(peer =>
+            !string.IsNullOrWhiteSpace(peer.ownerPubkeyHex)
+            && string.Equals(peer.ownerPubkeyHex, chatId, StringComparison.OrdinalIgnoreCase));
+        if (!isNearby)
+            return null;
+
+        var border = new Border
+        {
+            Background = ResourceBrush("Panel"),
+            CornerRadius = new CornerRadius(12),
+            Padding = new Thickness(14, 12, 14, 12),
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        var row = new Grid();
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+        row.Children.Add(new TextBlock
+        {
+            Text = "\uE701",
+            FontFamily = new System.Windows.Media.FontFamily("Segoe MDL2 Assets"),
+            FontSize = 18,
+            Foreground = ResourceBrush("Accent"),
+            Margin = new Thickness(0, 0, 12, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        var text = new StackPanel { Orientation = Orientation.Vertical };
+        text.Children.Add(new TextBlock
+        {
+            Text = "Nearby now",
+            FontWeight = FontWeights.SemiBold,
+            Foreground = ResourceBrush("TextPrimary"),
+        });
+        text.Children.Add(new TextBlock
+        {
+            Text = "Wi-Fi",
+            FontSize = 13,
+            Foreground = ResourceBrush("TextMuted"),
+            Margin = new Thickness(0, 2, 0, 0),
+        });
+        Grid.SetColumn(text, 1);
+        row.Children.Add(text);
         border.Child = row;
         return border;
     }

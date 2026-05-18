@@ -286,24 +286,21 @@ fn nearby_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::P
     {
         let manager = manager.clone();
         master.connect_active_notify(move |row| {
-            manager.dispatch(AppAction::SetNearbyEnabled {
-                enabled: row.is_active(),
-            });
+            manager.set_nearby_enabled(row.is_active());
         });
     }
     group.add(&master);
 
-    if prefs.nearby_enabled {
-        let lan = adw::SwitchRow::builder().title("Wi-Fi").build();
-        lan.set_active(prefs.nearby_lan_enabled);
-        {
-            let manager = manager.clone();
-            lan.connect_active_notify(move |row| {
-                manager.set_nearby_lan_enabled(row.is_active());
-            });
-        }
-        group.add(&lan);
+    let lan = adw::SwitchRow::builder().title("Wi-Fi").build();
+    lan.set_active(prefs.nearby_lan_enabled);
+    lan.set_sensitive(prefs.nearby_enabled);
+    {
+        let manager = manager.clone();
+        lan.connect_active_notify(move |row| {
+            manager.set_nearby_lan_enabled(row.is_active());
+        });
     }
+    group.add(&lan);
 
     group
 }

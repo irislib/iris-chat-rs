@@ -61,7 +61,6 @@ pub struct AppManager {
     nearby: Arc<FfiDesktopNearby>,
     nearby_update_rx: async_channel::Receiver<DesktopNearbySnapshot>,
     nearby_snapshot: RefCell<DesktopNearbySnapshot>,
-    nearby_first_open_path: PathBuf,
     local_state: RefCell<AppState>,
     last_rev_applied: Cell<u64>,
     bootstrap_in_flight: Cell<bool>,
@@ -170,7 +169,6 @@ impl AppManager {
             nearby,
             nearby_update_rx: nearby_rx,
             nearby_snapshot: RefCell::new(nearby_snapshot),
-            nearby_first_open_path: secrets_dir.join("nearby-first-open"),
             last_rev_applied: Cell::new(initial_state.rev),
             local_state: RefCell::new(initial_state),
             bootstrap_in_flight: Cell::new(persisted_restore_in_flight),
@@ -594,30 +592,28 @@ impl AppManager {
             && self.last_user_activity.borrow().elapsed() <= ACTIVE_CHAT_SEEN_IDLE_LIMIT
     }
 
-    pub fn prepare_nearby_for_user_tap(&self) {
-        let first_open = !self.nearby_first_open_path.exists();
-        if first_open {
-            let _ = std::fs::write(&self.nearby_first_open_path, b"1");
-        }
-        let prefs = self.current_state().preferences;
-        if prefs.nearby_lan_enabled || first_open {
-            self.set_nearby_lan_enabled(true);
-        }
-    }
-
     pub fn set_nearby_lan_enabled(&self, enabled: bool) {
         if enabled {
-            self.start_nearby_safely(true);
+            if self.current_state().preferences.nearby_enabled {
+                self.start_nearby_safely(true);
+            }
         } else {
             self.stop_nearby_safely(true);
         }
         self.dispatch_to_rust(AppAction::SetNearbyLanEnabled { enabled }, false);
     }
 
+    pub fn set_nearby_enabled(&self, enabled: bool) {
+        if !enabled {
+            self.stop_nearby_safely(false);
+        }
+        self.dispatch_to_rust(AppAction::SetNearbyEnabled { enabled }, false);
+    }
+
     pub fn sync_nearby_preference(&self, state: &AppState) {
-        if state.preferences.nearby_lan_enabled {
+        if state.preferences.nearby_enabled && state.preferences.nearby_lan_enabled {
             self.start_nearby_safely(false);
-        } else {
+        } else if self.nearby_snapshot.borrow().visible {
             self.stop_nearby_safely(false);
         }
     }
