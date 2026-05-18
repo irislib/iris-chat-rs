@@ -350,7 +350,7 @@ pub(super) async fn upload_profile_picture_to_hashtree(
     Ok(format!("htree://{nhash}"))
 }
 
-fn looks_like_image(path: &Path, data: &[u8]) -> bool {
+pub(super) fn looks_like_image(path: &Path, data: &[u8]) -> bool {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())

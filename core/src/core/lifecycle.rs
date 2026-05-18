@@ -52,6 +52,7 @@ impl AppCore {
             owner_profiles: BTreeMap::new(),
             app_keys: BTreeMap::new(),
             groups: BTreeMap::new(),
+            group_pictures: BTreeMap::new(),
             typing_indicators: BTreeMap::new(),
             typing_floor_secs: BTreeMap::new(),
             chat_message_ttl_seconds: BTreeMap::new(),
@@ -146,6 +147,7 @@ impl AppCore {
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
                     "ProfilePictureUploadFinished"
                 }
+                InternalEvent::GroupPictureUploadFinished { .. } => "GroupPictureUploadFinished",
                 InternalEvent::SyncComplete => "SyncComplete",
                 InternalEvent::OpenChatFinalize { .. } => "OpenChatFinalize",
             },
@@ -657,6 +659,9 @@ impl AppCore {
             }
             InternalEvent::ProfilePictureUploadFinished { result } => {
                 self.handle_profile_picture_upload_finished(result);
+            }
+            InternalEvent::GroupPictureUploadFinished { group_id, result } => {
+                self.handle_group_picture_upload_finished(group_id, result);
             }
             InternalEvent::SyncComplete => {
                 self.protocol_subscription_runtime.protocol_fetch_in_flight = false;

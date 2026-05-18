@@ -1207,6 +1207,92 @@ fn create_group_allows_self_only_group() {
 }
 
 #[test]
+fn group_picture_projects_to_chat_list_current_chat_and_details() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = logged_in_test_core("group-picture-projection", &owner, &device);
+
+    core.handle_action(AppAction::CreateGroup {
+        name: "Photo Group".to_string(),
+        member_inputs: Vec::new(),
+    });
+
+    let current = core.state.current_chat.as_ref().expect("opened group chat");
+    let group_id = current.group_id.as_ref().expect("group id").clone();
+    let chat_id = group_chat_id(&group_id);
+    let picture_url = "htree://nhash1group/photo.jpg".to_string();
+    core.apply_group_picture_url(&group_id, Some(picture_url.clone()), 123);
+
+    assert_eq!(
+        core.state
+            .chat_list
+            .iter()
+            .find(|chat| chat.chat_id == chat_id)
+            .and_then(|chat| chat.picture_url.as_deref()),
+        Some(picture_url.as_str())
+    );
+    assert_eq!(
+        core.state
+            .current_chat
+            .as_ref()
+            .and_then(|chat| chat.picture_url.as_deref()),
+        Some(picture_url.as_str())
+    );
+
+    core.screen_stack = vec![Screen::GroupDetails {
+        group_id: group_id.clone(),
+    }];
+    core.rebuild_state();
+    assert_eq!(
+        core.state
+            .group_details
+            .as_ref()
+            .and_then(|details| details.picture_url.as_deref()),
+        Some(picture_url.as_str())
+    );
+}
+
+#[test]
+fn group_picture_persists_separately_from_protocol_group_snapshot() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let temp_dir = tempfile::TempDir::new().expect("temp dir");
+    let data_dir = temp_dir.path().to_string_lossy().to_string();
+    let mut core = logged_in_test_core_at_data_dir(&owner, &device, data_dir);
+
+    core.handle_action(AppAction::CreateGroup {
+        name: "Persisted Photo Group".to_string(),
+        member_inputs: Vec::new(),
+    });
+
+    let group_id = core
+        .state
+        .current_chat
+        .as_ref()
+        .and_then(|chat| chat.group_id.clone())
+        .expect("group id");
+    let picture_url = "htree://nhash1persisted/photo%201.jpg".to_string();
+    core.apply_group_picture_url(&group_id, Some(picture_url.clone()), 456);
+
+    let persisted = core
+        .load_persisted()
+        .expect("load persisted")
+        .expect("persisted state");
+    assert_eq!(
+        persisted.group_pictures.get(&group_id).map(String::as_str),
+        Some(picture_url.as_str())
+    );
+    assert!(
+        persisted
+            .groups
+            .iter()
+            .find(|group| group.group_id == group_id)
+            .is_some(),
+        "group metadata still persists through the protocol snapshot"
+    );
+}
+
+#[test]
 fn group_metadata_changes_create_system_notices() {
     let owner = Keys::generate();
     let device = Keys::generate();

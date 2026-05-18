@@ -334,6 +334,8 @@ pub(super) struct PersistedState {
     pub(super) app_keys: Vec<KnownAppKeys>,
     #[serde(default)]
     pub(super) groups: Vec<GroupSnapshot>,
+    #[serde(default)]
+    pub(super) group_pictures: BTreeMap<String, String>,
     pub(super) threads: Vec<PersistedThread>,
     #[serde(default)]
     pub(super) seen_event_ids: Vec<String>,

@@ -102,6 +102,7 @@ impl AppStore {
         let chat_message_ttl_seconds = load_chat_ttls(&conn)?;
         let app_keys = load_app_keys(&conn)?;
         let groups = load_groups(&conn)?;
+        let group_pictures = load_group_pictures(&conn)?;
         let threads = load_threads(&conn, active_chat_id.as_deref())?;
         let (seen_event_ids, seen_events_max_seq) = load_seen_events(&conn)?;
         drop(conn);
@@ -123,6 +124,7 @@ impl AppStore {
             chat_message_ttl_seconds,
             app_keys,
             groups,
+            group_pictures,
             threads,
             seen_event_ids,
             authorization_state,
@@ -509,6 +511,7 @@ pub(crate) struct SaveSnapshot<'a> {
     pub chat_message_ttl_seconds: &'a BTreeMap<String, u64>,
     pub app_keys: &'a BTreeMap<String, KnownAppKeys>,
     pub groups: &'a BTreeMap<String, GroupSnapshot>,
+    pub group_pictures: &'a BTreeMap<String, String>,
     pub threads: &'a BTreeMap<String, ThreadRecord>,
     pub seen_event_order: &'a VecDeque<String>,
 }
@@ -550,7 +553,7 @@ impl SavePlan {
         let owner_profiles_hash = hash_value(snapshot.owner_profiles);
         let chat_ttls_hash = hash_value(snapshot.chat_message_ttl_seconds);
         let app_keys_hash = hash_value(snapshot.app_keys);
-        let groups_hash = hash_groups(snapshot.groups);
+        let groups_hash = hash_groups(snapshot.groups, snapshot.group_pictures);
         let seen_events = plan_seen_events_diff(cache, snapshot.seen_event_order);
 
         let mut threads_to_write = HashMap::new();
@@ -609,7 +612,7 @@ impl SavePlan {
             write_app_keys(tx, snapshot.app_keys)?;
         }
         if self.groups.is_some() {
-            write_groups(tx, snapshot.groups)?;
+            write_groups(tx, snapshot.groups, snapshot.group_pictures)?;
         }
         if let Some(plan) = &self.seen_events {
             apply_seen_events_diff(tx, plan)?;
@@ -729,10 +732,13 @@ fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     hasher.finish()
 }
 
-fn hash_groups(groups: &BTreeMap<String, GroupSnapshot>) -> u64 {
+fn hash_groups(
+    groups: &BTreeMap<String, GroupSnapshot>,
+    group_pictures: &BTreeMap<String, String>,
+) -> u64 {
     // GroupSnapshot isn't Hash, but its serde shape is canonical enough for
     // change detection.
-    hash_value(groups)
+    hash_value(&(groups, group_pictures))
 }
 
 /// Build the set of `INSERT` / `DELETE` ops needed to bring the persisted
@@ -1182,7 +1188,26 @@ fn load_groups(conn: &rusqlite::Connection) -> anyhow::Result<Vec<GroupSnapshot>
     Ok(groups)
 }
 
-fn write_groups(tx: &Transaction, groups: &BTreeMap<String, GroupSnapshot>) -> anyhow::Result<()> {
+fn load_group_pictures(conn: &rusqlite::Connection) -> anyhow::Result<BTreeMap<String, String>> {
+    let mut stmt = conn.prepare(
+        "SELECT group_id, picture FROM groups WHERE picture IS NOT NULL AND picture != ''",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut pictures = BTreeMap::new();
+    for row in rows {
+        let (group_id, picture) = row?;
+        pictures.insert(group_id, picture);
+    }
+    Ok(pictures)
+}
+
+fn write_groups(
+    tx: &Transaction,
+    groups: &BTreeMap<String, GroupSnapshot>,
+    group_pictures: &BTreeMap<String, String>,
+) -> anyhow::Result<()> {
     tx.execute("DELETE FROM groups", [])?;
     let mut stmt = tx.prepare_cached(
         "INSERT INTO groups(group_id, name, picture, created_at_ms, updated_at_secs, group_json)
@@ -1193,7 +1218,7 @@ fn write_groups(tx: &Transaction, groups: &BTreeMap<String, GroupSnapshot>) -> a
         stmt.execute(params![
             group.group_id,
             group.name,
-            Option::<String>::None,
+            group_pictures.get(&group.group_id),
             group.created_at.get() as i64 * 1000,
             group.updated_at.get() as i64,
             group_json,
@@ -1697,6 +1722,7 @@ mod tests {
             chat_message_ttl_seconds: chat_ttls,
             app_keys,
             groups,
+            group_pictures: Box::leak(Box::new(BTreeMap::new())),
             threads,
             seen_event_order: seen_events,
         }
@@ -1889,6 +1915,7 @@ mod tests {
         let chat_ttls = BTreeMap::new();
         let app_keys = BTreeMap::new();
         let groups = BTreeMap::new();
+        let group_pictures = BTreeMap::new();
         let mut seen_events = VecDeque::new();
         seen_events.push_back("evt1".to_string());
         seen_events.push_back("evt2".to_string());
@@ -1902,6 +1929,7 @@ mod tests {
             chat_message_ttl_seconds: &chat_ttls,
             app_keys: &app_keys,
             groups: &groups,
+            group_pictures: &group_pictures,
             threads: &threads,
             seen_event_order: &seen_events,
         };

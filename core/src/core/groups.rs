@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 impl AppCore {
     pub(super) fn create_group(&mut self, name: &str, member_inputs: &[String]) {
@@ -9,17 +10,21 @@ impl AppCore {
         &mut self,
         name: &str,
         member_inputs: &[String],
-        _picture_file_path: &str,
-        _picture_filename: &str,
+        picture_file_path: &str,
+        picture_filename: &str,
     ) {
-        self.create_group_inner(name, member_inputs, None);
+        self.create_group_inner(
+            name,
+            member_inputs,
+            Some((picture_file_path.to_string(), picture_filename.to_string())),
+        );
     }
 
     fn create_group_inner(
         &mut self,
         name: &str,
         member_inputs: &[String],
-        _picture: Option<(String, String)>,
+        picture: Option<(String, String)>,
     ) {
         if self.logged_in.is_none() {
             self.state.toast = Some("Create or restore a profile first.".to_string());
@@ -89,6 +94,9 @@ impl AppCore {
                 self.schedule_tracked_peer_catch_up(Duration::from_secs(
                     RESUBSCRIBE_CATCH_UP_DELAY_SECS,
                 ));
+                if let Some((file_path, filename)) = picture {
+                    self.begin_group_picture_upload(&group.group_id, &file_path, &filename);
+                }
             }
             Some(Err(error)) => self.state.toast = Some(error.to_string()),
             None => self.state.toast = Some("Protocol engine is not ready.".to_string()),
@@ -136,15 +144,212 @@ impl AppCore {
         self.emit_state();
     }
 
-    pub(super) fn update_group_picture(
-        &mut self,
-        _group_id: &str,
-        _file_path: &str,
-        _filename: &str,
-    ) {
-        self.state.toast = Some(
-            "Group photos are not supported on the experimental group protocol yet.".to_string(),
+    pub(super) fn update_group_picture(&mut self, group_id: &str, file_path: &str, filename: &str) {
+        self.begin_group_picture_upload(group_id, file_path, filename);
+    }
+
+    fn begin_group_picture_upload(&mut self, group_id: &str, file_path: &str, filename: &str) {
+        let group_id = group_id.trim();
+        if group_id.is_empty() || !self.groups.contains_key(group_id) {
+            self.state.toast = Some("Group was not found.".to_string());
+            self.emit_state();
+            return;
+        }
+        if self.state.busy.uploading_attachment {
+            self.state.toast = Some("Attachment upload already in progress.".to_string());
+            self.emit_state();
+            return;
+        }
+        let Some(logged_in) = self.logged_in.as_ref() else {
+            self.state.toast = Some("Create or restore a profile first.".to_string());
+            self.emit_state();
+            return;
+        };
+        if !self.can_use_chats() {
+            self.state.toast = Some(chat_unavailable_message(self.logged_in.as_ref()).to_string());
+            self.emit_state();
+            return;
+        }
+        let path = PathBuf::from(file_path.trim());
+        if !path.is_file() {
+            self.state.toast = Some("Group photo was not found.".to_string());
+            self.emit_state();
+            return;
+        }
+        let filename = attachment_upload::display_filename(filename, &path);
+        let data = match fs::read(&path) {
+            Ok(data) => data,
+            Err(_) => {
+                self.state.toast = Some("Group photo could not be opened.".to_string());
+                self.emit_state();
+                return;
+            }
+        };
+        if data.is_empty() || !attachment_upload::looks_like_image(&path, &data) {
+            self.state.toast = Some("Group photo must be an image.".to_string());
+            self.emit_state();
+            return;
+        }
+        let upload_keys = logged_in
+            .owner_keys
+            .as_ref()
+            .unwrap_or(&logged_in.device_keys);
+        let secret_hex = upload_keys.secret_key().to_secret_hex();
+        let sender = self.core_sender.clone();
+        let group_id = group_id.to_string();
+        let total_bytes = data.len() as u64;
+        self.push_debug_log(
+            "group.picture.upload.start",
+            format!("group_id={group_id} filename={filename} bytes={total_bytes}"),
         );
+        self.state.busy.uploading_attachment = true;
+        self.state.busy.upload_progress = Some(crate::state::UploadProgress {
+            bytes_uploaded: 0,
+            total_bytes,
+        });
+        self.rebuild_state();
+        self.emit_state();
+        self.runtime.spawn(async move {
+            let progress = Arc::new(AtomicU64::new(0));
+            let progress_sender = sender.clone();
+            let progress_counter = progress.clone();
+            let progress_handle = tokio::spawn(async move {
+                let mut last_reported: u64 = u64::MAX;
+                loop {
+                    tokio::time::sleep(Duration::from_millis(120)).await;
+                    let current = progress_counter.load(Ordering::Relaxed);
+                    if current == last_reported {
+                        continue;
+                    }
+                    last_reported = current;
+                    let _ = progress_sender.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::AttachmentUploadProgress {
+                            bytes_uploaded: current,
+                            total_bytes,
+                        },
+                    )));
+                }
+            });
+            let result = attachment_upload::upload_file_to_hashtree(
+                &secret_hex,
+                &path,
+                Some(progress.clone()),
+            )
+            .await
+            .map(|nhash| format!("htree://{}", format_file_link(&nhash, &filename)))
+            .map_err(|error| error.to_string());
+            progress_handle.abort();
+            let _ = sender.send(CoreMsg::Internal(Box::new(
+                InternalEvent::GroupPictureUploadFinished { group_id, result },
+            )));
+        });
+    }
+
+    pub(super) fn handle_group_picture_upload_finished(
+        &mut self,
+        group_id: String,
+        result: Result<String, String>,
+    ) {
+        self.state.busy.uploading_attachment = false;
+        self.state.busy.upload_progress = None;
+        match result {
+            Ok(picture_url) => {
+                self.push_debug_log(
+                    "group.picture.upload.ok",
+                    format!("group_id={group_id} url={picture_url}"),
+                );
+                self.apply_group_picture_url(
+                    &group_id,
+                    Some(picture_url.clone()),
+                    unix_now().get(),
+                );
+                self.publish_group_picture_control(&group_id, Some(picture_url));
+            }
+            Err(error) => {
+                self.push_debug_log("group.picture.upload.error", error);
+                self.state.toast = Some("Group photo upload failed.".to_string());
+                self.emit_state();
+            }
+        }
+    }
+
+    fn publish_group_picture_control(&mut self, group_id: &str, picture_url: Option<String>) {
+        let Some(owner_pubkey) = self
+            .logged_in
+            .as_ref()
+            .map(|logged_in| logged_in.owner_pubkey)
+        else {
+            return;
+        };
+        let content = serde_json::json!({ "picture": picture_url }).to_string();
+        let mut tags = Vec::new();
+        if let Ok(group_tag) = nostr::Tag::parse(["l", group_id]) {
+            tags.push(group_tag);
+        }
+        let mut rumor = UnsignedEvent::new(
+            owner_pubkey,
+            Timestamp::from_secs(unix_now().get()),
+            Kind::Custom(GROUP_PICTURE_KIND as u16),
+            tags,
+            content,
+        );
+        rumor.ensure_id();
+        let inner_event_id = rumor.id.as_ref().map(ToString::to_string);
+        let payload = match serde_json::to_vec(&rumor) {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.state.toast = Some(error.to_string());
+                self.emit_state();
+                return;
+            }
+        };
+        let result = self
+            .protocol_engine
+            .as_mut()
+            .map(|engine| engine.send_group_payload(group_id, payload, inner_event_id));
+        match result {
+            Some(Ok(result)) => {
+                self.process_protocol_engine_effects_with_completions(
+                    result.effects,
+                    &BTreeMap::new(),
+                );
+                self.handle_queued_protocol_targets("group.picture", &result.queued_targets);
+                self.request_protocol_subscription_refresh();
+                self.rebuild_state();
+                self.persist_best_effort();
+                self.emit_state();
+            }
+            Some(Err(error)) => {
+                self.state.toast = Some(error.to_string());
+                self.emit_state();
+            }
+            None => {
+                self.state.toast = Some("Protocol engine is not ready.".to_string());
+                self.emit_state();
+            }
+        }
+    }
+
+    pub(super) fn apply_group_picture_url(
+        &mut self,
+        group_id: &str,
+        picture_url: Option<String>,
+        updated_at_secs: u64,
+    ) {
+        match picture_url {
+            Some(url) if !url.trim().is_empty() => {
+                self.group_pictures
+                    .insert(group_id.to_string(), url.trim().to_string());
+            }
+            _ => {
+                self.group_pictures.remove(group_id);
+            }
+        }
+        if let Some(group) = self.groups.get(group_id).cloned() {
+            self.apply_group_snapshot_to_threads(&group, updated_at_secs);
+        }
+        self.rebuild_state();
+        self.persist_best_effort();
         self.emit_state();
     }
 
@@ -422,6 +627,30 @@ impl AppCore {
                     created_at_secs,
                 );
             }
+            GROUP_PICTURE_KIND => {
+                let Some(group_id) = parse_group_id_from_chat_id(chat_id) else {
+                    return;
+                };
+                let Some(group) = self.groups.get(&group_id) else {
+                    return;
+                };
+                if !group
+                    .admins
+                    .iter()
+                    .any(|admin| admin.to_string() == sender_owner.to_hex())
+                {
+                    self.push_debug_log(
+                        "group.picture.skip",
+                        format!(
+                            "group_id={group_id} sender_not_admin={}",
+                            sender_owner.to_hex()
+                        ),
+                    );
+                    return;
+                }
+                let picture_url = parse_group_picture_control(&runtime_rumor.content);
+                self.apply_group_picture_url(&group_id, picture_url, created_at_secs);
+            }
             _ => {}
         }
     }
@@ -509,4 +738,14 @@ impl AppCore {
         }
         "Group admins changed".to_string()
     }
+}
+
+fn parse_group_picture_control(content: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(content).ok()?;
+    value
+        .get("picture")
+        .and_then(|picture| picture.as_str())
+        .map(str::trim)
+        .filter(|picture| picture.starts_with("htree://") || picture.starts_with("nhash://"))
+        .map(ToString::to_string)
 }

@@ -628,6 +628,7 @@ impl AppCore {
                 .cloned()
                 .map(|group| (group.group_id.clone(), group))
                 .collect();
+            self.group_pictures = persisted.group_pictures.clone();
             self.threads = persisted
                 .threads
                 .iter()

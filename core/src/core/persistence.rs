@@ -44,6 +44,7 @@ impl AppCore {
             chat_message_ttl_seconds: &self.chat_message_ttl_seconds,
             app_keys: &self.app_keys,
             groups: &self.groups,
+            group_pictures: &self.group_pictures,
             threads: &self.threads,
             seen_event_order: &self.seen_event_order,
         };

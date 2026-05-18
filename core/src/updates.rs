@@ -131,6 +131,10 @@ pub(crate) enum InternalEvent {
     ProfilePictureUploadFinished {
         result: Result<String, String>,
     },
+    GroupPictureUploadFinished {
+        group_id: String,
+        result: Result<String, String>,
+    },
     SyncComplete,
     // Heavy tail of `open_chat` — DB page load, identity republish,
     // persist, protocol refresh. Runs on the same event loop as a

@@ -323,7 +323,7 @@ impl AppCore {
                     subtitle,
                     picture_url: group_snapshot
                         .as_ref()
-                        .and_then(|_| None)
+                        .and_then(|group| self.group_pictures.get(&group.group_id).cloned())
                         .or(direct_picture),
                     member_count,
                     last_message_preview: last_message.map(message_preview),
@@ -376,7 +376,7 @@ impl AppCore {
                         .or_else(|| self.owner_secondary_identifier(&thread.chat_id)),
                     picture_url: group_snapshot
                         .as_ref()
-                        .and_then(|_| None)
+                        .and_then(|group| self.group_pictures.get(&group.group_id).cloned())
                         .or(direct_picture),
                     group_id: group_snapshot.as_ref().map(|group| group.group_id.clone()),
                     member_count: group_snapshot
@@ -801,11 +801,12 @@ impl AppCore {
             .and_then(owner_npub_from_owner)
             .unwrap_or_else(|| creator.clone());
         let is_muted = self.is_chat_muted(&group_chat_id(&group.group_id));
+        let picture_url = self.group_pictures.get(&group.group_id).cloned();
 
         Some(GroupDetailsSnapshot {
             group_id: group.group_id,
             name: group.name,
-            picture_url: None,
+            picture_url,
             created_by_display_name: self.owner_display_label(&creator),
             created_by_npub: creator_npub,
             can_manage: group

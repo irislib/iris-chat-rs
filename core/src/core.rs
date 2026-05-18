@@ -81,6 +81,7 @@ mod support;
 mod tests;
 
 pub(crate) const NEARBY_PRESENCE_KIND: u16 = 22242;
+pub(crate) const GROUP_PICTURE_KIND: u32 = 10449;
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 pub(super) const APPCORE_PROTOCOL_BOOTSTRAP_LABEL: &str = "appcore-protocol-bootstrap";
 pub(super) const APPCORE_PROTOCOL_FIRST_CONTACT_LABEL: &str = "appcore-protocol-first-contact";
@@ -455,6 +456,7 @@ pub struct AppCore {
     owner_profiles: BTreeMap<String, OwnerProfileRecord>,
     app_keys: BTreeMap<String, KnownAppKeys>,
     groups: BTreeMap<String, GroupSnapshot>,
+    group_pictures: BTreeMap<String, String>,
     typing_indicators: BTreeMap<String, TypingIndicatorRecord>,
     /// Monotonic per-chat ceiling on `last_event_secs` we'll accept
     /// for incoming typing events. Bumped to the wire-clock
