@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+IMAGE="${IRIS_CLI_PRODUCTION_E2E_IMAGE:-debian:bookworm-slim}"
+PLATFORM="${IRIS_CLI_PRODUCTION_E2E_PLATFORM:-linux/amd64}"
+INSTALL_URL="${IRIS_CLI_INSTALL_URL:-https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-chat-rs/latest/install.sh}"
+PREFIX="${IRIS_CLI_PRODUCTION_E2E_PREFIX:-iris-cli-prod-e2e}"
+CONTAINER_A="${PREFIX}-a"
+CONTAINER_B="${PREFIX}-b"
+KEEP="${IRIS_CLI_PRODUCTION_E2E_KEEP:-0}"
+TIMEOUT_ATTEMPTS="${IRIS_CLI_PRODUCTION_E2E_ATTEMPTS:-24}"
+LOCAL_BIN="${IRIS_CLI_BIN:-}"
+
+usage() {
+  cat <<EOF
+usage: ./scripts/cli_production_relay_e2e_docker [options]
+
+Starts two fresh Linux Docker containers, installs iris, and verifies direct
+messages both ways through the default production message servers.
+
+Options:
+  --image <image>       Docker image (default: ${IMAGE})
+  --platform <platform> Docker platform (default: ${PLATFORM})
+  --install-url <url>   Install script URL (default: irischat.org CLI install URL)
+  --local-bin <path>    Copy a prebuilt Linux iris binary instead of installing release
+  --keep                Keep containers after the run
+  -h, --help            Show this help
+
+Environment:
+  IRIS_CLI_BIN                         Prebuilt Linux iris binary to copy in
+  IRIS_CLI_INSTALL_URL                 Install script URL override
+  IRIS_CLI_PRODUCTION_E2E_IMAGE
+  IRIS_CLI_PRODUCTION_E2E_PLATFORM
+  IRIS_CLI_PRODUCTION_E2E_KEEP=1
+  IRIS_CLI_PRODUCTION_E2E_ATTEMPTS=24
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --image) IMAGE="$2"; shift 2 ;;
+    --platform) PLATFORM="$2"; shift 2 ;;
+    --install-url) INSTALL_URL="$2"; shift 2 ;;
+    --local-bin) LOCAL_BIN="$2"; shift 2 ;;
+    --keep) KEEP=1; shift ;;
+    -h|--help|help) usage; exit 0 ;;
+    *) echo "Unknown arg: $1" >&2; usage >&2; exit 2 ;;
+  esac
+done
+
+if ! command -v docker >/dev/null 2>&1; then
+  echo "docker is required" >&2
+  exit 1
+fi
+
+cleanup() {
+  if [[ "${KEEP}" != "1" ]]; then
+    docker rm -f "${CONTAINER_A}" "${CONTAINER_B}" >/dev/null 2>&1 || true
+  fi
+}
+trap cleanup EXIT
+
+docker rm -f "${CONTAINER_A}" "${CONTAINER_B}" >/dev/null 2>&1 || true
+
+start_container() {
+  local name="$1"
+  docker run -d --name "${name}" --platform "${PLATFORM}" "${IMAGE}" sleep infinity >/dev/null
+  docker exec "${name}" sh -lc '
+    set -eu
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update >/dev/null
+    apt-get install -y --no-install-recommends ca-certificates curl jq tar >/dev/null
+  '
+}
+
+install_iris() {
+  local name="$1"
+  if [[ -n "${LOCAL_BIN}" ]]; then
+    docker cp "${LOCAL_BIN}" "${name}:/usr/local/bin/iris"
+    docker exec "${name}" sh -lc 'chmod +x /usr/local/bin/iris'
+  else
+    docker exec -e INSTALL_URL="${INSTALL_URL}" "${name}" sh -lc '
+      set -eu
+      export PATH="/usr/local/bin:/root/.local/bin:$PATH"
+      curl -fsSL "$INSTALL_URL" | sh
+    '
+  fi
+  docker exec "${name}" sh -lc 'export PATH="/usr/local/bin:/root/.local/bin:$PATH"; command -v iris; iris --version'
+}
+
+iris_json() {
+  local name="$1"
+  shift
+  docker exec "${name}" sh -lc "export PATH=\"/usr/local/bin:/root/.local/bin:\$PATH\"; IRIS_DATA_DIR=/tmp/iris iris --json $*"
+}
+
+iris_value() {
+  local name="$1"
+  local filter="$2"
+  shift 2
+  iris_json "${name}" "$@" | docker exec -i "${name}" jq -r "${filter}"
+}
+
+wait_for_message() {
+  local receiver="$1"
+  local chat_id="$2"
+  local body="$3"
+  local sender_label="$4"
+  local last_sync=""
+  local last_read=""
+
+  for attempt in $(seq 1 "${TIMEOUT_ATTEMPTS}"); do
+    last_sync="$(iris_json "${receiver}" sync --wait-ms 3000 || true)"
+    last_read="$(iris_json "${receiver}" read "${chat_id}" --limit 50 || true)"
+    if printf '%s\n' "${last_read}" | docker exec -i "${receiver}" jq -e --arg body "${body}" '.data.messages[]? | select(.body == $body)' >/dev/null; then
+      echo "${receiver} received ${sender_label} message after attempt ${attempt}"
+      return 0
+    fi
+    sleep 2
+  done
+
+  echo "${receiver} did not receive ${sender_label} message: ${body}" >&2
+  echo "last sync: ${last_sync}" >&2
+  echo "last read: ${last_read}" >&2
+  return 1
+}
+
+echo "Starting fresh Linux containers"
+start_container "${CONTAINER_A}"
+start_container "${CONTAINER_B}"
+
+echo "Installing iris"
+install_iris "${CONTAINER_A}"
+install_iris "${CONTAINER_B}"
+
+echo "Creating fresh profiles"
+iris_json "${CONTAINER_A}" account create --name Alice >/tmp/${PREFIX}-alice.json
+iris_json "${CONTAINER_B}" account create --name Bob >/tmp/${PREFIX}-bob.json
+
+ALICE_ID="$(iris_value "${CONTAINER_A}" '.data.user_id' whoami)"
+BOB_ID="$(iris_value "${CONTAINER_B}" '.data.user_id' whoami)"
+
+echo "Alice: ${ALICE_ID}"
+echo "Bob:   ${BOB_ID}"
+
+iris_json "${CONTAINER_A}" chat create "${BOB_ID}" >/dev/null
+iris_json "${CONTAINER_B}" chat create "${ALICE_ID}" >/dev/null
+
+ALICE_BODY="prod-e2e-alice-$(date +%s)"
+BOB_BODY="prod-e2e-bob-$(date +%s)"
+
+echo "Alice -> Bob"
+ALICE_SEND="$(iris_json "${CONTAINER_A}" send "${BOB_ID}" "${ALICE_BODY}")"
+echo "${ALICE_SEND}"
+wait_for_message "${CONTAINER_B}" "${ALICE_ID}" "${ALICE_BODY}" "Alice"
+
+echo "Bob -> Alice"
+BOB_SEND="$(iris_json "${CONTAINER_B}" send "${ALICE_ID}" "${BOB_BODY}")"
+echo "${BOB_SEND}"
+wait_for_message "${CONTAINER_A}" "${BOB_ID}" "${BOB_BODY}" "Bob"
+
+echo "Production relay CLI Docker e2e passed."

@@ -268,6 +268,35 @@ fn read_stream_message(
     None
 }
 
+fn sync_until_message(
+    relay: &TestRelay,
+    data_dir: &Path,
+    chat_id: &str,
+    expected_body: &str,
+) -> Value {
+    let started = Instant::now();
+    let mut last_sync = Value::Null;
+    let mut last_read = Value::Null;
+    while started.elapsed() < Duration::from_secs(30) {
+        relay.replay_stored();
+        last_sync = run_iris(data_dir, &["sync", "--wait-ms", "1500"]);
+        last_read = run_iris(data_dir, &["read", chat_id, "--limit", "20"]);
+        if let Some(messages) = last_read["data"]["messages"].as_array() {
+            if let Some(message) = messages
+                .iter()
+                .find(|message| message["body"] == expected_body)
+            {
+                return message.clone();
+            }
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    panic!(
+        "timed out waiting for {expected_body}; last_sync={last_sync}; last_read={last_read}; relay_events={}",
+        relay_event_summary(relay)
+    );
+}
+
 fn wait_for_decrypted_message(relay: &TestRelay, session: &mut Session, expected: &str) -> Value {
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(10) {
@@ -532,6 +561,38 @@ fn iris_listen_receives_first_contact_sent_to_user_id() {
 
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[test]
+fn short_lived_cli_processes_exchange_direct_messages_by_user_id() {
+    let relay = TestRelay::start();
+    let alice = TempDir::new().unwrap();
+    let bob = TempDir::new().unwrap();
+
+    run_iris(alice.path(), &["relay", "set", relay.url()]);
+    let alice_account = run_iris(alice.path(), &["account", "create", "--name", "Alice"]);
+    run_iris(alice.path(), &["relay", "set", relay.url()]);
+    let alice_user_id = alice_account["data"]["user_id"].as_str().unwrap();
+
+    run_iris(bob.path(), &["relay", "set", relay.url()]);
+    let bob_account = run_iris(bob.path(), &["account", "create", "--name", "Bob"]);
+    run_iris(bob.path(), &["relay", "set", relay.url()]);
+    let bob_user_id = bob_account["data"]["user_id"].as_str().unwrap();
+
+    run_iris(alice.path(), &["chat", "create", bob_user_id]);
+    run_iris(bob.path(), &["chat", "create", alice_user_id]);
+
+    let alice_body = "short lived alice to bob";
+    let alice_sent = run_iris(alice.path(), &["send", bob_user_id, alice_body]);
+    assert_eq!(alice_sent["data"]["body"], alice_body);
+    let bob_received = sync_until_message(&relay, bob.path(), alice_user_id, alice_body);
+    assert_eq!(bob_received["is_outgoing"], false);
+
+    let bob_body = "short lived bob to alice";
+    let bob_sent = run_iris(bob.path(), &["send", alice_user_id, bob_body]);
+    assert_eq!(bob_sent["data"]["body"], bob_body);
+    let alice_received = sync_until_message(&relay, alice.path(), bob_user_id, bob_body);
+    assert_eq!(alice_received["is_outgoing"], false);
 }
 
 #[test]

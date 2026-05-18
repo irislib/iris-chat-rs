@@ -526,8 +526,14 @@ fn run(cli: Cli) -> Result<()> {
         command => {
             let cli_app = CliApp::open(&data_dir)?;
             let data = handle_command(&cli_app, &data_dir, command)?;
+            let background_sync = should_spawn_background_sync(&cli_app.app.state(), &data);
             cli_app.app.shutdown();
-            data
+            drop(cli_app);
+            print_output(cli.json, &command_name, data)?;
+            if background_sync {
+                spawn_background_sync(&data_dir);
+            }
+            return Ok(());
         }
     };
     print_output(cli.json, &command_name, data)
@@ -1147,11 +1153,6 @@ fn send_message(
             text: message.to_string(),
         }
     };
-    // Fire-and-forget: wait only for the local state to settle (message
-    // encrypted, added to the chat, queued for publish). Relay delivery
-    // happens asynchronously in the background; we don't block on it.
-    // Callers that need to verify publish completion should `sync --wait-ms`
-    // or poll the message's delivery field.
     cli.dispatch_and_wait(action, Duration::from_secs(2))?;
     let state = cli.app.state();
     fail_on_toast(&state)?;
@@ -1600,6 +1601,34 @@ fn print_output(json_output: bool, command: &str, data: Value) -> Result<()> {
         println!("{data}");
     }
     Ok(())
+}
+
+fn should_spawn_background_sync(state: &AppState, data: &Value) -> bool {
+    !state.preferences.nostr_relay_urls.is_empty()
+        && data
+            .get("is_outgoing")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        && data.get("id").and_then(Value::as_str).is_some()
+        && data
+            .get("delivery")
+            .and_then(Value::as_str)
+            .is_some_and(|delivery| matches!(delivery, "queued" | "pending"))
+}
+
+fn spawn_background_sync(data_dir: &Path) {
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let _ = std::process::Command::new(exe)
+        .arg("--data-dir")
+        .arg(data_dir)
+        .args(["sync", "--wait-ms", "8000"])
+        .env("IRIS_CLI_BACKGROUND_SYNC", "1")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
 }
 
 fn command_name(command: &Commands) -> &'static str {
